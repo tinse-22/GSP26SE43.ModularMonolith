@@ -1,0 +1,12 @@
+version: "3.6"
+services:
+    migrator:
+        volumes:
+            - D:\\ClassifiedAds.ModularMonolith\\Logs\\Migrator:/ClassifiedAds.ModularMonolith/logs
+    webapi:
+        volumes:
+            - D:\\ClassifiedAds.ModularMonolith\\Logs\\WebAPI:/ClassifiedAds.ModularMonolith/logs
+            - D:\\ClassifiedAds.ModularMonolith\\Files:/files
+    background:
+        volumes:
+            - D:\\ClassifiedAds.ModularMonolith\\Logs\\Background:/ClassifiedAds.ModularMonolith/logs

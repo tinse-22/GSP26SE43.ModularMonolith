@@ -1,0 +1,80 @@
+# ============================================================================
+# CODEOWNERS - Automatic Review Assignment
+# ============================================================================
+# GitHub automatically requests reviews from code owners when PRs modify
+# files they own. Code owners must have write access to the repository.
+#
+# Syntax:
+#   pattern  @owner1 @owner2 @org/team-name
+#
+# Later rules take precedence. Use * for default ownership.
+# ============================================================================
+
+# =============================================================================
+# Default Owners (fallback for all files)
+# =============================================================================
+*                                           @platform-team
+
+# =============================================================================
+# Infrastructure & DevOps
+# =============================================================================
+.github/                                    @devops-team @platform-team
+docker-compose*.yml                         @devops-team
+Dockerfile                                  @devops-team
+**/Dockerfile                               @devops-team
+.dockerignore                               @devops-team
+
+# =============================================================================
+# Documentation
+# =============================================================================
+*.md                                        @docs-team @tech-leads
+docs/                                       @docs-team
+docs-architecture/                          @architects @tech-leads
+
+# =============================================================================
+# Core Building Blocks
+# =============================================================================
+ClassifiedAds.Domain/                       @architects @backend-team
+ClassifiedAds.Application/                  @architects @backend-team
+ClassifiedAds.Infrastructure/               @backend-team @devops-team
+ClassifiedAds.CrossCuttingConcerns/         @backend-team
+ClassifiedAds.Contracts/                    @architects @backend-team
+ClassifiedAds.Persistence.PostgreSQL/       @backend-team @dba-team
+
+# =============================================================================
+# Host Applications
+# =============================================================================
+ClassifiedAds.WebAPI/                       @backend-team @api-team
+ClassifiedAds.Background/                   @backend-team
+ClassifiedAds.Migrator/                     @backend-team @dba-team
+
+# =============================================================================
+# Feature Modules
+# =============================================================================
+ClassifiedAds.Modules.AuditLog/             @security-team @backend-team
+ClassifiedAds.Modules.Configuration/        @backend-team
+ClassifiedAds.Modules.Identity/             @security-team @backend-team
+ClassifiedAds.Modules.Notification/         @backend-team
+ClassifiedAds.Modules.Product/              @product-team @backend-team
+ClassifiedAds.Modules.Storage/              @backend-team @devops-team
+
+# =============================================================================
+# Security-Sensitive Files
+# =============================================================================
+**/appsettings*.json                        @security-team @devops-team
+**/*.pfx                                    @security-team
+**/*.cer                                    @security-team
+**/Certs/                                   @security-team
+.env*                                       @security-team @devops-team
+SECURITY.md                                 @security-team
+
+# =============================================================================
+# Configuration & Build
+# =============================================================================
+*.csproj                                    @backend-team
+*.slnx                                      @architects @backend-team
+*.sln                                       @architects @backend-team
+global.json                                 @devops-team @backend-team
+.editorconfig                               @backend-team
+Directory.Build.props                       @architects @backend-team
+Directory.Packages.props                    @architects @backend-team
