@@ -20,6 +20,13 @@ services:
         ports: 
           - 1025:1025 # smtp server
           - 8025:8025 # web ui
+    redis:
+        image: "redis:7-alpine"
+        ports:
+          - "6379:6379"
+        volumes:
+          - redis_data:/data
+        command: redis-server --appendonly yes
     migrator:
         image: classifiedads.modularmonolith.migrator
         build:
@@ -94,3 +101,4 @@ services:
 
 volumes:
     postgres_data:
+    redis_data:

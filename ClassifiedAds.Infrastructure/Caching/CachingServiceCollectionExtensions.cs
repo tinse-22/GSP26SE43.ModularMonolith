@@ -28,15 +28,6 @@ public static class CachingServiceCollectionExtensions
                 opt.InstanceName = options.Distributed.Redis.InstanceName;
             });
         }
-        else if (distributedProvider == "SqlServer")
-        {
-            services.AddDistributedSqlServerCache(opt =>
-            {
-                opt.ConnectionString = options.Distributed.SqlServer.ConnectionString;
-                opt.SchemaName = options.Distributed.SqlServer.SchemaName;
-                opt.TableName = options.Distributed.SqlServer.TableName;
-            });
-        }
 
         services.AddHybridCache(options =>
         {
