@@ -730,4 +730,4 @@ services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
 ---
 
-*Previous: [10 - DevOps & Local Development](10-devops-and-local-development.md) | Next: [Appendix - Glossary](appendix-glossary.md)*
+*Previous: [Tin 10 - DevOps & Local Development](10-devops-and-local-development.md) | Next: [Appendix - Glossary](appendix-glossary.md)*
