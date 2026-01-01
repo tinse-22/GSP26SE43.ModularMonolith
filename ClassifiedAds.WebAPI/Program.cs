@@ -2,10 +2,13 @@
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
+using ClassifiedAds.Infrastructure.Web.Validation;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Services;
 using ClassifiedAds.Modules.Notification.Hubs;
 using ClassifiedAds.WebAPI.ConfigurationOptions;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -42,11 +45,29 @@ services.AddExceptionHandler<GlobalExceptionHandler>();
 
 services.AddCaches(appSettings.Caching);
 
+// Register FluentValidation validators from all loaded assemblies
+// This enables automatic discovery of validators when modules add them
+services.AddValidatorsFromAssemblies(
+    AppDomain.CurrentDomain.GetAssemblies().Where(a => a.FullName?.StartsWith("ClassifiedAds") == true),
+    ServiceLifetime.Scoped,
+    includeInternalTypes: true);
+
+// Add FluentValidation to MVC pipeline for automatic model validation
+services.AddFluentValidationAutoValidation(config =>
+{
+    // Disable DataAnnotations validation to avoid double validation
+    // FluentValidation will handle all validation
+    config.DisableDataAnnotationsValidation = false; // Keep DataAnnotations for backward compatibility
+});
+
 services.AddControllers(configure =>
 {
 })
 .ConfigureApiBehaviorOptions(options =>
 {
+    // Standardize validation error responses
+    // Returns ValidationProblemDetails with traceId and consistent error format
+    options.InvalidModelStateResponseFactory = ValidationProblemDetailsFactory.CreateFactory();
 })
 .AddJsonOptions(options =>
 {
