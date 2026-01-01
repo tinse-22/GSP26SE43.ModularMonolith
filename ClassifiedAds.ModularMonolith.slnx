@@ -37,4 +37,6 @@
   <Folder Name="/Modules/Storage/">
     <Project Path="ClassifiedAds.Modules.Storage/ClassifiedAds.Modules.Storage.csproj" />
   </Folder>
+  <Project Path="ClassifiedAds.AppHost/ClassifiedAds.AppHost.csproj" />
+  <Project Path="ClassifiedAds.ServiceDefaults/ClassifiedAds.ServiceDefaults.csproj" />
 </Solution>
