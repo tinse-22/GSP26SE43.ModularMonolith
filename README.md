@@ -96,12 +96,12 @@ docker-compose down -v
 | WebAPI (Swagger) | http://localhost:9002/swagger | - |
 | RabbitMQ Management | http://localhost:15672 | guest / guest |
 | MailHog (Email UI) | http://localhost:8025 | - |
-| PostgreSQL | localhost:5432 | postgres / postgres123!@# |
+| PostgreSQL | localhost:5432 | postgres / <YOUR_PASSWORD> |
 
 ## Connection String Format (PostgreSQL)
 
 ```
-Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=postgres123!@#
+Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>
 ```
 
 ## Configuration
@@ -117,12 +117,12 @@ Messaging__Provider=RabbitMQ
 Messaging__RabbitMQ__HostName=rabbitmq
 Storage__Provider=Local
 Storage__Local__Path=/files
-Modules__AuditLog__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_AuditLog;Username=postgres;Password=postgres123!@#
-Modules__Configuration__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Configuration;Username=postgres;Password=postgres123!@#
-Modules__Identity__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Identity;Username=postgres;Password=postgres123!@#
-Modules__Notification__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Notification;Username=postgres;Password=postgres123!@#
-Modules__Product__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=postgres123!@#
-Modules__Storage__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Storage;Username=postgres;Password=postgres123!@#
+Modules__AuditLog__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_AuditLog;Username=postgres;Password=<YOUR_PASSWORD>
+Modules__Configuration__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Configuration;Username=postgres;Password=<YOUR_PASSWORD>
+Modules__Identity__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Identity;Username=postgres;Password=<YOUR_PASSWORD>
+Modules__Notification__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Notification;Username=postgres;Password=<YOUR_PASSWORD>
+Modules__Product__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>
+Modules__Storage__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Storage;Username=postgres;Password=<YOUR_PASSWORD>
 ```
 
 ### Local Development (without Docker for app)
@@ -134,7 +134,7 @@ Update `appsettings.Development.json` in WebAPI/Background/Migrator with localho
   "Modules": {
     "Product": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     }
   }

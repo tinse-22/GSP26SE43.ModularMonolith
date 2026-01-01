@@ -99,7 +99,7 @@ test:
       image: postgres:16
       env:
         POSTGRES_USER: postgres
-        POSTGRES_PASSWORD: postgres123!@#
+        POSTGRES_PASSWORD: <YOUR_PASSWORD>
         POSTGRES_DB: ClassifiedAds_Test
       ports:
         - 5432:5432

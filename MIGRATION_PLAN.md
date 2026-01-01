@@ -67,7 +67,7 @@ protected override void OnModelCreating(ModelBuilder builder)
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
   }
 }
 ```
