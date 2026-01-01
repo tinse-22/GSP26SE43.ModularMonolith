@@ -15,6 +15,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
 
+var builder = Host.CreateApplicationBuilder(args);
+
+// Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
+// This is optional and only activates when running under Aspire
+builder.AddServiceDefaults();
+
 Host.CreateDefaultBuilder(args)
 .UseWindowsService()
 .UseClassifiedAdsLogger(configuration =>

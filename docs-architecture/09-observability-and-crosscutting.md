@@ -1,12 +1,13 @@
 # 09 - Observability & Cross-Cutting Concerns
 
-> **Purpose**: Understand the logging, tracing, metrics, caching, and other cross-cutting concerns implemented across the application.
+> **Purpose**: Understand the logging, tracing, metrics, caching, and other cross-cutting concerns implemented across the application, including .NET Aspire integration for enhanced observability.
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Aspire Dashboard](#aspire-dashboard)
 - [Logging (Serilog)](#logging-serilog)
 - [Distributed Tracing (OpenTelemetry)](#distributed-tracing-opentelemetry)
 - [Metrics](#metrics)
@@ -20,34 +21,210 @@
 
 ## Overview
 
-Observability in this application is built on three pillars:
+Observability in this application is built on three pillars and can be consumed through multiple channels:
 
 ```mermaid
 graph TB
-    subgraph "Observability"
-        L[Logs - Serilog]
+    subgraph "Observability Sources"
+        L[Logs - Serilog + MEL]
         T[Traces - OpenTelemetry]
         M[Metrics - OpenTelemetry]
     end
     
-    subgraph "Sinks/Exporters"
-        Console[Console]
-        File[File]
-        AI[Application Insights]
-        Zipkin[Zipkin]
-        OTLP[OTLP Endpoint]
+    subgraph "Collection"
+        SD[ServiceDefaults<br/>OpenTelemetry Setup]
     end
     
-    L --> Console
-    L --> File
-    L --> AI
+    subgraph "Export Channels"
+        Console[Console]
+        File[File]
+        Aspire[Aspire Dashboard<br/>OTLP Endpoint]
+        AI[Application Insights]
+        Zipkin[Zipkin]
+    end
     
-    T --> Zipkin
-    T --> OTLP
-    T --> AI
+    L --> SD
+    T --> SD
+    M --> SD
     
-    M --> OTLP
-    M --> AI
+    SD --> Console
+    SD --> File
+    SD --> Aspire
+    SD --> AI
+    SD --> Zipkin
+    
+    style Aspire fill:#0078d4,color:#fff
+```
+
+### Observability Modes
+
+**1. With .NET Aspire (Recommended)**
+- All telemetry automatically flows to the Aspire Dashboard
+- Real-time logs, traces, and metrics in a unified UI
+- No additional configuration required
+- Best developer experience
+
+**2. Standalone (without Aspire)**
+- Logs written to console and files
+- OpenTelemetry can export to Jaeger/Zipkin if configured
+- Application Insights if enabled in appsettings
+
+---
+
+## Aspire Dashboard
+
+When running with Aspire (`dotnet run --project ClassifiedAds.AppHost`), the Aspire Dashboard provides comprehensive observability.
+
+### Dashboard URL
+
+**https://localhost:17180**
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Resources** | View all containers, projects, their status, and endpoints |
+| **Console Logs** | Real-time console output from all services |
+| **Structured Logs** | Searchable structured logs with filters (level, source, timespan) |
+| **Traces** | Distributed traces showing request flow across services |
+| **Metrics** | Request rates, error rates, latency percentiles, custom metrics |
+
+### Structured Logs View
+
+```mermaid
+graph LR
+    SL[Structured Logs] --> Filter[Filters]
+    Filter --> Level[Log Level<br/>Debug/Info/Warning/Error]
+    Filter --> Source[Source<br/>WebAPI/Background/Migrator]
+    Filter --> Time[Time Range<br/>Last 5m/1h/custom]
+    Filter --> Search[Full Text Search]
+```
+
+**Example log entry:**
+```json
+{
+  "timestamp": "2026-01-01T10:30:45.123Z",
+  "level": "Information",
+  "source": "ClassifiedAds.WebAPI",
+  "category": "ClassifiedAds.Modules.Product.Commands.CreateProductHandler",
+  "message": "Product created successfully",
+  "properties": {
+    "ProductId": "123e4567-e89b-12d3-a456-426614174000",
+    "UserId": "user123",
+    "TraceId": "abc123...",
+    "SpanId": "def456..."
+  }
+}
+```
+
+### Distributed Traces View
+
+Traces show the complete request flow across services and databases:
+
+```mermaid
+graph LR
+    HTTP[HTTP Request] --> API[WebAPI<br/>span: 120ms]
+    API --> Handler[Command Handler<br/>span: 100ms]
+    Handler --> DB[PostgreSQL Query<br/>span: 15ms]
+    Handler --> Event[Publish Event<br/>span: 5ms]
+    Event --> RMQ[RabbitMQ<br/>span: 3ms]
+```
+
+**Example trace:**
+```
+Trace ID: abc123def456
+Duration: 120ms
+Spans: 5
+
+├─ HTTP POST /api/products (120ms)
+│  ├─ CreateProductHandler.Handle (100ms)
+│  │  ├─ ProductDbContext.SaveChangesAsync (15ms)
+│  │  │  └─ PostgreSQL: INSERT INTO products (12ms)
+│  │  └─ MessageBus.PublishAsync (5ms)
+│  │     └─ RabbitMQ: publish to product.created (3ms)
+```
+
+### Metrics View
+
+Key metrics automatically collected:
+
+| Metric | Description |
+|--------|-------------|
+| `http.server.request.duration` | HTTP request latency (p50, p90, p99) |
+| `http.server.active_requests` | Number of active HTTP requests |
+| `http.server.request.errors` | Number of HTTP errors (4xx, 5xx) |
+| `db.client.operation.duration` | Database query latency |
+| `dotnet.gc.collections` | .NET garbage collection metrics |
+| `process.cpu.usage` | CPU usage percentage |
+| `process.memory.usage` | Memory usage (bytes) |
+
+### ServiceDefaults Integration
+
+The `ClassifiedAds.ServiceDefaults` project configures OpenTelemetry for all services:
+
+```csharp
+// ClassifiedAds.ServiceDefaults/Extensions.cs
+public static IHostApplicationBuilder AddServiceDefaults(this IHostApplicationBuilder builder)
+{
+    builder.ConfigureOpenTelemetry();
+    builder.AddDefaultHealthChecks();
+    builder.Services.AddServiceDiscovery();
+    builder.Services.ConfigureHttpClientDefaults(http =>
+    {
+        http.AddServiceDiscovery();
+        http.AddStandardResilienceHandler();
+    });
+
+    return builder;
+}
+
+public static IHostApplicationBuilder ConfigureOpenTelemetry(this IHostApplicationBuilder builder)
+{
+    builder.Logging.AddOpenTelemetry(logging =>
+    {
+        logging.IncludeFormattedMessage = true;
+        logging.IncludeScopes = true;
+    });
+
+    builder.Services.AddOpenTelemetry()
+        .WithMetrics(metrics =>
+        {
+            metrics
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation();
+        })
+        .WithTracing(tracing =>
+        {
+            tracing
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation();
+        });
+
+    // Export to Aspire Dashboard (OTLP endpoint)
+    builder.AddOpenTelemetryExporters();
+
+    return builder;
+}
+```
+
+**Integration in application hosts:**
+
+```csharp
+// WebAPI/Program.cs
+var builder = WebApplication.CreateBuilder(args);
+
+// Add Aspire ServiceDefaults (optional, only activates when running under Aspire)
+builder.AddServiceDefaults();
+
+// ... rest of configuration
+
+var app = builder.Build();
+
+// Map health check endpoints for Aspire
+app.MapDefaultEndpoints();
+
+app.Run();
 ```
 
 ---

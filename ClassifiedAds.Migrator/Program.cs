@@ -13,7 +13,13 @@ using Polly;
 using System;
 using System.Reflection;
 
-var builder = Host.CreateDefaultBuilder(args)
+var builder = Host.CreateApplicationBuilder(args);
+
+// Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
+// This is optional and only activates when running under Aspire
+builder.AddServiceDefaults();
+
+var hostBuilder = Host.CreateDefaultBuilder(args)
 .UseClassifiedAdsLogger(configuration =>
 {
     return new LoggingOptions();
@@ -88,7 +94,7 @@ var builder = Host.CreateDefaultBuilder(args)
     services.AddScoped<ICurrentUser, CurrentWebUser>();
 });
 
-var app = builder.Build();
+var app = hostBuilder.Build();
 var configuration = app.Services.GetRequiredService<IConfiguration>();
 
 Policy.Handle<Exception>().WaitAndRetry(

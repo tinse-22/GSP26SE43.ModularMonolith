@@ -8,7 +8,9 @@ A simplified .NET Modular Monolith template for local development and learning.
 - **PostgreSQL** - Database (only provider)
 - **RabbitMQ** - Message broker
 - **MailHog** - Email testing
-- **Docker Compose** - Local development orchestration
+- **Redis** - Distributed cache
+- **Docker Compose** - Local development orchestration (legacy)
+- **.NET Aspire** - Developer orchestration and observability (recommended)
 
 ## Prerequisites
 
@@ -71,7 +73,9 @@ dotnet run --project ClassifiedAds.WebAPI
 dotnet run --project ClassifiedAds.Background
 ```
 
-## Full Docker Compose Setup
+---
+
+### Option C: Docker Compose (Full Containerized)
 
 To run everything in Docker (including the app services):
 
@@ -89,89 +93,209 @@ docker-compose down
 docker-compose down -v
 ```
 
-## Service URLs
+---
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| WebAPI (Swagger) | http://localhost:9002/swagger | - |
-| RabbitMQ Management | http://localhost:15672 | guest / guest |
-| MailHog (Email UI) | http://localhost:8025 | - |
-| PostgreSQL | localhost:5432 | postgres / <YOUR_PASSWORD> |
+## Service URLs (All Modes)
 
-## Connection String Format (PostgreSQL)
+| Service | Docker Compose | Aspire | Notes |
+|---------|----------------|--------|-------|
+| WebAPI (Swagger) | http://localhost:9002/swagger | Dynamic (check dashboard) | REST API with Swagger UI |
+| RabbitMQ Management | http://localhost:15672 | http://localhost:15672 | guest / guest |
+| MailHog (Email UI) | http://localhost:8025 | http://localhost:8025 | Catches dev emails |
+| PostgreSQL | localhost:5432 | localhost:5432 | postgres / Postgres123@ |
+| pgAdmin | - | http://localhost:5050 | Aspire only |
+| Redis | localhost:6379 | localhost:6379 | Distributed cache |
 
-```
-Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>
-```
+---
 
-## Configuration
+## Database Migrations
 
-### Environment Variables (.env file)
+### Running Migrations
 
-The `.env` file contains all environment variables for docker-compose:
+**With Aspire (Automatic)**:
+- Migrations run automatically when you start the AppHost
+- The migrator runs before WebAPI and Background start
 
-```env
-ASPNETCORE_ENVIRONMENT=Development
-DOTNET_ENVIRONMENT=Development
-Messaging__Provider=RabbitMQ
-Messaging__RabbitMQ__HostName=rabbitmq
-Storage__Provider=Local
-Storage__Local__Path=/files
-Modules__AuditLog__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_AuditLog;Username=postgres;Password=<YOUR_PASSWORD>
-Modules__Configuration__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Configuration;Username=postgres;Password=<YOUR_PASSWORD>
-Modules__Identity__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Identity;Username=postgres;Password=<YOUR_PASSWORD>
-Modules__Notification__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Notification;Username=postgres;Password=<YOUR_PASSWORD>
-Modules__Product__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>
-Modules__Storage__ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds_Storage;Username=postgres;Password=<YOUR_PASSWORD>
+**Manually** (Docker Compose or standalone):
+```bash
+dotnet run --project ClassifiedAds.Migrator
 ```
 
-### Local Development (without Docker for app)
+**Via EF CLI**:
+```bash
+dotnet ef database update --context ProductDbContext --project ClassifiedAds.Migrator
+```
 
-Update `appsettings.Development.json` in WebAPI/Background/Migrator with localhost connection strings:
+### Creating New Migrations
+
+```bash
+# Install dotnet-ef tool if not already installed
+dotnet tool install --global dotnet-ef --version="10.0"
+
+# Navigate to ClassifiedAds.Migrator and create migration
+cd ClassifiedAds.Migrator
+dotnet ef migrations add YourMigrationName --context ProductDbContext -o Migrations/ProductDb
+
+# Apply the migration
+dotnet run
+```
+
+### Resetting Local Database
+
+**With Aspire**:
+1. Stop the AppHost (`Ctrl+C`)
+2. Remove Docker volumes:
+   ```bash
+   docker volume rm aspire-postgres_data
+   docker volume rm aspire-redis_data
+   ```
+3. Restart AppHost
+
+**With Docker Compose**:
+```bash
+docker-compose down -v
+docker-compose up -d db
+dotnet run --project ClassifiedAds.Migrator
+```
+
+---
+
+## Observability
+
+### With Aspire
+
+Aspire provides built-in observability via the Aspire Dashboard:
+- **Logs**: Real-time structured logs from all services
+- **Traces**: Distributed tracing across HTTP and database calls
+- **Metrics**: Performance metrics (request rates, errors, latency)
+- **Resources**: Health status of all containers and projects
+
+All services automatically export telemetry to the Aspire Dashboard (OpenTelemetry OTLP endpoint).
+
+### Without Aspire (Standalone)
+
+Each service can export telemetry independently if configured in `appsettings.json`:
 
 ```json
 {
-  "Modules": {
-    "Product": {
-      "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>"
+  "Monitoring": {
+    "OpenTelemetry": {
+      "IsEnabled": true,
+      "Otlp": {
+        "IsEnabled": true,
+        "Endpoint": "http://localhost:4317"
       }
     }
   }
 }
 ```
 
-## Database Migrations
+You can run a local OpenTelemetry collector or Jaeger to visualize traces.
 
-### Create New Migration
+---
 
-```bash
-# Install dotnet-ef tool
-dotnet tool install --global dotnet-ef --version="10.0"
+## Common Tasks
 
-# Navigate to ClassifiedAds.Migrator and create migration
-dotnet ef migrations add YourMigrationName --context ProductDbContext -o Migrations/ProductDb
-```
-
-### Apply Migrations
+### Re-run Migrations Only
 
 ```bash
-# Run all pending migrations
+# Aspire (stop AppHost, run migrator, restart AppHost)
 dotnet run --project ClassifiedAds.Migrator
 
-# Or via EF CLI
-dotnet ef database update --context ProductDbContext --project ClassifiedAds.Migrator
+# Docker Compose
+docker-compose up -d db
+dotnet run --project ClassifiedAds.Migrator
 ```
 
-## Architecture Documentation
+### Check if Services are Healthy
 
-See [docs-architecture/README.md](docs-architecture/README.md) for detailed architecture documentation.
+**Aspire**: Check the Aspire Dashboard
+
+**Manual**:
+```bash
+curl http://localhost:9002/health
+curl http://localhost:9002/alive
+```
+
+### View Service Logs
+
+**Aspire**: Use the Aspire Dashboard (Logs view)
+
+**Docker Compose**:
+```bash
+docker-compose logs -f webapi
+docker-compose logs -f background
+```
+
+**Standalone**:
+Logs are written to console and optionally to files (configured in `appsettings.json`).
+
+---
+
+## Configuration
+
+### Connection Strings
+
+**Aspire**: Automatically injected. All modules share a single PostgreSQL database.
+
+**Docker Compose**: Configure in `.env` file (see `.env` for defaults).
+
+**Standalone**: Configure in `appsettings.Development.json`:
+
+```json
+{
+  "ConnectionStrings": {
+    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=Postgres123@"
+  }
+}
+```
+
+Each module reads `ConnectionStrings:Default` or falls back to `Modules:{ModuleName}:ConnectionStrings:Default`.
+
+### Messaging (RabbitMQ)
+
+**Aspire**: Automatically configured with service discovery.
+
+**Docker Compose / Standalone**:
+```json
+{
+  "Messaging": {
+    "Provider": "RabbitMQ",
+    "RabbitMQ": {
+      "HostName": "localhost" // or "rabbitmq" in Docker
+    }
+  }
+}
+```
+
+### Email (MailHog)
+
+**Aspire**: SMTP host/port injected automatically into Background worker.
+
+**Docker Compose / Standalone**:
+```json
+{
+  "Modules": {
+    "Notification": {
+      "Email": {
+        "Provider": "SmtpClient",
+        "SmtpClient": {
+          "Host": "localhost", // or "mailhog" in Docker
+          "Port": 1025
+        }
+      }
+    }
+  }
+}
+```
+
+---
 
 ## Docker Commands Reference
 
 ```bash
-# Start infrastructure only
-docker-compose up -d db rabbitmq mailhog
+# Start infrastructure only (for local .NET development)
+docker-compose up -d db rabbitmq mailhog redis
 
 # Build images
 docker-compose build
@@ -188,6 +312,24 @@ docker-compose restart webapi
 # Stop all
 docker-compose down
 
-# Remove volumes
+# Remove volumes (clears all data)
 docker-compose down -v
+
+# List volumes
+docker volume ls
+
+# Prune unused volumes
+docker volume prune
 ```
+
+---
+
+## Architecture Documentation
+
+See [docs-architecture/README.md](docs-architecture/README.md) for detailed architecture documentation.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to this project.

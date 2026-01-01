@@ -22,8 +22,13 @@ using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerUI;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
+// This is optional and only activates when running under Aspire
+builder.AddServiceDefaults();
 
 // Add services to the container.
 var services = builder.Services;
@@ -296,5 +301,8 @@ app.UseRateLimiter();
 
 app.MapControllers();
 app.MapHub<NotificationHub>("/hubs/notification").RequireCors("SignalRHubs");
+
+// Map Aspire default endpoints (health checks)
+app.MapDefaultEndpoints();
 
 app.Run();

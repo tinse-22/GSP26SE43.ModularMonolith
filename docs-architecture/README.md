@@ -8,7 +8,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [01 - Solution Structure](01-solution-structure.md) | Project organization, dependencies between projects, folder conventions, and naming standards |
+| [01 - Solution Structure](01-solution-structure.md) | Project organization, dependencies, Aspire orchestration, and folder conventions |
 | [02 - Architecture Overview](02-architecture-overview.md) | High-level architecture, layering strategy, design principles, and key architectural decisions |
 | [03 - Request Lifecycle](03-request-lifecycle.md) | HTTP request flow from controller through handlers to database and response |
 | [04 - CQRS and Mediator](04-cqrs-and-mediator.md) | Command/Query separation pattern implementation with custom Dispatcher |
@@ -16,8 +16,8 @@
 | [06 - Events and Outbox](06-events-and-outbox.md) | Domain events, outbox pattern for reliable messaging, and message bus integration |
 | [07 - Modules](07-modules.md) | Module structure, boundaries, responsibilities, and inter-module communication |
 | [08 - Authentication & Authorization](08-authentication-authorization.md) | JWT authentication, permission system, policies, and security implementation |
-| [09 - Observability & Cross-Cutting](09-observability-and-crosscutting.md) | Logging (Serilog), tracing (OpenTelemetry), metrics, caching, and health checks |
-| [10 - Local Development](10-devops-and-local-development.md) | Docker Compose setup, database migrations, and local development workflow |
+| [09 - Observability & Cross-Cutting](09-observability-and-crosscutting.md) | Aspire Dashboard, logging (Serilog), tracing (OpenTelemetry), metrics, and health checks |
+| [10 - Local Development](10-devops-and-local-development.md) | .NET Aspire orchestration, Docker Compose, database migrations, and local workflows |
 | [11 - Extension Playbook](11-extension-playbook.md) | Step-by-step guides for common development tasks (adding entities, commands, modules) |
 | [Testing Guide](testing.md) | Test project structure, running tests, writing tests, and CI/CD integration |
 | [Appendix - Glossary](appendix-glossary.md) | Key terms and definitions used throughout this documentation |
@@ -36,9 +36,33 @@
 
 ### Running Locally
 
+**Option A: .NET Aspire (Recommended)**
 ```bash
-# 1. Start infrastructure services (PostgreSQL, RabbitMQ, MailHog)
-docker-compose up -d db rabbitmq mailhog
+# Start everything with one command (requires Docker Desktop)
+dotnet run --project ClassifiedAds.AppHost
+```
+
+**What you get:**
+- ✅ Aspire Dashboard at https://localhost:17180 (logs, traces, metrics)
+- ✅ All infrastructure automatically started (PostgreSQL, RabbitMQ, Redis, MailHog)
+- ✅ Database migrations run automatically
+- ✅ WebAPI and Background services with service discovery
+- ✅ Real-time observability and health monitoring
+
+**Option B: Docker Compose (Traditional)**
+```bash
+# 1. Start infrastructure services (PostgreSQL, RabbitMQ, MailHog, Redis)
+**With Aspire:**
+| Service | URL | Notes |
+|---------|-----|-------|
+| Aspire Dashboard | https://localhost:17180 | Logs, traces, metrics, resource management |
+| WebAPI (Swagger) | Dynamic port (check dashboard) | REST API with Swagger UI |
+| RabbitMQ Management | http://localhost:15672 | guest / guest |
+| MailHog (Email Testing) | http://localhost:8025 | Catches all dev emails |
+| pgAdmin | http://localhost:5050 | Database management |
+
+**With Docker Compose:**
+docker-compose up -d db rabbitmq mailhog redis
 
 # 2. Run database migrations (creates schema and seed data)
 dotnet run --project ClassifiedAds.Migrator
