@@ -22,16 +22,16 @@
 The solution follows a **Modular Monolith** architecture where the codebase is organized into:
 
 1. **Entry Points** - Host applications (WebAPI, Background Workers, Migrator)
-2. **Core/Shared Projects** - Domain, Application, Infrastructure, Contracts
+2. **Core/Shared Projects** - Domain, Application, Infrastructure, Contracts, CrossCuttingConcerns
 3. **Modules** - Feature-specific vertical slices (Product, Identity, Storage, etc.)
-4. **Persistence** - Database provider implementations
+4. **Persistence** - Database provider implementation (PostgreSQL)
+5. **Tests** - Unit tests and Integration tests
 
 ```
 ClassifiedAds.ModularMonolith/
 ├── ClassifiedAds.WebAPI/                 # ASP.NET Core Web API host
 ├── ClassifiedAds.Background/             # Background worker service
 ├── ClassifiedAds.Migrator/               # Database migration runner
-├── ClassifiedAds.AspireAppHost/          # .NET Aspire orchestration
 │
 ├── ClassifiedAds.Application/            # CQRS handlers, Dispatcher, services
 ├── ClassifiedAds.Domain/                 # Entities, Events, Repository interfaces
@@ -46,14 +46,14 @@ ClassifiedAds.ModularMonolith/
 ├── ClassifiedAds.Modules.AuditLog/       # Audit logging
 ├── ClassifiedAds.Modules.Configuration/  # Application configuration
 │
-├── ClassifiedAds.Persistence.SqlServer/  # SQL Server EF Core implementation
-├── ClassifiedAds.Persistence.MySQL/      # MySQL EF Core implementation
 ├── ClassifiedAds.Persistence.PostgreSQL/ # PostgreSQL EF Core implementation
 │
-├── ClassifiedAds.Modules.Product.UnitTests/
-├── ClassifiedAds.Modules.Product.IntegrationTests/
-├── ClassifiedAds.Modules.Product.EndToEndTests/
-└── ClassifiedAds.Migrator.Tests/
+├── ClassifiedAds.UnitTests/              # Unit tests for domain, utilities
+├── ClassifiedAds.IntegrationTests/       # Integration tests with Testcontainers
+│
+├── docs/                                 # General documentation
+├── docs-architecture/                    # Architecture documentation
+└── rules/                                # Development guidelines and rules
 ```
 
 ### Where in code?
@@ -64,13 +64,14 @@ ClassifiedAds.ModularMonolith/
 
 ## Project Dependency Graph
 
+The following diagram shows how projects reference each other:
+
 ```mermaid
 graph TB
     subgraph "Entry Points"
         WebAPI[ClassifiedAds.WebAPI]
         Background[ClassifiedAds.Background]
         Migrator[ClassifiedAds.Migrator]
-        Aspire[ClassifiedAds.AspireAppHost]
     end
 
     subgraph "Modules"
@@ -91,9 +92,12 @@ graph TB
     end
 
     subgraph "Persistence"
-        SqlServer[Persistence.SqlServer]
-        MySQL[Persistence.MySQL]
         PostgreSQL[Persistence.PostgreSQL]
+    end
+
+    subgraph "Tests"
+        UnitTests[UnitTests]
+        IntegTests[IntegrationTests]
     end
 
     WebAPI --> Product
@@ -120,12 +124,12 @@ graph TB
     Product --> App
     Product --> Contracts
     Product --> Infra
-    Product --> SqlServer
+    Product --> PostgreSQL
 
     Identity --> App
     Identity --> Contracts
     Identity --> Infra
-    Identity --> SqlServer
+    Identity --> PostgreSQL
 
     App --> Domain
     App --> CrossCut
@@ -136,7 +140,13 @@ graph TB
 
     Domain --> CrossCut
 
-    SqlServer --> Domain
+    PostgreSQL --> Domain
+
+    UnitTests --> CrossCut
+    UnitTests --> Domain
+    UnitTests --> Infra
+
+    IntegTests --> WebAPI
 ```
 
 ---
@@ -297,17 +307,19 @@ public interface ICurrentUser
 ### ClassifiedAds.CrossCuttingConcerns
 
 **Layer**: Utilities  
-**Responsibility**: Helper libraries that can be used across all layers.
+**Responsibility**: Helper libraries that can be used across all layers. Contains utilities that don't belong to any specific domain.
 
-| Folder | Description |
-|--------|-------------|
-| `Csv/` | CSV reading/writing abstractions |
-| `Excel/` | Excel file generation |
-| `Pdf/` | PDF generation abstractions |
-| `Html/` | HTML rendering |
-| `DateTimes/` | DateTime provider abstraction |
-| `Exceptions/` | Custom exception types |
-| `Locks/` | Distributed locking |
+| Folder | Description | Key Classes/Interfaces |
+|--------|-------------|------------------------|
+| `Csv/` | CSV reading/writing abstractions | `ICsvReader`, `ICsvWriter` |
+| `Excel/` | Excel file generation (EPPlus) | `IExcelWriter` |
+| `Pdf/` | PDF generation abstractions | `IPdfWriter` |
+| `Html/` | HTML rendering utilities | `IHtmlGenerator` |
+| `DateTimes/` | DateTime provider abstraction | `IDateTimeProvider` |
+| `Exceptions/` | Custom exception types | `ValidationException`, `NotFoundException` |
+| `Locks/` | Distributed locking abstractions | `IDistributedLock` |
+| `Logging/` | Logging extensions | Extension methods for ILogger |
+| `ExtensionMethods/` | Common extension methods | String, Collection extensions |
 
 **Where in code?**: [ClassifiedAds.CrossCuttingConcerns/](../ClassifiedAds.CrossCuttingConcerns/)
 
@@ -315,7 +327,7 @@ public interface ICurrentUser
 
 ## Module Projects
 
-Each module follows a **vertical slice** structure:
+Each module follows a **vertical slice** structure containing everything needed for that feature:
 
 ```
 ClassifiedAds.Modules.{ModuleName}/
@@ -343,14 +355,14 @@ ClassifiedAds.Modules.{ModuleName}/
 
 ### Module List
 
-| Module | Responsibility | Has DbContext | Has Outbox |
-|--------|---------------|---------------|------------|
-| **Product** | Sample business domain (product catalog) | ✅ `ProductDbContext` | ✅ |
-| **Identity** | User/Role management, ASP.NET Identity | ✅ `IdentityDbContext` | ❌ |
-| **Storage** | File upload/download, blob storage | ✅ `StorageDbContext` | ✅ |
-| **Notification** | Email, SMS, Web push notifications | ✅ `NotificationDbContext` | ❌ |
-| **AuditLog** | Centralized audit logging | ✅ `AuditLogDbContext` | ❌ |
-| **Configuration** | Application configuration entries | ✅ `ConfigurationDbContext` | ❌ |
+| Module | Responsibility | DbContext | Key Features |
+|--------|---------------|-----------|--------------|
+| **Product** | Sample business domain (product catalog) | `ProductDbContext` | Outbox pattern, CRUD operations, event publishing |
+| **Identity** | User/Role management, ASP.NET Identity | `IdentityDbContext` | User registration, authentication, role management |
+| **Storage** | File upload/download, blob storage | `StorageDbContext` | Outbox pattern, file metadata, multiple storage providers |
+| **Notification** | Email, SMS, Web push notifications | `NotificationDbContext` | Queued email/SMS, notification templates |
+| **AuditLog** | Centralized audit logging | `AuditLogDbContext` | Automatic change tracking, audit queries |
+| **Configuration** | Application configuration entries | `ConfigurationDbContext` | Dynamic app settings, feature flags |
 
 **Where in code?**: [ClassifiedAds.Modules.Product/](../ClassifiedAds.Modules.Product/) (reference implementation)
 
@@ -358,12 +370,19 @@ ClassifiedAds.Modules.{ModuleName}/
 
 ## Persistence Projects
 
-### ClassifiedAds.Persistence.SqlServer
+### ClassifiedAds.Persistence.PostgreSQL
 
-**Responsibility**: Base EF Core implementation for SQL Server. Provides `DbContextUnitOfWork<T>` and `Repository<T, TKey>`.
+**Responsibility**: PostgreSQL-specific EF Core implementation. Provides base classes for DbContext with Unit of Work pattern and generic repository.
+
+**Key Components**:
+
+| Component | Description |
+|-----------|-------------|
+| `DbContextUnitOfWork<T>` | Base DbContext implementing `IUnitOfWork` with transaction support |
+| `Repository<T, TKey>` | Generic repository implementation with common CRUD operations |
 
 ```csharp
-// ClassifiedAds.Persistence.SqlServer/DbContextUnitOfWork.cs
+// ClassifiedAds.Persistence.PostgreSQL/DbContextUnitOfWork.cs
 public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
     where TDbContext : DbContext
 {
@@ -382,62 +401,106 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
 }
 ```
 
-**Where in code?**: [ClassifiedAds.Persistence.SqlServer/](../ClassifiedAds.Persistence.SqlServer/)
-
-### Other Providers
-
-- **MySQL**: [ClassifiedAds.Persistence.MySQL/](../ClassifiedAds.Persistence.MySQL/)
-- **PostgreSQL**: [ClassifiedAds.Persistence.PostgreSQL/](../ClassifiedAds.Persistence.PostgreSQL/)
+**Where in code?**: [ClassifiedAds.Persistence.PostgreSQL/](../ClassifiedAds.Persistence.PostgreSQL/)
 
 ---
 
 ## Test Projects
 
-| Project | Type | Scope |
-|---------|------|-------|
-| `ClassifiedAds.Modules.Product.UnitTests` | Unit Tests | Handler logic, domain logic |
-| `ClassifiedAds.Modules.Product.IntegrationTests` | Integration Tests | Full module with test database |
-| `ClassifiedAds.Modules.Product.EndToEndTests` | E2E Tests | Full API testing |
-| `ClassifiedAds.Migrator.Tests` | Migration Tests | Database migration verification |
+The solution includes comprehensive test projects for ensuring code quality:
 
-**Where in code?**: 
-- [ClassifiedAds.Modules.Product.UnitTests/](../ClassifiedAds.Modules.Product.UnitTests/)
-- [ClassifiedAds.Modules.Product.IntegrationTests/](../ClassifiedAds.Modules.Product.IntegrationTests/)
-- [ClassifiedAds.Modules.Product.EndToEndTests/](../ClassifiedAds.Modules.Product.EndToEndTests/)
+| Project | Type | Scope | Key Technologies |
+|---------|------|-------|------------------|
+| `ClassifiedAds.UnitTests` | Unit Tests | Domain logic, utilities, exception handling | xUnit, FluentAssertions, Moq |
+| `ClassifiedAds.IntegrationTests` | Integration Tests | Full API testing with real database | xUnit, Testcontainers, WebApplicationFactory |
+
+### ClassifiedAds.UnitTests
+
+**Purpose**: Fast, isolated tests for business logic without external dependencies.
+
+**Structure**:
+```
+ClassifiedAds.UnitTests/
+├── CrossCuttingConcerns/
+│   ├── ValidationExceptionTests.cs
+│   └── NotFoundExceptionTests.cs
+├── Domain/
+│   └── (Entity tests)
+└── Infrastructure/
+    └── (Service tests)
+```
+
+**Test Stack**:
+- **xUnit**: Test framework
+- **FluentAssertions**: Readable assertions (`result.Should().Be(expected)`)
+- **Moq**: Mocking framework for dependencies
+- **coverlet.collector**: Code coverage collection
+
+**Where in code?**: [ClassifiedAds.UnitTests/](../ClassifiedAds.UnitTests/)
+
+### ClassifiedAds.IntegrationTests
+
+**Purpose**: End-to-end tests that verify the full request/response cycle with a real PostgreSQL database.
+
+**Structure**:
+```
+ClassifiedAds.IntegrationTests/
+├── Infrastructure/
+│   ├── CustomWebApplicationFactory.cs   # Test server factory
+│   ├── PostgreSqlContainerFixture.cs    # Testcontainers fixture
+│   ├── IntegrationTestCollection.cs     # xUnit collection definition
+│   └── TestAuthHandler.cs               # Test authentication bypass
+└── Smoke/
+    └── ApplicationSmokeTests.cs         # Basic health/startup tests
+```
+
+**Test Stack**:
+- **Microsoft.AspNetCore.Mvc.Testing**: WebApplicationFactory for HTTP testing
+- **Testcontainers.PostgreSql**: Spins up real PostgreSQL containers
+- **Respawn**: Database reset between tests for isolation
+
+**Key Features**:
+- Uses real PostgreSQL database via Docker containers
+- Bypasses authentication for testing with `TestAuthHandler`
+- Automatic database reset between test runs
+
+**Where in code?**: [ClassifiedAds.IntegrationTests/](../ClassifiedAds.IntegrationTests/)
 
 ---
 
 ## Configuration & Infrastructure Files
 
-| File | Purpose |
-|------|---------|
-| `docker-compose.yml` | Local development environment |
-| `docker-compose.volumes.yml` | Persistent volume configuration |
-| `azure-pipelines.yml` | Azure DevOps CI/CD pipeline |
-| `Jenkinsfile` | Jenkins CI/CD pipeline |
-| `global.json` | .NET SDK version pinning |
+| File | Purpose | Description |
+|------|---------|-------------|
+| `docker-compose.yml` | Local development environment | Defines services: PostgreSQL, RabbitMQ, MailHog |
+| `docker-compose.volumes.yml` | Persistent volume configuration | Volume definitions for database persistence |
+| `.github/workflows/ci.yml` | GitHub Actions CI pipeline | Build, test, lint, Docker validation |
+| `.github/workflows/cd.yml` | GitHub Actions CD pipeline | Release, deploy to staging/production |
+| `global.json` | .NET SDK version pinning | Ensures consistent SDK version across team |
+| `.editorconfig` | Code style settings | Consistent formatting rules |
+| `.env` | Environment variables | Local development secrets (gitignored) |
 
 **Where in code?**: 
 - [docker-compose.yml](../docker-compose.yml)
-- [azure-pipelines.yml](../azure-pipelines.yml)
-- [Jenkinsfile](../Jenkinsfile)
+- [.github/workflows/](../.github/workflows/)
 - [global.json](../global.json)
 
 ---
 
 ## Naming Conventions
 
-| Convention | Example |
-|------------|---------|
-| Module projects | `ClassifiedAds.Modules.{ModuleName}` |
-| DbContext | `{ModuleName}DbContext` |
-| Repository | `{Entity}Repository` or `Repository<T, TKey>` |
-| Command | `{Action}{Entity}Command` (e.g., `AddUpdateProductCommand`) |
-| Query | `Get{Entity/Entities}Query` (e.g., `GetProductsQuery`) |
-| Handler | `{Command/Query}Handler` |
-| Event Handler | `{Entity}{Action}EventHandler` |
-| Controller | `{Entities}Controller` |
-| Service Extension | `ServiceCollectionExtensions.cs` |
+| Convention | Pattern | Example |
+|------------|---------|---------|
+| Module projects | `ClassifiedAds.Modules.{ModuleName}` | `ClassifiedAds.Modules.Product` |
+| DbContext | `{ModuleName}DbContext` | `ProductDbContext` |
+| Repository | `{Entity}Repository` or `Repository<T, TKey>` | `ProductRepository` |
+| Command | `{Action}{Entity}Command` | `AddUpdateProductCommand` |
+| Query | `Get{Entity/Entities}Query` | `GetProductsQuery` |
+| Handler | `{Command/Query}Handler` | `AddUpdateProductCommandHandler` |
+| Event Handler | `{Entity}{Action}EventHandler` | `ProductCreatedEventHandler` |
+| Controller | `{Entities}Controller` | `ProductsController` |
+| Service Extension | `ServiceCollectionExtensions.cs` | Module DI registration |
+| Test Class | `{ClassUnderTest}Tests` | `ValidationExceptionTests` |
 
 ---
 
