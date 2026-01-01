@@ -1,13 +1,15 @@
 # 10 - Local Development
 
-> **Purpose**: Comprehensive guide for running the application locally using Docker Compose, managing database migrations, and establishing an efficient development workflow.
+> **Purpose**: Comprehensive guide for running the application locally using .NET Aspire (recommended) or Docker Compose, managing database migrations, and establishing an efficient development workflow.
 
 ---
 
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
+- [Quick Start with Aspire](#quick-start-with-aspire)
+- [Quick Start with Docker Compose](#quick-start-with-docker-compose)
+- [.NET Aspire Orchestration](#net-aspire-orchestration)
 - [Docker Compose](#docker-compose)
 - [Database Migrations](#database-migrations)
 - [Environment Configuration](#environment-configuration)
@@ -42,17 +44,41 @@ docker compose version
 
 ---
 
-## Quick Start
+## Quick Start with Aspire
 
-Get up and running in 5 minutes:
+**✅ Recommended** - Best developer experience with one-command startup:
+
+```powershell
+# Start everything with Aspire (requires Docker Desktop running)
+dotnet run --project ClassifiedAds.AppHost
+```
+
+**What happens:**
+1. Aspire Dashboard opens at https://localhost:17180
+2. PostgreSQL, RabbitMQ, Redis, and MailHog containers start
+3. Database migrations run automatically
+4. WebAPI and Background services start
+5. All telemetry flows to the Aspire Dashboard
+
+**Access services:**
+- **Aspire Dashboard**: https://localhost:17180 (logs, traces, metrics)
+- **WebAPI Swagger**: Check dashboard for dynamic port
+- **RabbitMQ Management**: http://localhost:15672
+- **MailHog UI**: http://localhost:8025
+
+---
+
+## Quick Start with Docker Compose
+
+Alternative workflow for traditional Docker-first development:
 
 ```powershell
 # 1. Clone the repository (if not already done)
 git clone https://github.com/your-org/ClassifiedAds.ModularMonolith.git
 cd ClassifiedAds.ModularMonolith
 
-# 2. Start infrastructure services (PostgreSQL, RabbitMQ, MailHog)
-docker-compose up -d db rabbitmq mailhog
+# 2. Start infrastructure services (PostgreSQL, RabbitMQ, MailHog, Redis)
+docker-compose up -d db rabbitmq mailhog redis
 
 # 3. Wait for PostgreSQL to be ready (about 10-15 seconds)
 docker-compose logs db | Select-String "ready to accept connections"
@@ -75,6 +101,256 @@ dotnet run --project ClassifiedAds.Background
 | RabbitMQ Management | http://localhost:15672 | guest / guest | Message queue monitoring |
 | MailHog | http://localhost:8025 | - | Email testing (catches all outgoing emails) |
 | PostgreSQL | localhost:5432 | postgres / (see .env) | Database |
+
+---
+
+## .NET Aspire Orchestration
+
+**.NET Aspire** is the recommended way to run the application locally. It provides a superior developer experience with built-in observability and orchestration.
+
+### What is Aspire?
+
+.NET Aspire is a cloud-ready stack for building observable, production-ready, distributed applications. For local development, it provides:
+
+- **Unified orchestration** - Start all services with one command
+- **Built-in dashboard** - Real-time logs, traces, and metrics
+- **Service discovery** - Automatic connection string injection
+- **Dependency management** - Ensures correct startup order
+- **Health monitoring** - Visual health status for all resources
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "Aspire AppHost"
+        AH[ClassifiedAds.AppHost<br/>Orchestration Layer]
+    end
+    
+    subgraph "Infrastructure Resources"
+        PG[(PostgreSQL 16)]
+        RMQ[RabbitMQ 3-mgmt]
+        RD[Redis 7]
+        MH[MailHog]
+    end
+    
+    subgraph "Application Services"
+        MIG[Migrator<br/>runs first]
+        API[WebAPI<br/>with ServiceDefaults]
+        BG[Background<br/>with ServiceDefaults]
+    end
+    
+    subgraph "Aspire Dashboard"
+        DASH[Dashboard UI<br/>https://localhost:17180]
+        LOGS[Structured Logs]
+        TRACES[Distributed Traces]
+        METRICS[Performance Metrics]
+    end
+    
+    AH -->|orchestrates| PG
+    AH -->|orchestrates| RMQ
+    AH -->|orchestrates| RD
+    AH -->|orchestrates| MH
+    AH -->|starts| MIG
+    AH -->|starts| API
+    AH -->|starts| BG
+    
+    MIG -->|waits for| PG
+    API -->|waits for| MIG
+    API -->|uses| PG
+    API -->|uses| RMQ
+    API -->|uses| RD
+    BG -->|waits for| MIG
+    BG -->|uses| PG
+    BG -->|uses| RMQ
+    BG -->|uses| RD
+    BG -->|uses| MH
+    
+    API -->|exports telemetry| DASH
+    BG -->|exports telemetry| DASH
+    MIG -->|exports telemetry| DASH
+    
+    DASH --> LOGS
+    DASH --> TRACES
+    DASH --> METRICS
+```
+
+### Projects
+
+#### ClassifiedAds.AppHost
+
+The orchestration host that defines all resources and services.
+
+**Key features:**
+- Defines infrastructure resources (PostgreSQL, RabbitMQ, Redis, MailHog)
+- Configures application services (Migrator, WebAPI, Background)
+- Manages dependencies (Migrator runs before WebAPI/Background)
+- Injects configuration automatically (connection strings, messaging settings)
+
+**Location**: [ClassifiedAds.AppHost/Program.cs](../ClassifiedAds.AppHost/Program.cs)
+
+**Example configuration:**
+```csharp
+// Add PostgreSQL with pgAdmin
+var postgres = builder.AddPostgres("postgres")
+    .WithImage("postgres")
+    .WithImageTag("16")
+    .WithPgAdmin();
+
+var classifiedAdsDb = postgres.AddDatabase("ClassifiedAds");
+
+// Add RabbitMQ with management UI
+var rabbitmq = builder.AddRabbitMQ("rabbitmq")
+    .WithManagementPlugin();
+
+// Add Redis for distributed caching
+var redis = builder.AddRedis("redis");
+
+// Add MailHog for email testing
+var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
+    .WithHttpEndpoint(port: 8025, targetPort: 8025, name: "webui")
+    .WithEndpoint(port: 1025, targetPort: 1025, name: "smtp");
+
+// Add Migrator (runs first)
+var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj")
+    .WithReference(classifiedAdsDb)
+    .WaitFor(postgres);
+
+// Add WebAPI (waits for migrator)
+var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
+    .WithReference(classifiedAdsDb)
+    .WithReference(rabbitmq)
+    .WithReference(redis)
+    .WaitFor(migrator)
+    .WithExternalHttpEndpoints();
+
+// Add Background worker (waits for migrator)
+var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
+    .WithReference(classifiedAdsDb)
+    .WithReference(rabbitmq)
+    .WithReference(redis)
+    .WaitFor(migrator);
+```
+
+#### ClassifiedAds.ServiceDefaults
+
+Shared telemetry and resilience defaults used by all application services.
+
+**Key features:**
+- OpenTelemetry configuration (logs, metrics, traces)
+- Health check endpoints (`/health`, `/alive`)
+- Service discovery for HTTP clients
+- Standard resilience patterns (retry, circuit breaker)
+
+**Location**: [ClassifiedAds.ServiceDefaults/Extensions.cs](../ClassifiedAds.ServiceDefaults/Extensions.cs)
+
+**Integration in hosts:**
+```csharp
+// WebAPI/Program.cs
+var builder = WebApplication.CreateBuilder(args);
+
+// Add Aspire ServiceDefaults (optional, only active when running under Aspire)
+builder.AddServiceDefaults();
+
+// ... rest of configuration
+
+var app = builder.Build();
+
+// Map default health check endpoints
+app.MapDefaultEndpoints();
+```
+
+### Running with Aspire
+
+**Start everything:**
+```powershell
+dotnet run --project ClassifiedAds.AppHost
+```
+
+**What opens:**
+- Aspire Dashboard: https://localhost:17180
+- All services start automatically in dependency order
+
+**Dashboard features:**
+
+| Tab | Purpose |
+|-----|---------|
+| **Resources** | View all containers and projects, their status, and endpoints |
+| **Console** | Real-time console output from all services |
+| **Structured** | Structured logs with filtering and search |
+| **Traces** | Distributed traces across HTTP calls and database queries |
+| **Metrics** | Performance metrics (request rates, errors, latency) |
+
+### Configuration Injection
+
+Aspire automatically injects configuration into application services:
+
+**Connection Strings:**
+```csharp
+// Automatically injected by Aspire when using .WithReference(classifiedAdsDb)
+"ConnectionStrings": {
+  "ClassifiedAds": "Host=localhost;Port=5432;Database=ClassifiedAds;Username=postgres;Password=..."
+}
+```
+
+**Messaging:**
+```csharp
+// Automatically injected by Aspire when using .WithReference(rabbitmq)
+"Messaging": {
+  "Provider": "RabbitMQ",
+  "RabbitMQ": {
+    "HostName": "{rabbitmq.connectionString}" // Service discovery
+  }
+}
+```
+
+**Redis:**
+```csharp
+// Automatically injected by Aspire when using .WithReference(redis)
+"Caching": {
+  "Distributed": {
+    "Provider": "Redis",
+    "Redis": {
+      "Configuration": "{redis.connectionString}" // Service discovery
+    }
+  }
+}
+```
+
+### Troubleshooting Aspire
+
+**Issue: "Docker is not running"**
+```powershell
+# Fix: Start Docker Desktop and wait for it to initialize
+docker info
+```
+
+**Issue: Port conflicts**
+```powershell
+# Fix: Aspire uses dynamic ports. Check the dashboard for assigned ports.
+# If conflicts persist, modify ClassifiedAds.AppHost/Properties/launchSettings.json
+```
+
+**Issue: Migrations fail**
+```powershell
+# Fix: Run migrations manually
+dotnet run --project ClassifiedAds.Migrator
+```
+
+**Issue: Can't see logs in dashboard**
+```powershell
+# Fix: Ensure OpenTelemetry is enabled in appsettings.Development.json
+# The ServiceDefaults automatically configure this when running under Aspire
+```
+
+**Reset everything:**
+```powershell
+# Stop AppHost (Ctrl+C), then remove volumes
+docker volume ls | Select-String "aspire"
+docker volume rm aspire-postgres_data aspire-redis_data
+
+# Restart
+dotnet run --project ClassifiedAds.AppHost
+```
 
 ---
 

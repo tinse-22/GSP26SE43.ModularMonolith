@@ -29,6 +29,8 @@ The solution follows a **Modular Monolith** architecture where the codebase is o
 
 ```
 ClassifiedAds.ModularMonolith/
+├── ClassifiedAds.AppHost/                # .NET Aspire orchestration host
+├── ClassifiedAds.ServiceDefaults/        # Aspire shared defaults (telemetry, health)
 ├── ClassifiedAds.WebAPI/                 # ASP.NET Core Web API host
 ├── ClassifiedAds.Background/             # Background worker service
 ├── ClassifiedAds.Migrator/               # Database migration runner
@@ -68,6 +70,11 @@ The following diagram shows how projects reference each other:
 
 ```mermaid
 graph TB
+    subgraph "Aspire Orchestration"
+        AppHost[AppHost]
+        ServiceDefaults[ServiceDefaults]
+    end
+
     subgraph "Entry Points"
         WebAPI[ClassifiedAds.WebAPI]
         Background[ClassifiedAds.Background]
@@ -153,6 +160,99 @@ graph TB
 
 ## Host/Entry Point Projects
 
+### ClassifiedAds.AppHost
+
+**Type**: .NET Aspire AppHost  
+**Responsibility**: Orchestrates the entire application stack for local development with one command.
+
+**Key Features:**
+- Defines all infrastructure resources (PostgreSQL, RabbitMQ, Redis, MailHog)
+- Manages application service startup order
+- Provides Aspire Dashboard for observability
+- Injects configuration automatically via service discovery
+- Manages dependencies (Migrator runs before WebAPI/Background)
+
+```csharp
+// ClassifiedAds.AppHost/Program.cs
+var builder = DistributedApplication.CreateBuilder(args);
+
+// Infrastructure
+var postgres = builder.AddPostgres("postgres").WithPgAdmin();
+var classifiedAdsDb = postgres.AddDatabase("ClassifiedAds");
+var rabbitmq = builder.AddRabbitMQ("rabbitmq").WithManagementPlugin();
+var redis = builder.AddRedis("redis");
+var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog");
+
+// Application Services (with dependency order)
+var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/...")
+    .WithReference(classifiedAdsDb)
+    .WaitFor(postgres);
+
+var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/...")
+    .WithReference(classifiedAdsDb)
+    .WithReference(rabbitmq)
+    .WithReference(redis)
+    .WaitFor(migrator);
+
+var background = builder.AddProject("background", "../ClassifiedAds.Background/...")
+    .WithReference(classifiedAdsDb)
+    .WithReference(rabbitmq)
+    .WithReference(redis)
+    .WaitFor(migrator);
+```
+
+**Where in code?**: [ClassifiedAds.AppHost/Program.cs](../ClassifiedAds.AppHost/Program.cs)
+
+**How to run:**
+```bash
+dotnet run --project ClassifiedAds.AppHost
+```
+
+**Access:**
+- Aspire Dashboard: https://localhost:17180
+
+---
+
+### ClassifiedAds.ServiceDefaults
+
+**Type**: Shared Library (Aspire)  
+**Responsibility**: Provides common telemetry, health checks, and resilience defaults for all application services.
+
+**Key Features:**
+- OpenTelemetry configuration (logs, metrics, traces)
+- Health check endpoints (`/health`, `/alive`)
+- Service discovery for HTTP clients
+- Standard resilience patterns (retry, circuit breaker)
+
+```csharp
+// ClassifiedAds.ServiceDefaults/Extensions.cs
+public static IHostApplicationBuilder AddServiceDefaults(this IHostApplicationBuilder builder)
+{
+    builder.ConfigureOpenTelemetry();
+    builder.AddDefaultHealthChecks();
+    builder.Services.AddServiceDiscovery();
+    builder.Services.ConfigureHttpClientDefaults(http =>
+    {
+        http.AddServiceDiscovery();
+        http.AddStandardResilienceHandler();
+    });
+    return builder;
+}
+```
+
+**Integration:**
+```csharp
+// Used in WebAPI/Background/Migrator
+var builder = WebApplication.CreateBuilder(args);
+
+// Add ServiceDefaults (optional, only active when running under Aspire)
+builder.AddServiceDefaults();
+```
+
+**Where in code?**: [ClassifiedAds.ServiceDefaults/Extensions.cs](../ClassifiedAds.ServiceDefaults/Extensions.cs)
+
+---
+
 ### ClassifiedAds.WebAPI
 
 **Type**: ASP.NET Core Web API  
@@ -213,21 +313,34 @@ app.MigrateStorageDb();
 
 ---
 
-### ClassifiedAds.AspireAppHost
+## Orchestration & Observability Projects
 
-**Type**: .NET Aspire AppHost  
-**Responsibility**: Orchestrates all services for local development with service discovery and dashboards.
+The solution includes optional .NET Aspire projects for enhanced local development experience:
 
-```csharp
-// ClassifiedAds.AspireAppHost/Program.cs
-var builder = DistributedApplication.CreateBuilder(args);
+| Project | Type | Purpose |
+|---------|------|---------|
+| `ClassifiedAds.AppHost` | Aspire AppHost | Orchestrates all services and infrastructure |
+| `ClassifiedAds.ServiceDefaults` | Shared Library | Common telemetry and resilience defaults |
 
-var migrator = builder.AddProject<Projects.ClassifiedAds_Migrator>("ClassifiedAds-Migrator");
-var background = builder.AddProject<Projects.ClassifiedAds_Background>("ClassifiedAds-Background");
-var webApi = builder.AddProject<Projects.ClassifiedAds_WebAPI>("ClassifiedAds-WebAPI");
+These projects are **optional** and only used when running with Aspire:
+```bash
+dotnet run --project ClassifiedAds.AppHost
 ```
 
-**Where in code?**: [ClassifiedAds.AspireAppHost/Program.cs](../ClassifiedAds.AspireAppHost/Program.cs)
+Traditional workflows still work:
+```bash
+docker-compose up -d
+dotnet run --project ClassifiedAds.WebAPI
+```
+
+**Benefits of Aspire:**
+- ✅ One-command startup for entire stack
+- ✅ Built-in observability dashboard (logs, traces, metrics)
+- ✅ Automatic configuration injection
+- ✅ Dependency management (ensures correct startup order)
+- ✅ Service discovery
+
+**See**: [10 - DevOps and Local Development](./10-devops-and-local-development.md#net-aspire-orchestration)
 
 ---
 
