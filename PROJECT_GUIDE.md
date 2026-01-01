@@ -587,17 +587,17 @@ app.MapControllers();
   "Modules": {
     "Product": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Product;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     },
     "Identity": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Identity;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_Identity;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     },
     "AuditLog": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_AuditLog;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds_AuditLog;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     }
     // ... etc for each module
@@ -612,7 +612,7 @@ For a **single database** approach, configure all modules to use the same connec
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
   },
   "Modules": {
     "Product": {
@@ -662,12 +662,12 @@ Or simply point all module connection strings to the same database name:
   "Modules": {
     "Product": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     },
     "Identity": {
       "ConnectionStrings": {
-        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+        "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
       }
     }
     // ... all modules use Database=ClassifiedAds
@@ -752,7 +752,7 @@ The repository is configured with a **single shared database** (`ClassifiedAds`)
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+    "Default": "Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
   }
 }
 ```
@@ -1280,7 +1280,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     // Single test database connection string
     private const string TestConnectionString = 
-        "Host=localhost;Port=5432;Database=ClassifiedAds_Test;Username=postgres;Password=postgres123!@#";
+        "Host=localhost;Port=5432;Database=ClassifiedAds_Test;Username=postgres;Password=<YOUR_PASSWORD>";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -1606,12 +1606,12 @@ For single database development:
 
 1. **Modify `.env`** - Set all modules to use the same database:
    ```dotenv
-   Modules__AuditLog__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
-   Modules__Configuration__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
-   Modules__Identity__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
-   Modules__Notification__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
-   Modules__Product__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
-   Modules__Storage__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres123!@#"
+   Modules__AuditLog__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
+   Modules__Configuration__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
+   Modules__Identity__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
+   Modules__Notification__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
+   Modules__Product__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
+   Modules__Storage__ConnectionStrings__Default="Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=<YOUR_PASSWORD>"
    ```
 
 2. **Run migrations** - All tables created in one database:
@@ -1636,7 +1636,7 @@ docker-compose up -d db
 # Host: localhost
 # Port: 5432
 # User: postgres
-# Password: postgres123!@#
+# Password: <YOUR_PASSWORD>
 # Database: ClassifiedAds (single DB) or ClassifiedAds_Product, etc. (multi-DB)
 ```
 
