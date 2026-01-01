@@ -14,6 +14,7 @@ public class NotificationDbContext : DbContextUnitOfWork<NotificationDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("notification");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }

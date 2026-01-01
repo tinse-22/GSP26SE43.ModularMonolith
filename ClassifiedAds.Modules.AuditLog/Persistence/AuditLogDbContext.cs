@@ -14,6 +14,7 @@ public class AuditLogDbContext : DbContextUnitOfWork<AuditLogDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("auditlog");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }

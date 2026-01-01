@@ -31,34 +31,48 @@ var builder = Host.CreateDefaultBuilder(args)
 
     services.AddCaches();
 
+    var sharedConnectionString = configuration.GetConnectionString("Default");
+
     services.AddAuditLogModule(opt =>
     {
         configuration.GetSection("Modules:AuditLog").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.AuditLog.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddConfigurationModule(opt =>
     {
         configuration.GetSection("Modules:Configuration").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Configuration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddIdentityModuleCore(opt =>
     {
         configuration.GetSection("Modules:Identity").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Identity.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddNotificationModule(opt =>
     {
         configuration.GetSection("Modules:Notification").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddProductModule(opt =>
     {
         configuration.GetSection("Modules:Product").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Product.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddStorageModule(opt =>
     {
         configuration.GetSection("Modules:Storage").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
     .AddApplicationServices();
@@ -93,7 +107,7 @@ Policy.Handle<Exception>().WaitAndRetry(
     app.MigrateStorageDb();
 
     var upgrader = DeployChanges.To
-    .PostgresqlDatabase(configuration["Modules:AuditLog:ConnectionStrings:Default"])
+    .PostgresqlDatabase(configuration.GetConnectionString("Default"))
     .WithScriptsEmbeddedInAssembly(Assembly.GetExecutingAssembly())
     .LogToConsole()
     .Build();

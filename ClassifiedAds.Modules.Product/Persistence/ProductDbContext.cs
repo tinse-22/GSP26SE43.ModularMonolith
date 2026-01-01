@@ -18,6 +18,7 @@ public class ProductDbContext : DbContextUnitOfWork<ProductDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("product");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 

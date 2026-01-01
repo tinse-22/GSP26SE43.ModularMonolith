@@ -14,6 +14,7 @@ public class ConfigurationDbContext : DbContextUnitOfWork<ConfigurationDbContext
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("configuration");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }
