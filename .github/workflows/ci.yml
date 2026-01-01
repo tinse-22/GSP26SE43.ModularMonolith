@@ -90,12 +90,28 @@ jobs:
           if-no-files-found: warn
 
   # ============================================================================
-  # Test Job (when tests are added)
+  # Test Job
   # ============================================================================
   test:
     name: Run Tests
     runs-on: ubuntu-latest
     needs: build
+
+    services:
+      # PostgreSQL service for integration tests (fallback if Testcontainers unavailable)
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres123!@#
+          POSTGRES_DB: ClassifiedAds_Test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -117,20 +133,44 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ClassifiedAds.ModularMonolith.slnx
 
-      # Placeholder: Enable when test projects are added
-      # - name: Run unit tests
-      #   run: dotnet test ClassifiedAds.ModularMonolith.slnx --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage"
+      - name: Build solution
+        run: dotnet build ClassifiedAds.ModularMonolith.slnx --configuration Release --no-restore
 
-      # - name: Upload test results
-      #   uses: actions/upload-artifact@v4
-      #   if: always()
-      #   with:
-      #     name: test-results
-      #     path: '**/TestResults/**'
-      #     retention-days: 7
+      - name: Run unit tests
+        run: |
+          dotnet test ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj \
+            --configuration Release \
+            --no-build \
+            --verbosity normal \
+            --logger "trx;LogFileName=unit-test-results.trx" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults/UnitTests
 
-      - name: Tests placeholder
-        run: echo "⚠️ No test projects found. Add test projects and uncomment test steps above."
+      - name: Run integration tests
+        run: |
+          dotnet test ClassifiedAds.IntegrationTests/ClassifiedAds.IntegrationTests.csproj \
+            --configuration Release \
+            --no-build \
+            --verbosity normal \
+            --logger "trx;LogFileName=integration-test-results.trx" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults/IntegrationTests
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: "./TestResults/**"
+          retention-days: 7
+
+      - name: Upload code coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-coverage
+          path: "./TestResults/**/coverage.cobertura.xml"
+          retention-days: 7
 
   # ============================================================================
   # Docker Build Validation
