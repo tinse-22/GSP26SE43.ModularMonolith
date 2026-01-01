@@ -38,16 +38,15 @@ public class SmsMessageRepository : Repository<SmsMessage, Guid>, ISmsMessageRep
 
         var archivedMessages = messagesToArchive.Select(x => _mapper.Map<SmsMessage, ArchivedSmsMessage>(x)).ToList();
 
-        using (await UnitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken))
+        await UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             await _dbContext.BulkInsertAsync(archivedMessages,
                 new BulkInsertOptions
                 {
                     KeepIdentity = true
-                }, cancellationToken: cancellationToken);
-            await _dbContext.BulkDeleteAsync(messagesToArchive, cancellationToken: cancellationToken);
-            await UnitOfWork.CommitTransactionAsync(cancellationToken);
-        }
+                }, cancellationToken: ct);
+            await _dbContext.BulkDeleteAsync(messagesToArchive, cancellationToken: ct);
+        }, IsolationLevel.ReadCommitted, cancellationToken);
 
         return messagesToArchive.Count;
     }

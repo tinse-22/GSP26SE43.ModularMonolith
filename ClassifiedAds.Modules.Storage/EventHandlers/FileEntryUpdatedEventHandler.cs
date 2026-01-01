@@ -36,8 +36,8 @@ public class FileEntryUpdatedEventHandler : IDomainEventHandler<EntityUpdatedEve
             Log = domainEvent.Entity.AsJsonString(),
         };
 
+        // Add all entities to change tracker first
         await _auditLogRepository.AddOrUpdateAsync(auditLog, cancellationToken);
-        await _auditLogRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
         await _outboxMessageRepository.AddOrUpdateAsync(new OutboxMessage
         {
@@ -57,6 +57,7 @@ public class FileEntryUpdatedEventHandler : IDomainEventHandler<EntityUpdatedEve
             Payload = domainEvent.Entity.AsJsonString(),
         }, cancellationToken);
 
-        await _outboxMessageRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        // Single atomic save - audit log and outbox messages committed together
+        await _auditLogRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
