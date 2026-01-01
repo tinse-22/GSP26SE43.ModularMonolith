@@ -14,6 +14,10 @@
     <Project Path="ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj" />
     <Project Path="ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj" />
   </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj" />
+    <Project Path="ClassifiedAds.IntegrationTests/ClassifiedAds.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/Modules/" />
   <Folder Name="/Modules/AuditLog/">
     <Project Path="ClassifiedAds.Modules.AuditLog/ClassifiedAds.Modules.AuditLog.csproj" />
