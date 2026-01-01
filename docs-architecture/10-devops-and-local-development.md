@@ -48,6 +48,8 @@ docker compose version
 
 **✅ Recommended** - Best developer experience with one-command startup:
 
+Get up and running in 5 minutes:
+
 ```powershell
 # Start everything with Aspire (requires Docker Desktop running)
 dotnet run --project ClassifiedAds.AppHost
@@ -118,7 +120,7 @@ dotnet run --project ClassifiedAds.Background
 - **Dependency management** - Ensures correct startup order
 - **Health monitoring** - Visual health status for all resources
 
-### Architecture
+### Architecture Overview
 
 ```mermaid
 graph TB
