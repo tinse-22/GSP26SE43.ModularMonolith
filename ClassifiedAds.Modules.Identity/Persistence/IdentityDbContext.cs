@@ -17,6 +17,7 @@ public class IdentityDbContext : DbContextUnitOfWork<IdentityDbContext>, IDataPr
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("identity");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }

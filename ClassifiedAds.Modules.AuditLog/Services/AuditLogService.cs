@@ -36,26 +36,25 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
 
         var uow = _idempotentRequestRepository.UnitOfWork;
 
-        await uow.BeginTransactionAsync();
-
-        await AddOrUpdateAsync(new AuditLogEntry
+        await uow.ExecuteInTransactionAsync(async ct =>
         {
-            UserId = dto.UserId,
-            CreatedDateTime = dto.CreatedDateTime,
-            Action = dto.Action,
-            ObjectId = dto.ObjectId,
-            Log = dto.Log,
+            await AddOrUpdateAsync(new AuditLogEntry
+            {
+                UserId = dto.UserId,
+                CreatedDateTime = dto.CreatedDateTime,
+                Action = dto.Action,
+                ObjectId = dto.ObjectId,
+                Log = dto.Log,
+            });
+
+            await _idempotentRequestRepository.AddAsync(new IdempotentRequest
+            {
+                RequestType = requestType,
+                RequestId = requestId,
+            });
+
+            await uow.SaveChangesAsync(ct);
         });
-
-        await _idempotentRequestRepository.AddAsync(new IdempotentRequest
-        {
-            RequestType = requestType,
-            RequestId = requestId,
-        });
-
-        await uow.SaveChangesAsync();
-
-        await uow.CommitTransactionAsync();
     }
 
     public async Task<List<AuditLogEntryDTO>> GetAuditLogEntriesAsync(AuditLogEntryQueryOptions query)

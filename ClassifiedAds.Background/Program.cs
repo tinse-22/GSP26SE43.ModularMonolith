@@ -47,12 +47,39 @@ Host.CreateDefaultBuilder(args)
 
     services.AddCaches(appSettings.Caching);
 
+    var sharedConnectionString = configuration.GetConnectionString("Default");
+
     services
-    .AddAuditLogModule(opt => configuration.GetSection("Modules:AuditLog").Bind(opt))
-    .AddIdentityModuleCore(opt => configuration.GetSection("Modules:Identity").Bind(opt))
-    .AddNotificationModule(opt => configuration.GetSection("Modules:Notification").Bind(opt))
-    .AddProductModule(opt => configuration.GetSection("Modules:Product").Bind(opt))
-    .AddStorageModule(opt => configuration.GetSection("Modules:Storage").Bind(opt))
+    .AddAuditLogModule(opt =>
+    {
+        configuration.GetSection("Modules:AuditLog").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.AuditLog.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddIdentityModuleCore(opt =>
+    {
+        configuration.GetSection("Modules:Identity").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Identity.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddNotificationModule(opt =>
+    {
+        configuration.GetSection("Modules:Notification").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddProductModule(opt =>
+    {
+        configuration.GetSection("Modules:Product").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Product.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddStorageModule(opt =>
+    {
+        configuration.GetSection("Modules:Storage").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
     .AddApplicationServices();
 
     services.AddHtmlRazorLightEngine();

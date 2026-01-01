@@ -7,7 +7,7 @@ services:
         environment:
             POSTGRES_USER: "postgres"
             POSTGRES_PASSWORD: "postgres123!@#"
-            POSTGRES_DB: "classifiedads"
+            POSTGRES_DB: "ClassifiedAds"
         volumes:
             - postgres_data:/var/lib/postgresql/data
     rabbitmq:
@@ -36,12 +36,7 @@ services:
           - db
         environment:
           DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
-          Modules__AuditLog__ConnectionStrings__Default: ${Modules__AuditLog__ConnectionStrings__Default}
-          Modules__Configuration__ConnectionStrings__Default: ${Modules__Configuration__ConnectionStrings__Default}
-          Modules__Identity__ConnectionStrings__Default: ${Modules__Identity__ConnectionStrings__Default}
-          Modules__Notification__ConnectionStrings__Default: ${Modules__Notification__ConnectionStrings__Default}
-          Modules__Product__ConnectionStrings__Default: ${Modules__Product__ConnectionStrings__Default}
-          Modules__Storage__ConnectionStrings__Default: ${Modules__Storage__ConnectionStrings__Default}
+          ConnectionStrings__Default: ${ConnectionStrings__Default}
           CheckDependency__Enabled: "true"
           CheckDependency__Host: "db:5432"
     webapi:
@@ -57,12 +52,7 @@ services:
           - rabbitmq
         environment:
           ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
-          Modules__AuditLog__ConnectionStrings__Default: ${Modules__AuditLog__ConnectionStrings__Default}
-          Modules__Configuration__ConnectionStrings__Default: ${Modules__Configuration__ConnectionStrings__Default}
-          Modules__Identity__ConnectionStrings__Default: ${Modules__Identity__ConnectionStrings__Default}
-          Modules__Notification__ConnectionStrings__Default: ${Modules__Notification__ConnectionStrings__Default}
-          Modules__Product__ConnectionStrings__Default: ${Modules__Product__ConnectionStrings__Default}
-          Modules__Storage__ConnectionStrings__Default: ${Modules__Storage__ConnectionStrings__Default}
+          ConnectionStrings__Default: ${ConnectionStrings__Default}
           Modules__Storage__Provider: ${Storage__Provider}
           Modules__Storage__Local__Path: ${Storage__Local__Path}
     background:
@@ -81,10 +71,7 @@ services:
           CheckDependency__Host: "rabbitmq:5672"
           Messaging__Provider: ${Messaging__Provider}
           Messaging__RabbitMQ__HostName: ${Messaging__RabbitMQ__HostName}
-          Modules__AuditLog__ConnectionStrings__Default: ${Modules__AuditLog__ConnectionStrings__Default}
-          Modules__Configuration__ConnectionStrings__Default: ${Modules__Configuration__ConnectionStrings__Default}
-          Modules__Identity__ConnectionStrings__Default: ${Modules__Identity__ConnectionStrings__Default}
-          Modules__Notification__ConnectionStrings__Default: ${Modules__Notification__ConnectionStrings__Default}
+          ConnectionStrings__Default: ${ConnectionStrings__Default}
           Modules__Notification__Email__Provider: "SmtpClient"
           Modules__Notification__Email__SmtpClient__Host: "mailhog"
           Modules__Notification__Email__SmtpClient__Port: "1025"
@@ -94,8 +81,6 @@ services:
           Modules__Notification__Sms__Twilio__FromNumber: ""
           Modules__Notification__Web__Provider: "Fake"
           Modules__Notification__Web__SignalR__Endpoint: "http://notificationserver"
-          Modules__Product__ConnectionStrings__Default: ${Modules__Product__ConnectionStrings__Default}
-          Modules__Storage__ConnectionStrings__Default: ${Modules__Storage__ConnectionStrings__Default}
           Modules__Storage__Provider: ${Storage__Provider}
           Modules__Storage__Local__Path: ${Storage__Local__Path}
 

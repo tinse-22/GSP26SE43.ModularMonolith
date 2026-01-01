@@ -18,6 +18,7 @@ public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasDefaultSchema("storage");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 
