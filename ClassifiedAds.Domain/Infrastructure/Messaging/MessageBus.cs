@@ -118,8 +118,13 @@ public class MessageBus : IMessageBus
 
         if (handlerTypes == null)
         {
-            // TODO: Take Note
-            return;
+            var logger = _serviceProvider.GetRequiredService<ILogger<MessageBus>>();
+            logger.LogWarning(
+                "No publisher registered for outbox event. EventSource: {EventSource}, EventType: {EventType}, OutboxId: {OutboxId}",
+                outbox.EventSource, outbox.EventType, outbox.Id);
+            
+            throw new InvalidOperationException(
+                $"No publisher registered for event '{key}'. Outbox ID: {outbox.Id}");
         }
 
         foreach (var type in handlerTypes)

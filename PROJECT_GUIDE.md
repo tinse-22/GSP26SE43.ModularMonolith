@@ -67,12 +67,15 @@ The project addresses the challenge of building maintainable, scalable applicati
 
 ```
 ClassifiedAds.ModularMonolith/
-├── Hosts/               → Entry points (WebAPI, Background, Migrator)
-├── Core/                → Shared layers (Domain, Application, Infrastructure)
-├── Modules/             → Vertical slices (Product, Identity, Storage, etc.)
-├── Persistence/         → Database providers (PostgreSQL)
-├── Contracts/           → Shared interfaces/DTOs between modules
-└── CrossCuttingConcerns → Utilities (CSV, PDF, Excel, DateTime, etc.)
+├── Hosts/                      → Entry points (WebAPI, Background, Migrator)
+├── Shared Layers (Building Blocks)/ → Core shared layers:
+│   ├── Domain                  → Domain entities, events, interfaces
+│   ├── Application             → CQRS handlers, services
+│   ├── Infrastructure          → External integrations (messaging, storage)
+│   └── CrossCuttingConcerns    → Utilities (CSV, PDF, Excel, DateTime, etc.)
+├── Modules/                    → Vertical slices (Product, Identity, Storage, etc.)
+├── Persistence/                → Database providers (PostgreSQL)
+└── Contracts/                  → Shared interfaces/DTOs between modules
 ```
 
 ### Navigating the Codebase
