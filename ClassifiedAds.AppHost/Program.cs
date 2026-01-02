@@ -8,11 +8,14 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 // PostgreSQL - Main database server
 // Matches docker-compose: postgres:16, port 5432
+var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "Postgres123@";
+var postgresUser = builder.Configuration["POSTGRES_USER"] ?? "postgres";
+
 var postgres = builder.AddPostgres("postgres")
     .WithImage("postgres")
     .WithImageTag("16")
-    .WithEnvironment("POSTGRES_PASSWORD", "Postgres123@")
-    .WithEnvironment("POSTGRES_USER", "postgres")
+    .WithEnvironment("POSTGRES_PASSWORD", postgresPassword)
+    .WithEnvironment("POSTGRES_USER", postgresUser)
     .WithDataVolume("postgres_data")
     .WithPgAdmin();
 
