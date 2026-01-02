@@ -53,13 +53,30 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
                 ActivityId = eventLog.ActivityId
             };
 
-            await _messageBus.SendAsync(outbox, cancellationToken);
+            try
+            {
+                await _messageBus.SendAsync(outbox, cancellationToken);
 
-            eventLog.Published = true;
-            eventLog.UpdatedDateTime = _dateTimeProvider.OffsetNow;
-            await _outboxMessageRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+                eventLog.Published = true;
+                eventLog.UpdatedDateTime = _dateTimeProvider.OffsetNow;
+                await _outboxMessageRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("No publisher registered"))
+            {
+                _logger.LogError(ex, 
+                    "Failed to publish outbox event {EventType} (ID: {OutboxId}). No publisher registered. Event will be retried.",
+                    eventLog.EventType, eventLog.Id);
+                // Do NOT mark as Published - let it retry
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, 
+                    "Unexpected error publishing outbox event {EventType} (ID: {OutboxId})",
+                    eventLog.EventType, eventLog.Id);
+                throw; // Re-throw to fail the batch and retry later
+            }
         }
 
-        command.SentEventsCount = events.Count;
+        command.SentEventsCount = events.Count(x => x.Published);
     }
 }
