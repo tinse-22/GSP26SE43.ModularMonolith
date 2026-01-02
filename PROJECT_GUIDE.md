@@ -1596,8 +1596,8 @@ dotnet run --project ClassifiedAds.WebAPI
 # 4. (Optional) Start Background Worker
 dotnet run --project ClassifiedAds.Background
 
-# 5. Open Swagger UI
-# http://localhost:9002/swagger
+# 5. Open Scalar UI
+# http://localhost:9002/docs
 ```
 
 ### 10.2 Single Database Local Setup

@@ -99,7 +99,7 @@ docker-compose down -v
 
 | Service | Docker Compose | Aspire | Notes |
 |---------|----------------|--------|-------|
-| WebAPI (Swagger) | http://localhost:9002/swagger | Dynamic (check dashboard) | REST API with Swagger UI |
+| WebAPI (Scalar) | http://localhost:9002/docs | Dynamic (check dashboard) | REST API with Scalar UI |
 | RabbitMQ Management | http://localhost:15672 | http://localhost:15672 | guest / guest |
 | MailHog (Email UI) | http://localhost:8025 | http://localhost:8025 | Catches dev emails |
 | PostgreSQL | localhost:5432 | localhost:5432 | postgres / Postgres123@ |
