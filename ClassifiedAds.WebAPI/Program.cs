@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
@@ -18,8 +18,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
+using Scalar.AspNetCore;
 using Microsoft.OpenApi;
-using Swashbuckle.AspNetCore.SwaggerUI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -193,17 +193,6 @@ services.AddSwaggerGen(setupAction =>
             Title = "ClassifiedAds API",
             Version = "1",
             Description = "ClassifiedAds API Specification.",
-            Contact = new OpenApiContact
-            {
-                Email = "abc.xyz@gmail.com",
-                Name = "Phong Nguyen",
-                Url = new Uri("https://github.com/phongnguyend"),
-            },
-            License = new OpenApiLicense
-            {
-                Name = "MIT License",
-                Url = new Uri("https://opensource.org/licenses/MIT"),
-            },
         });
 
     setupAction.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme()
@@ -275,24 +264,7 @@ app.UseCors(appSettings.CORS.AllowAnyOrigin ? "AllowAnyOrigin" : "AllowedOrigins
 
 app.UseSwagger();
 
-app.UseSwaggerUI(setupAction =>
-{
-    setupAction.OAuthClientId("Swagger");
-    setupAction.OAuthClientSecret("secret");
-    setupAction.OAuthUsePkce();
-
-    setupAction.SwaggerEndpoint(
-        "/swagger/ClassifiedAds/swagger.json",
-        "ClassifiedAds API");
-
-    setupAction.RoutePrefix = string.Empty;
-
-    setupAction.DefaultModelExpandDepth(2);
-    setupAction.DefaultModelRendering(ModelRendering.Model);
-    setupAction.DocExpansion(DocExpansion.None);
-    setupAction.EnableDeepLinking();
-    setupAction.DisplayOperationId();
-});
+app.MapScalarApiReference();
 
 app.UseAuthentication();
 app.UseAuthorization();

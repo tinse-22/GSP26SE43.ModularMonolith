@@ -64,7 +64,7 @@ dotnet run --project ClassifiedAds.AppHost
 
 **Access services:**
 - **Aspire Dashboard**: https://localhost:17180 (logs, traces, metrics)
-- **WebAPI Swagger**: Check dashboard for dynamic port
+- **WebAPI Scalar**: Check dashboard for dynamic port
 - **RabbitMQ Management**: http://localhost:15672
 - **MailHog UI**: http://localhost:8025
 
@@ -99,7 +99,7 @@ dotnet run --project ClassifiedAds.Background
 
 | Service | URL | Credentials | Purpose |
 |---------|-----|-------------|---------|
-| WebAPI (Swagger) | http://localhost:9002/swagger | - | REST API documentation and testing |
+| WebAPI (Scalar) | http://localhost:9002/docs | - | REST API documentation and testing |
 | RabbitMQ Management | http://localhost:15672 | guest / guest | Message queue monitoring |
 | MailHog | http://localhost:8025 | - | Email testing (catches all outgoing emails) |
 | PostgreSQL | localhost:5432 | postgres / (see .env) | Database |
@@ -724,7 +724,7 @@ graph LR
     A[Clone Repo] --> B[Start Docker Compose]
     B --> C[Run Migrator]
     C --> D[Start WebAPI<br/>with Hot Reload]
-    D --> E[Open Swagger UI]
+    D --> E[Open Scalar UI]
     E --> F[Develop & Test]
     F -->|Code Changes| G[Hot Reload<br/>Auto-restart]
     G --> F

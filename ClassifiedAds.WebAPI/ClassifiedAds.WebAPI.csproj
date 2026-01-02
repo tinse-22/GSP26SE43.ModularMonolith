@@ -9,10 +9,12 @@
 	<ItemGroup>
 		<PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+		<PackageReference Include="Microsoft.OpenApi" Version="2.3.0" />
 		<PackageReference Include="StyleCop.Analyzers" Version="1.1.118">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
+		<PackageReference Include="Scalar.AspNetCore" Version="1.2.42" />
 		<PackageReference Include="Swashbuckle.AspNetCore" Version="10.0.1" />
 	</ItemGroup>
 
