@@ -35,7 +35,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj" IsAspireSharedProject="true" />
+    <ProjectReference
+      Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj"
+      IsAspireSharedProject="true" />
     <ProjectReference Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
     <ProjectReference
       Include="..\ClassifiedAds.Modules.AuditLog\ClassifiedAds.Modules.AuditLog.csproj" />
