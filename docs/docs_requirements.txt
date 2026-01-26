@@ -1,0 +1,118 @@
+2. Product Background
+In modern software development, APIs act as the primary integration layer among services and components. Ensuring software quality therefore requires systematic API testing to validate functional correctness, data handling, and compliance with interface contracts defined in documentation. In practice, many teams maintain API documentation in structured formats such as OpenAPI/Swagger specifications and Postman collections. However, converting these artifacts into comprehensive and maintainable API test suites is still largely manual.
+Manual API testing introduces several recurring issues. First, testers and developers must spend significant effort reading documentation, designing test cases, creating test data, and updating test suites whenever APIs change. Second, test coverage often becomes inconsistent across endpoints because it depends heavily on individual experience, time constraints, and manual effort. Third, boundary conditions, invalid inputs, and state-dependent workflows (e.g., authentication followed by protected endpoints) are frequently under-tested. These issues become more severe under rapid iteration cycles where API contracts evolve continuously.
+The proposed system addresses these challenges by automating the transformation from API documentation to executable tests. It combines rule-based test generation and validation (to produce deterministic pass/fail decisions) with LLM-assisted interpretation and explanation (to improve the diversity of generated scenarios and provide understandable feedback when failures occur).
+
+
+3. Existing Systems
+Several widely used tools support API documentation and API testing, but they typically require substantial manual effort to design test suites and interpret results. Two representative systems relevant to this project are Postman (with Newman) and Swagger/OpenAPI tooling (e.g., Swagger UI and the OpenAPI ecosystem).
+3.1 Postman
+Link: https://www.postman.com/
+Brief description:
+Postman is a widely adopted platform for creating, organizing, and executing API requests using collections and environments. It supports collaboration, basic automated checks, and integration into development workflows. Newman is Postman’s command-line runner that executes collections in automated pipelines (e.g., CI/CD) and produces machine-readable and human-readable reports.
+Actors:
+QA Engineers
+Developers
+DevOps / CI Engineers
+Key features (relevant to this project):
+Organize API requests into collections (grouped by service, feature, or workflow)
+Environment and variable management (base URLs, tokens, API keys, dynamic variables)
+Basic response assertions and test scripts for validating API responses
+Automated execution via Newman, including CI/CD integration
+Report generation and execution logs
+Pros:
+Strong adoption and ecosystem support; familiar to many teams
+Effective collection/environment abstraction for repeatable testing
+Newman enables automation in CI/CD with standardized execution outputs
+Flexible scripting enables advanced use cases when manually implemented
+Cons:
+Test design and test data creation are largely manual and time-consuming
+Coverage depends heavily on human experience, time, and discipline
+Complex dependency flows (token chaining, prerequisite requests) require custom scripts
+Does not automatically generate diverse tests (happy/boundary/negative) from documentation
+What we learn / How it informs our design:
+Postman demonstrates practical mechanisms for structuring test execution through collections, using environment variables for portability, and providing reports suitable for CI/CD. These aspects inform how the proposed system should represent execution contexts, track variables across requests, and present results. However, Postman’s limitations in automated test generation and dependency-aware execution motivate the proposed system to focus on documentation-driven parsing, systematic scenario generation, and workflow-aware execution with minimal manual scripting.
+3.2 Swagger / OpenAPI Tooling (Swagger UI / OpenAPI Specification)
+Link: https://swagger.io/tools/swagger-ui/ | https://spec.openapis.org/oas/latest.html
+Brief description:
+Swagger/OpenAPI tooling provides standardized specifications for describing REST APIs, including endpoints, parameters, request/response schemas, and security mechanisms. Tools such as Swagger UI visualize the documentation and allow basic “try-out” requests. The OpenAPI ecosystem primarily focuses on documentation accuracy and consistency, enabling a shared contract between API producers and consumers.
+Actors:
+API Designers
+Developers
+QA Engineers
+Key features (relevant to this project):
+Standardized API specification of endpoints, parameters, schemas, and examples
+Schema-driven representation of request/response structures (types, formats, constraints)
+Security scheme definitions (e.g., bearer token, API key, OAuth2)
+Documentation visualization and interactive endpoint exploration (e.g., Swagger UI)
+Pros:
+Provides a structured “single source of truth” for API contracts
+Improves consistency and shared understanding across teams
+Offers strong foundations for automated test data generation using schema constraints
+Enables static checking of documentation completeness and schema validity
+Cons:
+Primarily documentation-oriented; not a full automated testing solution
+Does not automatically generate comprehensive test suites (happy/boundary/negative)
+Limited support for end-to-end execution flows and dependency chaining
+Does not provide natural-language failure explanations or actionable diagnostics by default
+What we learn / How it informs our design:
+OpenAPI schemas provide the most reliable ground truth for generating valid and invalid inputs systematically (e.g., required fields, value ranges, enums, and formats). Security definitions also inform which endpoints require authentication and how credentials should be applied. The proposed system therefore uses OpenAPI/Swagger as a primary input for parsing, normalization, and rule-based validation. The remaining gap—automated scenario generation, dependency-aware execution, and explainable reporting—is addressed by combining rule-based execution with controlled LLM usage for scenario enrichment and failure explanation.
+4. Business Opportunity
+Many development teams operate under API-first or service-oriented architectures where frequent API changes are expected. Under these conditions, manual API testing becomes a bottleneck because teams must repeatedly interpret documentation, write new test cases, and maintain test suites as APIs evolve. This results in slower feedback cycles and inconsistent coverage, particularly for boundary and negative scenarios and for state-dependent workflows such as authentication and authorization.
+The proposed system creates an opportunity to reduce manual effort and improve consistency by automatically converting documentation artifacts into executable tests. By accepting standard documentation formats (OpenAPI/Swagger specifications and Postman collections) as primary inputs, the system can be integrated into existing documentation and development practices. The design further emphasizes trustworthiness and reproducibility: pass/fail decisions are derived from explicit rule-based validation, while the LLM component is used only to interpret documentation, suggest scenarios, and explain failures. This approach supports earlier and more consistent detection of API contract issues, documentation inconsistencies, and implementation defects during development and maintenance.
+
+5. Software Product Vision
+For API designers, developers, QA engineers, and DevOps engineers who need to validate APIs efficiently and consistently, the LLM-Assisted API Test Generation and Execution from Documentation is a web-based system that ingests OpenAPI/Swagger specifications and Postman collections, parses them into structured endpoint models, generates test scenarios (including happy path, boundary, and negative cases), executes those tests with dependency-aware chaining (e.g., authentication before protected endpoints), and produces deterministic execution results with exportable reports.
+Unlike approaches that rely mainly on manual test case authoring and ad-hoc scripting in separate tools, the proposed system focuses on systematic, documentation-driven automation. It maintains reliability by using rule-based validation to determine test outcomes, while using an LLM only to improve documentation interpretation, enrich scenario generation, and provide clear explanations of observed failures. This division of responsibilities supports consistent results while improving the usability of test outputs for engineering teams.
+6. Project Scope & Limitations
+The project scope covers the end-to-end workflow from ingesting API documentation to generating, executing, and reporting API tests. The system targets standard documentation artifacts (OpenAPI/Swagger and Postman) and produces executable tests that validate API behavior against documented contracts. The system prioritizes reproducibility: test execution follows defined rules, and validation criteria are explicitly specified and consistently applied.
+At the same time, the project clearly separates responsibilities between deterministic automation and LLM assistance. Rule-based mechanisms govern execution and evaluation, while the LLM component supports interpretation and explanation. The following major features and exclusions define the expected boundaries of the delivered product.
+
+6.1 Major Features
+FE-01: Provide user authentication and role-based access control to manage documentation, test configurations, and access to execution results.
+
+
+FE-02: Upload, store, and manage API input sources, supporting OpenAPI/Swagger files, Postman collection files, and manual API definition entry (including optional cURL import) as primary inputs.
+
+
+
+FE-03: Parse and normalize uploaded documentation into a unified internal model, extracting endpoints, HTTP methods, parameters, request/response schemas, and security requirements.
+
+
+FE-04: Configure test scope and execution settings, including selecting target endpoints, setting the execution environment (e.g., base URL), and specifying authentication/headers needed for requests.
+
+
+FE-05: Generate happy-path API test cases for each endpoint using schema-derived valid inputs and required parameters.
+
+
+FE-06: Generate boundary and negative API test cases using rule-based mutations (e.g., missing required fields, out-of-range values, invalid types) and LLM-assisted scenario suggestions grounded in the provided documentation.
+
+
+FE-07: Execute tests in a dependency-aware manner, supporting chained workflows such as login/token acquisition → protected API calls, with variable extraction and reuse across requests.
+
+
+FE-08: Perform deterministic test execution and pass/fail evaluation using rule-based validation, including HTTP status code verification, response structure/schema validation, and contract conformance checks.
+
+
+FE-09: Provide LLM-assisted explanations for failed test cases by summarizing observed mismatches against documentation and suggesting plausible causes, without affecting deterministic pass/fail decisions.
+
+
+FE-10: Generate test execution reports (coverage summaries, run history, failure details, and logs) and support exporting results in PDF and/or CSV formats.
+
+FE-11: Provide a Manual Entry (Enter API Details) mode that lets users define an API request (HTTP method, endpoint URL, headers, path params, query params, and request body) to generate test suites without OpenAPI/Postman artifacts.
+FE-12: Support path-parameter templating in manually entered endpoints (e.g., /resource/{id}) and bind placeholders to user-provided sample values via structured Path Params input for deterministic test generation and execution.
+FE-13: Provide a cURL import option that parses a pasted cURL command into method/URL/headers/body (and related params) to quickly bootstrap test generation from existing developer workflows. 
+FE-14: Provide subscription and billing management with plan lifecycle operations (trial, upgrade/downgrade, cancel), plan-based limits and usage tracking (e.g., projects/endpoints/test runs/concurrency), and integration with a third-party payment provider for checkout, recurring billing, and invoicing without storing raw cardholder data in the system. 
+
+
+6.2 Limitations & Exclusions
+LI-01: The system supports API inputs via OpenAPI/Swagger specifications, Postman collections, and manual API definition entry (including optional cURL import); arbitrary free-form documents (e.g., unstructured PDF/Word specifications) are out of scope.
+LI-02: The system focuses on API-level testing and does not include UI testing or end-to-end testing of front-end applications.
+LI-03: Deep performance testing (load, stress, endurance) is excluded; the project prioritizes functional and contract-based validation.
+LI-04: Advanced security testing (penetration testing, vulnerability scanning, fuzzing) is excluded; security handling is limited to executing documented authentication/authorization mechanisms.
+LI-05: The system does not infer domain-specific business rules or complex data dependencies beyond what is explicitly described in provided schemas/examples or user-entered inputs; domain-correct test data may require user configuration.
+LI-06: The system does not automatically fix bugs, modify API implementations, or generate code patches; it reports detected issues and test outcomes only.
+LI-07: The LLM component is not used to determine pass/fail outcomes and does not override rule-based validation; its use is limited to documentation interpretation, scenario suggestion, and failure explanation.
+LI-08: The system does not aim to fully replicate advanced custom scripting capabilities found in existing tools; only predefined mechanisms for variable extraction and dependency chaining are supported.
+LI-09: Test coverage and accuracy depend on the completeness and correctness of the provided documentation or manual inputs and the availability of the target environment; the system does not guarantee exhaustive coverage when specifications are incomplete or inconsistent.
+LI-10: Manual Entry supports JSON, form-data, and URL-encoded request bodies; XML support (if enabled) is limited, and non-HTTP API styles such as gRPC/GraphQL are out of scope for the initial release. 
