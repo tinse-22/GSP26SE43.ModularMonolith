@@ -11,7 +11,7 @@
 ```
 ClassifiedAds.ModularMonolith/
 ├── ClassifiedAds.Application/           # Application layer (CQRS handlers, dispatchers)
-├── ClassifiedAds.AspireAppHost/         # .NET Aspire orchestration host
+├── ClassifiedAds.AppHost/               # .NET Aspire orchestration host
 ├── ClassifiedAds.Background/            # Background worker service (hosted services)
 ├── ClassifiedAds.Contracts/             # Shared contracts/interfaces between modules
 ├── ClassifiedAds.CrossCuttingConcerns/  # Cross-cutting utilities (CSV, PDF, HTML, etc.)
@@ -29,6 +29,7 @@ ClassifiedAds.ModularMonolith/
 ├── ClassifiedAds.Modules.Product.UnitTests/
 ├── ClassifiedAds.Modules.Storage/       # Module: File storage
 ├── ClassifiedAds.Persistence.PostgreSQL/# PostgreSQL persistence provider
+├── ClassifiedAds.ServiceDefaults/       # Aspire shared defaults (telemetry, health checks)
 ├── ClassifiedAds.WebAPI/                # ASP.NET Core Web API host
 ├── libs/                                # Native libraries (e.g., libwkhtmltox)
 ├── docker-compose.yml                   # Local dev environment
@@ -46,13 +47,15 @@ ClassifiedAds.ModularMonolith/
 | **ClassifiedAds.WebAPI** | ASP.NET Core Web API | Main HTTP API host. Composes all modules, configures authentication, Swagger, CORS, SignalR. |
 | **ClassifiedAds.Background** | Worker Service | Hosts background jobs: outbox publishing, email/SMS sending, message bus consumers. |
 | **ClassifiedAds.Migrator** | Worker Service | Database migrations via EF Core + DbUp. Runs all module migrations. |
-| **ClassifiedAds.AspireAppHost** | Aspire AppHost | .NET Aspire orchestration for local dev (coordinates WebAPI, Background, Migrator). |
+| **ClassifiedAds.AppHost** | Aspire AppHost | .NET Aspire orchestration for local dev (coordinates WebAPI, Background, Migrator, infrastructure). |
+| **ClassifiedAds.ServiceDefaults** | Class Library | Aspire shared defaults: OpenTelemetry, health checks, resilience, service discovery. |
 
 #### Where in code?
 - [ClassifiedAds.WebAPI/Program.cs](ClassifiedAds.WebAPI/Program.cs) - Web API composition root
 - [ClassifiedAds.Background/Program.cs](ClassifiedAds.Background/Program.cs) - Background worker composition root
 - [ClassifiedAds.Migrator/Program.cs](ClassifiedAds.Migrator/Program.cs) - Migration runner
-- [ClassifiedAds.AspireAppHost/Program.cs](ClassifiedAds.AspireAppHost/Program.cs) - Aspire orchestration
+- [ClassifiedAds.AppHost/Program.cs](ClassifiedAds.AppHost/Program.cs) - Aspire orchestration
+- [ClassifiedAds.ServiceDefaults/Extensions.cs](ClassifiedAds.ServiceDefaults/Extensions.cs) - Aspire defaults
 
 ---
 

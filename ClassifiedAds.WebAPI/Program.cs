@@ -24,6 +24,17 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// ClassifiedAds.WebAPI - REST API Host
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Responsibilities:
+// - Expose REST API endpoints for all modules (thin controllers + CQRS dispatcher)
+// - Handle authentication/authorization (JWT Bearer, IdentityServer/Auth0/Azure AD B2C)
+// - Serve Swagger/Scalar API documentation
+// - SignalR hub for real-time notifications
+// - CORS, rate limiting, global exception handling
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
@@ -34,6 +45,7 @@ builder.AddServiceDefaults();
 var services = builder.Services;
 var configuration = builder.Configuration;
 
+// Configure logging using custom Serilog setup
 builder.WebHost.UseClassifiedAdsLogger(configuration =>
 {
     var appSettings = new AppSettings();
@@ -41,14 +53,36 @@ builder.WebHost.UseClassifiedAdsLogger(configuration =>
     return appSettings.Logging;
 });
 
+// Bind and validate AppSettings (fail-fast on misconfiguration)
 var appSettings = new AppSettings();
 configuration.Bind(appSettings);
 
+// Note: WebAPI doesn't have Validate() method on AppSettings like Background does
+// Consider adding validation in future if AppSettings grows complex enough
+// For now, rely on runtime validation via IOptions<T> with ValidateDataAnnotations
+
 services.Configure<AppSettings>(configuration);
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Global Exception Handling
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddExceptionHandler<GlobalExceptionHandler>();
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Caching Configuration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Supports: InMemory, Redis, SQL Server (based on appsettings.Caching.Distributed.Provider)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 services.AddCaches(appSettings.Caching);
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// FluentValidation Setup
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Auto-discovers validators from all ClassifiedAds* assemblies (modules)
+// Integrates with ASP.NET Core model validation pipeline
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 // Register FluentValidation validators from all loaded assemblies
 // This enables automatic discovery of validators when modules add them
@@ -64,6 +98,20 @@ services.AddFluentValidationAutoValidation(config =>
     // FluentValidation will handle all validation
     config.DisableDataAnnotationsValidation = false; // Keep DataAnnotations for backward compatibility
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// MVC Controllers & Module Registration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Registers controllers from all modules via .Add{Module}Module() extensions
+// Each module contributes its controllers via ApplicationParts
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// MVC Controllers & Module Registration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Registers controllers from all modules via .Add{Module}Module() extensions
+// Each module contributes its controllers via ApplicationParts
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddControllers(configure =>
 {
@@ -84,7 +132,25 @@ services.AddControllers(configure =>
 .AddProductModule()
 .AddStorageModule();
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// SignalR (Real-time Notifications)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 services.AddSignalR();
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// CORS Configuration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Configures multiple policies for API endpoints and SignalR hubs
+// Uses appsettings.CORS.AllowedOrigins or AllowAnyOrigin flag
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// CORS Configuration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Configures multiple policies for API endpoints and SignalR hubs
+// Uses appsettings.CORS.AllowedOrigins or AllowAnyOrigin flag
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddCors(options =>
 {
@@ -110,7 +176,19 @@ services.AddCors(options =>
         .WithHeaders("Content-Type"));
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Date/Time Abstraction
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 services.AddDateTimeProvider();
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Module Service Registration
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Pattern: Chain .Add{Module}Module() calls, bind config from appsettings, set shared connection string
+// Each module registers its own DbContext, repositories, commands, queries, event handlers
+// Order matters: modules should be registered before .AddApplicationServices()
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 var sharedConnectionString = configuration.GetConnectionString("Default");
 
@@ -152,12 +230,38 @@ services.AddAuditLogModule(opt =>
 })
 .AddApplicationServices();
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// HTML & PDF Utilities
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Used by modules for generating reports, invoices, etc.
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 services.AddHtmlRazorLightEngine();
 services.AddDinkToPdfConverter();
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// ASP.NET Core Data Protection
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Keys persisted to database (IdentityModule) for multi-instance deployments
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddDataProtection()
     .PersistKeysToDbContext<IdentityDbContext>()
     .SetApplicationName("ClassifiedAds");
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Authentication & Authorization
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Supports: JWT Bearer tokens (self-issued or IdentityServer/Auth0/Azure AD B2C)
+// Provider configured via appsettings.Authentication.Provider
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Authentication & Authorization
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Supports: JWT Bearer tokens (self-issued or IdentityServer/Auth0/Azure AD B2C)
+// Provider configured via appsettings.Authentication.Provider
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddAuthentication(options =>
 {
@@ -183,6 +287,13 @@ services.AddAuthentication(options =>
         IssuerSigningKey = new X509SecurityKey(appSettings.Authentication.Jwt.IssuerSigningCertificate.FindCertificate()),
     };
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Swagger/OpenAPI Documentation
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Generates API documentation with OAuth2/JWT authentication support
+// UI available at /swagger and /scalar (modern alternative to Swagger UI)
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddSwaggerGen(setupAction =>
 {
@@ -241,12 +352,26 @@ services.AddSwaggerGen(setupAction =>
     });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Monitoring & Observability
+// ═══════════════════════════════════════════════════════════════════════════════════
+// OpenTelemetry (traces, metrics) and Azure Application Insights support
+// ═══════════════════════════════════════════════════════════════════════════════════
+
 services.AddMonitoringServices(appSettings.Monitoring);
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// HTTP Context & Current User
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Provides access to authenticated user info throughout the application
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 services.AddScoped<ICurrentUser, CurrentWebUser>();
 
+// ═══════════════════════════════════════════════════════════════════════════════════
 // Configure the HTTP request pipeline.
+// ═══════════════════════════════════════════════════════════════════════════════════
 var app = builder.Build();
 
 app.UseDebuggingMiddleware();

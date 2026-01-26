@@ -1,4 +1,4 @@
-# Contributing to ClassifiedAds Modular Monolith
+# Contributing to API Testing Automation System
 
 Thank you for considering contributing to this project! This document outlines the process and guidelines for contributing.
 

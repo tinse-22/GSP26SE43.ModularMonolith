@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Application.FeatureToggles;
+using ClassifiedAds.Application.FeatureToggles;
 using ClassifiedAds.Background.ConfigurationOptions;
 using ClassifiedAds.Background.Identity;
 using ClassifiedAds.Contracts.Identity.Services;
@@ -15,11 +15,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
 
-var builder = Host.CreateApplicationBuilder(args);
-
-// Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
-// This is optional and only activates when running under Aspire
-builder.AddServiceDefaults();
+// ═══════════════════════════════════════════════════════════════════════════════════
+// ClassifiedAds.Background - Background Worker Host
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Responsibilities:
+// - Publish outbox messages to message bus (cross-module async communication)
+// - Send email/SMS/web notifications
+// - Consume message bus events from other modules
+// - Run scheduled background tasks
+//
+// Pattern: Uses Host.CreateDefaultBuilder + UseClassifiedAdsLogger for logging setup
+// Aspire ServiceDefaults added via ConfigureServices (activates only under Aspire)
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 Host.CreateDefaultBuilder(args)
 .UseWindowsService()
@@ -31,9 +38,9 @@ Host.CreateDefaultBuilder(args)
 })
 .ConfigureServices((hostContext, services) =>
 {
-    var serviceProvider = services.BuildServiceProvider();
-    var configuration = serviceProvider.GetService<IConfiguration>();
+    var configuration = hostContext.Configuration;
 
+    // Bind and validate AppSettings (fail-fast on misconfiguration)
     var appSettings = new AppSettings();
     configuration.Bind(appSettings);
 
@@ -45,15 +52,28 @@ Host.CreateDefaultBuilder(args)
 
     services.Configure<AppSettings>(configuration);
 
+    // Add monitoring services (OpenTelemetry, Application Insights)
     services.AddMonitoringServices(appSettings.Monitoring);
 
+    // Register current user implementation for background context
     services.AddScoped<ICurrentUser, CurrentUser>();
 
+    // Register date/time abstraction
     services.AddDateTimeProvider();
 
+    // Configure caching (InMemory, Redis, SQL Server)
     services.AddCaches(appSettings.Caching);
 
+    // Get shared connection string for all modules
     var sharedConnectionString = configuration.GetConnectionString("Default");
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // Module Registration
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // Pattern: Chain .Add{Module}Module() calls, bind config from appsettings, set shared connection string
+    // Each module registers its own DbContext, repositories, commands, queries, event handlers
+    // Note: ConfigurationModule not needed in Background (only used in WebAPI for runtime config)
+    // ═══════════════════════════════════════════════════════════════════════════════════
 
     services
     .AddAuditLogModule(opt =>
@@ -88,12 +108,21 @@ Host.CreateDefaultBuilder(args)
     })
     .AddApplicationServices();
 
+    // Add HTML and PDF utilities (used by notification module)
     services.AddHtmlRazorLightEngine();
     services.AddDinkToPdfConverter();
 
+    // Configure ASP.NET Core Data Protection (keys persisted to database)
     services.AddDataProtection()
     .PersistKeysToDbContext<IdentityDbContext>()
     .SetApplicationName("ClassifiedAds");
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // Message Bus Configuration
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // Registers message bus sender/receiver for async cross-module communication
+    // Uses RabbitMQ/Kafka/Azure Service Bus based on appsettings.Messaging.Provider
+    // ═══════════════════════════════════════════════════════════════════════════════════
 
     services.AddTransient<IMessageBus, MessageBus>();
     services.AddMessageBusSender<FileUploadedEvent>(appSettings.Messaging);
@@ -101,7 +130,10 @@ Host.CreateDefaultBuilder(args)
     services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.Messaging);
     services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.Messaging);
 
+    // Register feature toggles (e.g., file-based outbox publishing toggle)
     AddFeatureToggles(services);
+
+    // Register hosted services (background workers) from all modules
     AddHostedServices(services);
 })
 .Build()
