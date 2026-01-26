@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Infrastructure.HealthChecks;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Modules.Identity.Persistence;
@@ -13,31 +13,50 @@ using Polly;
 using System;
 using System.Reflection;
 
-var builder = Host.CreateApplicationBuilder(args);
-
-// Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
-// This is optional and only activates when running under Aspire
-builder.AddServiceDefaults();
+// ═══════════════════════════════════════════════════════════════════════════════════
+// ClassifiedAds.Migrator - Database Migration Runner
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Responsibilities:
+// - Apply EF Core migrations for all module DbContexts
+// - Run DbUp scripts for supplemental SQL migrations
+// - Ensure database is ready before WebAPI/Background start
+// - Fail-fast if migration errors occur
+//
+// Pattern: Uses Host.CreateDefaultBuilder + UseClassifiedAdsLogger for logging setup
+// Runs migrations then exits (not a long-running service)
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 var hostBuilder = Host.CreateDefaultBuilder(args)
 .UseClassifiedAdsLogger(configuration =>
 {
-    return new LoggingOptions();
+    return new LoggingOptions(); // Use default logging for migrator (minimal output)
 })
 .ConfigureServices((hostContext, services) =>
 {
     var configuration = hostContext.Configuration;
 
+    // Optional: Wait for database to be available before attempting migrations
+    // Enabled via CheckDependency:Enabled in appsettings (disabled under Aspire)
     if (bool.TryParse(configuration["CheckDependency:Enabled"], out var enabled) && enabled)
     {
         NetworkPortCheck.Wait(configuration["CheckDependency:Host"], 5);
     }
 
+    // Register date/time abstraction
     services.AddDateTimeProvider();
 
+    // Register caching (minimal for migrator, just in case modules need it)
     services.AddCaches();
 
+    // Get shared connection string for all modules
     var sharedConnectionString = configuration.GetConnectionString("Default");
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // Module Registration for Migration
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // CRITICAL: Must set MigrationsAssembly to this project so EF Core finds migrations here
+    // Pattern: Same as WebAPI/Background but with MigrationsAssembly override
+    // ═══════════════════════════════════════════════════════════════════════════════════
 
     services.AddAuditLogModule(opt =>
     {
@@ -83,19 +102,29 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
     })
     .AddApplicationServices();
 
+    // Add HTML and PDF utilities (some modules might reference these in migrations)
     services.AddHtmlRazorLightEngine();
     services.AddDinkToPdfConverter();
 
+    // Configure ASP.NET Core Data Protection (keys persisted to database)
     services.AddDataProtection()
         .PersistKeysToDbContext<IdentityDbContext>()
         .SetApplicationName("ClassifiedAds");
 
+    // Register HTTP context and current user (needed by some migration extension methods)
     services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
     services.AddScoped<ICurrentUser, CurrentWebUser>();
 });
 
 var app = hostBuilder.Build();
 var configuration = app.Services.GetRequiredService<IConfiguration>();
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Run Migrations with Retry Policy
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Uses Polly WaitAndRetry to handle transient database connection failures
+// Runs all module migrations, then DbUp scripts
+// ═══════════════════════════════════════════════════════════════════════════════════
 
 Policy.Handle<Exception>().WaitAndRetry(
 [
@@ -105,6 +134,7 @@ Policy.Handle<Exception>().WaitAndRetry(
 ])
 .Execute(() =>
 {
+    // Run EF Core migrations for each module DbContext
     app.MigrateAuditLogDb();
     app.MigrateConfigurationDb();
     app.MigrateIdentityDb();
@@ -112,6 +142,7 @@ Policy.Handle<Exception>().WaitAndRetry(
     app.MigrateProductDb();
     app.MigrateStorageDb();
 
+    // Run DbUp scripts (for supplemental SQL migrations not in EF Core)
     var upgrader = DeployChanges.To
     .PostgresqlDatabase(configuration.GetConnectionString("Default"))
     .WithScriptsEmbeddedInAssembly(Assembly.GetExecutingAssembly())

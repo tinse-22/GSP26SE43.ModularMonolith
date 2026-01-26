@@ -10,14 +10,16 @@
 |----------|----------|------|-------------|
 | 1 | **Security** | `security.md` | AuthN/AuthZ, secrets, OWASP, data protection |
 | 2 | **Architecture** | `architecture.md` | Module boundaries, CQRS, layering, persistence |
-| 3 | **Testing** | `testing.md` | Coverage, test patterns, CI validation |
-| 4 | **Coding** | `coding.md` | C# conventions, async, logging, DI |
-| 5 | **Git Workflow** | `git-workflow.md` | Branching, commits, PRs, releases |
+| 3 | **AI Agent Standards** | `ai-agent-coding-standards.md` | **Mandatory patterns for AI Agents** |
+| 4 | **Testing** | `testing.md` | Coverage, test patterns, CI validation |
+| 5 | **Coding** | `coding.md` | C# conventions, async, logging, DI |
+| 6 | **Git Workflow** | `git-workflow.md` | Branching, commits, PRs, releases |
 
 ### Priority Rules
 
 - **Security** rules MUST override all other rules. If any rule would weaken security, the security rule takes absolute precedence.
 - **Architecture** rules MUST override Testing, Coding, and Git Workflow rules.
+- **AI Agent Standards** define mandatory implementation patterns that MUST be followed.
 - **Testing** rules MUST override Coding and Git Workflow rules.
 - **Coding** rules MUST override Git Workflow rules.
 

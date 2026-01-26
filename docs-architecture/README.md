@@ -1,6 +1,6 @@
-# ClassifiedAds Modular Monolith - Architecture Documentation
+# API Testing Automation System - Architecture Documentation
 
-> **Purpose**: This documentation set provides a comprehensive technical reference for the ClassifiedAds Modular Monolith architecture. It is designed for developers, architects, and technical leads who need to understand, maintain, or extend this codebase.
+> **Purpose**: This documentation set provides a comprehensive technical reference for the API Testing Automation System architecture (built on Modular Monolith). It is designed for developers, architects, and technical leads who need to understand, maintain, or extend this codebase.
 
 ---
 
