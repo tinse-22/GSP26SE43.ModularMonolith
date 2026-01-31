@@ -30,10 +30,15 @@ public class TestCaseConfiguration : IEntityTypeConfiguration<Entities.TestCase>
         builder.Property(x => x.Tags)
             .HasColumnType("jsonb");
 
+        builder.Property(x => x.Version)
+            .HasDefaultValue(1);
+
         builder.HasIndex(x => x.TestSuiteId);
         builder.HasIndex(x => x.EndpointId);
         builder.HasIndex(x => x.DependsOnId);
         builder.HasIndex(x => new { x.TestSuiteId, x.OrderIndex });
+        builder.HasIndex(x => new { x.TestSuiteId, x.CustomOrderIndex });
+        builder.HasIndex(x => x.LastModifiedById);
 
         builder.HasOne(x => x.TestSuite)
             .WithMany(x => x.TestCases)
