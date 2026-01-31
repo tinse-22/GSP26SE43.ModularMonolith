@@ -79,25 +79,40 @@ Tài liệu này phân tích chi tiết Entity-Relationship Diagram (ERD) cho h�
 
 ## 3. Detailed ERD by Module
 
-### 3.1 Identity Module (Existing - Reuse)
+### 3.1 Identity Module (ASP.NET Core Identity)
+
+Sử dụng **ASP.NET Core Identity** library với các tables mặc định + custom extensions:
 
 ```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ASP.NET CORE IDENTITY TABLES                             │
+│                    (Built-in - DO NOT MODIFY SCHEMA)                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
 ┌─────────────────────────────────────────┐
-│                 Users                    │
+│            AspNetUsers                   │  ← IdentityUser<Guid>
 ├─────────────────────────────────────────┤
-│ PK  Id              : GUID              │
-│     UserName        : VARCHAR(256)      │
-│     Email           : VARCHAR(256)      │
-│     PasswordHash    : TEXT              │
-│     EmailConfirmed  : BOOLEAN           │
-│     CreatedDateTime : TIMESTAMP         │
-│     UpdatedDateTime : TIMESTAMP         │
+│ PK  Id                    : GUID        │
+│     UserName              : NVARCHAR(256)│
+│     NormalizedUserName    : NVARCHAR(256)│
+│     Email                 : NVARCHAR(256)│
+│     NormalizedEmail       : NVARCHAR(256)│
+│     EmailConfirmed        : BIT         │
+│     PasswordHash          : NVARCHAR(MAX)│
+│     SecurityStamp         : NVARCHAR(MAX)│
+│     ConcurrencyStamp      : NVARCHAR(MAX)│
+│     PhoneNumber           : NVARCHAR(MAX)│
+│     PhoneNumberConfirmed  : BIT         │
+│     TwoFactorEnabled      : BIT         │
+│     LockoutEnd            : DATETIMEOFFSET│
+│     LockoutEnabled        : BIT         │
+│     AccessFailedCount     : INT         │
 └─────────────────────────────────────────┘
            │
            │ 1:N
            ▼
 ┌─────────────────────────────────────────┐
-│              UserRoles                   │
+│           AspNetUserRoles                │
 ├─────────────────────────────────────────┤
 │ PK  UserId          : GUID (FK)         │
 │ PK  RoleId          : GUID (FK)         │
@@ -106,24 +121,137 @@ Tài liệu này phân tích chi tiết Entity-Relationship Diagram (ERD) cho h�
            │ N:1
            ▼
 ┌─────────────────────────────────────────┐
-│                 Roles                    │
+│            AspNetRoles                   │  ← IdentityRole<Guid>
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│     Name            : VARCHAR(100)      │
-│     NormalizedName  : VARCHAR(100)      │
-│     Description     : TEXT              │
+│     Name            : NVARCHAR(256)     │
+│     NormalizedName  : NVARCHAR(256)     │
+│     ConcurrencyStamp: NVARCHAR(MAX)     │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│          AspNetUserClaims                │
+├─────────────────────────────────────────┤
+│ PK  Id              : INT (Identity)    │
+│ FK  UserId          : GUID              │
+│     ClaimType       : NVARCHAR(MAX)     │
+│     ClaimValue      : NVARCHAR(MAX)     │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│          AspNetUserLogins                │  ← External logins (Google, etc.)
+├─────────────────────────────────────────┤
+│ PK  LoginProvider       : NVARCHAR(128) │
+│ PK  ProviderKey         : NVARCHAR(128) │
+│ FK  UserId              : GUID          │
+│     ProviderDisplayName : NVARCHAR(MAX) │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│          AspNetUserTokens                │  ← 2FA, refresh tokens
+├─────────────────────────────────────────┤
+│ PK  UserId          : GUID (FK)         │
+│ PK  LoginProvider   : NVARCHAR(128)     │
+│ PK  Name            : NVARCHAR(128)     │
+│     Value           : NVARCHAR(MAX)     │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│          AspNetRoleClaims                │
+├─────────────────────────────────────────┤
+│ PK  Id              : INT (Identity)    │
+│ FK  RoleId          : GUID              │
+│     ClaimType       : NVARCHAR(MAX)     │
+│     ClaimValue      : NVARCHAR(MAX)     │
 └─────────────────────────────────────────┘
 ```
 
-**Roles định nghĩa:**
+### 3.1.1 Custom User Extension (Optional)
+
+Nếu cần thêm fields cho User (profile info), có thể extend `IdentityUser`:
+
+```
+┌─────────────────────────────────────────┐
+│          UserProfiles                    │  ← Custom extension table
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  UserId          : GUID → AspNetUsers│  ← 1:1 relationship
+│     DisplayName     : NVARCHAR(200)     │
+│     AvatarUrl       : NVARCHAR(500)     │
+│     Timezone        : NVARCHAR(50)      │
+│     CreatedAt       : TIMESTAMP         │
+│     UpdatedAt       : TIMESTAMP         │
+└─────────────────────────────────────────┘
+```
+
+**Hoặc** extend trực tiếp `IdentityUser<Guid>`:
+
+```csharp
+public class ApplicationUser : IdentityUser<Guid>
+{
+    public string? DisplayName { get; set; }
+    public string? AvatarUrl { get; set; }
+    public string? Timezone { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    
+    // Navigation properties
+    public virtual ICollection<Project> Projects { get; set; }
+    public virtual UserSubscription? Subscription { get; set; }
+}
+```
+
+**Roles định nghĩa (Seed Data):**
 - `Admin` - Quản lý hệ thống, users
-- `Developer` - Upload docs, config tests, execute, view reports
-- `Tester` - Execute tests, view reports
-- `Viewer` - View reports only
+- `User` - Default role cho tất cả users (upload docs, config tests, execute, view reports)
 
 ---
 
-### 3.2 ApiDocumentation Module
+### 3.2 Storage Module (File Management)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             STORAGE MODULE                                  │
+│                           (Local Storage Only)                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│              FileEntries                 │  (FE-02, FE-10)
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  OwnerId         : GUID → AspNetUsers│  ← Who uploaded
+│     FileName        : VARCHAR(255)      │  ← Original filename
+│     ContentType     : VARCHAR(100)      │  ← MIME type (application/json, etc.)
+│     FileSize        : BIGINT            │  ← Size in bytes
+│     StoragePath     : VARCHAR(500)      │  ← Relative path on disk
+│     FileCategory    : ENUM              │  ← ApiSpec/Report/Export/Attachment
+│     IsDeleted       : BOOLEAN           │  ← Soft delete
+│     DeletedAt       : TIMESTAMP         │
+│     CreatedDateTime : TIMESTAMP         │  ← From base Entity
+│     UpdatedDateTime : TIMESTAMP         │  ← From base Entity
+│     ExpiresAt       : TIMESTAMP         │  ← Auto-delete after (for temp files)
+└─────────────────────────────────────────┘
+```
+
+**Storage Configuration:**
+
+```json
+{
+  "Storage": {
+    "BasePath": "./uploads"
+  }
+}
+```
+
+**File Categories:**
+- `ApiSpec` - OpenAPI/Postman/Swagger files
+- `Report` - Generated PDF/CSV reports
+- `Export` - Exported test results
+- `Attachment` - User attachments
+
+---
+
+### 3.3 ApiDocumentation Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -134,7 +262,8 @@ Tài liệu này phân tích chi tiết Entity-Relationship Diagram (ERD) cho h�
 │               Projects                   │  (FE-01, FE-02)
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│ FK  OwnerId         : GUID → Users      │
+│ FK  OwnerId         : GUID → AspNetUsers│
+│ FK  ActiveSpecId    : GUID → ApiSpecs   │  ← NEW: Default spec for testing
 │     Name            : VARCHAR(200)      │
 │     Description     : TEXT              │
 │     BaseUrl         : VARCHAR(500)      │  ← Default execution URL
@@ -150,10 +279,11 @@ Tài liệu này phân tích chi tiết Entity-Relationship Diagram (ERD) cho h�
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
 │ FK  ProjectId       : GUID → Projects   │
+│ FK  OriginalFileId  : GUID → StorageFiles│  ← Reference to uploaded file
 │     Name            : VARCHAR(200)      │
 │     SourceType      : ENUM              │  ← OpenAPI/Postman/Manual/cURL
-│     OriginalFileId  : GUID → Storage    │  ← Reference to uploaded file
 │     Version         : VARCHAR(50)       │
+│     IsActive        : BOOLEAN           │  ← NEW: Active version for this project
 │     ParsedAt        : TIMESTAMP         │
 │     ParseStatus     : ENUM              │  ← Pending/Success/Failed
 │     ParseErrors     : JSONB             │  ← Parse error details
@@ -224,7 +354,7 @@ Tài liệu này phân tích chi tiết Entity-Relationship Diagram (ERD) cho h�
 └─────────────────────────────────────────┘
 ```
 
-### 3.2.1 Flow Upload & Parse OpenAPI/Scalar File
+### 3.3.1 Flow Upload & Parse OpenAPI/Scalar File
 
 Khi người dùng upload **1 file OpenAPI/Scalar** chứa nhiều API endpoints, hệ thống xử lý như sau:
 
@@ -376,7 +506,7 @@ ORDER BY e.Path, e.HttpMethod;
 
 ---
 
-### 3.3 TestGeneration Module
+### 3.4 TestGeneration Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -393,7 +523,7 @@ ORDER BY e.Path, e.HttpMethod;
 │     Description     : TEXT              │
 │     GenerationType  : ENUM              │ ← Auto/Manual/LLMAssisted
 │     Status          : ENUM              │ ← Draft/Ready/Archived
-│     CreatedById     : GUID → Users      │
+│     CreatedById     : GUID → AspNetUsers│
 │     CreatedDateTime : TIMESTAMP         │
 │     UpdatedDateTime : TIMESTAMP         │
 └─────────────────────────────────────────┘
@@ -475,7 +605,7 @@ ORDER BY e.Path, e.HttpMethod;
 
 ---
 
-### 3.4 TestExecution Module
+### 3.5 TestExecution Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -505,7 +635,7 @@ ORDER BY e.Path, e.HttpMethod;
 │ PK  Id              : GUID              │
 │ FK  TestSuiteId     : GUID → TestSuites │
 │ FK  EnvironmentId   : GUID → Environments│
-│ FK  TriggeredById   : GUID → Users      │
+│ FK  TriggeredById   : GUID → AspNetUsers│
 │     RunNumber       : INT               │ ← Auto-increment per suite
 │     Status          : ENUM              │ ← Pending/Running/Completed/Failed/Cancelled
 │     StartedAt       : TIMESTAMP         │
@@ -522,7 +652,7 @@ ORDER BY e.Path, e.HttpMethod;
 
 ```
 
-### 3.4.1 Redis Schema cho Test Results (Hot Storage)
+### 3.5.1 Redis Schema cho Test Results (Hot Storage)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -601,7 +731,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 
 ---
 
-### 3.5 TestReporting Module
+### 3.6 TestReporting Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -613,10 +743,10 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
 │ FK  TestRunId       : GUID → TestRuns   │
-│ FK  GeneratedById   : GUID → Users      │
+│ FK  GeneratedById   : GUID → AspNetUsers│
+│ FK  FileId          : GUID → StorageFiles│ ← Reference to generated file
 │     ReportType      : ENUM              │ ← Summary/Detailed/Coverage
 │     Format          : ENUM              │ ← PDF/CSV/JSON/HTML
-│     FileId          : GUID → Storage    │ ← Reference to generated file
 │     GeneratedAt     : TIMESTAMP         │
 │     ExpiresAt       : TIMESTAMP         │ ← Optional auto-delete
 └─────────────────────────────────────────┘
@@ -638,7 +768,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 
 ---
 
-### 3.6 Subscription Module
+### 3.7 Subscription Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -668,11 +798,14 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 │ PK  Id              : GUID              │
 │ FK  PlanId          : GUID → Plans      │
 │     LimitType       : ENUM              │
-│         ← MaxProjects/MaxEndpoints/     │
+│         ← MaxProjects/                  │
+│           MaxEndpointsPerProject/       │
+│           MaxTestCasesPerSuite/         │
 │           MaxTestRunsPerMonth/          │
 │           MaxConcurrentRuns/            │
-│           MaxTeamMembers/               │
-│           RetentionDays                 │
+│           RetentionDays/                │
+│           MaxLlmCallsPerMonth/          │
+│           MaxStorageMB                  │
 │     LimitValue      : INT               │
 │     IsUnlimited     : BOOLEAN           │
 └─────────────────────────────────────────┘
@@ -681,29 +814,51 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 │          UserSubscriptions               │
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│ FK  UserId          : GUID → Users      │
+│ FK  UserId          : GUID → AspNetUsers│
 │ FK  PlanId          : GUID → Plans      │
 │     Status          : ENUM              │ ← Trial/Active/PastDue/Cancelled/Expired
 │     BillingCycle    : ENUM              │ ← Monthly/Yearly
 │     StartDate       : DATE              │
 │     EndDate         : DATE              │
+│     NextBillingDate : DATE              │ ← NEW: When next payment is due
 │     TrialEndsAt     : TIMESTAMP         │
 │     CancelledAt     : TIMESTAMP         │
+│     AutoRenew       : BOOLEAN           │ ← NEW: Auto-renew subscription
 │     ExternalSubId   : VARCHAR(200)      │ ← Stripe subscription ID
+│     ExternalCustId  : VARCHAR(200)      │ ← NEW: Stripe customer ID
 │     CreatedDateTime : TIMESTAMP         │
 │     UpdatedDateTime : TIMESTAMP         │
+└─────────────────────────────────────────┘
+           │
+           │ 1:N
+           ▼
+┌─────────────────────────────────────────┐
+│       SubscriptionHistories              │  ← NEW: Track plan changes
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  SubscriptionId  : GUID              │
+│ FK  OldPlanId       : GUID → Plans      │ ← Previous plan (NULL if first)
+│ FK  NewPlanId       : GUID → Plans      │ ← New plan
+│     ChangeType      : ENUM              │ ← Created/Upgraded/Downgraded/Cancelled/Reactivated
+│     ChangeReason    : TEXT              │ ← Optional reason
+│     EffectiveDate   : DATE              │
+│     CreatedAt       : TIMESTAMP         │
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
 │            UsageTracking                 │
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│ FK  UserId          : GUID → Users      │
+│ FK  UserId          : GUID → AspNetUsers│
 │     PeriodStart     : DATE              │ ← First day of billing period
 │     PeriodEnd       : DATE              │
 │     ProjectCount    : INT               │
 │     EndpointCount   : INT               │
+│     TestSuiteCount  : INT               │ ← NEW: Track test suites
+│     TestCaseCount   : INT               │ ← NEW: Track test cases
 │     TestRunCount    : INT               │
+│     LlmCallCount    : INT               │ ← Track LLM API usage (FE-06, FE-09)
+│     StorageUsedMB   : DECIMAL(10,2)     │ ← Track file storage usage
 │     UpdatedAt       : TIMESTAMP         │
 └─────────────────────────────────────────┘
 
@@ -711,7 +866,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 │          PaymentTransactions             │
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│ FK  UserId          : GUID → Users      │
+│ FK  UserId          : GUID → AspNetUsers│
 │ FK  SubscriptionId  : GUID              │
 │     Amount          : DECIMAL(10,2)     │
 │     Currency        : VARCHAR(3)        │
@@ -726,7 +881,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 
 ---
 
-### 3.7 LlmAssistant Module
+### 3.8 LlmAssistant Module
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -738,7 +893,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
 │          LlmInteractions                 │
 ├─────────────────────────────────────────┤
 │ PK  Id              : GUID              │
-│ FK  UserId          : GUID → Users      │
+│ FK  UserId          : GUID → AspNetUsers│
 │     InteractionType : ENUM              │
 │         ← ScenarioSuggestion/           │
 │           FailureExplanation/           │
@@ -805,7 +960,7 @@ ZADD user:{userId}:recent_runs 1706356800 "runId2"
              │                    │                    │                    │
              ▼                    ▼                    ▼                    ▼
     ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐
-    │EndpointParameters│  │EndpointResponses│  │EndpointSecurity│  │  TestCases  │
+    │EndpointParameters│  │EndpointResponses│  │EndpointSecurityReqs│  │  TestCases  │
     └─────────────────┘  └─────────────────┘  └─────────────────┘  └──────┬──────┘
                                                                           │
                                               ┌───────────────────────────┼───────────────────────────┐
@@ -895,12 +1050,13 @@ public class TestResultCleanupJob : IHostedService
 
 | Module | Tables |
 |--------|--------|
-| Identity | Users, Roles, UserRoles |
-| ApiDocumentation | Projects, ApiSpecifications, ApiEndpoints, EndpointParameters, EndpointResponses, SecuritySchemes |
-| TestGeneration | TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables |
-| TestExecution | ExecutionEnvironments, TestRuns (summary only), CoverageMetrics |
-| TestReporting | TestReports |
-| Subscription | SubscriptionPlans, PlanLimits, UserSubscriptions, UsageTracking, PaymentTransactions |
+| Identity (ASP.NET Core Identity) | AspNetUsers, AspNetRoles, AspNetUserRoles, AspNetUserClaims, AspNetUserLogins, AspNetUserTokens, AspNetRoleClaims, UserProfiles (optional) |
+| **Storage** | **FileEntries** |
+| ApiDocumentation | Projects, ApiSpecifications, ApiEndpoints, EndpointParameters, EndpointResponses, EndpointSecurityReqs, SecuritySchemes |
+| TestGeneration | TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables, TestDataSets |
+| TestExecution | ExecutionEnvironments, TestRuns (summary only) |
+| TestReporting | TestReports, CoverageMetrics |
+| Subscription | SubscriptionPlans, PlanLimits, UserSubscriptions, SubscriptionHistories, UsageTracking, PaymentTransactions |
 | LlmAssistant | LlmInteractions, LlmSuggestionCache |
 
 ### 6.2 Redis Keys (Temporary Storage - 5-10 days)
@@ -917,6 +1073,773 @@ public class TestResultCleanupJob : IHostedService
 
 | Category | Count |
 |----------|-------|
-| Core business tables | ~25 |
+| ASP.NET Core Identity tables | 7 |
+| Storage table | 1 |
+| Custom business tables | ~23 |
 | Redis key patterns | ~5 |
-| Total entities | ~30 |
+| **Total PostgreSQL tables** | **~31** |
+
+---
+
+## 7. Subscription Tiers & Usage Limits (FE-14)
+
+### 7.1 Default Plan Configuration
+
+Khi user đăng ký mới **không mua gói**, hệ thống tự động assign **Free Plan** với các giới hạn sau:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SUBSCRIPTION TIERS MATRIX                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │                           FREE TIER                                │    │
+│   │                     (Auto-assigned on signup)                      │    │
+│   ├────────────────────────────────────────────────────────────────────┤    │
+│   │  Price: $0/month                                                   │    │
+│   │                                                                    │    │
+│   │  Limits:                                                           │    │
+│   │  ├── MaxProjects           : 1                                     │    │
+│   │  ├── MaxEndpointsPerProject: 10                                    │    │
+│   │  ├── MaxTestCasesPerSuite  : 20                                    │    │
+│   │  ├── MaxTestRunsPerMonth   : 30                                    │    │
+│   │  ├── MaxConcurrentRuns     : 1                                     │    │
+│   │  ├── RetentionDays         : 5                                     │    │
+│   │  ├── MaxLlmCallsPerMonth   : 10 (limited AI assistance)            │    │
+│   │  └── ExportFormats         : CSV only                              │    │
+│   │                                                                    │    │
+│   │  Features:                                                         │    │
+│   │  ✓ Manual API entry (FE-11)                                        │    │
+│   │  ✓ cURL import (FE-13)                                             │    │
+│   │  ✓ OpenAPI/Postman upload (limited endpoints)                      │    │
+│   │  ✓ Happy-path test generation                                      │    │
+│   │  ✗ Boundary/Negative test generation (LLM-assisted) - LIMITED      │    │
+│   │  ✗ LLM failure explanations - LIMITED                              │    │
+│   │  ✗ PDF export                                                      │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │                           PRO TIER                                 │    │
+│   │                        $19/month or $190/year                      │    │
+│   ├────────────────────────────────────────────────────────────────────┤    │
+│   │  Limits:                                                           │    │
+│   │  ├── MaxProjects           : 10                                    │    │
+│   │  ├── MaxEndpointsPerProject: 100                                   │    │
+│   │  ├── MaxTestCasesPerSuite  : 200                                   │    │
+│   │  ├── MaxTestRunsPerMonth   : 500                                   │    │
+│   │  ├── MaxConcurrentRuns     : 3                                     │    │
+│   │  ├── RetentionDays         : 7                                     │    │
+│   │  ├── MaxLlmCallsPerMonth   : 200                                   │    │
+│   │  └── ExportFormats         : CSV, PDF                              │    │
+│   │                                                                    │    │
+│   │  Features:                                                         │    │
+│   │  ✓ All Free features                                               │    │
+│   │  ✓ Full LLM-assisted test generation (FE-06)                       │    │
+│   │  ✓ LLM failure explanations (FE-09)                                │    │
+│   │  ✓ PDF report export                                               │    │
+│   │  ✓ Priority support                                                │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │                       ENTERPRISE TIER                              │    │
+│   │                        Custom pricing                              │    │
+│   ├────────────────────────────────────────────────────────────────────┤    │
+│   │  Limits:                                                           │    │
+│   │  ├── MaxProjects           : Unlimited                             │    │
+│   │  ├── MaxEndpointsPerProject: Unlimited                             │    │
+│   │  ├── MaxTestCasesPerSuite  : Unlimited                             │    │
+│   │  ├── MaxTestRunsPerMonth   : Unlimited                             │    │
+│   │  ├── MaxConcurrentRuns     : 10+                                   │    │
+│   │  ├── RetentionDays         : 10+ (configurable)                    │    │
+│   │  ├── MaxLlmCallsPerMonth   : Unlimited                             │    │
+│   │  └── ExportFormats         : CSV, PDF, JSON, HTML                  │    │
+│   │                                                                    │    │
+│   │  Features:                                                         │    │
+│   │  ✓ All Pro features                                                │    │
+│   │  ✓ SSO/SAML integration                                            │    │
+│   │  ✓ Custom retention policies                                       │    │
+│   │  ✓ Dedicated support                                               │    │
+│   │  ✓ On-premise deployment option                                    │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.2 User Registration Flow với Auto-assign Free Plan
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    USER REGISTRATION & SUBSCRIPTION FLOW                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   User clicks "Sign Up"
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 1: Create User Account                                          │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  Users table                                                    │  │
+   │  │  • Id: user-guid-001                                            │  │
+   │  │  • Email: john@example.com                                      │  │
+   │  │  • CreatedDateTime: 2026-01-31T10:00:00Z                        │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 2: Auto-assign Free Plan (Event Handler / Domain Service)       │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  UserSubscriptions table                                        │  │
+   │  │  • Id: sub-guid-001                                             │  │
+   │  │  • UserId: user-guid-001                                        │  │
+   │  │  • PlanId: FREE_PLAN_ID (seeded GUID)                           │  │
+   │  │  • Status: Active                                               │  │
+   │  │  • BillingCycle: NULL                                           │  │
+   │  │  • StartDate: 2026-01-31                                        │  │
+   │  │  • EndDate: NULL (no expiration for free)                       │  │
+   │  │  • ExternalSubId: NULL (no payment provider)                    │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 3: Initialize Usage Tracking                                    │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  UsageTracking table                                            │  │
+   │  │  • Id: usage-guid-001                                           │  │
+   │  │  • UserId: user-guid-001                                        │  │
+   │  │  • PeriodStart: 2026-01-01 (first of month)                     │  │
+   │  │  • PeriodEnd: 2026-01-31                                        │  │
+   │  │  • ProjectCount: 0                                              │  │
+   │  │  • EndpointCount: 0                                             │  │
+   │  │  • TestRunCount: 0                                              │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   User can now use system with FREE tier limits
+```
+
+### 7.3 Usage Limit Enforcement Logic
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      USAGE LIMIT CHECK FLOW                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   User attempts action (e.g., Create Project, Run Test)
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  UsageLimitService.CheckLimit(userId, limitType)                      │
+   │                                                                       │
+   │  1. Get UserSubscription → PlanId                                     │
+   │  2. Get PlanLimits WHERE PlanId AND LimitType                         │
+   │  3. Get UsageTracking for current period                              │
+   │  4. Compare: currentUsage < limitValue                                │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ├─────────────────────────────────┐
+           │                                 │
+           ▼                                 ▼
+   ┌─────────────────┐             ┌─────────────────────────────────────┐
+   │  Within Limit   │             │       Limit Exceeded                │
+   │  ✓ Allow action │             │  ✗ Return 403 + upgrade prompt      │
+   └─────────────────┘             │  Response:                          │
+                                   │  {                                  │
+                                   │    "error": "LIMIT_EXCEEDED",       │
+                                   │    "limitType": "MaxTestRunsPerMonth",│
+                                   │    "currentUsage": 30,              │
+                                   │    "limit": 30,                     │
+                                   │    "upgradeUrl": "/pricing"         │
+                                   │  }                                  │
+                                   └─────────────────────────────────────┘
+```
+
+### 7.4 Bổ sung LimitType ENUM
+
+```sql
+-- Updated LimitType enum values
+CREATE TYPE limit_type AS ENUM (
+    'MaxProjects',
+    'MaxEndpointsPerProject',
+    'MaxTestCasesPerSuite',
+    'MaxTestRunsPerMonth',
+    'MaxConcurrentRuns',
+    'RetentionDays',
+    'MaxLlmCallsPerMonth',       -- Track LLM API usage
+    'MaxStorageMB'               -- File storage limit
+);
+```
+
+### 7.5 Seed Data for Plans
+
+```sql
+-- Seed SubscriptionPlans
+INSERT INTO SubscriptionPlans (Id, Name, DisplayName, PriceMonthly, PriceYearly, IsActive, SortOrder)
+VALUES 
+    ('FREE_PLAN_GUID', 'Free', 'Free Plan', 0.00, 0.00, true, 1),
+    ('PRO_PLAN_GUID', 'Pro', 'Pro Plan', 19.00, 190.00, true, 2),
+    ('ENTERPRISE_PLAN_GUID', 'Enterprise', 'Enterprise Plan', NULL, NULL, true, 3);
+
+-- Seed PlanLimits for Free Plan
+INSERT INTO PlanLimits (Id, PlanId, LimitType, LimitValue, IsUnlimited)
+VALUES
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxProjects', 1, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxEndpointsPerProject', 10, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxTestCasesPerSuite', 20, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxTestRunsPerMonth', 30, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxConcurrentRuns', 1, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'RetentionDays', 5, false),
+    (gen_random_uuid(), 'FREE_PLAN_GUID', 'MaxLlmCallsPerMonth', 10, false);
+
+-- Seed PlanLimits for Pro Plan
+INSERT INTO PlanLimits (Id, PlanId, LimitType, LimitValue, IsUnlimited)
+VALUES
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxProjects', 10, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxEndpointsPerProject', 100, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxTestCasesPerSuite', 200, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxTestRunsPerMonth', 500, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxConcurrentRuns', 3, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'RetentionDays', 7, false),
+    (gen_random_uuid(), 'PRO_PLAN_GUID', 'MaxLlmCallsPerMonth', 200, false);
+
+-- Seed PlanLimits for Enterprise Plan (Unlimited)
+INSERT INTO PlanLimits (Id, PlanId, LimitType, LimitValue, IsUnlimited)
+VALUES
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxProjects', NULL, true),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxEndpointsPerProject', NULL, true),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxTestCasesPerSuite', NULL, true),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxTestRunsPerMonth', NULL, true),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxConcurrentRuns', 10, false),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'RetentionDays', 10, false),
+    (gen_random_uuid(), 'ENTERPRISE_PLAN_GUID', 'MaxLlmCallsPerMonth', NULL, true);
+```
+
+---
+
+## 8. Complete Mermaid ERD Diagram
+
+### 8.1 Full ERD with All Tables
+
+```mermaid
+erDiagram
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 1: ASP.NET CORE IDENTITY (Built-in tables)
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    AspNetUsers {
+        UUID Id PK
+        string UserName "NVARCHAR(256)"
+        string NormalizedUserName "NVARCHAR(256)"
+        string Email "NVARCHAR(256)"
+        string NormalizedEmail "NVARCHAR(256)"
+        boolean EmailConfirmed
+        string PasswordHash "NVARCHAR(MAX)"
+        string SecurityStamp "NVARCHAR(MAX)"
+        string ConcurrencyStamp "NVARCHAR(MAX)"
+        string PhoneNumber "NVARCHAR(MAX)"
+        boolean PhoneNumberConfirmed
+        boolean TwoFactorEnabled
+        datetimeoffset LockoutEnd
+        boolean LockoutEnabled
+        int AccessFailedCount
+    }
+    
+    AspNetRoles {
+        UUID Id PK
+        string Name "NVARCHAR(256)"
+        string NormalizedName "NVARCHAR(256)"
+        string ConcurrencyStamp "NVARCHAR(MAX)"
+    }
+    
+    AspNetUserRoles {
+        UUID UserId PK_FK "AspNetUsers"
+        UUID RoleId PK_FK "AspNetRoles"
+    }
+    
+    AspNetUserClaims {
+        int Id PK "IDENTITY"
+        UUID UserId FK "AspNetUsers"
+        string ClaimType "NVARCHAR(MAX)"
+        string ClaimValue "NVARCHAR(MAX)"
+    }
+    
+    AspNetUserLogins {
+        string LoginProvider PK "NVARCHAR(128)"
+        string ProviderKey PK "NVARCHAR(128)"
+        UUID UserId FK "AspNetUsers"
+        string ProviderDisplayName "NVARCHAR(MAX)"
+    }
+    
+    AspNetUserTokens {
+        UUID UserId PK_FK "AspNetUsers"
+        string LoginProvider PK "NVARCHAR(128)"
+        string Name PK "NVARCHAR(128)"
+        string Value "NVARCHAR(MAX)"
+    }
+    
+    AspNetRoleClaims {
+        int Id PK "IDENTITY"
+        UUID RoleId FK "AspNetRoles"
+        string ClaimType "NVARCHAR(MAX)"
+        string ClaimValue "NVARCHAR(MAX)"
+    }
+    
+    %% Custom User Profile Extension (Optional)
+    UserProfiles {
+        UUID Id PK
+        UUID UserId FK_UK "AspNetUsers (1:1)"
+        string DisplayName "NVARCHAR(200)"
+        string AvatarUrl "NVARCHAR(500)"
+        string Timezone "NVARCHAR(50)"
+        datetime CreatedAt
+        datetime UpdatedAt
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 2: STORAGE (File Management)
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    StorageFiles {
+        UUID Id PK
+        UUID OwnerId FK "AspNetUsers"
+        string FileName "VARCHAR(255)"
+        string ContentType "VARCHAR(100)"
+        bigint FileSize "bytes"
+        enum StorageProvider "Local|AzureBlob|AwsS3"
+        string BucketName "VARCHAR(100)"
+        string StoragePath "VARCHAR(500)"
+        string PublicUrl "VARCHAR(1000)"
+        string Checksum "VARCHAR(64) SHA256"
+        enum FileCategory "ApiSpec|Report|Export"
+        boolean IsDeleted
+        datetime DeletedAt
+        datetime CreatedAt
+        datetime ExpiresAt
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 3: API DOCUMENTATION
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    Projects {
+        UUID Id PK
+        UUID OwnerId FK "AspNetUsers"
+        UUID ActiveSpecId FK "ApiSpecifications"
+        string Name "VARCHAR(200)"
+        text Description
+        string BaseUrl "VARCHAR(500)"
+        enum Status "Active|Archived"
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+    }
+    
+    ApiSpecifications {
+        UUID Id PK
+        UUID ProjectId FK "Projects"
+        UUID OriginalFileId FK "StorageFiles"
+        string Name "VARCHAR(200)"
+        enum SourceType "OpenAPI|Postman|Manual|cURL"
+        string Version "VARCHAR(50)"
+        boolean IsActive
+        datetime ParsedAt
+        enum ParseStatus "Pending|Success|Failed"
+        json ParseErrors
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+    }
+    
+    ApiEndpoints {
+        UUID Id PK
+        UUID ApiSpecId FK "ApiSpecifications"
+        enum HttpMethod "GET|POST|PUT|DELETE|PATCH"
+        string Path "VARCHAR(500)"
+        string OperationId "VARCHAR(200)"
+        string Summary "VARCHAR(500)"
+        text Description
+        array Tags "VARCHAR[]"
+        boolean IsDeprecated
+        datetime CreatedDateTime
+    }
+    
+    EndpointParameters {
+        UUID Id PK
+        UUID EndpointId FK "ApiEndpoints"
+        string Name "VARCHAR(100)"
+        enum Location "Path|Query|Header|Body"
+        string DataType "VARCHAR(50)"
+        string Format "VARCHAR(50)"
+        boolean IsRequired
+        text DefaultValue
+        json Schema "JSON Schema"
+        json Examples
+    }
+    
+    EndpointResponses {
+        UUID Id PK
+        UUID EndpointId FK "ApiEndpoints"
+        int StatusCode "200|400|401|404|500"
+        text Description
+        json Schema "Response JSON Schema"
+        json Examples
+        json Headers
+    }
+    
+    EndpointSecurityReqs {
+        UUID Id PK
+        UUID EndpointId FK "ApiEndpoints"
+        enum SecurityType "Bearer|ApiKey|OAuth2|Basic"
+        string SchemeName "VARCHAR(100)"
+        array Scopes "VARCHAR[]"
+    }
+    
+    SecuritySchemes {
+        UUID Id PK
+        UUID ApiSpecId FK "ApiSpecifications"
+        string Name "VARCHAR(100)"
+        enum Type "http|apiKey|oauth2|openIdConnect"
+        string Scheme "VARCHAR(50)"
+        string BearerFormat "VARCHAR(50)"
+        enum In "header|query|cookie"
+        string ParameterName "VARCHAR(100)"
+        json Configuration
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 4: TEST GENERATION
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    TestSuites {
+        UUID Id PK
+        UUID ProjectId FK "Projects"
+        UUID ApiSpecId FK "ApiSpecifications (nullable)"
+        string Name "VARCHAR(200)"
+        text Description
+        enum GenerationType "Auto|Manual|LLMAssisted"
+        enum Status "Draft|Ready|Archived"
+        UUID CreatedById FK "AspNetUsers"
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+    }
+    
+    TestCases {
+        UUID Id PK
+        UUID TestSuiteId FK "TestSuites"
+        UUID EndpointId FK "ApiEndpoints (nullable)"
+        string Name "VARCHAR(200)"
+        text Description
+        enum TestType "HappyPath|Boundary|Negative"
+        enum Priority "Critical|High|Medium|Low"
+        boolean IsEnabled
+        UUID DependsOnId FK "TestCases (self-ref)"
+        int OrderIndex
+        array Tags "VARCHAR[]"
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+    }
+    
+    TestCaseRequests {
+        UUID Id PK
+        UUID TestCaseId FK_UK "TestCases (1:1)"
+        enum HttpMethod "GET|POST|PUT|DELETE|PATCH"
+        string Url "VARCHAR(1000)"
+        json Headers
+        json PathParams
+        json QueryParams
+        enum BodyType "JSON|FormData|UrlEncoded|Raw"
+        text Body
+        int Timeout "milliseconds"
+    }
+    
+    TestCaseExpectations {
+        UUID Id PK
+        UUID TestCaseId FK_UK "TestCases (1:1)"
+        array ExpectedStatus "INT[]"
+        json ResponseSchema
+        json HeaderChecks
+        array BodyContains "VARCHAR[]"
+        array BodyNotContains "VARCHAR[]"
+        json JsonPathChecks
+        int MaxResponseTime "milliseconds"
+    }
+    
+    TestCaseVariables {
+        UUID Id PK
+        UUID TestCaseId FK "TestCases"
+        string VariableName "VARCHAR(100)"
+        enum ExtractFrom "ResponseBody|ResponseHeader|Status"
+        string JsonPath "VARCHAR(500)"
+        string HeaderName "VARCHAR(100)"
+        string Regex "VARCHAR(500)"
+        text DefaultValue
+    }
+    
+    TestDataSets {
+        UUID Id PK
+        UUID TestCaseId FK "TestCases"
+        string Name "VARCHAR(100)"
+        json Data "Data-driven testing"
+        boolean IsEnabled
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 5: TEST EXECUTION
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    ExecutionEnvironments {
+        UUID Id PK
+        UUID ProjectId FK "Projects"
+        string Name "VARCHAR(100)"
+        string BaseUrl "VARCHAR(500)"
+        json Variables
+        json Headers
+        json AuthConfig "encrypted"
+        boolean IsDefault
+        datetime CreatedDateTime
+    }
+    
+    TestRuns {
+        UUID Id PK
+        UUID TestSuiteId FK "TestSuites"
+        UUID EnvironmentId FK "ExecutionEnvironments"
+        UUID TriggeredById FK "AspNetUsers"
+        int RunNumber "auto-increment per suite"
+        enum Status "Pending|Running|Completed|Failed|Cancelled"
+        datetime StartedAt
+        datetime CompletedAt
+        int TotalTests
+        int PassedCount
+        int FailedCount
+        int SkippedCount
+        bigint DurationMs
+        string RedisKey "VARCHAR(200)"
+        datetime ResultsExpireAt
+        datetime CreatedDateTime
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 6: TEST REPORTING
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    TestReports {
+        UUID Id PK
+        UUID TestRunId FK "TestRuns"
+        UUID GeneratedById FK "AspNetUsers"
+        UUID FileId FK "StorageFiles"
+        enum ReportType "Summary|Detailed|Coverage"
+        enum Format "PDF|CSV|JSON|HTML"
+        datetime GeneratedAt
+        datetime ExpiresAt
+    }
+    
+    CoverageMetrics {
+        UUID Id PK
+        UUID TestRunId FK "TestRuns"
+        int TotalEndpoints
+        int TestedEndpoints
+        decimal CoveragePercent "DECIMAL(5,2)"
+        json ByMethod
+        json ByTag
+        array UncoveredPaths "VARCHAR[]"
+        datetime CalculatedAt
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 7: SUBSCRIPTION & BILLING
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    SubscriptionPlans {
+        UUID Id PK
+        string Name "VARCHAR(100)"
+        string DisplayName "VARCHAR(200)"
+        text Description
+        decimal PriceMonthly "DECIMAL(10,2)"
+        decimal PriceYearly "DECIMAL(10,2)"
+        string Currency "VARCHAR(3)"
+        boolean IsActive
+        int SortOrder
+    }
+    
+    PlanLimits {
+        UUID Id PK
+        UUID PlanId FK "SubscriptionPlans"
+        enum LimitType "MaxProjects|MaxEndpoints|MaxTestRuns|..."
+        int LimitValue
+        boolean IsUnlimited
+    }
+    
+    UserSubscriptions {
+        UUID Id PK
+        UUID UserId FK "AspNetUsers"
+        UUID PlanId FK "SubscriptionPlans"
+        enum Status "Trial|Active|PastDue|Cancelled|Expired"
+        enum BillingCycle "Monthly|Yearly"
+        date StartDate
+        date EndDate
+        date NextBillingDate
+        datetime TrialEndsAt
+        datetime CancelledAt
+        boolean AutoRenew
+        string ExternalSubId "Stripe subscription ID"
+        string ExternalCustId "Stripe customer ID"
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+    }
+    
+    SubscriptionHistories {
+        UUID Id PK
+        UUID SubscriptionId FK "UserSubscriptions"
+        UUID OldPlanId FK "SubscriptionPlans (nullable)"
+        UUID NewPlanId FK "SubscriptionPlans"
+        enum ChangeType "Created|Upgraded|Downgraded|Cancelled|Reactivated"
+        text ChangeReason
+        date EffectiveDate
+        datetime CreatedAt
+    }
+    
+    UsageTracking {
+        UUID Id PK
+        UUID UserId FK "AspNetUsers"
+        date PeriodStart
+        date PeriodEnd
+        int ProjectCount
+        int EndpointCount
+        int TestSuiteCount
+        int TestCaseCount
+        int TestRunCount
+        int LlmCallCount
+        decimal StorageUsedMB "DECIMAL(10,2)"
+        datetime UpdatedAt
+    }
+    
+    PaymentTransactions {
+        UUID Id PK
+        UUID UserId FK "AspNetUsers"
+        UUID SubscriptionId FK "UserSubscriptions"
+        decimal Amount "DECIMAL(10,2)"
+        string Currency "VARCHAR(3)"
+        enum Status "Pending|Succeeded|Failed|Refunded"
+        string PaymentMethod "VARCHAR(50)"
+        string ExternalTxnId "Stripe payment intent ID"
+        string InvoiceUrl "VARCHAR(500)"
+        text FailureReason
+        datetime CreatedDateTime
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% MODULE 8: LLM ASSISTANT
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    LlmInteractions {
+        UUID Id PK
+        UUID UserId FK "AspNetUsers"
+        enum InteractionType "ScenarioSuggestion|FailureExplanation|DocParsing"
+        text InputContext
+        text LlmResponse
+        string ModelUsed "VARCHAR(100)"
+        int TokensUsed
+        int LatencyMs
+        datetime CreatedDateTime
+    }
+    
+    LlmSuggestionCache {
+        UUID Id PK
+        UUID EndpointId FK "ApiEndpoints"
+        enum SuggestionType "BoundaryCase|NegativeCase"
+        string CacheKey "VARCHAR(500)"
+        json Suggestions
+        datetime ExpiresAt
+        datetime CreatedDateTime
+    }
+    
+    %% ═══════════════════════════════════════════════════════════════════════
+    %% RELATIONSHIPS
+    %% ═══════════════════════════════════════════════════════════════════════
+    
+    %% Identity Relationships
+    AspNetUsers ||--o{ AspNetUserRoles : has
+    AspNetRoles ||--o{ AspNetUserRoles : assigned_to
+    AspNetUsers ||--o{ AspNetUserClaims : has
+    AspNetUsers ||--o{ AspNetUserLogins : has
+    AspNetUsers ||--o{ AspNetUserTokens : has
+    AspNetRoles ||--o{ AspNetRoleClaims : has
+    AspNetUsers ||--o| UserProfiles : has
+    
+    %% Storage Relationships
+    AspNetUsers ||--o{ StorageFiles : uploads
+    
+    %% Project & API Documentation Relationships
+    AspNetUsers ||--o{ Projects : owns
+    Projects ||--o{ ApiSpecifications : contains
+    Projects ||--o| ApiSpecifications : active_spec
+    StorageFiles ||--o| ApiSpecifications : original_file
+    ApiSpecifications ||--o{ ApiEndpoints : defines
+    ApiSpecifications ||--o{ SecuritySchemes : includes
+    ApiEndpoints ||--o{ EndpointParameters : has
+    ApiEndpoints ||--o{ EndpointResponses : returns
+    ApiEndpoints ||--o{ EndpointSecurityReqs : requires
+    
+    %% Test Generation Relationships
+    Projects ||--o{ TestSuites : has
+    ApiSpecifications ||--o{ TestSuites : referenced_by
+    AspNetUsers ||--o{ TestSuites : creates
+    TestSuites ||--o{ TestCases : contains
+    ApiEndpoints ||--o{ TestCases : tested_by
+    TestCases ||--o| TestCases : depends_on
+    TestCases ||--|| TestCaseRequests : defines_request
+    TestCases ||--|| TestCaseExpectations : defines_expectations
+    TestCases ||--o{ TestCaseVariables : extracts
+    TestCases ||--o{ TestDataSets : uses
+    
+    %% Test Execution Relationships
+    Projects ||--o{ ExecutionEnvironments : configures
+    TestSuites ||--o{ TestRuns : executed_as
+    ExecutionEnvironments ||--o{ TestRuns : used_in
+    AspNetUsers ||--o{ TestRuns : triggers
+    
+    %% Test Reporting Relationships
+    TestRuns ||--o| TestReports : generates
+    TestRuns ||--o| CoverageMetrics : calculates
+    AspNetUsers ||--o{ TestReports : generates
+    StorageFiles ||--o| TestReports : stores
+    
+    %% Subscription Relationships
+    SubscriptionPlans ||--o{ PlanLimits : defines
+    SubscriptionPlans ||--o{ UserSubscriptions : subscribed_to
+    AspNetUsers ||--o| UserSubscriptions : has
+    UserSubscriptions ||--o{ SubscriptionHistories : tracks
+    SubscriptionPlans ||--o{ SubscriptionHistories : old_plan
+    SubscriptionPlans ||--o{ SubscriptionHistories : new_plan
+    AspNetUsers ||--o{ UsageTracking : tracked_for
+    AspNetUsers ||--o{ PaymentTransactions : pays
+    UserSubscriptions ||--o{ PaymentTransactions : for
+    
+    %% LLM Assistant Relationships
+    AspNetUsers ||--o{ LlmInteractions : uses
+    ApiEndpoints ||--o{ LlmSuggestionCache : cached_for
+```
+
+### 8.2 Table Naming Convention
+
+| Convention | Example | Rule |
+|------------|---------|------|
+| **Identity Tables** | `AspNetUsers`, `AspNetRoles` | Prefix `AspNet` (built-in) |
+| **Business Tables** | `Projects`, `TestSuites` | PascalCase, Plural |
+| **Junction Tables** | `AspNetUserRoles` | Combine both entity names |
+| **History Tables** | `SubscriptionHistories` | Suffix `Histories` |
+| **Metrics Tables** | `CoverageMetrics`, `UsageTracking` | Descriptive name |
+
+### 8.3 Table Count Summary
+
+| Module | Table Count | Tables |
+|--------|-------------|--------|
+| **Identity** | 8 | AspNetUsers, AspNetRoles, AspNetUserRoles, AspNetUserClaims, AspNetUserLogins, AspNetUserTokens, AspNetRoleClaims, UserProfiles |
+| **Storage** | 1 | StorageFiles |
+| **ApiDocumentation** | 7 | Projects, ApiSpecifications, ApiEndpoints, EndpointParameters, EndpointResponses, EndpointSecurityReqs, SecuritySchemes |
+| **TestGeneration** | 6 | TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables, TestDataSets |
+| **TestExecution** | 2 | ExecutionEnvironments, TestRuns |
+| **TestReporting** | 2 | TestReports, CoverageMetrics |
+| **Subscription** | 6 | SubscriptionPlans, PlanLimits, UserSubscriptions, SubscriptionHistories, UsageTracking, PaymentTransactions |
+| **LlmAssistant** | 2 | LlmInteractions, LlmSuggestionCache |
+| **TOTAL** | **34** | |

@@ -10,6 +10,21 @@ public class FileEntryConfiguration : IEntityTypeConfiguration<FileEntry>
     {
         builder.ToTable("FileEntries");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+
+        // New ERD properties
+        builder.Property(x => x.ContentType).HasMaxLength(100);
+        builder.Property(x => x.FileCategory).HasDefaultValue(FileCategory.Attachment);
+
+        // Indexes
+        builder.HasIndex(x => x.OwnerId);
+        builder.HasIndex(x => x.FileCategory);
+        builder.HasIndex(x => x.Deleted);
+
+        // Ignore computed properties (aliases)
+        builder.Ignore(x => x.FileSize);
+        builder.Ignore(x => x.StoragePath);
+        builder.Ignore(x => x.IsDeleted);
+        builder.Ignore(x => x.DeletedAt);
     }
 }
 
