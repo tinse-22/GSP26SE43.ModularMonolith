@@ -603,6 +603,179 @@ ORDER BY e.Path, e.HttpMethod;
 └─────────────────────────────────────────┘
 ```
 
+### 3.4.1 Human Validation & Test Order Management
+
+Hệ thống hỗ trợ:
+1. **AI đề xuất thứ tự test** → User review/approve/modify trước khi chạy
+2. **User tự custom thứ tự** → Ghi đè AI suggestion
+3. **Version history** → Track mọi thay đổi
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TEST ORDER PROPOSAL & APPROVAL FLOW                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   AI generates test cases
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 1: AI Proposes Test Execution Order                             │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  TestOrderProposals                                             │  │
+   │  │  • Source: Ai                                                   │  │
+   │  │  • Status: Pending                                              │  │
+   │  │  • ProposedOrder: [                                             │  │
+   │  │      {TestCaseId: "login", Order: 1, Reason: "Auth first"},     │  │
+   │  │      {TestCaseId: "get-users", Order: 2, Reason: "Need token"}, │  │
+   │  │      {TestCaseId: "create-user", Order: 3, Reason: "CRUD ops"}  │  │
+   │  │    ]                                                            │  │
+   │  │  • AiReasoning: "Login first for token, then protected APIs"    │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 2: Human Review (Required before execution)                     │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  TestSuites                                                     │  │
+   │  │  • ApprovalStatus: PendingReview (cannot execute until Approved)│  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   │                                                                       │
+   │  User can:                                                            │
+   │  ├── ✅ Approve as-is → Status: Approved                             │
+   │  ├── ✏️  Modify order → Status: ModifiedAndApproved                   │
+   │  │       User drags/drops to reorder tests                           │
+   │  │       UserModifiedOrder: [{TestCaseId: "...", Order: N}, ...]     │
+   │  └── ❌ Reject → Status: Rejected (request new proposal)             │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 3: Apply Order to TestCases                                     │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  TestCases (updated)                                            │  │
+   │  │  • OrderIndex: AI's original suggestion                         │  │
+   │  │  • CustomOrderIndex: User's modified order (if changed)         │  │
+   │  │  • IsOrderCustomized: true/false                                │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   │                                                                       │
+   │  Execution uses: CustomOrderIndex ?? OrderIndex                       │
+   └───────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+   ┌───────────────────────────────────────────────────────────────────────┐
+   │  STEP 4: Version History (Automatic)                                  │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  TestSuiteVersions                                              │  │
+   │  │  • VersionNumber: 2                                             │  │
+   │  │  • ChangeType: UserOrderCustomized                              │  │
+   │  │  • ChangedById: user-guid                                       │  │
+   │  │  • TestCaseOrderSnapshot: [current order state]                 │  │
+   │  │  • PreviousState: [AI order]                                    │  │
+   │  │  • NewState: [User modified order]                              │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   │                                                                       │
+   │  ┌─────────────────────────────────────────────────────────────────┐  │
+   │  │  TestCaseChangeLogs (per test case change)                      │  │
+   │  │  • ChangeType: UserCustomizedOrder                              │  │
+   │  │  • FieldName: "CustomOrderIndex"                                │  │
+   │  │  • OldValue: null                                               │  │
+   │  │  • NewValue: "3"                                                │  │
+   │  │  • ChangedById: user-guid                                       │  │
+   │  └─────────────────────────────────────────────────────────────────┘  │
+   └───────────────────────────────────────────────────────────────────────┘
+```
+
+**New Entities for Test Order Management:**
+
+```
+┌─────────────────────────────────────────┐
+│         TestOrderProposals               │  (NEW - Human Validation)
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  TestSuiteId     : GUID → TestSuites │
+│     ProposalNumber  : INT               │ ← Sequential per suite
+│     Source          : ENUM              │ ← Ai/User/System/Imported
+│     Status          : ENUM              │ ← Pending/Approved/Rejected/Modified
+│     ProposedOrder   : JSONB             │ ← [{TestCaseId, Order, Reason}]
+│     AiReasoning     : TEXT              │ ← AI explanation
+│     ConsideredFactors: JSONB            │ ← {dependencies, authFlow, etc.}
+│     ReviewedById    : GUID → AspNetUsers│
+│     ReviewedAt      : TIMESTAMP         │
+│     ReviewNotes     : TEXT              │ ← User feedback
+│     UserModifiedOrder: JSONB            │ ← User's custom order
+│     AppliedOrder    : JSONB             │ ← Final applied order
+│     AppliedAt       : TIMESTAMP         │
+│     LlmModel        : VARCHAR(100)      │
+│     TokensUsed      : INT               │
+│     CreatedDateTime : TIMESTAMP         │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│         TestSuiteVersions                │  (NEW - Version History)
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  TestSuiteId     : GUID → TestSuites │
+│     VersionNumber   : INT               │
+│     ChangedById     : GUID → AspNetUsers│
+│     ChangeType      : ENUM              │ ← Created/TestOrderChanged/etc.
+│     ChangeDescription: TEXT             │
+│     TestCaseOrderSnapshot: JSONB        │ ← Order at this version
+│     ApprovalStatusSnapshot: ENUM        │
+│     PreviousState   : JSONB             │
+│     NewState        : JSONB             │
+│     CreatedDateTime : TIMESTAMP         │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│         TestCaseChangeLogs               │  (NEW - Audit Trail)
+├─────────────────────────────────────────┤
+│ PK  Id              : GUID              │
+│ FK  TestCaseId      : GUID → TestCases  │
+│     ChangedById     : GUID → AspNetUsers│
+│     ChangeType      : ENUM              │ ← OrderChanged/NameChanged/etc.
+│     FieldName       : VARCHAR(100)      │
+│     OldValue        : TEXT              │
+│     NewValue        : TEXT              │
+│     ChangeReason    : TEXT              │
+│     VersionAfterChange: INT             │
+│     IpAddress       : VARCHAR(45)       │
+│     UserAgent       : VARCHAR(500)      │
+│     CreatedDateTime : TIMESTAMP         │
+└─────────────────────────────────────────┘
+```
+
+**Updated TestSuite Entity:**
+
+```
+┌─────────────────────────────────────────┐
+│              TestSuites                  │  (UPDATED)
+├─────────────────────────────────────────┤
+│ ...existing fields...                   │
+│     ApprovalStatus  : ENUM              │ ← NEW: NotApplicable/PendingReview/
+│                                         │        Approved/Rejected/ModifiedAndApproved
+│     ApprovedById    : GUID → AspNetUsers│ ← NEW: Who approved
+│     ApprovedAt      : TIMESTAMP         │ ← NEW: When approved
+│     Version         : INT               │ ← NEW: Current version number
+│     LastModifiedById: GUID → AspNetUsers│ ← NEW: Last modifier
+└─────────────────────────────────────────┘
+```
+
+**Updated TestCase Entity:**
+
+```
+┌─────────────────────────────────────────┐
+│              TestCases                   │  (UPDATED)
+├─────────────────────────────────────────┤
+│ ...existing fields...                   │
+│     OrderIndex      : INT               │ ← AI-suggested order
+│     CustomOrderIndex: INT               │ ← NEW: User-customized order (nullable)
+│     IsOrderCustomized: BOOLEAN          │ ← NEW: True if user changed order
+│     LastModifiedById: GUID → AspNetUsers│ ← NEW: Last modifier
+│     Version         : INT               │ ← NEW: Current version number
+└─────────────────────────────────────────┘
+```
+
 ---
 
 ### 3.5 TestExecution Module
@@ -1053,7 +1226,7 @@ public class TestResultCleanupJob : IHostedService
 | Identity (ASP.NET Core Identity) | AspNetUsers, AspNetRoles, AspNetUserRoles, AspNetUserClaims, AspNetUserLogins, AspNetUserTokens, AspNetRoleClaims, UserProfiles (optional) |
 | **Storage** | **FileEntries** |
 | ApiDocumentation | Projects, ApiSpecifications, ApiEndpoints, EndpointParameters, EndpointResponses, EndpointSecurityReqs, SecuritySchemes |
-| TestGeneration | TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables, TestDataSets |
+| TestGeneration | TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables, TestDataSets, **TestSuiteVersions**, **TestCaseChangeLogs**, **TestOrderProposals** |
 | TestExecution | ExecutionEnvironments, TestRuns (summary only) |
 | TestReporting | TestReports, CoverageMetrics |
 | Subscription | SubscriptionPlans, PlanLimits, UserSubscriptions, SubscriptionHistories, UsageTracking, PaymentTransactions |

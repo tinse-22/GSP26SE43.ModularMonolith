@@ -55,9 +55,29 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     public int OrderIndex { get; set; }
 
     /// <summary>
+    /// User-customized order (NULL = use AI/default order).
+    /// </summary>
+    public int? CustomOrderIndex { get; set; }
+
+    /// <summary>
+    /// Whether the order was customized by user (vs AI-suggested).
+    /// </summary>
+    public bool IsOrderCustomized { get; set; }
+
+    /// <summary>
     /// Tags for categorization (stored as JSON array).
     /// </summary>
     public string Tags { get; set; }
+
+    /// <summary>
+    /// Last user who modified this test case.
+    /// </summary>
+    public Guid? LastModifiedById { get; set; }
+
+    /// <summary>
+    /// Current version number.
+    /// </summary>
+    public int Version { get; set; } = 1;
 
     // Navigation properties
     public TestSuite TestSuite { get; set; }
@@ -66,6 +86,7 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     public TestCaseExpectation Expectation { get; set; }
     public ICollection<TestCaseVariable> Variables { get; set; } = new List<TestCaseVariable>();
     public ICollection<TestDataSet> DataSets { get; set; } = new List<TestDataSet>();
+    public ICollection<TestCaseChangeLog> ChangeLogs { get; set; } = new List<TestCaseChangeLog>();
 }
 
 public enum TestType

@@ -27,9 +27,20 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
             .HasMaxLength(20)
             .IsRequired();
 
+        builder.Property(x => x.ApprovalStatus)
+            .HasConversion<string>()
+            .HasMaxLength(30)
+            .IsRequired();
+
+        builder.Property(x => x.Version)
+            .HasDefaultValue(1);
+
         builder.HasIndex(x => x.ProjectId);
         builder.HasIndex(x => x.ApiSpecId);
         builder.HasIndex(x => x.CreatedById);
         builder.HasIndex(x => x.Status);
+        builder.HasIndex(x => x.ApprovalStatus);
+        builder.HasIndex(x => x.ApprovedById);
+        builder.HasIndex(x => x.LastModifiedById);
     }
 }
