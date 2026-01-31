@@ -389,7 +389,16 @@ app.UseCors(appSettings.CORS.AllowAnyOrigin ? "AllowAnyOrigin" : "AllowedOrigins
 
 app.UseSwagger();
 
-app.MapScalarApiReference();
+app.UseSwaggerUI(setupAction =>
+{
+    setupAction.SwaggerEndpoint("/swagger/ClassifiedAds/swagger.json", "ClassifiedAds API");
+    setupAction.RoutePrefix = "swagger";
+});
+
+app.MapScalarApiReference(options =>
+{
+    options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
