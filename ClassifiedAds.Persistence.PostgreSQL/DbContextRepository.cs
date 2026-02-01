@@ -47,13 +47,13 @@ public class DbContextRepository<TDbContext, TEntity, TKey> : IRepository<TEntit
 
     public async Task AddAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
-        entity.CreatedDateTime = _dateTimeProvider.OffsetNow;
+        entity.CreatedDateTime = _dateTimeProvider.OffsetUtcNow;
         await DbSet.AddAsync(entity, cancellationToken);
     }
 
     public Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
-        entity.UpdatedDateTime = _dateTimeProvider.OffsetNow;
+        entity.UpdatedDateTime = _dateTimeProvider.OffsetUtcNow;
         return Task.CompletedTask;
     }
 
