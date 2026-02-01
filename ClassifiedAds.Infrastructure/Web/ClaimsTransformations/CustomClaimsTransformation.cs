@@ -30,7 +30,7 @@ public class CustomClaimsTransformation : IClaimsTransformation
 
         if (Guid.TryParse(userClaim?.Value, out var userId))
         {
-            var issuedAt = principal.Claims.FirstOrDefault(x => x.Type == "iat").Value;
+            var issuedAt = principal.Claims.FirstOrDefault(x => x.Type == "iat")?.Value ?? "default";
 
             var cacheKey = $"permissions/{userId}/{issuedAt}";
 
