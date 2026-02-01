@@ -23,6 +23,7 @@ using Microsoft.OpenApi;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ClassifiedAds.WebAPI - REST API Host
@@ -204,12 +205,13 @@ services.AddAuditLogModule(opt =>
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.Configuration.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
-.AddIdentityModuleCore(opt =>
+.AddIdentityModule(opt =>
 {
     configuration.GetSection("Modules:Identity").Bind(opt);
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.Identity.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
+.AddHttpCurrentUser()
 .AddNotificationModule(opt =>
 {
     configuration.GetSection("Modules:Notification").Bind(opt);
@@ -270,6 +272,8 @@ services.AddAuthentication(options =>
         "Jwt" => "Jwt",
         _ => JwtBearerDefaults.AuthenticationScheme
     };
+    options.DefaultChallengeScheme = options.DefaultScheme;
+    options.DefaultAuthenticateScheme = options.DefaultScheme;
 })
 .AddJwtBearer(options =>
 {
@@ -279,12 +283,33 @@ services.AddAuthentication(options =>
 })
 .AddJwtBearer("Jwt", options =>
 {
+    // Use same symmetric key as JwtTokenService for HMAC-SHA256 validation
+    var secretKey = "ClassifiedAds-Super-Secret-Key-For-JWT-Token-Generation-2026!@#$%";
+    var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(secretKey));
+    
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidIssuer = appSettings.Authentication.Jwt.IssuerUri,
         ValidAudience = appSettings.Authentication.Jwt.Audience,
-        TokenDecryptionKey = new X509SecurityKey(appSettings.Authentication.Jwt.TokenDecryptionCertificate.FindCertificate()),
-        IssuerSigningKey = new X509SecurityKey(appSettings.Authentication.Jwt.IssuerSigningCertificate.FindCertificate()),
+        IssuerSigningKey = key,
+        ValidateIssuerSigningKey = true,
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+    };
+    
+    options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
+        {
+            Console.WriteLine($"JWT Auth Failed: {context.Exception.Message}");
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
+            return Task.CompletedTask;
+        }
     };
 });
 
