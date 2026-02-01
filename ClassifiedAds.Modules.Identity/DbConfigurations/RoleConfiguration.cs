@@ -1,4 +1,5 @@
-﻿using ClassifiedAds.Modules.Identity.Entities;
+﻿using System;
+using ClassifiedAds.Modules.Identity.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -18,5 +19,23 @@ public class RoleConfiguration : IEntityTypeConfiguration<Role>
         builder.HasMany(x => x.UserRoles)
             .WithOne(x => x.Role)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Seed Roles
+        builder.HasData(
+            new Role
+            {
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+                Name = "Admin",
+                NormalizedName = "ADMIN",
+                ConcurrencyStamp = "00000000-0000-0000-0000-000000000001",
+            },
+            new Role
+            {
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000002"),
+                Name = "User",
+                NormalizedName = "USER",
+                ConcurrencyStamp = "00000000-0000-0000-0000-000000000002",
+            }
+        );
     }
 }

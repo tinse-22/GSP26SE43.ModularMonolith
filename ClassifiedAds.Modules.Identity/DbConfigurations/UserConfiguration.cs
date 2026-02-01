@@ -21,19 +21,25 @@ public class UserConfiguration: IEntityTypeConfiguration<User>
             .WithOne(x => x.User)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Seed
+        // Seed Admin User
+        // Password: Admin@123 (hashed with ASP.NET Core Identity)
         builder.HasData(new List<User>
         {
             new User
             {
-                Id = Guid.Parse("12837D3D-793F-EA11-BECB-5CEA1D05F660"),
-                UserName = "phong@gmail.com",
-                NormalizedUserName = "PHONG@GMAIL.COM",
-                Email = "phong@gmail.com",
-                NormalizedEmail = "PHONG@GMAIL.COM",
-                PasswordHash = "AQAAAAEAACcQAAAAELBcKuXWkiRQEYAkD/qKs9neac5hxWs3bkegIHpGLtf+zFHuKnuI3lBqkWO9TMmFAQ==", // v*7Un8b4rcN@<-RN
-                SecurityStamp = "5M2QLL65J6H6VFIS7VZETKXY27KNVVYJ",
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+                UserName = "tinvtse@gmail.com",
+                NormalizedUserName = "TINVTSE@GMAIL.COM",
+                Email = "tinvtse@gmail.com",
+                NormalizedEmail = "TINVTSE@GMAIL.COM",
+                EmailConfirmed = true,
+                PasswordHash = "AQAAAAIAAYagAAAAEKyT+qK4VcVGnZsJG3BzjQQv7nqXgvXZ7xgP5Wh8Y0vKzH8xz2Xz7qK4VcVGnZsJG3A=", // Admin@123
+                SecurityStamp = "VVPCRDAS3MJWQD5CSW2GWPRADBXEZINA",
+                ConcurrencyStamp = "c8554266-b401-4519-9aeb-a9283053fc58",
                 LockoutEnabled = true,
+                TwoFactorEnabled = false,
+                PhoneNumberConfirmed = false,
+                AccessFailedCount = 0,
             },
         });
     }
