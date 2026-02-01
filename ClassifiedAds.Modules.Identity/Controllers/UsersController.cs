@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 
@@ -29,12 +30,14 @@ public class UsersController : ControllerBase
 {
     private readonly Dispatcher _dispatcher;
     private readonly UserManager<User> _userManager;
+    private readonly RoleManager<Role> _roleManager;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IEmailMessageService _emailMessageService;
     private readonly IdentityModuleOptions _moduleOptions;
 
     public UsersController(Dispatcher dispatcher,
         UserManager<User> userManager,
+        RoleManager<Role> roleManager,
         ILogger<UsersController> logger,
         IDateTimeProvider dateTimeProvider,
         IEmailMessageService emailMessageService,
@@ -42,6 +45,7 @@ public class UsersController : ControllerBase
     {
         _dispatcher = dispatcher;
         _userManager = userManager;
+        _roleManager = roleManager;
         _dateTimeProvider = dateTimeProvider;
         _emailMessageService = emailMessageService;
         _moduleOptions = moduleOptions.Value;
@@ -71,27 +75,86 @@ public class UsersController : ControllerBase
     [HttpPost]
     [Consumes("application/json")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<ActionResult<User>> Post([FromBody] UserModel model)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<UserModel>> Post([FromBody] CreateUserModel model)
     {
-        User user = new User
+        // Validate role exists
+        var roleName = string.IsNullOrWhiteSpace(model.RoleName) ? "User" : model.RoleName;
+        var role = await _roleManager.FindByNameAsync(roleName);
+        if (role == null)
         {
-            UserName = model.UserName,
-            NormalizedUserName = model.UserName.ToUpper(),
+            return BadRequest(new { Error = $"Role '{roleName}' does not exist." });
+        }
+
+        // Check if email already exists
+        var existingUser = await _userManager.FindByEmailAsync(model.Email);
+        if (existingUser != null)
+        {
+            return BadRequest(new { Error = "Email is already registered." });
+        }
+
+        // Admin role: EmailConfirmed = true (no email verification)
+        // User role: EmailConfirmed = false (requires email verification)
+        var isAdmin = roleName.Equals("Admin", StringComparison.OrdinalIgnoreCase);
+
+        var user = new User
+        {
+            UserName = model.UserName ?? model.Email,
+            NormalizedUserName = (model.UserName ?? model.Email).ToUpper(),
             Email = model.Email,
             NormalizedEmail = model.Email.ToUpper(),
-            EmailConfirmed = model.EmailConfirmed,
+            EmailConfirmed = isAdmin,
             PhoneNumber = model.PhoneNumber,
-            PhoneNumberConfirmed = model.PhoneNumberConfirmed,
-            TwoFactorEnabled = model.TwoFactorEnabled,
-            LockoutEnabled = model.LockoutEnabled,
-            LockoutEnd = model.LockoutEnd,
-            AccessFailedCount = model.AccessFailedCount,
+            PhoneNumberConfirmed = false,
+            TwoFactorEnabled = false,
+            LockoutEnabled = true,
+            AccessFailedCount = 0,
         };
 
-        _ = await _userManager.CreateAsync(user);
+        // Create user with password
+        var result = await _userManager.CreateAsync(user, model.Password);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
 
-        model = user.ToModel();
-        return Created($"/api/users/{model.Id}", model);
+        // Assign role to user
+        var roleResult = await _userManager.AddToRoleAsync(user, roleName);
+        if (!roleResult.Succeeded)
+        {
+            return BadRequest(new { Errors = roleResult.Errors.Select(e => e.Description) });
+        }
+
+        // If User role, send confirmation email
+        if (!isAdmin)
+        {
+            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+            var confirmationUrl = $"{_moduleOptions.IdentityServer.Authority}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+
+            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+            {
+                From = "noreply@classifiedads.com",
+                Tos = user.Email,
+                Subject = "Confirm your email address",
+                Body = $@"
+                    <h2>Welcome to ClassifiedAds!</h2>
+                    <p>Please confirm your email address by clicking the link below:</p>
+                    <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
+                    <p>If you did not create an account, please ignore this email.</p>
+                ",
+            });
+        }
+
+        var userModel = user.ToModel();
+        return Created($"/api/users/{userModel.Id}", new
+        {
+            User = userModel,
+            Role = roleName,
+            EmailConfirmationRequired = !isAdmin,
+            Message = isAdmin
+                ? "Admin user created successfully."
+                : "User created successfully. Please check email to confirm your account."
+        });
     }
 
     [Authorize(Permissions.UpdateUser)]
