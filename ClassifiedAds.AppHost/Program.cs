@@ -23,7 +23,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 // PostgreSQL - Main database server
 // Matches docker-compose: postgres:16, port 5432
 // Credentials can be overridden via appsettings or environment variables
-var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "Postgres123@";
+var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "postgres";
 var postgresUser = builder.Configuration["POSTGRES_USER"] ?? "postgres";
 
 var postgres = builder.AddPostgres("postgres")
@@ -34,9 +34,9 @@ var postgres = builder.AddPostgres("postgres")
     .WithDataVolume("postgres_data")  // Persists data across container restarts
     .WithPgAdmin();                   // Adds PgAdmin UI for database management
 
-// Add the main database (ClassifiedAds)
+// Add the main database (ApiTestLlm)
 // All modules share this database with separate schemas
-var classifiedAdsDb = postgres.AddDatabase("ClassifiedAds");
+var classifiedAdsDb = postgres.AddDatabase("ApiTestLlm");
 
 // RabbitMQ - Message broker with management UI
 // Matches docker-compose: rabbitmq:3-management, ports 5672 (AMQP), 15672 (Management UI)
@@ -80,7 +80,7 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WithReference(classifiedAdsDb)  // Injects ConnectionStrings__ClassifiedAds
     .WithReference(rabbitmq)         // Injects RabbitMQ connection details
     .WithReference(redis)            // Injects Redis connection details
-    // Override appsettings for Aspire environment
+                                     // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
