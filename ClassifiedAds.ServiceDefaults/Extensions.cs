@@ -31,10 +31,10 @@ public static class Extensions
     {
         builder.ConfigureOpenTelemetry();
         builder.AddDefaultHealthChecks();
-        
+
         // Service discovery (automatic DNS/URL resolution for inter-service communication)
         builder.Services.AddServiceDiscovery();
-        
+
         // Configure all HTTP clients with service discovery and resilience
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
@@ -57,13 +57,25 @@ public static class Extensions
     /// </summary>
     public static IHostApplicationBuilder ConfigureOpenTelemetry(this IHostApplicationBuilder builder)
     {
-        // Only enable if not already configured by the application
-        // This preserves existing OpenTelemetry settings in appsettings
-        builder.Logging.AddOpenTelemetry(logging =>
+        // Check if OTLP endpoint is configured (either via Aspire or manual configuration)
+        var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
+
+        // Check if application has its own OpenTelemetry configuration
+        // If so, skip Aspire OTLP config to avoid conflict with signal-specific AddOtlpExporter calls
+        var hasAppOtelConfig =
+            string.Equals(builder.Configuration["Monitoring:OpenTelemetry:IsEnabled"], "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(builder.Configuration["Monitoring:OpenTelemetry:Otlp:IsEnabled"], "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(builder.Configuration["Logging:OpenTelemetry:IsEnabled"], "true", StringComparison.OrdinalIgnoreCase);
+
+        // Only configure OpenTelemetry logging if app doesn't have its own config
+        if (!hasAppOtelConfig)
         {
-            logging.IncludeFormattedMessage = true;
-            logging.IncludeScopes = true;
-        });
+            builder.Logging.AddOpenTelemetry(logging =>
+            {
+                logging.IncludeFormattedMessage = true;
+                logging.IncludeScopes = true;
+            });
+        }
 
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
@@ -78,25 +90,22 @@ public static class Extensions
                 tracing
                     .AddAspNetCoreInstrumentation()   // HTTP request traces
                     .AddHttpClientInstrumentation();  // HTTP client traces
-                    // Note: EF Core instrumentation added by modules via AddMonitoringServices
+                                                      // Note: EF Core instrumentation added by modules via AddMonitoringServices
             });
 
-        // Add OTLP exporters if available (Aspire dashboard or other collector)
-        builder.AddOpenTelemetryExporters();
+        // Add OTLP exporters if available (Aspire dashboard or other collector) and app has no custom config
+        if (useOtlpExporter && !hasAppOtelConfig)
+        {
+            builder.AddOpenTelemetryExporters();
+        }
 
         return builder;
     }
 
     private static IHostApplicationBuilder AddOpenTelemetryExporters(this IHostApplicationBuilder builder)
     {
-        // Check if OTLP endpoint is configured (either via Aspire or manual configuration)
-        var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
-
-        if (useOtlpExporter)
-        {
-            builder.Services.AddOpenTelemetry()
-                .UseOtlpExporter(); // Sends to OTEL_EXPORTER_OTLP_ENDPOINT (Aspire dashboard by default)
-        }
+        builder.Services.AddOpenTelemetry()
+            .UseOtlpExporter(); // Sends to OTEL_EXPORTER_OTLP_ENDPOINT (Aspire dashboard by default)
 
         return builder;
     }
