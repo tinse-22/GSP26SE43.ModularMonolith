@@ -40,11 +40,13 @@ public static class ServiceCollectionExtensions
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
-            .AddScoped(typeof(IUserService), typeof(UserService));
+            .AddScoped(typeof(IUserService), typeof(UserService))
+            .AddScoped<IJwtTokenService, JwtTokenService>();
 
         services.AddIdentity<User, Role>()
                 .AddTokenProviders()
-                .AddPasswordValidators();
+                .AddPasswordValidators()
+                .AddSignInManager<SignInManager<User>>();
 
         services.AddTransient<IUserStore<User>, UserStore>();
         services.AddTransient<IRoleStore<Role>, RoleStore>();
@@ -160,6 +162,13 @@ public static class ServiceCollectionExtensions
     public static IMvcBuilder AddIdentityModule(this IMvcBuilder builder)
     {
         return builder.AddApplicationPart(Assembly.GetExecutingAssembly());
+    }
+
+    public static IServiceCollection AddHttpCurrentUser(this IServiceCollection services)
+    {
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentUser, CurrentWebUser>();
+        return services;
     }
 
     public static void MigrateIdentityDb(this IApplicationBuilder app)
