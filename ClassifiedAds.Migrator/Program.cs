@@ -56,19 +56,16 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
     // ═══════════════════════════════════════════════════════════════════════════════════
     // CRITICAL: Must set MigrationsAssembly to this project so EF Core finds migrations here
     // Pattern: Same as WebAPI/Background but with MigrationsAssembly override
+    // Base Modules: AuditLog (cross-cutting), Identity, Storage
+    // Core Modules: Configuration, Notification, Product
+    // Test Modules: TestGeneration, TestExecution, TestReporting
+    // Business Modules: Subscription
     // ═══════════════════════════════════════════════════════════════════════════════════
 
     services.AddAuditLogModule(opt =>
     {
         configuration.GetSection("Modules:AuditLog").Bind(opt);
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.AuditLog.ConfigurationOptions.ConnectionStringsOptions();
-        opt.ConnectionStrings.Default = sharedConnectionString;
-        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
-    })
-    .AddConfigurationModule(opt =>
-    {
-        configuration.GetSection("Modules:Configuration").Bind(opt);
-        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Configuration.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
@@ -79,6 +76,22 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
+    .AddStorageModule(opt =>
+    {
+        configuration.GetSection("Modules:Storage").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
+    // Configuration Module
+    .AddConfigurationModule(opt =>
+    {
+        configuration.GetSection("Modules:Configuration").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Configuration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
+    // Notification Module
     .AddNotificationModule(opt =>
     {
         configuration.GetSection("Modules:Notification").Bind(opt);
@@ -86,6 +99,7 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
+    // Product Module
     .AddProductModule(opt =>
     {
         configuration.GetSection("Modules:Product").Bind(opt);
@@ -93,10 +107,35 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
-    .AddStorageModule(opt =>
+    // Test Generation Module
+    .AddTestGenerationModule(opt =>
     {
-        configuration.GetSection("Modules:Storage").Bind(opt);
-        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
+        configuration.GetSection("Modules:TestGeneration").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
+    // Test Execution Module
+    .AddTestExecutionModule(opt =>
+    {
+        configuration.GetSection("Modules:TestExecution").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestExecution.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
+    // Test Reporting Module
+    .AddTestReportingModule(opt =>
+    {
+        configuration.GetSection("Modules:TestReporting").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestReporting.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
+    // Subscription Module
+    .AddSubscriptionModule(opt =>
+    {
+        configuration.GetSection("Modules:Subscription").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
@@ -135,12 +174,23 @@ Policy.Handle<Exception>().WaitAndRetry(
 .Execute(() =>
 {
     // Run EF Core migrations for each module DbContext
+    // Base Modules: AuditLog, Identity, Storage
     app.MigrateAuditLogDb();
-    app.MigrateConfigurationDb();
     app.MigrateIdentityDb();
+    app.MigrateStorageDb();
+
+    // Core Modules: Configuration, Notification, Product
+    app.MigrateConfigurationDb();
     app.MigrateNotificationDb();
     app.MigrateProductDb();
-    app.MigrateStorageDb();
+
+    // Test Modules: TestGeneration, TestExecution, TestReporting
+    app.MigrateTestGenerationDb();
+    app.MigrateTestExecutionDb();
+    app.MigrateTestReportingDb();
+
+    // Business Modules: Subscription
+    app.MigrateSubscriptionDb();
 
     // Run DbUp scripts (for supplemental SQL migrations not in EF Core)
     var upgrader = DeployChanges.To

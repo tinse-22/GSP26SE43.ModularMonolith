@@ -51,6 +51,14 @@
       Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
     <ProjectReference
       Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
+    <ProjectReference
+      Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
+    <ProjectReference
+      Include="..\ClassifiedAds.Modules.TestGeneration\ClassifiedAds.Modules.TestGeneration.csproj" />
+    <ProjectReference
+      Include="..\ClassifiedAds.Modules.TestExecution\ClassifiedAds.Modules.TestExecution.csproj" />
+    <ProjectReference
+      Include="..\ClassifiedAds.Modules.TestReporting\ClassifiedAds.Modules.TestReporting.csproj" />
   </ItemGroup>
 
 </Project>
