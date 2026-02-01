@@ -22,21 +22,18 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 // PostgreSQL - Main database server
 // Matches docker-compose: postgres:16, port 5432
-// Credentials can be overridden via appsettings or environment variables
-var postgresPassword = builder.Configuration["POSTGRES_PASSWORD"] ?? "postgres";
-var postgresUser = builder.Configuration["POSTGRES_USER"] ?? "postgres";
-
-var postgres = builder.AddPostgres("postgres")
+// Using fixed password to avoid mismatch issues with persisted volumes
+var postgresPassword = builder.AddParameter("postgres-password", secret: true);
+var postgres = builder.AddPostgres("postgres", password: postgresPassword)
     .WithImage("postgres")
     .WithImageTag("16")
-    .WithEnvironment("POSTGRES_PASSWORD", postgresPassword)
-    .WithEnvironment("POSTGRES_USER", postgresUser)
-    .WithDataVolume("postgres_data")  // Persists data across container restarts
     .WithPgAdmin();                   // Adds PgAdmin UI for database management
+                                      // Note: Not using WithDataVolume to avoid password mismatch issues during development
 
-// Add the main database (ApiTestLlm)
-// All modules share this database with separate schemas
-var classifiedAdsDb = postgres.AddDatabase("ApiTestLlm");
+// Add the main database
+// Using "Default" as database resource name so Aspire injects ConnectionStrings__Default
+// which matches the key used in appsettings.json
+var classifiedAdsDb = postgres.AddDatabase("Default", databaseName: "ClassifiedAds");
 
 // RabbitMQ - Message broker with management UI
 // Matches docker-compose: rabbitmq:3-management, ports 5672 (AMQP), 15672 (Management UI)
@@ -103,8 +100,8 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     // Configure email via MailHog (for testing, no real emails sent)
     .WithEnvironment("Modules__Notification__Email__Provider", "SmtpClient")
-    .WithEnvironment("Modules__Notification__Email__SmtpClient__Host", "{mailhog.bindings.smtp.host}")
-    .WithEnvironment("Modules__Notification__Email__SmtpClient__Port", "{mailhog.bindings.smtp.port}")
+    .WithEnvironment("Modules__Notification__Email__SmtpClient__Host", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Host))
+    .WithEnvironment("Modules__Notification__Email__SmtpClient__Port", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Port))
     // Configure SMS and Web notifications (fake providers for development)
     .WithEnvironment("Modules__Notification__Sms__Provider", "Fake")
     .WithEnvironment("Modules__Notification__Web__Provider", "Fake")
@@ -113,7 +110,8 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
     .WaitFor(migrator)
     .WaitFor(rabbitmq)
-    .WaitFor(redis);
+    .WaitFor(redis)
+    .WaitFor(mailhog);
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Build and Run
