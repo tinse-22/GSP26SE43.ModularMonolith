@@ -50,7 +50,7 @@ public class SendSmsMessagesCommandHandler : ICommandHandler<SendSmsMessagesComm
             TimeSpan.FromMinutes(89),
         };
 
-        var dateTime = _dateTimeProvider.OffsetNow;
+        var dateTime = _dateTimeProvider.OffsetUtcNow;
         var defaultAttemptCount = 5;
 
         var messages = _repository.GetQueryableSet()
@@ -74,18 +74,18 @@ public class SendSmsMessagesCommandHandler : ICommandHandler<SendSmsMessagesComm
                         PhoneNumber = sms.PhoneNumber,
                     }, cancellationToken);
 
-                    sms.SentDateTime = _dateTimeProvider.OffsetNow;
+                    sms.SentDateTime = _dateTimeProvider.OffsetUtcNow;
                     sms.Log += log + "Succeed.";
                 }
                 catch (Exception ex)
                 {
                     sms.Log += log + ex.ToString();
-                    sms.NextAttemptDateTime = _dateTimeProvider.OffsetNow + deplayedTimes[sms.AttemptCount];
+                    sms.NextAttemptDateTime = _dateTimeProvider.OffsetUtcNow + deplayedTimes[sms.AttemptCount];
                 }
 
                 sms.AttemptCount += 1;
                 sms.Log = sms.Log.Trim();
-                sms.UpdatedDateTime = _dateTimeProvider.OffsetNow;
+                sms.UpdatedDateTime = _dateTimeProvider.OffsetUtcNow;
 
                 if (sms.MaxAttemptCount == 0)
                 {
