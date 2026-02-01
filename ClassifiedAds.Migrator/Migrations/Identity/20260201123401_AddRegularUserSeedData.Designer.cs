@@ -3,6 +3,7 @@ using System;
 using ClassifiedAds.Modules.Identity.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ClassifiedAds.Migrator.Migrations.Identity
 {
     [DbContext(typeof(IdentityDbContext))]
-    partial class IdentityDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260201123401_AddRegularUserSeedData")]
+    partial class AddRegularUserSeedData
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -189,7 +192,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             LockoutEnabled = true,
                             NormalizedEmail = "TINVTSE@GMAIL.COM",
                             NormalizedUserName = "TINVTSE@GMAIL.COM",
-                            PasswordHash = "AQAAAAEAACcQAAAAEH+jsbWrH4v5LnT429AB0w/+I6Y05097m53Qq1CCj/Y9fPJ4pAtDwtmT4tk7TIfP9w==",
+                            PasswordHash = "AQAAAAIAAYagAAAAEKyT+qK4VcVGnZsJG3BzjQQv7nqXgvXZ7xgP5Wh8Y0vKzH8xz2Xz7qK4VcVGnZsJG3A=",
                             PhoneNumberConfirmed = false,
                             SecurityStamp = "VVPCRDAS3MJWQD5CSW2GWPRADBXEZINA",
                             TwoFactorEnabled = false,
@@ -206,7 +209,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             LockoutEnabled = true,
                             NormalizedEmail = "USER@EXAMPLE.COM",
                             NormalizedUserName = "USER@EXAMPLE.COM",
-                            PasswordHash = "AQAAAAEAACcQAAAAEOTpuUKQx8yQvn+SoGpxuzFRyYGEEIj799+xim2iti6zufqH4+py34yKlFIvZ2HdaA==",
+                            PasswordHash = "AQAAAAIAAYagAAAAEKyT+qK4VcVGnZsJG3BzjQQv7nqXgvXZ7xgP5Wh8Y0vKzH8xz2Xz7qK4VcVGnZsJG3A=",
                             PhoneNumberConfirmed = false,
                             SecurityStamp = "XYZPCRDAS3MJWQD5CSW2GWPRADBXEZIN",
                             TwoFactorEnabled = false,
