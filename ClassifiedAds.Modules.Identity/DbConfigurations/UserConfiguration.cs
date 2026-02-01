@@ -6,7 +6,7 @@ using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.Identity.DbConfigurations;
 
-public class UserConfiguration: IEntityTypeConfiguration<User>
+public class UserConfiguration : IEntityTypeConfiguration<User>
 {
     public void Configure(EntityTypeBuilder<User> builder)
     {
