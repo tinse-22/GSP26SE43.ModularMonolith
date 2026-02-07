@@ -7,6 +7,7 @@ using ClassifiedAds.Modules.Identity.IdentityProviders.Auth0;
 using ClassifiedAds.Modules.Identity.IdentityProviders.Azure;
 using ClassifiedAds.Modules.Identity.PasswordValidators;
 using ClassifiedAds.Modules.Identity.Persistence;
+using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
@@ -59,6 +60,14 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
+
+        // Add Rate Limiting policies
+        services.AddRateLimiter(options =>
+        {
+            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
+            options.AddPolicy<string, AuthRateLimiterPolicy>(RateLimiterPolicyNames.AuthPolicy);
+            options.AddPolicy<string, PasswordRateLimiterPolicy>(RateLimiterPolicyNames.PasswordPolicy);
+        });
 
         return services;
     }

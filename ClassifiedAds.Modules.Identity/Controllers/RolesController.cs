@@ -4,9 +4,11 @@ using ClassifiedAds.Modules.Identity.Commands.Roles;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
+using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -14,6 +16,7 @@ using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.Identity.Controllers;
 
+[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]
 [Authorize]
 [Produces("application/json")]
 [Route("api/[controller]")]
