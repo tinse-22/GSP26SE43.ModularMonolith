@@ -66,6 +66,16 @@ public class PermissionsTests
     [InlineData("Permission:UpdatePlan")]
     [InlineData("Permission:DeletePlan")]
     [InlineData("Permission:GetPlanAuditLogs")]
+    [InlineData("Permission:GetSubscription")]
+    [InlineData("Permission:GetCurrentSubscription")]
+    [InlineData("Permission:AddSubscription")]
+    [InlineData("Permission:UpdateSubscription")]
+    [InlineData("Permission:CancelSubscription")]
+    [InlineData("Permission:GetSubscriptionHistory")]
+    [InlineData("Permission:GetPaymentTransactions")]
+    [InlineData("Permission:AddPaymentTransaction")]
+    [InlineData("Permission:GetUsageTracking")]
+    [InlineData("Permission:UpdateUsageTracking")]
     public void Permissions_Should_ContainRequiredValues(string expectedPermission)
     {
         // Arrange
@@ -89,7 +99,7 @@ public class PermissionsTests
             .ToList();
 
         // Assert
-        fields.Should().HaveCount(5, "Subscription module should have exactly 5 permissions");
+        fields.Should().HaveCount(15, "Subscription module should have exactly 15 permissions");
     }
 
     #endregion
@@ -124,6 +134,66 @@ public class PermissionsTests
     public void GetPlanAuditLogs_Should_HaveCorrectValue()
     {
         Permissions.GetPlanAuditLogs.Should().Be("Permission:GetPlanAuditLogs");
+    }
+
+    [Fact]
+    public void GetSubscription_Should_HaveCorrectValue()
+    {
+        Permissions.GetSubscription.Should().Be("Permission:GetSubscription");
+    }
+
+    [Fact]
+    public void GetCurrentSubscription_Should_HaveCorrectValue()
+    {
+        Permissions.GetCurrentSubscription.Should().Be("Permission:GetCurrentSubscription");
+    }
+
+    [Fact]
+    public void AddSubscription_Should_HaveCorrectValue()
+    {
+        Permissions.AddSubscription.Should().Be("Permission:AddSubscription");
+    }
+
+    [Fact]
+    public void UpdateSubscription_Should_HaveCorrectValue()
+    {
+        Permissions.UpdateSubscription.Should().Be("Permission:UpdateSubscription");
+    }
+
+    [Fact]
+    public void CancelSubscription_Should_HaveCorrectValue()
+    {
+        Permissions.CancelSubscription.Should().Be("Permission:CancelSubscription");
+    }
+
+    [Fact]
+    public void GetSubscriptionHistory_Should_HaveCorrectValue()
+    {
+        Permissions.GetSubscriptionHistory.Should().Be("Permission:GetSubscriptionHistory");
+    }
+
+    [Fact]
+    public void GetPaymentTransactions_Should_HaveCorrectValue()
+    {
+        Permissions.GetPaymentTransactions.Should().Be("Permission:GetPaymentTransactions");
+    }
+
+    [Fact]
+    public void AddPaymentTransaction_Should_HaveCorrectValue()
+    {
+        Permissions.AddPaymentTransaction.Should().Be("Permission:AddPaymentTransaction");
+    }
+
+    [Fact]
+    public void GetUsageTracking_Should_HaveCorrectValue()
+    {
+        Permissions.GetUsageTracking.Should().Be("Permission:GetUsageTracking");
+    }
+
+    [Fact]
+    public void UpdateUsageTracking_Should_HaveCorrectValue()
+    {
+        Permissions.UpdateUsageTracking.Should().Be("Permission:UpdateUsageTracking");
     }
 
     #endregion
