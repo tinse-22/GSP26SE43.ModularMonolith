@@ -29,7 +29,7 @@ public class PlanDeletedEventHandler : IDomainEventHandler<EntityDeletedEvent<Su
     {
         var auditLog = new AuditLogEntry
         {
-            UserId = _currentUser.UserId,
+            UserId = _currentUser.IsAuthenticated ? _currentUser.UserId : Guid.Empty,
             CreatedDateTime = domainEvent.EventDateTime,
             Action = "DELETED_PLAN",
             ObjectId = domainEvent.Entity.Id.ToString(),
@@ -41,7 +41,7 @@ public class PlanDeletedEventHandler : IDomainEventHandler<EntityDeletedEvent<Su
         await _outboxMessageRepository.AddOrUpdateAsync(new OutboxMessage
         {
             EventType = EventTypeConstants.AuditLogEntryCreated,
-            TriggeredById = _currentUser.UserId,
+            TriggeredById = _currentUser.IsAuthenticated ? _currentUser.UserId : Guid.Empty,
             CreatedDateTime = auditLog.CreatedDateTime,
             ObjectId = auditLog.Id.ToString(),
             Payload = auditLog.AsJsonString(),
@@ -50,7 +50,7 @@ public class PlanDeletedEventHandler : IDomainEventHandler<EntityDeletedEvent<Su
         await _outboxMessageRepository.AddOrUpdateAsync(new OutboxMessage
         {
             EventType = EventTypeConstants.PlanDeleted,
-            TriggeredById = _currentUser.UserId,
+            TriggeredById = _currentUser.IsAuthenticated ? _currentUser.UserId : Guid.Empty,
             CreatedDateTime = domainEvent.EventDateTime,
             ObjectId = domainEvent.Entity.Id.ToString(),
             Payload = domainEvent.Entity.AsJsonString(),
