@@ -5,14 +5,20 @@ using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Models;
+using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
+using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -20,42 +26,139 @@ using System.Web;
 
 namespace ClassifiedAds.Modules.Identity.Controllers;
 
+[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]
 [Produces("application/json")]
 [Route("api/[controller]")]
 [ApiController]
 public class AuthController : ControllerBase
 {
     private readonly UserManager<User> _userManager;
+    private readonly RoleManager<Role> _roleManager;
     private readonly SignInManager<User> _signInManager;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IEmailMessageService _emailMessageService;
     private readonly IdentityModuleOptions _moduleOptions;
+    private readonly IdentityDbContext _dbContext;
     private readonly Dispatcher _dispatcher;
 
     public AuthController(
         UserManager<User> userManager,
+        RoleManager<Role> roleManager,
         SignInManager<User> signInManager,
         IJwtTokenService jwtTokenService,
         IEmailMessageService emailMessageService,
         IOptionsSnapshot<IdentityModuleOptions> moduleOptions,
+        IdentityDbContext dbContext,
         Dispatcher dispatcher)
     {
         _userManager = userManager;
+        _roleManager = roleManager;
         _signInManager = signInManager;
         _jwtTokenService = jwtTokenService;
         _emailMessageService = emailMessageService;
         _moduleOptions = moduleOptions.Value;
+        _dbContext = dbContext;
         _dispatcher = dispatcher;
+    }
+
+    /// <summary>
+    /// Register a new user account (self-registration)
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
+    [HttpPost("register")]
+    [ProducesResponseType(typeof(RegisterResponseModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<RegisterResponseModel>> Register([FromBody] RegisterModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        // Check if email already exists
+        var existingUser = await _userManager.FindByEmailAsync(model.Email);
+        if (existingUser != null)
+        {
+            return BadRequest(new { Error = "Email is already registered." });
+        }
+
+        // Create new user with minimal required fields
+        var user = new User
+        {
+            UserName = model.Email,
+            NormalizedUserName = model.Email.ToUpper(),
+            Email = model.Email,
+            NormalizedEmail = model.Email.ToUpper(),
+            EmailConfirmed = false,
+            PhoneNumberConfirmed = false,
+            TwoFactorEnabled = false,
+            LockoutEnabled = true,
+            AccessFailedCount = 0,
+        };
+
+        // Create user with password
+        var result = await _userManager.CreateAsync(user, model.Password);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        // Assign default "User" role
+        var userRole = await _roleManager.FindByNameAsync("User");
+        if (userRole != null)
+        {
+            await _userManager.AddToRoleAsync(user, "User");
+        }
+
+        // Create user profile
+        var profile = new UserProfile
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            DisplayName = model.Email.Split('@')[0], // Default display name from email
+        };
+        _dbContext.UserProfiles.Add(profile);
+        await _dbContext.SaveChangesAsync();
+
+        // Send confirmation email
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
+
+        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        {
+            From = "noreply@classifiedads.com",
+            Tos = user.Email,
+            Subject = "Welcome! Please confirm your email address",
+            Body = $@"
+                <h2>Welcome to ClassifiedAds!</h2>
+                <p>Thank you for registering. Please confirm your email address by clicking the link below:</p>
+                <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
+                <p>This link will expire in 2 days.</p>
+                <p>If you did not create an account, please ignore this email.</p>
+            ",
+        });
+
+        return Created($"/api/auth/me", new RegisterResponseModel
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            Message = "Registration successful. Please check your email to confirm your account.",
+            EmailConfirmationRequired = true,
+        });
     }
 
     /// <summary>
     /// Login with email and password
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
     [HttpPost("login")]
     [ProducesResponseType(typeof(LoginResponseModel), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<LoginResponseModel>> Login([FromBody] LoginModel model)
     {
         if (!ModelState.IsValid)
@@ -120,12 +223,21 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Refresh access token using refresh token
+    /// Refresh access token using refresh token.
+    /// Implements token rotation: old refresh token is invalidated and a new one is issued.
     /// </summary>
+    /// <remarks>
+    /// Token rotation is a security best practice that:
+    /// - Limits the window of opportunity if a refresh token is compromised
+    /// - Enables detection of token theft (if old token is reused)
+    /// - Forces attackers to constantly steal new tokens
+    /// </remarks>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
     [HttpPost("refresh-token")]
     [ProducesResponseType(typeof(LoginResponseModel), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<LoginResponseModel>> RefreshToken([FromBody] RefreshTokenModel model)
     {
         if (!ModelState.IsValid)
@@ -133,11 +245,14 @@ public class AuthController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var principal = await _jwtTokenService.ValidateRefreshTokenAsync(model.RefreshToken);
-        if (principal == null)
+        // Use token rotation: validate and get new tokens in one atomic operation
+        var result = await _jwtTokenService.ValidateAndRotateRefreshTokenAsync(model.RefreshToken);
+        if (result == null)
         {
             return Unauthorized(new { Error = "Invalid or expired refresh token." });
         }
+
+        var (accessToken, refreshToken, expiresIn, principal) = result.Value;
 
         var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId))
@@ -152,12 +267,11 @@ public class AuthController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
-        var (accessToken, refreshToken, expiresIn) = await _jwtTokenService.GenerateTokensAsync(user, roles);
 
         return Ok(new LoginResponseModel
         {
             AccessToken = accessToken,
-            RefreshToken = refreshToken,
+            RefreshToken = refreshToken, // New refresh token (old one is now invalid)
             TokenType = "Bearer",
             ExpiresIn = expiresIn,
             User = new UserInfoModel
@@ -233,8 +347,10 @@ public class AuthController : ControllerBase
     /// Request password reset email
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.PasswordPolicy)]
     [HttpPost("forgot-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult> ForgotPassword([FromBody] ForgotPasswordModel model)
     {
         if (!ModelState.IsValid)
@@ -274,9 +390,11 @@ public class AuthController : ControllerBase
     /// Reset password using token from email
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.PasswordPolicy)]
     [HttpPost("reset-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult> ResetPassword([FromBody] ResetPasswordModel model)
     {
         if (!ModelState.IsValid)
@@ -445,5 +563,304 @@ public class AuthController : ControllerBase
         });
 
         return Ok(new { Message = "If an account with that email exists and is not confirmed, a confirmation link has been sent." });
+    }
+
+    /// <summary>
+    /// Get current user's profile
+    /// </summary>
+    [Authorize]
+    [HttpGet("me/profile")]
+    [ProducesResponseType(typeof(UserProfileModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UserProfileModel>> GetProfile()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        {
+            return Unauthorized(new { Error = "User not authenticated." });
+        }
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+        {
+            return Unauthorized(new { Error = "User not found." });
+        }
+
+        var profile = await _dbContext.UserProfiles
+            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+
+        // Create profile if not exists
+        if (profile == null)
+        {
+            profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = userGuid,
+                DisplayName = user.UserName,
+            };
+            _dbContext.UserProfiles.Add(profile);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        return Ok(new UserProfileModel
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            UserName = user.UserName,
+            DisplayName = profile.DisplayName,
+            AvatarUrl = profile.AvatarUrl,
+            Timezone = profile.Timezone,
+            PhoneNumber = user.PhoneNumber,
+            EmailConfirmed = user.EmailConfirmed,
+            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
+        });
+    }
+
+    /// <summary>
+    /// Update current user's profile
+    /// </summary>
+    [Authorize]
+    [HttpPut("me/profile")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(UserProfileModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<UserProfileModel>> UpdateProfile([FromBody] UpdateProfileModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        {
+            return Unauthorized(new { Error = "User not authenticated." });
+        }
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+        {
+            return Unauthorized(new { Error = "User not found." });
+        }
+
+        var profile = await _dbContext.UserProfiles
+            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+
+        // Create profile if not exists
+        if (profile == null)
+        {
+            profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = userGuid,
+            };
+            _dbContext.UserProfiles.Add(profile);
+        }
+
+        // Update profile fields
+        if (!string.IsNullOrWhiteSpace(model.DisplayName))
+        {
+            profile.DisplayName = model.DisplayName;
+        }
+
+        if (model.Timezone != null)
+        {
+            profile.Timezone = model.Timezone;
+        }
+
+        // Update phone number if provided
+        if (model.PhoneNumber != null && model.PhoneNumber != user.PhoneNumber)
+        {
+            user.PhoneNumber = model.PhoneNumber;
+            user.PhoneNumberConfirmed = false;
+            await _userManager.UpdateAsync(user);
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        return Ok(new UserProfileModel
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            UserName = user.UserName,
+            DisplayName = profile.DisplayName,
+            AvatarUrl = profile.AvatarUrl,
+            Timezone = profile.Timezone,
+            PhoneNumber = user.PhoneNumber,
+            EmailConfirmed = user.EmailConfirmed,
+            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
+        });
+    }
+
+    /// <summary>
+    /// Upload user avatar
+    /// </summary>
+    /// <remarks>
+    /// Allowed file types: JPEG, PNG, GIF, WebP (validated by magic bytes)
+    /// Maximum file size: 2MB
+    /// Files are sanitized and stored with unique filenames
+    /// </remarks>
+    [Authorize]
+    [HttpPost("me/avatar")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(2 * 1024 * 1024)] // 2MB hard limit
+    [ProducesResponseType(typeof(AvatarUploadResponseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
+    public async Task<ActionResult<AvatarUploadResponseModel>> UploadAvatar(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+        {
+            return BadRequest(new { Error = "No file uploaded." });
+        }
+
+        // Validate file size (max 2MB)
+        const int maxFileSize = 2 * 1024 * 1024;
+        if (file.Length > maxFileSize)
+        {
+            return BadRequest(new { Error = "File size exceeds 2MB limit." });
+        }
+
+        // Validate file extension (whitelist)
+        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+        var extension = Path.GetExtension(file.FileName)?.ToLowerInvariant();
+        if (string.IsNullOrEmpty(extension) || !allowedExtensions.Contains(extension))
+        {
+            return BadRequest(new { Error = "Invalid file extension. Allowed: .jpg, .jpeg, .png, .gif, .webp" });
+        }
+
+        // Validate content type
+        var allowedContentTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+        if (!allowedContentTypes.Contains(file.ContentType?.ToLowerInvariant()))
+        {
+            return BadRequest(new { Error = "Invalid content type. Allowed: JPEG, PNG, GIF, WebP." });
+        }
+
+        // Validate magic bytes (file signature) to prevent content-type spoofing
+        if (!await IsValidImageMagicBytesAsync(file))
+        {
+            return BadRequest(new { Error = "File content does not match a valid image format." });
+        }
+
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        {
+            return Unauthorized(new { Error = "User not authenticated." });
+        }
+
+        var profile = await _dbContext.UserProfiles
+            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+
+        if (profile == null)
+        {
+            profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = userGuid,
+            };
+            _dbContext.UserProfiles.Add(profile);
+        }
+
+        // Generate sanitized unique filename (no user input in filename)
+        var safeFileName = $"{Guid.NewGuid()}{extension}";
+        var fileLocation = $"avatars/{userGuid}/{safeFileName}";
+
+        // TODO: In production, integrate with ClassifiedAds.Modules.Storage
+        // Example: await _fileStorageService.UploadAsync(fileLocation, file.OpenReadStream());
+        // For now, store locally in wwwroot/uploads
+        var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars", userGuid.ToString());
+        Directory.CreateDirectory(uploadsPath);
+
+        var filePath = Path.Combine(uploadsPath, safeFileName);
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var avatarUrl = $"/uploads/{fileLocation}";
+
+        // Delete old avatar file if exists
+        if (!string.IsNullOrEmpty(profile.AvatarUrl))
+        {
+            var oldFilePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", profile.AvatarUrl.TrimStart('/'));
+            if (System.IO.File.Exists(oldFilePath))
+            {
+                try
+                {
+                    System.IO.File.Delete(oldFilePath);
+                }
+                catch
+                {
+                    // Log but don't fail if old file can't be deleted
+                }
+            }
+        }
+
+        profile.AvatarUrl = avatarUrl;
+        await _dbContext.SaveChangesAsync();
+
+        return Ok(new AvatarUploadResponseModel
+        {
+            AvatarUrl = avatarUrl,
+            Message = "Avatar uploaded successfully.",
+        });
+    }
+
+    /// <summary>
+    /// Validates file magic bytes to ensure it's a real image
+    /// </summary>
+    private static async Task<bool> IsValidImageMagicBytesAsync(IFormFile file)
+    {
+        // Magic bytes for common image formats
+        var imageSignatures = new Dictionary<string, byte[][]>
+        {
+            // JPEG: FF D8 FF
+            { "image/jpeg", new[] { new byte[] { 0xFF, 0xD8, 0xFF } } },
+            // PNG: 89 50 4E 47 0D 0A 1A 0A
+            { "image/png", new[] { new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } } },
+            // GIF: 47 49 46 38 (GIF87a or GIF89a)
+            { "image/gif", new[] { new byte[] { 0x47, 0x49, 0x46, 0x38 } } },
+            // WebP: 52 49 46 46 (RIFF) ... 57 45 42 50 (WEBP)
+            { "image/webp", new[] { new byte[] { 0x52, 0x49, 0x46, 0x46 } } },
+        };
+
+        using var stream = file.OpenReadStream();
+        var headerBytes = new byte[12];
+        await stream.ReadAsync(headerBytes, 0, 12);
+
+        foreach (var signatures in imageSignatures.Values)
+        {
+            foreach (var signature in signatures)
+            {
+                if (headerBytes.Length >= signature.Length)
+                {
+                    var match = true;
+                    for (int i = 0; i < signature.Length; i++)
+                    {
+                        if (headerBytes[i] != signature[i])
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 }

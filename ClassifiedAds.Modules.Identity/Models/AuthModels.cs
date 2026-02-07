@@ -48,6 +48,41 @@ public class UserInfoModel
     public IList<string> Roles { get; set; } = new List<string>();
 }
 
+/// <summary>
+/// Model for user self-registration.
+/// Contains only essential fields required to create an account.
+/// </summary>
+public class RegisterModel
+{
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email format")]
+    [StringLength(256, ErrorMessage = "Email cannot exceed 256 characters")]
+    public string Email { get; set; }
+
+    [Required(ErrorMessage = "Password is required")]
+    [MinLength(6, ErrorMessage = "Password must be at least 6 characters")]
+    [StringLength(100, ErrorMessage = "Password cannot exceed 100 characters")]
+    public string Password { get; set; }
+
+    [Required(ErrorMessage = "Confirm password is required")]
+    [Compare("Password", ErrorMessage = "Passwords do not match")]
+    public string ConfirmPassword { get; set; }
+}
+
+/// <summary>
+/// Response model for successful registration.
+/// </summary>
+public class RegisterResponseModel
+{
+    public Guid UserId { get; set; }
+
+    public string Email { get; set; }
+
+    public string Message { get; set; }
+
+    public bool EmailConfirmationRequired { get; set; }
+}
+
 public class ForgotPasswordModel
 {
     [Required(ErrorMessage = "Email is required")]
@@ -101,4 +136,54 @@ public class ConfirmEmailModel
 
     [Required(ErrorMessage = "Token is required")]
     public string Token { get; set; }
+}
+
+/// <summary>
+/// Model for user profile information.
+/// </summary>
+public class UserProfileModel
+{
+    public Guid UserId { get; set; }
+
+    public string Email { get; set; }
+
+    public string UserName { get; set; }
+
+    public string DisplayName { get; set; }
+
+    public string AvatarUrl { get; set; }
+
+    public string Timezone { get; set; }
+
+    public string PhoneNumber { get; set; }
+
+    public bool EmailConfirmed { get; set; }
+
+    public bool PhoneNumberConfirmed { get; set; }
+}
+
+/// <summary>
+/// Model for updating user profile.
+/// </summary>
+public class UpdateProfileModel
+{
+    [StringLength(100, ErrorMessage = "Display name cannot exceed 100 characters")]
+    public string DisplayName { get; set; }
+
+    [StringLength(50, ErrorMessage = "Timezone cannot exceed 50 characters")]
+    public string Timezone { get; set; }
+
+    [Phone(ErrorMessage = "Invalid phone number format")]
+    [StringLength(20, ErrorMessage = "Phone number cannot exceed 20 characters")]
+    public string PhoneNumber { get; set; }
+}
+
+/// <summary>
+/// Response model for avatar upload.
+/// </summary>
+public class AvatarUploadResponseModel
+{
+    public string AvatarUrl { get; set; }
+
+    public string Message { get; set; }
 }
