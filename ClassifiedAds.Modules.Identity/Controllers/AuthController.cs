@@ -716,38 +716,28 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
     public async Task<ActionResult<AvatarUploadResponseModel>> UploadAvatar(IFormFile file)
     {
-        if (file == null || file.Length == 0)
+        if (file is not { Length: > 0 })
         {
             return BadRequest(new { Error = "No file uploaded." });
         }
 
-        // Validate file size (max 2MB)
+        // Hard limit file size (max 2MB) - checked server-side before any processing
         const int maxFileSize = 2 * 1024 * 1024;
         if (file.Length > maxFileSize)
         {
             return BadRequest(new { Error = "File size exceeds 2MB limit." });
         }
 
-        // Validate file extension (whitelist)
-        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
-        var extension = Path.GetExtension(file.FileName)?.ToLowerInvariant();
-        if (string.IsNullOrEmpty(extension) || !allowedExtensions.Contains(extension))
+        // SECURITY: Validate magic bytes FIRST - this is the server-side source of truth.
+        // Do NOT trust file.ContentType or file.FileName as they are user-controlled.
+        var detectedType = await DetectImageTypeFromMagicBytesAsync(file);
+        if (detectedType == null)
         {
-            return BadRequest(new { Error = "Invalid file extension. Allowed: .jpg, .jpeg, .png, .gif, .webp" });
+            return BadRequest(new { Error = "File content does not match a valid image format. Allowed: JPEG, PNG, GIF, WebP." });
         }
 
-        // Validate content type
-        var allowedContentTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
-        if (!allowedContentTypes.Contains(file.ContentType?.ToLowerInvariant()))
-        {
-            return BadRequest(new { Error = "Invalid content type. Allowed: JPEG, PNG, GIF, WebP." });
-        }
-
-        // Validate magic bytes (file signature) to prevent content-type spoofing
-        if (!await IsValidImageMagicBytesAsync(file))
-        {
-            return BadRequest(new { Error = "File content does not match a valid image format." });
-        }
+        // Use server-detected extension (not user-provided filename)
+        var extension = detectedType.Value.Extension;
 
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                   ?? User.FindFirst("sub")?.Value;
@@ -770,7 +760,7 @@ public class AuthController : ControllerBase
             _dbContext.UserProfiles.Add(profile);
         }
 
-        // Generate sanitized unique filename (no user input in filename)
+        // Generate sanitized unique filename using server-detected extension (no user input)
         var safeFileName = $"{Guid.NewGuid()}{extension}";
         var fileLocation = $"avatars/{userGuid}/{safeFileName}";
 
@@ -816,51 +806,55 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Validates file magic bytes to ensure it's a real image
+    /// Detects image type by reading file magic bytes (server-side truth).
+    /// Returns null if file is not a recognized image format.
+    /// This eliminates reliance on user-controlled ContentType/FileName.
     /// </summary>
-    private static async Task<bool> IsValidImageMagicBytesAsync(IFormFile file)
+    private static async Task<(string MimeType, string Extension)?> DetectImageTypeFromMagicBytesAsync(IFormFile file)
     {
-        // Magic bytes for common image formats
-        var imageSignatures = new Dictionary<string, byte[][]>
-        {
-            // JPEG: FF D8 FF
-            { "image/jpeg", new[] { new byte[] { 0xFF, 0xD8, 0xFF } } },
-            // PNG: 89 50 4E 47 0D 0A 1A 0A
-            { "image/png", new[] { new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } } },
-            // GIF: 47 49 46 38 (GIF87a or GIF89a)
-            { "image/gif", new[] { new byte[] { 0x47, 0x49, 0x46, 0x38 } } },
-            // WebP: 52 49 46 46 (RIFF) ... 57 45 42 50 (WEBP)
-            { "image/webp", new[] { new byte[] { 0x52, 0x49, 0x46, 0x46 } } },
-        };
-
         using var stream = file.OpenReadStream();
         var headerBytes = new byte[12];
-        await stream.ReadAsync(headerBytes, 0, 12);
+        var bytesRead = await stream.ReadAsync(headerBytes.AsMemory(0, 12));
 
-        foreach (var signatures in imageSignatures.Values)
+        if (bytesRead < 4)
         {
-            foreach (var signature in signatures)
-            {
-                if (headerBytes.Length >= signature.Length)
-                {
-                    var match = true;
-                    for (int i = 0; i < signature.Length; i++)
-                    {
-                        if (headerBytes[i] != signature[i])
-                        {
-                            match = false;
-                            break;
-                        }
-                    }
-
-                    if (match)
-                    {
-                        return true;
-                    }
-                }
-            }
+            return null;
         }
 
-        return false;
+        // JPEG: FF D8 FF
+        if (bytesRead >= 3 && headerBytes[0] == 0xFF && headerBytes[1] == 0xD8 && headerBytes[2] == 0xFF)
+        {
+            return ("image/jpeg", ".jpg");
+        }
+
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        if (bytesRead >= 8
+            && headerBytes[0] == 0x89 && headerBytes[1] == 0x50
+            && headerBytes[2] == 0x4E && headerBytes[3] == 0x47
+            && headerBytes[4] == 0x0D && headerBytes[5] == 0x0A
+            && headerBytes[6] == 0x1A && headerBytes[7] == 0x0A)
+        {
+            return ("image/png", ".png");
+        }
+
+        // GIF: 47 49 46 38 (GIF87a or GIF89a)
+        if (bytesRead >= 4
+            && headerBytes[0] == 0x47 && headerBytes[1] == 0x49
+            && headerBytes[2] == 0x46 && headerBytes[3] == 0x38)
+        {
+            return ("image/gif", ".gif");
+        }
+
+        // WebP: 52 49 46 46 xx xx xx xx 57 45 42 50 (RIFF....WEBP)
+        if (bytesRead >= 12
+            && headerBytes[0] == 0x52 && headerBytes[1] == 0x49
+            && headerBytes[2] == 0x46 && headerBytes[3] == 0x46
+            && headerBytes[8] == 0x57 && headerBytes[9] == 0x45
+            && headerBytes[10] == 0x42 && headerBytes[11] == 0x50)
+        {
+            return ("image/webp", ".webp");
+        }
+
+        return null;
     }
 }
