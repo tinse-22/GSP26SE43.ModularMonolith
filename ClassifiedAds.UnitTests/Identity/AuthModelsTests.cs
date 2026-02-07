@@ -146,7 +146,7 @@ public class AuthModelsTests
         // Arrange
         var model = new UpdateProfileModel
         {
-            DisplayName = new string('a', 256), // Exceeds max length
+            DisplayName = new string('a', 256), // Exceeds max length (200)
             Timezone = "UTC",
         };
 
@@ -155,6 +155,38 @@ public class AuthModelsTests
 
         // Assert
         validationResults.Should().Contain(v => v.MemberNames.Contains("DisplayName"));
+    }
+
+    [Fact]
+    public void UpdateProfileModel_Should_ValidateEmailFormat()
+    {
+        // Arrange
+        var model = new UpdateProfileModel
+        {
+            Email = "invalid-email",
+        };
+
+        // Act
+        var validationResults = ValidateModel(model);
+
+        // Assert
+        validationResults.Should().Contain(v => v.MemberNames.Contains("Email"));
+    }
+
+    [Fact]
+    public void UpdateProfileModel_Should_LimitUserNameLength()
+    {
+        // Arrange
+        var model = new UpdateProfileModel
+        {
+            UserName = new string('u', 300),
+        };
+
+        // Act
+        var validationResults = ValidateModel(model);
+
+        // Assert
+        validationResults.Should().Contain(v => v.MemberNames.Contains("UserName"));
     }
 
     #endregion

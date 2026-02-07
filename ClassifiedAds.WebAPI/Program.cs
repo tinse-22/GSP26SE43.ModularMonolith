@@ -81,6 +81,12 @@ services.Configure<AppSettings>(configuration);
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddExceptionHandler<GlobalExceptionHandler>();
+services.Configure<GlobalExceptionHandlerOptions>(opt =>
+{
+    opt.DetailLevel = builder.Environment.IsDevelopment()
+        ? GlobalExceptionDetailLevel.ToString
+        : GlobalExceptionDetailLevel.None;
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Caching Configuration
@@ -254,6 +260,14 @@ services.AddHtmlRazorLightEngine();
 services.AddDinkToPdfConverter();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
+// Background Workers (Notification Email/SMS sending)
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Registers hosted services that consume from the email channel and send via SMTP
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+services.AddHostedServicesNotificationModule();
+
+// ═══════════════════════════════════════════════════════════════════════════════════
 // ASP.NET Core Data Protection
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Keys persisted to database (IdentityModule) for multi-instance deployments
@@ -295,14 +309,32 @@ services.AddAuthentication(options =>
 })
 .AddJwtBearer("Jwt", options =>
 {
-    // Use same symmetric key as JwtTokenService for HMAC-SHA256 validation
-    var secretKey = "ClassifiedAds-Super-Secret-Key-For-JWT-Token-Generation-2026!@#$%";
-    var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(secretKey));
+    // Must match JwtTokenService signing configuration (Modules:Identity:Jwt)
+    var jwtSecretKey = appSettings.Modules?.Identity?.Jwt?.SecretKey;
+    if (string.IsNullOrWhiteSpace(jwtSecretKey) || jwtSecretKey.Length < 32)
+    {
+        throw new InvalidOperationException(
+            "JWT Secret Key is invalid. Configure Modules:Identity:Jwt:SecretKey with at least 32 characters.");
+    }
+
+    var jwtIssuer = appSettings.Modules?.Identity?.Jwt?.Issuer;
+    if (string.IsNullOrWhiteSpace(jwtIssuer))
+    {
+        jwtIssuer = appSettings.Authentication.Jwt.IssuerUri;
+    }
+
+    var jwtAudience = appSettings.Modules?.Identity?.Jwt?.Audience;
+    if (string.IsNullOrWhiteSpace(jwtAudience))
+    {
+        jwtAudience = appSettings.Authentication.Jwt.Audience;
+    }
+
+    var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSecretKey));
 
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidIssuer = appSettings.Authentication.Jwt.IssuerUri,
-        ValidAudience = appSettings.Authentication.Jwt.Audience,
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
         IssuerSigningKey = key,
         ValidateIssuerSigningKey = true,
         ValidateIssuer = true,
@@ -434,7 +466,7 @@ app.UseExceptionHandler(options => { });
 
 app.UseRouting();
 
-app.UseCors(appSettings.CORS.AllowAnyOrigin ? "AllowAnyOrigin" : "AllowedOrigins");
+app.UseCors(appSettings.CORS?.AllowAnyOrigin == true ? "AllowAnyOrigin" : "AllowedOrigins");
 
 app.UseSwagger();
 

@@ -5,6 +5,7 @@ using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
+using ClassifiedAds.Modules.Identity.Helpers;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
@@ -25,6 +26,9 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using System.Web;
 
+// Alias for brevity
+using ITemplates = ClassifiedAds.Contracts.Notification.Services.IEmailTemplateService;
+
 namespace ClassifiedAds.Modules.Identity.Controllers;
 
 [EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]
@@ -38,6 +42,7 @@ public class AuthController : ControllerBase
     private readonly SignInManager<User> _signInManager;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IEmailMessageService _emailMessageService;
+    private readonly ITemplates _emailTemplates;
     private readonly IdentityModuleOptions _moduleOptions;
     private readonly IdentityDbContext _dbContext;
     private readonly Dispatcher _dispatcher;
@@ -50,6 +55,7 @@ public class AuthController : ControllerBase
         SignInManager<User> signInManager,
         IJwtTokenService jwtTokenService,
         IEmailMessageService emailMessageService,
+        IEmailTemplateService emailTemplates,
         IOptionsSnapshot<IdentityModuleOptions> moduleOptions,
         IdentityDbContext dbContext,
         Dispatcher dispatcher,
@@ -61,6 +67,7 @@ public class AuthController : ControllerBase
         _signInManager = signInManager;
         _jwtTokenService = jwtTokenService;
         _emailMessageService = emailMessageService;
+        _emailTemplates = emailTemplates;
         _moduleOptions = moduleOptions.Value;
         _dbContext = dbContext;
         _dispatcher = dispatcher;
@@ -133,18 +140,13 @@ public class AuthController : ControllerBase
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
         var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+        var displayName = profile.DisplayName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Welcome! Please confirm your email address",
-            Body = $@"
-                <h2>Welcome to ClassifiedAds!</h2>
-                <p>Thank you for registering. Please confirm your email address by clicking the link below:</p>
-                <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
-                <p>This link will expire in 2 days.</p>
-                <p>If you did not create an account, please ignore this email.</p>
-            ",
+            Subject = "Chào mừng bạn! Vui lòng xác nhận email",
+            Body = _emailTemplates.WelcomeConfirmEmail(displayName, confirmationUrl),
         });
 
         return Created($"/api/auth/me", new RegisterResponseModel
@@ -205,6 +207,7 @@ public class AuthController : ControllerBase
 
         // Get user roles
         var roles = await _userManager.GetRolesAsync(user);
+        var profile = await GetOrCreateUserProfileAsync(user);
 
         // Generate tokens
         var (accessToken, refreshToken, expiresIn) = await _jwtTokenService.GenerateTokensAsync(user, roles);
@@ -215,17 +218,7 @@ public class AuthController : ControllerBase
             RefreshToken = refreshToken,
             TokenType = "Bearer",
             ExpiresIn = expiresIn,
-            User = new UserInfoModel
-            {
-                Id = user.Id,
-                UserName = user.UserName,
-                Email = user.Email,
-                EmailConfirmed = user.EmailConfirmed,
-                PhoneNumber = user.PhoneNumber,
-                PhoneNumberConfirmed = user.PhoneNumberConfirmed,
-                TwoFactorEnabled = user.TwoFactorEnabled,
-                Roles = roles.ToList(),
-            },
+            User = ToUserInfoModel(user, profile, roles),
         });
     }
 
@@ -274,6 +267,7 @@ public class AuthController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
+        var profile = await GetOrCreateUserProfileAsync(user);
 
         return Ok(new LoginResponseModel
         {
@@ -281,17 +275,7 @@ public class AuthController : ControllerBase
             RefreshToken = refreshToken, // New refresh token (old one is now invalid)
             TokenType = "Bearer",
             ExpiresIn = expiresIn,
-            User = new UserInfoModel
-            {
-                Id = user.Id,
-                UserName = user.UserName,
-                Email = user.Email,
-                EmailConfirmed = user.EmailConfirmed,
-                PhoneNumber = user.PhoneNumber,
-                PhoneNumberConfirmed = user.PhoneNumberConfirmed,
-                TwoFactorEnabled = user.TwoFactorEnabled,
-                Roles = roles.ToList(),
-            },
+            User = ToUserInfoModel(user, profile, roles),
         });
     }
 
@@ -339,18 +323,9 @@ public class AuthController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
+        var profile = await GetOrCreateUserProfileAsync(user);
 
-        return Ok(new UserInfoModel
-        {
-            Id = user.Id,
-            UserName = user.UserName,
-            Email = user.Email,
-            EmailConfirmed = user.EmailConfirmed,
-            PhoneNumber = user.PhoneNumber,
-            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
-            TwoFactorEnabled = user.TwoFactorEnabled,
-            Roles = roles.ToList(),
-        });
+        return Ok(ToUserInfoModel(user, profile, roles));
     }
 
     /// <summary>
@@ -379,18 +354,13 @@ public class AuthController : ControllerBase
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
         var resetUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ResetPassword?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+        var displayName = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Reset Your Password",
-            Body = $@"
-                <h2>Password Reset Request</h2>
-                <p>You have requested to reset your password. Click the link below to reset it:</p>
-                <p><a href='{resetUrl}'>Reset Password</a></p>
-                <p>This link will expire in 3 hours.</p>
-                <p>If you did not request a password reset, please ignore this email.</p>
-            ",
+            Subject = "Đặt lại mật khẩu",
+            Body = _emailTemplates.ForgotPassword(displayName, resetUrl),
         });
 
         return Ok(new { Message = "If an account with that email exists, a password reset link has been sent." });
@@ -418,23 +388,21 @@ public class AuthController : ControllerBase
             return BadRequest(new { Error = "Invalid request." });
         }
 
-        var result = await _userManager.ResetPasswordAsync(user, model.Token, model.NewPassword);
+        var normalizedToken = IdentityTokenNormalizer.Normalize(model.Token);
+        var result = await _userManager.ResetPasswordAsync(user, normalizedToken, model.NewPassword);
         if (!result.Succeeded)
         {
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
         // Send confirmation email
+        var displayNameReset = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Password Changed Successfully",
-            Body = $@"
-                <h2>Password Changed</h2>
-                <p>Your password has been changed successfully.</p>
-                <p>If you did not make this change, please contact support immediately.</p>
-            ",
+            Subject = "Mật khẩu đã được thay đổi",
+            Body = _emailTemplates.PasswordChanged(displayNameReset),
         });
 
         return Ok(new { Message = "Password has been reset successfully." });
@@ -489,16 +457,13 @@ public class AuthController : ControllerBase
         BlacklistCurrentAccessToken();
 
         // Send confirmation email
+        var displayNameChange = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Password Changed Successfully",
-            Body = $@"
-                <h2>Password Changed</h2>
-                <p>Your password has been changed successfully.</p>
-                <p>If you did not make this change, please contact support immediately.</p>
-            ",
+            Subject = "Mật khẩu đã được thay đổi",
+            Body = _emailTemplates.PasswordChanged(displayNameChange),
         });
 
         return Ok(new { Message = "Password has been changed successfully. Please login again with your new password." });
@@ -529,7 +494,8 @@ public class AuthController : ControllerBase
             return Ok(new { Message = "Email is already confirmed." });
         }
 
-        var result = await _userManager.ConfirmEmailAsync(user, model.Token);
+        var normalizedToken = IdentityTokenNormalizer.Normalize(model.Token);
+        var result = await _userManager.ConfirmEmailAsync(user, normalizedToken);
         if (!result.Succeeded)
         {
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
@@ -562,17 +528,13 @@ public class AuthController : ControllerBase
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
         var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+        var displayNameResend = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Confirm your email address",
-            Body = $@"
-                <h2>Email Confirmation</h2>
-                <p>Please confirm your email address by clicking the link below:</p>
-                <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
-                <p>If you did not create an account, please ignore this email.</p>
-            ",
+            Subject = "Xác nhận địa chỉ email",
+            Body = _emailTemplates.ResendConfirmEmail(displayNameResend, confirmationUrl),
         });
 
         return Ok(new { Message = "If an account with that email exists and is not confirmed, a confirmation link has been sent." });
@@ -591,7 +553,7 @@ public class AuthController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                   ?? User.FindFirst("sub")?.Value;
 
-        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
         {
             return Unauthorized(new { Error = "User not authenticated." });
         }
@@ -602,34 +564,10 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Error = "User not found." });
         }
 
-        var profile = await _dbContext.UserProfiles
-            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+        var profile = await GetOrCreateUserProfileAsync(user);
+        var roles = await _userManager.GetRolesAsync(user);
 
-        // Create profile if not exists
-        if (profile == null)
-        {
-            profile = new UserProfile
-            {
-                Id = Guid.NewGuid(),
-                UserId = userGuid,
-                DisplayName = user.UserName,
-            };
-            _dbContext.UserProfiles.Add(profile);
-            await _dbContext.SaveChangesAsync();
-        }
-
-        return Ok(new UserProfileModel
-        {
-            UserId = user.Id,
-            Email = user.Email,
-            UserName = user.UserName,
-            DisplayName = profile.DisplayName,
-            AvatarUrl = profile.AvatarUrl,
-            Timezone = profile.Timezone,
-            PhoneNumber = user.PhoneNumber,
-            EmailConfirmed = user.EmailConfirmed,
-            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
-        });
+        return Ok(ToUserProfileModel(user, profile, roles));
     }
 
     /// <summary>
@@ -651,7 +589,7 @@ public class AuthController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                   ?? User.FindFirst("sub")?.Value;
 
-        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
         {
             return Unauthorized(new { Error = "User not authenticated." });
         }
@@ -662,53 +600,112 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Error = "User not found." });
         }
 
-        var profile = await _dbContext.UserProfiles
-            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+        var profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
+        var userChanged = false;
+        var emailChanged = false;
 
-        // Create profile if not exists
-        if (profile == null)
+        if (model.UserName != null)
         {
-            profile = new UserProfile
+            var newUserName = model.UserName.Trim();
+            if (string.IsNullOrWhiteSpace(newUserName))
             {
-                Id = Guid.NewGuid(),
-                UserId = userGuid,
-            };
-            _dbContext.UserProfiles.Add(profile);
+                return BadRequest(new { Error = "Username cannot be empty." });
+            }
+
+            if (!string.Equals(newUserName, user.UserName, StringComparison.Ordinal))
+            {
+                var existingUser = await _userManager.FindByNameAsync(newUserName);
+                if (existingUser != null && existingUser.Id != user.Id)
+                {
+                    return BadRequest(new { Error = "Username is already taken." });
+                }
+
+                user.UserName = newUserName;
+                user.NormalizedUserName = _userManager.NormalizeName(newUserName) ?? newUserName.ToUpperInvariant();
+                userChanged = true;
+            }
         }
 
-        // Update profile fields
-        if (!string.IsNullOrWhiteSpace(model.DisplayName))
+        if (model.Email != null)
         {
-            profile.DisplayName = model.DisplayName;
+            var newEmail = model.Email.Trim();
+            if (string.IsNullOrWhiteSpace(newEmail))
+            {
+                return BadRequest(new { Error = "Email cannot be empty." });
+            }
+
+            if (!string.Equals(newEmail, user.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                var existingUser = await _userManager.FindByEmailAsync(newEmail);
+                if (existingUser != null && existingUser.Id != user.Id)
+                {
+                    return BadRequest(new { Error = "Email is already registered." });
+                }
+
+                user.Email = newEmail;
+                user.NormalizedEmail = _userManager.NormalizeEmail(newEmail) ?? newEmail.ToUpperInvariant();
+                user.EmailConfirmed = false;
+                userChanged = true;
+                emailChanged = true;
+            }
+        }
+
+        if (model.DisplayName != null)
+        {
+            profile.DisplayName = string.IsNullOrWhiteSpace(model.DisplayName)
+                ? null
+                : model.DisplayName.Trim();
         }
 
         if (model.Timezone != null)
         {
-            profile.Timezone = model.Timezone;
+            profile.Timezone = string.IsNullOrWhiteSpace(model.Timezone)
+                ? null
+                : model.Timezone.Trim();
         }
 
-        // Update phone number if provided
-        if (model.PhoneNumber != null && model.PhoneNumber != user.PhoneNumber)
+        if (model.PhoneNumber != null)
         {
-            user.PhoneNumber = model.PhoneNumber;
-            user.PhoneNumberConfirmed = false;
-            await _userManager.UpdateAsync(user);
+            var newPhoneNumber = string.IsNullOrWhiteSpace(model.PhoneNumber)
+                ? null
+                : model.PhoneNumber.Trim();
+
+            if (!string.Equals(newPhoneNumber, user.PhoneNumber, StringComparison.Ordinal))
+            {
+                user.PhoneNumber = newPhoneNumber;
+                user.PhoneNumberConfirmed = false;
+                userChanged = true;
+            }
+        }
+
+        if (userChanged)
+        {
+            var updateResult = await _userManager.UpdateAsync(user);
+            if (!updateResult.Succeeded)
+            {
+                return BadRequest(new { Errors = updateResult.Errors.Select(e => e.Description) });
+            }
         }
 
         await _dbContext.SaveChangesAsync();
 
-        return Ok(new UserProfileModel
+        if (emailChanged)
         {
-            UserId = user.Id,
-            Email = user.Email,
-            UserName = user.UserName,
-            DisplayName = profile.DisplayName,
-            AvatarUrl = profile.AvatarUrl,
-            Timezone = profile.Timezone,
-            PhoneNumber = user.PhoneNumber,
-            EmailConfirmed = user.EmailConfirmed,
-            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
-        });
+            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+            var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
+            var displayName = profile.DisplayName ?? user.UserName ?? user.Email.Split('@')[0];
+
+            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+            {
+                From = "noreply@classifiedads.com",
+                Tos = user.Email,
+                Subject = "Xác nhận địa chỉ email mới",
+                Body = _emailTemplates.ResendConfirmEmail(displayName, confirmationUrl),
+            });
+        }
+
+        var roles = await _userManager.GetRolesAsync(user);
+        return Ok(ToUserProfileModel(user, profile, roles));
     }
 
     /// <summary>
@@ -817,6 +814,97 @@ public class AuthController : ControllerBase
             AvatarUrl = fileLocation,
             Message = "Avatar uploaded successfully.",
         });
+    }
+
+    private async Task<UserProfile> GetOrCreateUserProfileAsync(User user, bool saveChanges = true)
+    {
+        var profile = await _dbContext.UserProfiles
+            .FirstOrDefaultAsync(p => p.UserId == user.Id);
+
+        if (profile != null)
+        {
+            return profile;
+        }
+
+        var defaultDisplayName = user.UserName;
+        if (string.IsNullOrWhiteSpace(defaultDisplayName) && !string.IsNullOrWhiteSpace(user.Email))
+        {
+            defaultDisplayName = user.Email.Split('@')[0];
+        }
+
+        profile = new UserProfile
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            DisplayName = defaultDisplayName,
+        };
+
+        _dbContext.UserProfiles.Add(profile);
+
+        if (saveChanges)
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+
+        return profile;
+    }
+
+    private static UserInfoModel ToUserInfoModel(User user, UserProfile profile, IEnumerable<string> roles)
+    {
+        var roleList = roles?.ToList() ?? new List<string>();
+        var isLockedOut = user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow;
+
+        return new UserInfoModel
+        {
+            Id = user.Id,
+            UserName = user.UserName,
+            Email = user.Email,
+            EmailConfirmed = user.EmailConfirmed,
+            PhoneNumber = user.PhoneNumber,
+            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
+            TwoFactorEnabled = user.TwoFactorEnabled,
+            LockoutEnabled = user.LockoutEnabled,
+            LockoutEnd = user.LockoutEnd,
+            IsLockedOut = isLockedOut,
+            AccessFailedCount = user.AccessFailedCount,
+            DisplayName = profile?.DisplayName,
+            AvatarUrl = profile?.AvatarUrl,
+            Timezone = profile?.Timezone,
+            CreatedDateTime = user.CreatedDateTime,
+            UpdatedDateTime = user.UpdatedDateTime,
+            ProfileCreatedDateTime = profile?.CreatedDateTime,
+            ProfileUpdatedDateTime = profile?.UpdatedDateTime,
+            Roles = roleList,
+        };
+    }
+
+    private static UserProfileModel ToUserProfileModel(User user, UserProfile profile, IEnumerable<string> roles)
+    {
+        var roleList = roles?.ToList() ?? new List<string>();
+        var isLockedOut = user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow;
+
+        return new UserProfileModel
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            UserName = user.UserName,
+            DisplayName = profile?.DisplayName,
+            AvatarUrl = profile?.AvatarUrl,
+            Timezone = profile?.Timezone,
+            PhoneNumber = user.PhoneNumber,
+            EmailConfirmed = user.EmailConfirmed,
+            PhoneNumberConfirmed = user.PhoneNumberConfirmed,
+            TwoFactorEnabled = user.TwoFactorEnabled,
+            LockoutEnabled = user.LockoutEnabled,
+            LockoutEnd = user.LockoutEnd,
+            IsLockedOut = isLockedOut,
+            AccessFailedCount = user.AccessFailedCount,
+            CreatedDateTime = user.CreatedDateTime,
+            UpdatedDateTime = user.UpdatedDateTime,
+            ProfileCreatedDateTime = profile?.CreatedDateTime,
+            ProfileUpdatedDateTime = profile?.UpdatedDateTime,
+            Roles = roleList,
+        };
     }
 
     /// <summary>

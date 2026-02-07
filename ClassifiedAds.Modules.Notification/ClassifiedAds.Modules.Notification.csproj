@@ -6,6 +6,7 @@
 
 	<ItemGroup>
 		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+		<PackageReference Include="Microsoft.Extensions.Resilience" Version="10.0.0" />
 		<PackageReference Include="StyleCop.Analyzers" Version="1.1.118">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -15,13 +16,10 @@
 	<ItemGroup>
 		<ProjectReference Include="..\ClassifiedAds.Application\ClassifiedAds.Application.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Contracts\ClassifiedAds.Contracts.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.CrossCuttingConcerns\ClassifiedAds.CrossCuttingConcerns.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.CrossCuttingConcerns\ClassifiedAds.CrossCuttingConcerns.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Domain\ClassifiedAds.Domain.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Persistence.PostgreSQL\ClassifiedAds.Persistence.PostgreSQL.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Persistence.PostgreSQL\ClassifiedAds.Persistence.PostgreSQL.csproj" />
 	</ItemGroup>
 
 </Project>

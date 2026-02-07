@@ -1,4 +1,5 @@
 ﻿using ClassifiedAds.Infrastructure.Notification.Email;
+using ClassifiedAds.Infrastructure.Notification.Email.Fake;
 using ClassifiedAds.Infrastructure.Notification.Email.SendGrid;
 using ClassifiedAds.Infrastructure.Notification.Email.SmtpClient;
 
@@ -26,6 +27,12 @@ public static class EmailNotificationServiceCollectionExtensions
 
     public static IServiceCollection AddEmailNotification(this IServiceCollection services, EmailOptions options)
     {
+        if (options == null)
+        {
+            services.AddFakeEmailNotification();
+            return services;
+        }
+
         if (options.UsedFake())
         {
             services.AddFakeEmailNotification();

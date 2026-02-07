@@ -45,6 +45,28 @@ public class UserInfoModel
 
     public bool TwoFactorEnabled { get; set; }
 
+    public bool LockoutEnabled { get; set; }
+
+    public DateTimeOffset? LockoutEnd { get; set; }
+
+    public bool IsLockedOut { get; set; }
+
+    public int AccessFailedCount { get; set; }
+
+    public string DisplayName { get; set; }
+
+    public string AvatarUrl { get; set; }
+
+    public string Timezone { get; set; }
+
+    public DateTimeOffset CreatedDateTime { get; set; }
+
+    public DateTimeOffset? UpdatedDateTime { get; set; }
+
+    public DateTimeOffset? ProfileCreatedDateTime { get; set; }
+
+    public DateTimeOffset? ProfileUpdatedDateTime { get; set; }
+
     public IList<string> Roles { get; set; } = new List<string>();
 }
 
@@ -160,6 +182,26 @@ public class UserProfileModel
     public bool EmailConfirmed { get; set; }
 
     public bool PhoneNumberConfirmed { get; set; }
+
+    public bool TwoFactorEnabled { get; set; }
+
+    public bool LockoutEnabled { get; set; }
+
+    public DateTimeOffset? LockoutEnd { get; set; }
+
+    public bool IsLockedOut { get; set; }
+
+    public int AccessFailedCount { get; set; }
+
+    public DateTimeOffset CreatedDateTime { get; set; }
+
+    public DateTimeOffset? UpdatedDateTime { get; set; }
+
+    public DateTimeOffset? ProfileCreatedDateTime { get; set; }
+
+    public DateTimeOffset? ProfileUpdatedDateTime { get; set; }
+
+    public IList<string> Roles { get; set; } = new List<string>();
 }
 
 /// <summary>
@@ -167,7 +209,14 @@ public class UserProfileModel
 /// </summary>
 public class UpdateProfileModel
 {
-    [StringLength(100, ErrorMessage = "Display name cannot exceed 100 characters")]
+    [StringLength(256, ErrorMessage = "Username cannot exceed 256 characters")]
+    public string UserName { get; set; }
+
+    [EmailAddress(ErrorMessage = "Invalid email format")]
+    [StringLength(256, ErrorMessage = "Email cannot exceed 256 characters")]
+    public string Email { get; set; }
+
+    [StringLength(200, ErrorMessage = "Display name cannot exceed 200 characters")]
     public string DisplayName { get; set; }
 
     [StringLength(50, ErrorMessage = "Timezone cannot exceed 50 characters")]

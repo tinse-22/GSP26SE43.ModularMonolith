@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using System;
 using System.Data;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -139,12 +138,6 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
             await _dbContextTransaction.DisposeAsync();
             _dbContextTransaction = null;
         }
-    }
-
-    protected override void OnModelCreating(ModelBuilder builder)
-    {
-        base.OnModelCreating(builder);
-        builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 
     public override async ValueTask DisposeAsync()

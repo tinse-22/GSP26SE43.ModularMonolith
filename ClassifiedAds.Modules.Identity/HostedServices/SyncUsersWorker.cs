@@ -24,22 +24,37 @@ public class SyncUsersWorker : BackgroundService
     {
         _logger.LogDebug("SyncUsersWorker is starting.");
 
+        // Wait briefly for infrastructure (DB, etc.) to become available
+        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+
         while (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogDebug($"SyncUsersWorker doing background work.");
-
-            var syncUsersCommand = new SyncUsersCommand();
-
-            using (var scope = _services.CreateScope())
+            try
             {
-                var dispatcher = scope.ServiceProvider.GetDispatcher();
+                _logger.LogDebug($"SyncUsersWorker doing background work.");
 
-                await dispatcher.DispatchAsync(syncUsersCommand, cancellationToken);
+                var syncUsersCommand = new SyncUsersCommand();
+
+                using (var scope = _services.CreateScope())
+                {
+                    var dispatcher = scope.ServiceProvider.GetDispatcher();
+
+                    await dispatcher.DispatchAsync(syncUsersCommand, cancellationToken);
+                }
+
+                if (syncUsersCommand.SyncedUsersCount == 0)
+                {
+                    await Task.Delay(10000, cancellationToken);
+                }
             }
-
-            if (syncUsersCommand.SyncedUsersCount == 0)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(10000, cancellationToken);
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SyncUsersWorker encountered an error. Retrying in 15 seconds...");
+                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
             }
         }
 

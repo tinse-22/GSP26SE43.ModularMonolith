@@ -37,6 +37,7 @@ public class UsersController : ControllerBase
     private readonly RoleManager<Role> _roleManager;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IEmailMessageService _emailMessageService;
+    private readonly IEmailTemplateService _emailTemplates;
     private readonly IdentityModuleOptions _moduleOptions;
 
     public UsersController(Dispatcher dispatcher,
@@ -45,6 +46,7 @@ public class UsersController : ControllerBase
         ILogger<UsersController> logger,
         IDateTimeProvider dateTimeProvider,
         IEmailMessageService emailMessageService,
+        IEmailTemplateService emailTemplates,
         IOptionsSnapshot<IdentityModuleOptions> moduleOptions)
     {
         _dispatcher = dispatcher;
@@ -52,6 +54,7 @@ public class UsersController : ControllerBase
         _roleManager = roleManager;
         _dateTimeProvider = dateTimeProvider;
         _emailMessageService = emailMessageService;
+        _emailTemplates = emailTemplates;
         _moduleOptions = moduleOptions.Value;
     }
 
@@ -168,19 +171,15 @@ public class UsersController : ControllerBase
         if (!isAdmin)
         {
             var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-            var confirmationUrl = $"{_moduleOptions.IdentityServer.Authority}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+            var confirmationUrl = $"{_moduleOptions.IdentityServer.Authority}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+            var displayName = user.UserName ?? user.Email.Split('@')[0];
             await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
             {
                 From = "noreply@classifiedads.com",
                 Tos = user.Email,
-                Subject = "Confirm your email address",
-                Body = $@"
-                    <h2>Welcome to ClassifiedAds!</h2>
-                    <p>Please confirm your email address by clicking the link below:</p>
-                    <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
-                    <p>If you did not create an account, please ignore this email.</p>
-                ",
+                Subject = "Chào mừng bạn! Vui lòng xác nhận email",
+                Body = _emailTemplates.WelcomeConfirmEmail(displayName, confirmationUrl),
             });
         }
 
@@ -237,6 +236,16 @@ public class UsersController : ControllerBase
 
         if (rs.Succeeded)
         {
+            // Notify user that their password was changed by admin
+            var displayNameSet = user.UserName ?? user.Email.Split('@')[0];
+            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+            {
+                From = "noreply@classifiedads.com",
+                Tos = user.Email,
+                Subject = "Mật khẩu đã được cập nhật bởi quản trị viên",
+                Body = _emailTemplates.AdminSetPassword(displayNameSet),
+            });
+
             return Ok();
         }
 
@@ -272,20 +281,15 @@ public class UsersController : ControllerBase
         }
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-        var resetUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ResetPassword?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+        var resetUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ResetPassword?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+        var displayNameReset = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Password Reset Request",
-            Body = $@"
-                <h2>Password Reset</h2>
-                <p>An administrator has requested a password reset for your account.</p>
-                <p>Click the link below to reset your password:</p>
-                <p><a href='{resetUrl}'>Reset Password</a></p>
-                <p>This link will expire in 3 hours.</p>
-            ",
+            Subject = "Yêu cầu đặt lại mật khẩu",
+            Body = _emailTemplates.AdminResetPassword(displayNameReset, resetUrl),
         });
 
         return Ok(new { Message = "Password reset email sent successfully." });
@@ -313,19 +317,15 @@ public class UsersController : ControllerBase
         }
 
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-        var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+        var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
+        var displayNameConfirm = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
             Tos = user.Email,
-            Subject = "Please Confirm Your Email Address",
-            Body = $@"
-                <h2>Email Confirmation</h2>
-                <p>Please confirm your email address by clicking the link below:</p>
-                <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
-                <p>This link will expire in 2 days.</p>
-            ",
+            Subject = "Xác nhận địa chỉ email",
+            Body = _emailTemplates.AdminConfirmEmail(displayNameConfirm, confirmationUrl),
         });
 
         return Ok(new { Message = "Email confirmation sent successfully." });
@@ -463,6 +463,20 @@ public class UsersController : ControllerBase
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
+        // Notify user about account lock
+        var displayNameLock = user.UserName ?? user.Email.Split('@')[0];
+        var lockoutEndDisplay = model.Permanent
+            ? "Vĩnh viễn (cho đến khi được mở khóa)"
+            : lockoutEnd.ToString("dd/MM/yyyy HH:mm:ss") + " (UTC)";
+
+        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        {
+            From = "noreply@classifiedads.com",
+            Tos = user.Email,
+            Subject = "Tài khoản của bạn đã bị khóa",
+            Body = _emailTemplates.AccountLocked(displayNameLock, lockoutEndDisplay),
+        });
+
         return Ok(new
         {
             Message = model.Permanent
@@ -495,6 +509,16 @@ public class UsersController : ControllerBase
 
         // Reset access failed count
         await _userManager.ResetAccessFailedCountAsync(user);
+
+        // Notify user about account unlock
+        var displayNameUnlock = user.UserName ?? user.Email.Split('@')[0];
+        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        {
+            From = "noreply@classifiedads.com",
+            Tos = user.Email,
+            Subject = "Tài khoản của bạn đã được mở khóa",
+            Body = _emailTemplates.AccountUnlocked(displayNameUnlock),
+        });
 
         return Ok(new { Message = "User has been unlocked." });
     }

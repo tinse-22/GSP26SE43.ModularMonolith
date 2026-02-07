@@ -27,6 +27,12 @@ public static class SmsNotificationServiceCollectionExtensions
 
     public static IServiceCollection AddSmsNotification(this IServiceCollection services, SmsOptions options)
     {
+        if (options == null)
+        {
+            services.AddFakeSmsNotification();
+            return services;
+        }
+
         if (options.UsedFake())
         {
             services.AddFakeSmsNotification();
