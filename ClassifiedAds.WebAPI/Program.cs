@@ -149,7 +149,8 @@ services.AddControllers(configure =>
 .AddIdentityModule()
 .AddNotificationModule()
 .AddProductModule()
-.AddStorageModule();
+.AddStorageModule()
+.AddSubscriptionModule();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // SignalR (Real-time Notifications)
@@ -248,6 +249,12 @@ services.AddAuditLogModule(opt =>
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
+.AddSubscriptionModule(opt =>
+{
+    configuration.GetSection("Modules:Subscription").Bind(opt);
+    opt.ConnectionStrings ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.ConnectionStringsOptions();
+    opt.ConnectionStrings.Default = sharedConnectionString;
+})
 .AddApplicationServices();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
@@ -266,6 +273,7 @@ services.AddDinkToPdfConverter();
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddHostedServicesNotificationModule();
+services.AddHostedServicesSubscriptionModule();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ASP.NET Core Data Protection

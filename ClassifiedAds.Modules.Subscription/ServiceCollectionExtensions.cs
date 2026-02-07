@@ -1,6 +1,8 @@
+using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.ConfigurationOptions;
 using ClassifiedAds.Modules.Subscription.Entities;
+using ClassifiedAds.Modules.Subscription.HostedServices;
 using ClassifiedAds.Modules.Subscription.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
@@ -44,6 +46,8 @@ public static class SubscriptionServiceCollectionExtensions
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
+        services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
+
         return services;
     }
 
@@ -62,5 +66,15 @@ public static class SubscriptionServiceCollectionExtensions
     {
         using var serviceScope = app.Services.CreateScope();
         serviceScope.ServiceProvider.GetRequiredService<SubscriptionDbContext>().Database.Migrate();
+    }
+
+    public static IServiceCollection AddHostedServicesSubscriptionModule(this IServiceCollection services)
+    {
+        services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
+        services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
+
+        services.AddHostedService<PublishEventWorker>();
+
+        return services;
     }
 }

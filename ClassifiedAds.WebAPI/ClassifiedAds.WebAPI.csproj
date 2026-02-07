@@ -30,6 +30,7 @@
 		<ProjectReference Include="..\ClassifiedAds.Modules.Notification\ClassifiedAds.Modules.Notification.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
 	</ItemGroup>
 
 	<PropertyGroup>
