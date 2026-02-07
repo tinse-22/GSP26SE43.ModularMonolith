@@ -42,6 +42,7 @@ public class AuthController : ControllerBase
     private readonly IdentityDbContext _dbContext;
     private readonly Dispatcher _dispatcher;
     private readonly IFileStorageManager _fileStorageManager;
+    private readonly ITokenBlacklistService _tokenBlacklistService;
 
     public AuthController(
         UserManager<User> userManager,
@@ -52,7 +53,8 @@ public class AuthController : ControllerBase
         IOptionsSnapshot<IdentityModuleOptions> moduleOptions,
         IdentityDbContext dbContext,
         Dispatcher dispatcher,
-        IFileStorageManager fileStorageManager)
+        IFileStorageManager fileStorageManager,
+        ITokenBlacklistService tokenBlacklistService)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -63,6 +65,7 @@ public class AuthController : ControllerBase
         _dbContext = dbContext;
         _dispatcher = dispatcher;
         _fileStorageManager = fileStorageManager;
+        _tokenBlacklistService = tokenBlacklistService;
     }
 
     /// <summary>
@@ -293,7 +296,7 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Logout - revoke refresh token
+    /// Logout - revoke refresh token and blacklist current access token
     /// </summary>
     [Authorize]
     [HttpPost("logout")]
@@ -305,6 +308,9 @@ public class AuthController : ControllerBase
         {
             await _jwtTokenService.RevokeRefreshTokenAsync(userGuid);
         }
+
+        // Blacklist the current access token so it cannot be used anymore
+        BlacklistCurrentAccessToken();
 
         return Ok(new { Message = "Logged out successfully." });
     }
@@ -478,6 +484,9 @@ public class AuthController : ControllerBase
 
         // Revoke existing refresh tokens for security
         await _jwtTokenService.RevokeRefreshTokenAsync(user.Id);
+
+        // Blacklist the current access token so it cannot be used anymore
+        BlacklistCurrentAccessToken();
 
         // Send confirmation email
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
@@ -861,6 +870,34 @@ public class AuthController : ControllerBase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Blacklists the current request's access token so it cannot be reused.
+    /// Extracts JTI and expiration from the current JWT claims.
+    /// </summary>
+    private void BlacklistCurrentAccessToken()
+    {
+        var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+        if (string.IsNullOrEmpty(jti))
+        {
+            return;
+        }
+
+        // Get token expiration from claims
+        var expClaim = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Exp)?.Value;
+        DateTimeOffset expiresAt;
+        if (!string.IsNullOrEmpty(expClaim) && long.TryParse(expClaim, out var expUnix))
+        {
+            expiresAt = DateTimeOffset.FromUnixTimeSeconds(expUnix);
+        }
+        else
+        {
+            // Fallback: blacklist for the max token lifetime (default 60 min)
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        }
+
+        _tokenBlacklistService.BlacklistToken(jti, expiresAt);
     }
 
     /// <summary>

@@ -298,7 +298,7 @@ services.AddAuthentication(options =>
     // Use same symmetric key as JwtTokenService for HMAC-SHA256 validation
     var secretKey = "ClassifiedAds-Super-Secret-Key-For-JWT-Token-Generation-2026!@#$%";
     var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(secretKey));
-    
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidIssuer = appSettings.Authentication.Jwt.IssuerUri,
@@ -309,7 +309,7 @@ services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidateLifetime = true,
     };
-    
+
     options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
     {
         OnAuthenticationFailed = context =>
@@ -319,6 +319,18 @@ services.AddAuthentication(options =>
         },
         OnTokenValidated = context =>
         {
+            // Check if the token has been blacklisted (e.g., after logout or password change)
+            var blacklistService = context.HttpContext.RequestServices.GetService<ITokenBlacklistService>();
+            if (blacklistService != null)
+            {
+                var jti = context.Principal?.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+                if (!string.IsNullOrEmpty(jti) && blacklistService.IsTokenBlacklisted(jti))
+                {
+                    context.Fail("Token has been revoked.");
+                    return Task.CompletedTask;
+                }
+            }
+
             Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }
