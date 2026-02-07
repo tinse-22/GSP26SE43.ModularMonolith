@@ -74,6 +74,8 @@ public static class ServiceCollectionExtensions
             options.AddPolicy<string, PasswordRateLimiterPolicy>(RateLimiterPolicyNames.PasswordPolicy);
         });
 
+        services.AddHostedService<DevelopmentIdentityBootstrapper>();
+
         return services;
     }
 
