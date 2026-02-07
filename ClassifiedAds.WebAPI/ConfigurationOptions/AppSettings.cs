@@ -14,11 +14,11 @@ public class AppSettings
 
     public MonitoringOptions Monitoring { get; set; }
 
-    public AuthenticationOptions Authentication { get; set; }
+    public AuthenticationOptions Authentication { get; set; } = new();
 
     public string AllowedHosts { get; set; }
 
-    public CORS CORS { get; set; }
+    public CORS CORS { get; set; } = new();
 
     public Dictionary<string, string> SecurityHeaders { get; set; }
 
