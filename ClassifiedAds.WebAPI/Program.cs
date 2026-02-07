@@ -36,6 +36,18 @@ using System.Threading.Tasks;
 // - CORS, rate limiting, global exception handling
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Load environment variables from .env file (private data, not committed to git)
+// Priority: .env.local > .env (allows per-developer overrides)
+// Docker uses its own .env.docker via docker-compose env_file
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Load .env file for private configuration (not committed to git)
+// Probes up parent directories to find .env at solution root
+dotenv.net.DotEnv.Fluent()
+    .WithTrimValues()
+    .WithProbeForEnv(probeLevelsToSearch: 6)
+    .Load();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
@@ -286,7 +298,7 @@ services.AddAuthentication(options =>
     // Use same symmetric key as JwtTokenService for HMAC-SHA256 validation
     var secretKey = "ClassifiedAds-Super-Secret-Key-For-JWT-Token-Generation-2026!@#$%";
     var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(secretKey));
-    
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidIssuer = appSettings.Authentication.Jwt.IssuerUri,
@@ -297,7 +309,7 @@ services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidateLifetime = true,
     };
-    
+
     options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
     {
         OnAuthenticationFailed = context =>
@@ -307,6 +319,18 @@ services.AddAuthentication(options =>
         },
         OnTokenValidated = context =>
         {
+            // Check if the token has been blacklisted (e.g., after logout or password change)
+            var blacklistService = context.HttpContext.RequestServices.GetService<ITokenBlacklistService>();
+            if (blacklistService != null)
+            {
+                var jti = context.Principal?.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+                if (!string.IsNullOrEmpty(jti) && blacklistService.IsTokenBlacklisted(jti))
+                {
+                    context.Fail("Token has been revoked.");
+                    return Task.CompletedTask;
+                }
+            }
+
             Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }

@@ -44,6 +44,11 @@ public static class ServiceCollectionExtensions
             .AddScoped(typeof(IUserService), typeof(UserService))
             .AddScoped<IJwtTokenService, JwtTokenService>();
 
+        // Token blacklist: singleton in-memory cache for revoked JWT access tokens
+        // Tokens are auto-removed from cache when they would have expired naturally
+        services.AddMemoryCache();
+        services.AddSingleton<ITokenBlacklistService, InMemoryTokenBlacklistService>();
+
         services.AddIdentity<User, Role>()
                 .AddTokenProviders()
                 .AddPasswordValidators()

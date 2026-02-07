@@ -2,6 +2,7 @@ using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Contracts.Notification.DTOs;
 using ClassifiedAds.Contracts.Notification.Services;
+using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Models;
@@ -40,6 +41,8 @@ public class AuthController : ControllerBase
     private readonly IdentityModuleOptions _moduleOptions;
     private readonly IdentityDbContext _dbContext;
     private readonly Dispatcher _dispatcher;
+    private readonly IFileStorageManager _fileStorageManager;
+    private readonly ITokenBlacklistService _tokenBlacklistService;
 
     public AuthController(
         UserManager<User> userManager,
@@ -49,7 +52,9 @@ public class AuthController : ControllerBase
         IEmailMessageService emailMessageService,
         IOptionsSnapshot<IdentityModuleOptions> moduleOptions,
         IdentityDbContext dbContext,
-        Dispatcher dispatcher)
+        Dispatcher dispatcher,
+        IFileStorageManager fileStorageManager,
+        ITokenBlacklistService tokenBlacklistService)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -59,6 +64,8 @@ public class AuthController : ControllerBase
         _moduleOptions = moduleOptions.Value;
         _dbContext = dbContext;
         _dispatcher = dispatcher;
+        _fileStorageManager = fileStorageManager;
+        _tokenBlacklistService = tokenBlacklistService;
     }
 
     /// <summary>
@@ -289,7 +296,7 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Logout - revoke refresh token
+    /// Logout - revoke refresh token and blacklist current access token
     /// </summary>
     [Authorize]
     [HttpPost("logout")]
@@ -301,6 +308,9 @@ public class AuthController : ControllerBase
         {
             await _jwtTokenService.RevokeRefreshTokenAsync(userGuid);
         }
+
+        // Blacklist the current access token so it cannot be used anymore
+        BlacklistCurrentAccessToken();
 
         return Ok(new { Message = "Logged out successfully." });
     }
@@ -474,6 +484,9 @@ public class AuthController : ControllerBase
 
         // Revoke existing refresh tokens for security
         await _jwtTokenService.RevokeRefreshTokenAsync(user.Id);
+
+        // Blacklist the current access token so it cannot be used anymore
+        BlacklistCurrentAccessToken();
 
         // Send confirmation email
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
@@ -764,43 +777,44 @@ public class AuthController : ControllerBase
         var safeFileName = $"{Guid.NewGuid()}{extension}";
         var fileLocation = $"avatars/{userGuid}/{safeFileName}";
 
-        // TODO: In production, integrate with ClassifiedAds.Modules.Storage
-        // Example: await _fileStorageService.UploadAsync(fileLocation, file.OpenReadStream());
-        // For now, store locally in wwwroot/uploads
-        var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars", userGuid.ToString());
-        Directory.CreateDirectory(uploadsPath);
-
-        var filePath = Path.Combine(uploadsPath, safeFileName);
-        using (var stream = new FileStream(filePath, FileMode.Create))
+        // Use IFileStorageManager to store file (supports Local, Azure, Amazon, Firebase)
+        var avatarFileEntry = new AvatarFileEntry
         {
-            await file.CopyToAsync(stream);
-        }
+            Id = Guid.NewGuid(),
+            FileName = safeFileName,
+            FileLocation = fileLocation,
+        };
 
-        var avatarUrl = $"/uploads/{fileLocation}";
+        using (var stream = file.OpenReadStream())
+        {
+            await _fileStorageManager.CreateAsync(avatarFileEntry, stream);
+        }
 
         // Delete old avatar file if exists
         if (!string.IsNullOrEmpty(profile.AvatarUrl))
         {
-            var oldFilePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", profile.AvatarUrl.TrimStart('/'));
-            if (System.IO.File.Exists(oldFilePath))
+            try
             {
-                try
+                var oldFileEntry = new AvatarFileEntry
                 {
-                    System.IO.File.Delete(oldFilePath);
-                }
-                catch
-                {
-                    // Log but don't fail if old file can't be deleted
-                }
+                    Id = Guid.Empty,
+                    FileName = Path.GetFileName(profile.AvatarUrl),
+                    FileLocation = profile.AvatarUrl.TrimStart('/'),
+                };
+                await _fileStorageManager.DeleteAsync(oldFileEntry);
+            }
+            catch
+            {
+                // Log but don't fail if old file can't be deleted
             }
         }
 
-        profile.AvatarUrl = avatarUrl;
+        profile.AvatarUrl = fileLocation;
         await _dbContext.SaveChangesAsync();
 
         return Ok(new AvatarUploadResponseModel
         {
-            AvatarUrl = avatarUrl,
+            AvatarUrl = fileLocation,
             Message = "Avatar uploaded successfully.",
         });
     }
@@ -856,5 +870,45 @@ public class AuthController : ControllerBase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Blacklists the current request's access token so it cannot be reused.
+    /// Extracts JTI and expiration from the current JWT claims.
+    /// </summary>
+    private void BlacklistCurrentAccessToken()
+    {
+        var jti = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+        if (string.IsNullOrEmpty(jti))
+        {
+            return;
+        }
+
+        // Get token expiration from claims
+        var expClaim = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Exp)?.Value;
+        DateTimeOffset expiresAt;
+        if (!string.IsNullOrEmpty(expClaim) && long.TryParse(expClaim, out var expUnix))
+        {
+            expiresAt = DateTimeOffset.FromUnixTimeSeconds(expUnix);
+        }
+        else
+        {
+            // Fallback: blacklist for the max token lifetime (default 60 min)
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+        }
+
+        _tokenBlacklistService.BlacklistToken(jti, expiresAt);
+    }
+
+    /// <summary>
+    /// Lightweight IFileEntry implementation for avatar file operations.
+    /// </summary>
+    private class AvatarFileEntry : IFileEntry
+    {
+        public Guid Id { get; set; }
+
+        public string FileName { get; set; }
+
+        public string FileLocation { get; set; }
     }
 }
