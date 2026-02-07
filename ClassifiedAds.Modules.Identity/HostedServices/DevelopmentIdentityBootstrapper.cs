@@ -102,7 +102,7 @@ public class DevelopmentIdentityBootstrapper : IHostedService
             var createResult = await userManager.CreateAsync(user, expectedPassword);
             if (!createResult.Succeeded)
             {
-                _logger.LogWarning("Cannot create user {Email}: {Errors}", email, string.Join("; ", createResult.Errors.Select(e => e.Description)));
+                _logger.LogWarning("Cannot create user {Email}: {Errors}", RedactEmail(email), string.Join("; ", createResult.Errors.Select(e => e.Description)));
                 return;
             }
         }
@@ -143,7 +143,7 @@ public class DevelopmentIdentityBootstrapper : IHostedService
             var resetResult = await userManager.ResetPasswordAsync(user, resetToken, expectedPassword);
             if (!resetResult.Succeeded)
             {
-                _logger.LogWarning("Cannot reset password for {Email}: {Errors}", email, string.Join("; ", resetResult.Errors.Select(e => e.Description)));
+                _logger.LogWarning("Cannot reset password for {Email}: {Errors}", RedactEmail(email), string.Join("; ", resetResult.Errors.Select(e => e.Description)));
             }
         }
 
@@ -154,5 +154,21 @@ public class DevelopmentIdentityBootstrapper : IHostedService
                 await userManager.AddToRoleAsync(user, role);
             }
         }
+    }
+
+    private static string RedactEmail(string email)
+    {
+        if (string.IsNullOrEmpty(email))
+        {
+            return email;
+        }
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex <= 0)
+        {
+            return "***";
+        }
+
+        return string.Concat(email.AsSpan(0, 1), "***", email.AsSpan(atIndex));
     }
 }
