@@ -1,4 +1,5 @@
 ﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application.Common.DTOs;
 using ClassifiedAds.Contracts.Notification.DTOs;
 using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.CrossCuttingConcerns.DateTimes;
@@ -8,10 +9,12 @@ using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
+using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -22,6 +25,7 @@ using System.Web;
 
 namespace ClassifiedAds.Modules.Identity.Controllers;
 
+[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]
 [Authorize]
 [Produces("application/json")]
 [Route("api/[controller]")]
@@ -51,26 +55,61 @@ public class UsersController : ControllerBase
         _moduleOptions = moduleOptions.Value;
     }
 
+    /// <summary>
+    /// Get users with optional pagination, search and filter.
+    /// If page/pageSize not specified, returns all users (legacy behavior).
+    /// </summary>
+    /// <param name="page">Page number (1-based). If specified, returns paginated results.</param>
+    /// <param name="pageSize">Number of items per page (default: 20, max: 100)</param>
+    /// <param name="search">Search by email or username</param>
+    /// <param name="role">Filter by role name</param>
+    /// <param name="emailConfirmed">Filter by email confirmation status</param>
+    /// <param name="isLocked">Filter by account lock status</param>
     [Authorize(Permissions.GetUsers)]
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<User>>> Get()
+    [ProducesResponseType(typeof(Paged<UserModel>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<Paged<UserModel>>> Get(
+        [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null,
+        [FromQuery] string? search = null,
+        [FromQuery] string? role = null,
+        [FromQuery] bool? emailConfirmed = null,
+        [FromQuery] bool? isLocked = null)
     {
-        var users = await _dispatcher.DispatchAsync(new GetUsersQuery());
-        var model = users.ToModels();
-        return Ok(model);
+        // If no pagination params, use defaults that return all (legacy behavior)
+        var actualPage = page ?? 1;
+        var actualPageSize = pageSize ?? (page.HasValue ? 20 : int.MaxValue);
+
+        var result = await _dispatcher.DispatchAsync(new GetPagedUsersQuery
+        {
+            Page = actualPage,
+            PageSize = Math.Min(actualPageSize, page.HasValue ? 100 : int.MaxValue),
+            Search = search,
+            Role = role,
+            EmailConfirmed = emailConfirmed,
+            IsLocked = isLocked,
+        });
+
+        return Ok(result);
     }
 
+    /// <summary>
+    /// Get user by ID
+    /// </summary>
     [Authorize(Permissions.GetUser)]
-    [HttpGet("{id}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [HttpGet("{id:guid}")]
+    [ProducesResponseType(typeof(UserModel), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<User>> Get(Guid id)
+    public async Task<ActionResult<UserModel>> Get(Guid id)
     {
         var user = await _dispatcher.DispatchAsync(new GetUserQuery { Id = id, AsNoTracking = true });
         var model = user.ToModel();
         return Ok(model);
     }
 
+    /// <summary>
+    /// Create a new user (Admin only)
+    /// </summary>
     [Authorize(Permissions.AddUser)]
     [HttpPost]
     [Consumes("application/json")]
@@ -216,58 +255,247 @@ public class UsersController : ControllerBase
         return Ok();
     }
 
+    /// <summary>
+    /// Send password reset email to user (Admin action)
+    /// </summary>
     [Authorize(Permissions.SendResetPasswordEmail)]
-    [HttpPost("{id}/passwordresetemail")]
-    public async Task<ActionResult> SendResetPasswordEmail(Guid id)
+    [HttpPost("{id}/password-reset-email")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> SendPasswordResetEmail(Guid id)
     {
         User user = await _dispatcher.DispatchAsync(new GetUserQuery { Id = id });
 
-        if (user != null)
+        if (user == null)
         {
-            var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-            var resetUrl = $"{_moduleOptions.IdentityServer.Authority}/Account/ResetPassword?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
-
-            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
-            {
-                From = "phong@gmail.com",
-                Tos = user.Email,
-                Subject = "Forgot Password",
-                Body = string.Format("Reset Url: {0}", resetUrl),
-            });
-        }
-        else
-        {
-            // email user and inform them that they do not have an account
+            return NotFound(new { Error = "User not found." });
         }
 
-        return Ok();
+        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var resetUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ResetPassword?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+
+        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        {
+            From = "noreply@classifiedads.com",
+            Tos = user.Email,
+            Subject = "Password Reset Request",
+            Body = $@"
+                <h2>Password Reset</h2>
+                <p>An administrator has requested a password reset for your account.</p>
+                <p>Click the link below to reset your password:</p>
+                <p><a href='{resetUrl}'>Reset Password</a></p>
+                <p>This link will expire in 3 hours.</p>
+            ",
+        });
+
+        return Ok(new { Message = "Password reset email sent successfully." });
     }
 
+    /// <summary>
+    /// Send email confirmation to user (Admin action)
+    /// </summary>
     [Authorize(Permissions.SendConfirmationEmailAddressEmail)]
-    [HttpPost("{id}/emailaddressconfirmation")]
-    public async Task<ActionResult> SendConfirmationEmailAddressEmail(Guid id)
+    [HttpPost("{id}/email-confirmation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> SendEmailConfirmation(Guid id)
     {
         User user = await _dispatcher.DispatchAsync(new GetUserQuery { Id = id });
 
-        if (user != null)
+        if (user == null)
         {
-            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+            return NotFound(new { Error = "User not found." });
+        }
 
-            var confirmationEmail = $"{_moduleOptions.IdentityServer.Authority}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+        if (user.EmailConfirmed)
+        {
+            return Ok(new { Message = "Email is already confirmed." });
+        }
 
-            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={user.Email}";
+
+        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        {
+            From = "noreply@classifiedads.com",
+            Tos = user.Email,
+            Subject = "Please Confirm Your Email Address",
+            Body = $@"
+                <h2>Email Confirmation</h2>
+                <p>Please confirm your email address by clicking the link below:</p>
+                <p><a href='{confirmationUrl}'>Confirm Email Address</a></p>
+                <p>This link will expire in 2 days.</p>
+            ",
+        });
+
+        return Ok(new { Message = "Email confirmation sent successfully." });
+    }
+
+    /// <summary>
+    /// Get roles assigned to a user
+    /// </summary>
+    [Authorize(Permissions.GetUser)]
+    [HttpGet("{id}/roles")]
+    [ProducesResponseType(typeof(IEnumerable<RoleModel>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IEnumerable<RoleModel>>> GetUserRoles(Guid id)
+    {
+        var user = await _userManager.FindByIdAsync(id.ToString());
+        if (user == null)
+        {
+            return NotFound(new { Error = "User not found." });
+        }
+
+        var roleNames = await _userManager.GetRolesAsync(user);
+        var roles = new List<RoleModel>();
+
+        foreach (var roleName in roleNames)
+        {
+            var role = await _roleManager.FindByNameAsync(roleName);
+            if (role != null)
             {
-                From = "phong@gmail.com",
-                Tos = user.Email,
-                Subject = "Confirmation Email",
-                Body = string.Format("Confirmation Email: {0}", confirmationEmail),
-            });
-        }
-        else
-        {
-            // email user and inform them that they do not have an account
+                roles.Add(role.ToModel());
+            }
         }
 
-        return Ok();
+        return Ok(roles);
+    }
+
+    /// <summary>
+    /// Assign a role to a user
+    /// </summary>
+    [Authorize(Permissions.UpdateUser)]
+    [HttpPost("{id}/roles")]
+    [Consumes("application/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> AssignRole(Guid id, [FromBody] AssignRoleModel model)
+    {
+        var user = await _userManager.FindByIdAsync(id.ToString());
+        if (user == null)
+        {
+            return NotFound(new { Error = "User not found." });
+        }
+
+        var role = await _roleManager.FindByIdAsync(model.RoleId.ToString());
+        if (role == null)
+        {
+            return BadRequest(new { Error = "Role not found." });
+        }
+
+        // Check if user already has this role
+        if (await _userManager.IsInRoleAsync(user, role.Name))
+        {
+            return BadRequest(new { Error = $"User already has role '{role.Name}'." });
+        }
+
+        var result = await _userManager.AddToRoleAsync(user, role.Name);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        return Ok(new { Message = $"Role '{role.Name}' assigned successfully." });
+    }
+
+    /// <summary>
+    /// Remove a role from a user
+    /// </summary>
+    [Authorize(Permissions.UpdateUser)]
+    [HttpDelete("{id}/roles/{roleId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> RemoveRole(Guid id, Guid roleId)
+    {
+        var user = await _userManager.FindByIdAsync(id.ToString());
+        if (user == null)
+        {
+            return NotFound(new { Error = "User not found." });
+        }
+
+        var role = await _roleManager.FindByIdAsync(roleId.ToString());
+        if (role == null)
+        {
+            return BadRequest(new { Error = "Role not found." });
+        }
+
+        // Check if user has this role
+        if (!await _userManager.IsInRoleAsync(user, role.Name))
+        {
+            return BadRequest(new { Error = $"User does not have role '{role.Name}'." });
+        }
+
+        var result = await _userManager.RemoveFromRoleAsync(user, role.Name);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        return Ok(new { Message = $"Role '{role.Name}' removed successfully." });
+    }
+
+    /// <summary>
+    /// Lock/Ban a user account
+    /// </summary>
+    [Authorize(Permissions.UpdateUser)]
+    [HttpPost("{id}/lock")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> LockUser(Guid id, [FromBody] LockUserModel model)
+    {
+        var user = await _userManager.FindByIdAsync(id.ToString());
+        if (user == null)
+        {
+            return NotFound(new { Error = "User not found." });
+        }
+
+        // Set lockout end date
+        var lockoutEnd = model.Permanent
+            ? DateTimeOffset.MaxValue
+            : DateTimeOffset.UtcNow.AddDays(model.Days ?? 30);
+
+        var result = await _userManager.SetLockoutEndDateAsync(user, lockoutEnd);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        return Ok(new
+        {
+            Message = model.Permanent
+                ? "User has been permanently locked."
+                : $"User has been locked until {lockoutEnd:yyyy-MM-dd HH:mm:ss} UTC.",
+            LockoutEnd = lockoutEnd
+        });
+    }
+
+    /// <summary>
+    /// Unlock a user account
+    /// </summary>
+    [Authorize(Permissions.UpdateUser)]
+    [HttpPost("{id}/unlock")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> UnlockUser(Guid id)
+    {
+        var user = await _userManager.FindByIdAsync(id.ToString());
+        if (user == null)
+        {
+            return NotFound(new { Error = "User not found." });
+        }
+
+        var result = await _userManager.SetLockoutEndDateAsync(user, null);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        // Reset access failed count
+        await _userManager.ResetAccessFailedCountAsync(user);
+
+        return Ok(new { Message = "User has been unlocked." });
     }
 }
