@@ -43,7 +43,8 @@ public class PlansController : ControllerBase
         [FromQuery] bool? isActive,
         [FromQuery] string search)
     {
-        _logger.LogInformation("Đang lấy danh sách gói cước. IsActive={IsActive}, Search={Search}", isActive, search);
+        var safeSearch = search?.Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Đang lấy danh sách gói cước. IsActive={IsActive}, Search={Search}", isActive, safeSearch);
 
         var plans = await _dispatcher.DispatchAsync(new GetPlansQuery
         {
