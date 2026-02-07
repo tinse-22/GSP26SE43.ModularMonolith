@@ -16,7 +16,7 @@ public class SmtpClientEmailNotification : IEmailNotification
 
     public async Task SendAsync(IEmailMessage emailMessage, CancellationToken cancellationToken = default)
     {
-        var mail = new MailMessage();
+        using var mail = new MailMessage();
 
         mail.From = new MailAddress(emailMessage.From);
 
@@ -41,7 +41,7 @@ public class SmtpClientEmailNotification : IEmailNotification
 
         mail.IsBodyHtml = true;
 
-        var smtpClient = new System.Net.Mail.SmtpClient(_options.Host);
+        using var smtpClient = new System.Net.Mail.SmtpClient(_options.Host);
 
         if (_options.Port.HasValue)
         {
@@ -51,7 +51,6 @@ public class SmtpClientEmailNotification : IEmailNotification
         if (!string.IsNullOrWhiteSpace(_options.UserName) && !string.IsNullOrWhiteSpace(_options.Password))
         {
             smtpClient.Credentials = new System.Net.NetworkCredential(_options.UserName, _options.Password);
-
         }
 
         if (_options.EnableSsl.HasValue)
