@@ -2,6 +2,7 @@
 using ClassifiedAds.Infrastructure.Storages.Amazon;
 using ClassifiedAds.Infrastructure.Storages.Azure;
 using ClassifiedAds.Infrastructure.Storages.Fake;
+using ClassifiedAds.Infrastructure.Storages.Firebase;
 using ClassifiedAds.Infrastructure.Storages.Local;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,13 @@ public static class StoragesCollectionExtensions
         return services;
     }
 
+    public static IServiceCollection AddFirebaseStorageManager(this IServiceCollection services, FirebaseOptions options)
+    {
+        services.AddSingleton<IFileStorageManager>(new FirebaseStorageManager(options));
+
+        return services;
+    }
+
     public static IServiceCollection AddFakeStorageManager(this IServiceCollection services)
     {
         services.AddSingleton<IFileStorageManager>(new FakeStorageManager());
@@ -45,6 +53,10 @@ public static class StoragesCollectionExtensions
         else if (options.UsedAmazon())
         {
             services.AddAmazonS3StorageManager(options.Amazon);
+        }
+        else if (options.UsedFirebase())
+        {
+            services.AddFirebaseStorageManager(options.Firebase);
         }
         else if (options.UsedLocal())
         {
