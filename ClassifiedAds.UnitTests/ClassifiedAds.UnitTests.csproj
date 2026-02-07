@@ -14,6 +14,8 @@
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="FluentAssertions" Version="8.0.1" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory"
+            Version="10.0.0-preview.1.25081.2" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
         <PackageReference Include="Moq" Version="4.20.72" />
         <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />
@@ -30,9 +32,12 @@
         <ProjectReference Include="..\ClassifiedAds.Domain\ClassifiedAds.Domain.csproj" />
         <ProjectReference
             Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
-        <ProjectReference Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
-        <ProjectReference Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
-        <ProjectReference Include="..\ClassifiedAds.Modules.Identity\ClassifiedAds.Modules.Identity.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.Identity\ClassifiedAds.Modules.Identity.csproj" />
     </ItemGroup>
 
     <ItemGroup>

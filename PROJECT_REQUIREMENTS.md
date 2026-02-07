@@ -172,52 +172,59 @@ The system aims to:
 ### 5.1 Authentication & Authorization
 | ID | Requirement |
 |----|-------------|
-| **FE-01** | Provide user authentication and role-based access control to manage documentation, test configurations, and access to execution results |
+| **FE-01** | Provide secure user authentication and role-based access control to manage access to API documentation, test configurations, test execution, and execution results |
 
 ### 5.2 API Input Management
 | ID | Requirement |
 |----|-------------|
-| **FE-02** | Upload, store, and manage API input sources, supporting OpenAPI/Swagger files, Postman collection files, and manual API definition entry (including optional cURL import) as primary inputs |
-| **FE-03** | Parse and normalize uploaded documentation into a unified internal model, extracting endpoints, HTTP methods, parameters, request/response schemas, and security requirements |
+| **FE-02** | Allow users to upload, store, and manage API input sources as primary inputs for test generation, including OpenAPI/Swagger specifications, Postman collection files, and manual API definitions with optional cURL import |
+| **FE-03** | Parse and normalize uploaded API inputs into a unified internal model by extracting endpoints, HTTP methods, parameters, request and response schemas, and documented security requirements |
 
 ### 5.3 Test Configuration
 | ID | Requirement |
 |----|-------------|
-| **FE-04** | Configure test scope and execution settings, including selecting target endpoints, setting the execution environment (e.g., base URL), and specifying authentication/headers needed for requests |
+| **FE-04** | Enable configuration of test scope and execution settings, including selection of target endpoints, definition of execution environments (e.g., base URLs), and specification of authentication mechanisms and request headers |
 
 ### 5.4 Test Generation
 | ID | Requirement |
 |----|-------------|
-| **FE-05** | Generate happy-path API test cases for each endpoint using schema-derived valid inputs and required parameters |
-| **FE-06** | Generate boundary and negative API test cases using rule-based mutations (e.g., missing required fields, out-of-range values, invalid types) and LLM-assisted scenario suggestions grounded in the provided documentation |
+| **FE-05** | Automatically generate happy-path API test cases for each endpoint using schema-compliant valid inputs and required parameters |
+| **FE-06** | Generate boundary and negative API test cases using deterministic, rule-based mutations (such as missing required fields, invalid data types, and out-of-range values), supplemented by LLM-assisted test scenario suggestions grounded in the provided API documentation |
+
+### 5.4.1 LLM Suggestion Review
+| ID | Requirement |
+|----|-------------|
+| **FE-15** | Provide a review interface for LLM-suggested test cases that allows users to preview, approve, reject, or modify individual suggestions before adding them to the test suite |
+| **FE-16** | Allow users to provide feedback on LLM-generated test case suggestions, such as marking them as helpful or not helpful and adding optional notes, to improve future suggestion quality through prompt refinement |
+| **FE-17** | Support bulk approval or rejection of LLM-suggested test cases, with filtering options by suggestion type, including boundary, negative, and edge case scenarios |
 
 ### 5.5 Test Execution
 | ID | Requirement |
 |----|-------------|
-| **FE-07** | Execute tests in a dependency-aware manner, supporting chained workflows such as login/token acquisition → protected API calls, with variable extraction and reuse across requests |
-| **FE-08** | Perform deterministic test execution and pass/fail evaluation using rule-based validation, including HTTP status code verification, response structure/schema validation, and contract conformance checks |
+| **FE-07** | Execute API tests in a dependency-aware manner, supporting chained workflows such as authentication or token acquisition followed by protected API calls, with support for variable extraction and reuse across requests |
+| **FE-08** | Perform deterministic test execution and pass/fail evaluation using rule-based validation, including HTTP status code verification, response structure and schema validation, and contract conformance checks |
 
 ### 5.6 LLM Assistance
 | ID | Requirement |
 |----|-------------|
-| **FE-09** | Provide LLM-assisted explanations for failed test cases by summarizing observed mismatches against documentation and suggesting plausible causes, without affecting deterministic pass/fail decisions |
+| **FE-09** | Provide LLM-assisted explanations for failed test cases by summarizing observed discrepancies between actual responses and documented expectations, and suggesting plausible causes, without influencing deterministic pass/fail outcomes |
 
 ### 5.7 Reporting
 | ID | Requirement |
 |----|-------------|
-| **FE-10** | Generate test execution reports (coverage summaries, run history, failure details, and logs) and support exporting results in PDF and/or CSV formats |
+| **FE-10** | Generate comprehensive test execution reports, including coverage summaries, execution history, failure details, and logs, and support exporting results in PDF and CSV formats |
 
 ### 5.8 Manual Entry Mode
 | ID | Requirement |
 |----|-------------|
-| **FE-11** | Provide a Manual Entry (Enter API Details) mode that lets users define an API request (HTTP method, endpoint URL, headers, path params, query params, and request body) to generate test suites without OpenAPI/Postman artifacts |
-| **FE-12** | Support path-parameter templating in manually entered endpoints (e.g., `/resource/{id}`) and bind placeholders to user-provided sample values via structured Path Params input for deterministic test generation and execution |
-| **FE-13** | Provide a cURL import option that parses a pasted cURL command into method/URL/headers/body (and related params) to quickly bootstrap test generation from existing developer workflows |
+| **FE-11** | Provide a Manual Entry (Enter API Details) mode that allows users to define API requests by specifying HTTP method, endpoint URL, headers, path parameters, query parameters, and request body, enabling test generation without OpenAPI or Postman artifacts |
+| **FE-12** | Support path-parameter templating in manually defined endpoints (for example, `/resource/{id}`) and bind placeholders to user-provided sample values through structured Path Parameters input for deterministic test generation and execution |
+| **FE-13** | Provide a cURL import capability that parses pasted cURL commands into HTTP method, URL, headers, request body, and related parameters to quickly bootstrap API definitions and test generation |
 
 ### 5.9 Subscription & Billing
 | ID | Requirement |
 |----|-------------|
-| **FE-14** | Provide subscription and billing management with plan lifecycle operations (trial, upgrade/downgrade, cancel), plan-based limits and usage tracking (e.g., projects/endpoints/test runs/concurrency), and integration with a third-party payment provider for checkout, recurring billing, and invoicing without storing raw cardholder data in the system |
+| **FE-14** | Provide subscription and billing management capabilities, including plan lifecycle operations (trial, upgrade, downgrade, cancellation), plan-based limits and usage tracking (such as projects, endpoints, test runs, and concurrency), and integration with a third-party payment provider for checkout, recurring billing, and invoicing, without storing raw cardholder data
 
 ---
 
@@ -254,6 +261,9 @@ The system aims to:
 | **FE-12** | Path-parameter templating support |
 | **FE-13** | cURL import option |
 | **FE-14** | Subscription and billing management |
+| **FE-15** | LLM suggestion review interface (preview, approve, reject, modify) |
+| **FE-16** | User feedback on LLM suggestions for quality improvement |
+| **FE-17** | Bulk approval/rejection with filtering by suggestion type |
 
 ### 7.2 Limitations & Exclusions
 
@@ -306,7 +316,7 @@ The system aims to:
 | Module | Purpose | Features Covered |
 |--------|---------|------------------|
 | **ApiDocumentation** | API input management | FE-02, FE-03, FE-11, FE-12, FE-13 |
-| **TestGeneration** | Test case generation | FE-05, FE-06 |
+| **TestGeneration** | Test case generation | FE-05, FE-06, FE-15, FE-16, FE-17 |
 | **TestExecution** | Test execution engine | FE-07, FE-08 |
 | **TestReporting** | Reports and exports | FE-10 |
 | **LlmAssistant** | LLM integration | FE-06 (partial), FE-09 |

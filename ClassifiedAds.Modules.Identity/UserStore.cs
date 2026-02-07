@@ -21,15 +21,18 @@ public class UserStore : IUserStore<User>,
                          IUserLockoutStore<User>,
                          IUserAuthenticationTokenStore<User>,
                          IUserAuthenticatorKeyStore<User>,
-                         IUserTwoFactorRecoveryCodeStore<User>
+                         IUserTwoFactorRecoveryCodeStore<User>,
+                         IUserRoleStore<User>
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IUserRepository _userRepository;
+    private readonly IdentityDbContext _dbContext;
 
-    public UserStore(IUserRepository userRepository)
+    public UserStore(IUserRepository userRepository, IdentityDbContext dbContext)
     {
         _unitOfWork = userRepository.UnitOfWork;
         _userRepository = userRepository;
+        _dbContext = dbContext;
     }
 
     public void Dispose()
@@ -313,5 +316,79 @@ public class UserStore : IUserStore<User>,
         }
 
         return 0;
+    }
+
+    // IUserRoleStore<User> implementation
+    public async Task AddToRoleAsync(User user, string roleName, CancellationToken cancellationToken)
+    {
+        var normalizedRoleName = roleName.ToUpperInvariant();
+        var role = await _dbContext.Set<Role>().FirstOrDefaultAsync(r => r.NormalizedName == normalizedRoleName, cancellationToken);
+        if (role == null)
+        {
+            throw new InvalidOperationException($"Role '{roleName}' not found.");
+        }
+
+        var userRole = new UserRole { UserId = user.Id, RoleId = role.Id };
+        await _dbContext.Set<UserRole>().AddAsync(userRole, cancellationToken);
+    }
+
+    public async Task RemoveFromRoleAsync(User user, string roleName, CancellationToken cancellationToken)
+    {
+        var normalizedRoleName = roleName.ToUpperInvariant();
+        var role = await _dbContext.Set<Role>().FirstOrDefaultAsync(r => r.NormalizedName == normalizedRoleName, cancellationToken);
+        if (role != null)
+        {
+            var userRole = await _dbContext.Set<UserRole>().FirstOrDefaultAsync(ur => ur.UserId == user.Id && ur.RoleId == role.Id, cancellationToken);
+            if (userRole != null)
+            {
+                _dbContext.Set<UserRole>().Remove(userRole);
+            }
+        }
+    }
+
+    public async Task<IList<string>> GetRolesAsync(User user, CancellationToken cancellationToken)
+    {
+        var roleIds = await _dbContext.Set<UserRole>()
+            .Where(ur => ur.UserId == user.Id)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(cancellationToken);
+
+        var roles = await _dbContext.Set<Role>()
+            .Where(r => roleIds.Contains(r.Id))
+            .Select(r => r.Name)
+            .ToListAsync(cancellationToken);
+
+        return roles;
+    }
+
+    public async Task<bool> IsInRoleAsync(User user, string roleName, CancellationToken cancellationToken)
+    {
+        var normalizedRoleName = roleName.ToUpperInvariant();
+        var role = await _dbContext.Set<Role>().FirstOrDefaultAsync(r => r.NormalizedName == normalizedRoleName, cancellationToken);
+        if (role == null)
+        {
+            return false;
+        }
+
+        return await _dbContext.Set<UserRole>().AnyAsync(ur => ur.UserId == user.Id && ur.RoleId == role.Id, cancellationToken);
+    }
+
+    public async Task<IList<User>> GetUsersInRoleAsync(string roleName, CancellationToken cancellationToken)
+    {
+        var normalizedRoleName = roleName.ToUpperInvariant();
+        var role = await _dbContext.Set<Role>().FirstOrDefaultAsync(r => r.NormalizedName == normalizedRoleName, cancellationToken);
+        if (role == null)
+        {
+            return new List<User>();
+        }
+
+        var userIds = await _dbContext.Set<UserRole>()
+            .Where(ur => ur.RoleId == role.Id)
+            .Select(ur => ur.UserId)
+            .ToListAsync(cancellationToken);
+
+        return await _dbContext.Set<User>()
+            .Where(u => userIds.Contains(u.Id))
+            .ToListAsync(cancellationToken);
     }
 }

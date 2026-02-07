@@ -50,7 +50,7 @@ public class SendEmailMessagesCommandHandler : ICommandHandler<SendEmailMessages
             TimeSpan.FromMinutes(89),
         };
 
-        var dateTime = _dateTimeProvider.OffsetNow;
+        var dateTime = _dateTimeProvider.OffsetUtcNow;
         var defaultAttemptCount = 5;
 
         var messages = _repository.GetQueryableSet()
@@ -78,18 +78,18 @@ public class SendEmailMessagesCommandHandler : ICommandHandler<SendEmailMessages
                         Body = email.Body,
                     }, cancellationToken);
 
-                    email.SentDateTime = _dateTimeProvider.OffsetNow;
+                    email.SentDateTime = _dateTimeProvider.OffsetUtcNow;
                     email.Log += log + "Succeed.";
                 }
                 catch (Exception ex)
                 {
                     email.Log += log + ex.ToString();
-                    email.NextAttemptDateTime = _dateTimeProvider.OffsetNow + deplayedTimes[email.AttemptCount];
+                    email.NextAttemptDateTime = _dateTimeProvider.OffsetUtcNow + deplayedTimes[email.AttemptCount];
                 }
 
                 email.AttemptCount += 1;
                 email.Log = email.Log.Trim();
-                email.UpdatedDateTime = _dateTimeProvider.OffsetNow;
+                email.UpdatedDateTime = _dateTimeProvider.OffsetUtcNow;
 
                 if (email.MaxAttemptCount == 0)
                 {

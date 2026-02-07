@@ -36,8 +36,15 @@ public class PublishEventWorker : BackgroundService
         {
             if (!_outboxPublishingToggle.IsEnabled())
             {
-                _logger.LogInformation("PushlishEventWorker is being paused. Retry in 10s.");
-                await Task.Delay(10000, cancellationToken);
+                _logger.LogInformation("PublishEventWorker is being paused. Retry in 10s.");
+                try
+                {
+                    await Task.Delay(10000, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
                 continue;
             }
 
@@ -59,10 +66,22 @@ public class PublishEventWorker : BackgroundService
                     await Task.Delay(10000, cancellationToken);
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Normal shutdown, ignore
+                break;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"");
-                await Task.Delay(10000, cancellationToken);
+                _logger.LogError(ex, "Error publishing outbox events.");
+                try
+                {
+                    await Task.Delay(10000, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
 

@@ -13,12 +13,19 @@ public class UserRoleConfiguration : IEntityTypeConfiguration<UserRole>
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
 
         // Seed Admin user with Admin role
+        // Seed Regular user with User role
         builder.HasData(
             new UserRole
             {
                 Id = Guid.Parse("00000000-0000-0000-0000-000000000001"),
                 UserId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
                 RoleId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+            },
+            new UserRole
+            {
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000002"),
+                UserId = Guid.Parse("00000000-0000-0000-0000-000000000002"),
+                RoleId = Guid.Parse("00000000-0000-0000-0000-000000000002"),
             }
         );
     }
