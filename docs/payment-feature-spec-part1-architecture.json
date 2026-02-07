@@ -1,0 +1,143 @@
+{
+  "$schema": "payment-feature-specification",
+  "version": "1.1.0",
+  "title": "StudentGamerHub Payment Feature - Architecture & Business Objects",
+  "description": "Tài liệu mô tả kiến trúc và entities của tính năng Payment. Chỉ bao gồm Payment, không bao gồm Wallet.",
+  "techStack": {
+    "framework": ".NET 8 (ASP.NET Core Web API)",
+    "database": "PostgreSQL (via Entity Framework Core + Npgsql)",
+    "paymentGateway": "PayOS (Vietnamese payment gateway - https://payos.vn)",
+    "cache": "Redis (optional, fallback to IMemoryCache)",
+    "authentication": "ASP.NET Core Identity + JWT Bearer",
+    "validation": "FluentValidation",
+    "di": "Built-in Microsoft DI",
+    "architecture": "Clean Architecture (BusinessObjects → DTOs → Repositories → Services → WebAPI)"
+  },
+
+  "part": "1/3 - Architecture & Business Objects",
+
+  "architecture": {
+    "layers": [
+      { "name": "BusinessObjects", "description": "Entity models, enums, base classes, Result pattern", "project": "BusinessObjects.csproj" },
+      { "name": "DTOs", "description": "Data Transfer Objects for API requests/responses", "project": "DTOs.csproj" },
+      { "name": "Repositories", "description": "Data access layer: EF Core DbContext, Repository interfaces/implementations, Migrations", "project": "Repositories.csproj" },
+      { "name": "Services", "description": "Business logic: Service interfaces/implementations, Configuration, Validation", "project": "Services.csproj" },
+      { "name": "WebAPI", "description": "Presentation layer: Controllers, Middleware, Extensions, Hubs", "project": "WebAPI.csproj" }
+    ],
+    "paymentFlows": [
+      {
+        "name": "Membership Purchase (wallet balance sufficient)",
+        "steps": [
+          "1. User calls POST /api/payments/buy-membership/{planId}",
+          "2. PaymentService.BuyMembershipAsync checks wallet balance vs plan price",
+          "3. Sufficient → Debit user wallet, credit platform wallet, create OUT+IN transactions, assign membership",
+          "4. Return { requiresExternalPayment: false, membership: {...} }"
+        ]
+      },
+      {
+        "name": "Membership Purchase via PayOS (insufficient balance)",
+        "steps": [
+          "1. POST /api/payments/buy-membership/{planId} → insufficient balance detected",
+          "2. Creates PaymentIntent (Purpose=Membership, Status=RequiresPayment, expires 15 min)",
+          "3. Returns { requiresExternalPayment: true, paymentIntentId: guid }",
+          "4. User calls POST /api/payments/payos/create { intentId, returnUrl }",
+          "5. PaymentService generates OrderCode, calls PayOS API → returns { checkoutUrl }",
+          "6. User redirected to PayOS → pays via QR/bank transfer",
+          "7. PayOS sends webhook POST /api/payments/payos/webhook",
+          "8. PayOsService verifies signature, ConfirmMembershipPurchaseAsync creates Transaction, assigns membership",
+          "9. User redirected back via GET /api/payments/payos/return"
+        ]
+      },
+      {
+        "name": "Event Ticket Purchase",
+        "steps": [
+          "1. User registers for event → PaymentIntent created (Purpose=EventTicket)",
+          "2. Option A: POST /api/payments/{intentId}/confirm (wallet payment) → debit wallet, confirm registration",
+          "3. Option B: POST /api/payments/payos/create → PayOS checkout → webhook → ConfirmEventTicketAsync"
+        ]
+      }
+    ]
+  },
+
+  "businessObjects": {
+    "baseClass": {
+      "name": "AuditableEntity",
+      "file": "BusinessObjects/Common/AuditableEntity.cs",
+      "code": "namespace BusinessObjects.Common;\n\npublic interface IAuditable\n{\n    DateTime CreatedAtUtc { get; set; }\n    Guid? CreatedBy { get; set; }\n    DateTime? UpdatedAtUtc { get; set; }\n    Guid? UpdatedBy { get; set; }\n}\n\npublic interface ISoftDelete\n{\n    bool IsDeleted { get; set; }\n    DateTime? DeletedAtUtc { get; set; }\n    Guid? DeletedBy { get; set; }\n}\n\npublic abstract class AuditableEntity : IAuditable, ISoftDelete\n{\n    public Guid Id { get; set; }\n    public DateTime CreatedAtUtc { get; set; }\n    public Guid? CreatedBy { get; set; }\n    public DateTime? UpdatedAtUtc { get; set; }\n    public Guid? UpdatedBy { get; set; }\n    public bool IsDeleted { get; set; }\n    public DateTime? DeletedAtUtc { get; set; }\n    public Guid? DeletedBy { get; set; }\n}"
+    },
+    "entities": {
+      "PaymentIntent": {
+        "file": "BusinessObjects/User.cs (within file)",
+        "description": "Represents a payment intent - tracks lifecycle of a payment from creation to completion",
+        "code": "[Index(nameof(EventId))]\npublic sealed class PaymentIntent : AuditableEntity\n{\n    public Guid UserId { get; set; }\n    public User? User { get; set; }\n\n    public long AmountCents { get; set; }\n    public PaymentPurpose Purpose { get; set; }\n\n    public Guid? EventRegistrationId { get; set; }\n    public EventRegistration? EventRegistration { get; set; }\n\n    public Guid? EventId { get; set; }\n    public Event? Event { get; set; }\n\n    public Guid? MembershipPlanId { get; set; }\n    public MembershipPlan? MembershipPlan { get; set; }\n\n    public PaymentIntentStatus Status { get; set; } = PaymentIntentStatus.RequiresPayment;\n    public string ClientSecret { get; set; } = default!;\n    public DateTime ExpiresAt { get; set; }\n    public long? OrderCode { get; set; }\n}",
+        "properties": {
+          "Id": "Guid - Primary key (from AuditableEntity)",
+          "UserId": "Guid - FK to User who owns this payment intent",
+          "AmountCents": "long - Amount in VND",
+          "Purpose": "PaymentPurpose enum - TopUp, EventTicket, WalletTopUp, Membership",
+          "EventRegistrationId": "Guid? - FK to EventRegistration (for EventTicket purpose)",
+          "EventId": "Guid? - FK to Event (for TopUp/EventTicket purposes)",
+          "MembershipPlanId": "Guid? - FK to MembershipPlan (for Membership purpose)",
+          "Status": "PaymentIntentStatus enum - RequiresPayment, Processing, Succeeded, Canceled",
+          "ClientSecret": "string - Stores PayOS checkout URL after creation",
+          "ExpiresAt": "DateTime - When this intent expires (typically 15 minutes)",
+          "OrderCode": "long? - Unique PayOS order code (15-digit number)"
+        }
+      },
+      "Transaction": {
+        "file": "BusinessObjects/User.cs (within file)",
+        "description": "Records a financial transaction in the system",
+        "code": "[Index(nameof(EventId))]\npublic sealed class Transaction : AuditableEntity\n{\n    public Guid? WalletId { get; set; }\n    public Wallet? Wallet { get; set; }\n    public Guid? EventId { get; set; }\n    public Event? Event { get; set; }\n\n    public long AmountCents { get; set; }\n    public string Currency { get; set; } = \"VND\";\n\n    public TransactionDirection Direction { get; set; } = TransactionDirection.Out;\n    public TransactionMethod Method { get; set; } = TransactionMethod.Wallet;\n    public TransactionStatus Status { get; set; } = TransactionStatus.Pending;\n\n    public string? Provider { get; set; }\n    public string? ProviderRef { get; set; }\n    public JsonDocument? Metadata { get; set; }\n}",
+        "properties": {
+          "WalletId": "Guid? - FK to Wallet (wallet là entity riêng, xem Wallet docs)",
+          "EventId": "Guid? - FK to Event",
+          "AmountCents": "long - Transaction amount in VND",
+          "Currency": "string - Always 'VND'",
+          "Direction": "TransactionDirection - In (credit) or Out (debit)",
+          "Method": "TransactionMethod - Wallet, Card, or Gateway",
+          "Status": "TransactionStatus - Pending, Succeeded, Failed, Refunded, Disputed",
+          "Provider": "string? - 'LOCAL' for wallet transfers, 'PAYOS' for PayOS transactions",
+          "ProviderRef": "string? - External reference ID from payment provider",
+          "Metadata": "JsonDocument? - JSON metadata (note, eventId, planId, etc.)"
+        }
+      }
+    },
+    "enums": {
+      "file": "BusinessObjects/Common/Enums.cs",
+      "paymentRelated": {
+        "TransactionDirection": { "In": 0, "Out": 1 },
+        "TransactionMethod": { "Wallet": 0, "Card": 1, "Gateway": 2 },
+        "TransactionStatus": { "Pending": 0, "Succeeded": 1, "Failed": 2, "Refunded": 3, "Disputed": 4 },
+        "PaymentPurpose": { "TopUp": 0, "EventTicket": 1, "WalletTopUp": 2, "Membership": 3 },
+        "PaymentIntentStatus": { "RequiresPayment": 0, "Processing": 1, "Succeeded": 2, "Canceled": 3 }
+      }
+    },
+    "resultPattern": {
+      "file": "BusinessObjects/Common/Results/Result.cs",
+      "description": "Railway-oriented Result pattern for error handling without exceptions",
+      "code": "namespace BusinessObjects.Common.Results\n{\n    public class Result\n    {\n        public bool IsSuccess { get; }\n        public bool IsFailure => !IsSuccess;\n        public Error Error { get; }\n\n        protected Result(bool isSuccess, Error error)\n        {\n            IsSuccess = isSuccess;\n            Error = error;\n        }\n\n        public static Result Success() => new(true, Error.None);\n        public static Result Failure(Error error) => new(false, error);\n\n        public static Result Combine(params Result[] results)\n        {\n            foreach (var r in results) if (r.IsFailure) return r;\n            return Success();\n        }\n    }\n\n    public sealed class Result<T> : Result\n    {\n        public T? Value { get; }\n        private Result(T? value, bool isSuccess, Error error) : base(isSuccess, error) => Value = value;\n        public static Result<T> Success(T value) => new(value, true, Error.None);\n        public static new Result<T> Failure(Error error) => new(default, false, error);\n        public static implicit operator Result<T>(T value) => Success(value);\n        public static Result<T> FromNullable(T? value, Error ifNull)\n            => value is null ? Failure(ifNull) : Success(value);\n    }\n}",
+      "errorCodes": {
+        "Error.Codes.NotFound": "404 Not Found",
+        "Error.Codes.Validation": "400 Bad Request",
+        "Error.Codes.Unauthorized": "401 Unauthorized",
+        "Error.Codes.Forbidden": "403 Forbidden",
+        "Error.Codes.Conflict": "409 Conflict",
+        "Error.Codes.Unexpected": "500 Internal Server Error",
+        "Error.Codes.ServiceUnavailable": "503 Service Unavailable"
+      }
+    }
+  },
+
+  "dbContext": {
+    "file": "Repositories/Persistence/AppDbContext.cs",
+    "dbSets": [
+      "public DbSet<Transaction> Transactions => Set<Transaction>();",
+      "public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();"
+    ],
+    "paymentIntentConfiguration": {
+      "description": "EF Core Fluent API configuration for PaymentIntent",
+      "code": "b.Entity<PaymentIntent>(e =>\n{\n    e.Property(x => x.Purpose).HasConversion<string>();\n    e.Property(x => x.Status).HasConversion<string>();\n    e.Property(x => x.ClientSecret).IsRequired();\n\n    e.HasOne(x => x.User)\n     .WithMany()\n     .HasForeignKey(x => x.UserId)\n     .OnDelete(DeleteBehavior.Restrict);\n\n    e.HasOne(x => x.Event)\n     .WithMany()\n     .HasForeignKey(x => x.EventId)\n     .OnDelete(DeleteBehavior.SetNull);\n\n    e.HasOne(x => x.MembershipPlan)\n     .WithMany()\n     .HasForeignKey(x => x.MembershipPlanId)\n     .OnDelete(DeleteBehavior.SetNull);\n\n    e.HasIndex(x => x.UserId);\n    e.HasIndex(x => x.EventRegistrationId).IsUnique();\n    e.HasIndex(x => x.EventId);\n    e.HasIndex(x => x.MembershipPlanId);\n\n    e.HasIndex(x => x.OrderCode)\n     .IsUnique()\n     .HasFilter(\"\\\"OrderCode\\\" IS NOT NULL\");\n\n    e.HasIndex(x => new { x.Status, x.CreatedAtUtc });\n    e.HasIndex(x => new { x.Status, x.Purpose });\n\n    e.HasCheckConstraint(\n        \"chk_payment_intent_amount_positive\",\n        isNpgsql ? \"\\\"AmountCents\\\" > 0\" : \"[AmountCents] > 0\");\n\n    e.HasCheckConstraint(\"chk_payment_intent_purpose_allowed\",\n        isNpgsql\n            ? \"\\\"Purpose\\\" IN ('TopUp','EventTicket','WalletTopUp','Membership')\"\n            : \"[Purpose] IN ('TopUp','EventTicket','WalletTopUp','Membership')\");\n\n    e.HasCheckConstraint(\"chk_payment_intent_status_allowed\",\n        isNpgsql\n            ? \"\\\"Status\\\" IN ('RequiresPayment','Succeeded','Canceled','Expired')\"\n            : \"[Status] IN ('RequiresPayment','Succeeded','Canceled','Expired')\");\n});"
+    },
+    "note": "Transaction entity và EventRegistration↔PaymentIntent FK cũng được configure trong AppDbContext, xem file gốc để biết chi tiết."
+  }
+}
