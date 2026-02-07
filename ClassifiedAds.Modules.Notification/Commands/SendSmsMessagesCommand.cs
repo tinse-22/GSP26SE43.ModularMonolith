@@ -97,7 +97,7 @@ public class SendSmsMessagesCommandHandler : ICommandHandler<SendSmsMessagesComm
         }
         else
         {
-            _logger.LogInformation("No SMS to send.");
+            _logger.LogDebug("No SMS to send.");
         }
 
         command.SentMessagesCount = messages.Count;

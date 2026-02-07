@@ -1,6 +1,7 @@
 ﻿using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Notification.ConfigurationOptions;
+using ClassifiedAds.Modules.Notification.EmailQueue;
 using ClassifiedAds.Modules.Notification.Entities;
 using ClassifiedAds.Modules.Notification.HostedServices;
 using ClassifiedAds.Modules.Notification.Persistence;
@@ -39,7 +40,28 @@ public static class ServiceCollectionExtensions
             .AddScoped<IRepository<SmsMessage, Guid>, Repository<SmsMessage, Guid>>()
             .AddScoped(typeof(IEmailMessageRepository), typeof(EmailMessageRepository))
             .AddScoped(typeof(ISmsMessageRepository), typeof(SmsMessageRepository))
-            .AddScoped<IEmailMessageService, EmailMessageService>();
+            .AddScoped<IEmailMessageService, EmailMessageService>()
+            .AddSingleton<IEmailTemplateService, EmailTemplateService>();
+
+        // ─── Email Queue (Channel-based async pipeline) ──────────────────
+        services.Configure<EmailQueueOptions>(opt =>
+        {
+            settings.EmailQueue ??= new EmailQueueOptions();
+            opt.ChannelCapacity = settings.EmailQueue.ChannelCapacity;
+            opt.MaxDegreeOfParallelism = settings.EmailQueue.MaxDegreeOfParallelism;
+            opt.MaxRetryAttempts = settings.EmailQueue.MaxRetryAttempts;
+            opt.BaseDelaySeconds = settings.EmailQueue.BaseDelaySeconds;
+            opt.MaxDelaySeconds = settings.EmailQueue.MaxDelaySeconds;
+            opt.SendTimeoutSeconds = settings.EmailQueue.SendTimeoutSeconds;
+            opt.CircuitBreakerFailureThreshold = settings.EmailQueue.CircuitBreakerFailureThreshold;
+            opt.CircuitBreakerDurationSeconds = settings.EmailQueue.CircuitBreakerDurationSeconds;
+            opt.DbSweepIntervalSeconds = settings.EmailQueue.DbSweepIntervalSeconds;
+        });
+
+        // Singleton channel — shared between producers (scoped services) and consumers (workers)
+        services.AddSingleton<EmailChannel>();
+        services.AddSingleton<IEmailQueueWriter>(sp => sp.GetRequiredService<EmailChannel>());
+        services.AddSingleton<IEmailQueueReader>(sp => sp.GetRequiredService<EmailChannel>());
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
@@ -67,7 +89,11 @@ public static class ServiceCollectionExtensions
 
     public static IServiceCollection AddHostedServicesNotificationModule(this IServiceCollection services)
     {
-        services.AddHostedService<SendEmailWorker>();
+        // New Channel-based email workers
+        services.AddHostedService<EmailSendingWorker>();
+        services.AddHostedService<EmailDbSweepWorker>();
+
+        // Legacy SMS worker (unchanged)
         services.AddHostedService<SendSmsWorker>();
 
         return services;

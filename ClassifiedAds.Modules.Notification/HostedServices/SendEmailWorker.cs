@@ -28,22 +28,37 @@ public class SendEmailWorker : BackgroundService
 
     private async Task DoWork(CancellationToken cancellationToken)
     {
+        // Wait briefly for infrastructure (DB, etc.) to become available
+        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+
         while (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogDebug($"SendEmail task doing background work.");
-
-            var sendEmailsCommand = new SendEmailMessagesCommand();
-
-            using (var scope = _services.CreateScope())
+            try
             {
-                var dispatcher = scope.ServiceProvider.GetDispatcher();
+                _logger.LogDebug($"SendEmail task doing background work.");
 
-                await dispatcher.DispatchAsync(sendEmailsCommand, cancellationToken);
+                var sendEmailsCommand = new SendEmailMessagesCommand();
+
+                using (var scope = _services.CreateScope())
+                {
+                    var dispatcher = scope.ServiceProvider.GetDispatcher();
+
+                    await dispatcher.DispatchAsync(sendEmailsCommand, cancellationToken);
+                }
+
+                if (sendEmailsCommand.SentMessagesCount == 0)
+                {
+                    await Task.Delay(10000, cancellationToken);
+                }
             }
-
-            if (sendEmailsCommand.SentMessagesCount == 0)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(10000, cancellationToken);
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SendEmailWorker encountered an error. Retrying in 15 seconds...");
+                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
             }
         }
 
