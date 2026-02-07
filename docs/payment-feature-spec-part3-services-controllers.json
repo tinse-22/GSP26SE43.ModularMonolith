@@ -1,0 +1,360 @@
+{
+  "$schema": "payment-feature-specification",
+  "version": "1.1.0",
+  "title": "StudentGamerHub Payment Feature - Services & Controller (Full Implementation)",
+  "part": "3/3 - Service Interfaces, Implementations & PaymentsController",
+
+  "serviceInterfaces": {
+    "IPaymentService": {
+      "file": "Services/Interfaces/IPaymentService.cs",
+      "code": "namespace Services.Interfaces;\n\npublic interface IPaymentService\n{\n    Task<Result<MembershipPurchaseResultDto>> BuyMembershipAsync(Guid userId, Guid planId, CancellationToken ct = default);\n    Task<Result<Guid>> CreateWalletTopUpIntentAsync(Guid userId, long amountCents, CancellationToken ct = default);\n    Task<Result> ConfirmAsync(Guid userId, Guid paymentIntentId, CancellationToken ct = default);\n    Task<Result<string>> CreateHostedCheckoutUrlAsync(Guid userId, Guid paymentIntentId, string? returnUrl, string clientIp, CancellationToken ct = default);\n}"
+    },
+    "IPaymentReadService": {
+      "file": "Services/Interfaces/IPaymentReadService.cs",
+      "code": "namespace Services.Interfaces;\n\npublic interface IPaymentReadService\n{\n    Task<Result<PaymentIntentDto>> GetAsync(Guid userId, Guid paymentIntentId, CancellationToken ct = default);\n    Task<Result<Guid>> ResolveIntentIdByOrderCodeAsync(long orderCode, CancellationToken ct = default);\n}"
+    },
+    "IPayOsService": {
+      "file": "Services/Interfaces/IPayOsService.cs",
+      "code": "using DTOs.Payments.PayOs;\n\nnamespace Services.Interfaces;\n\npublic interface IPayOsService\n{\n    Task<Result<string>> CreatePaymentLinkAsync(PayOsCreatePaymentRequest req, CancellationToken ct = default);\n    Task<Result<PayOsWebhookOutcome>> HandleWebhookAsync(PayOsWebhookPayload payload, string rawBody, string? signatureHeader, CancellationToken ct = default);\n    bool VerifyWebhookSignature(PayOsWebhookPayload payload, string rawBody);\n    Task<Result<PayOsPaymentInfo>> GetPaymentInfoAsync(long orderCode, CancellationToken ct = default);\n}\n\npublic sealed record PayOsPaymentInfo\n{\n    public long OrderCode { get; init; }\n    public long Amount { get; init; }\n    public string Status { get; init; } = \"\";\n    public string? Reference { get; init; }\n    public string? TransactionDateTime { get; init; }\n}"
+    }
+  },
+
+  "serviceImplementations": {
+    "PaymentService": {
+      "file": "Services/Implementations/PaymentService.cs",
+      "description": "Core payment business logic - handles payment intent creation, confirmation, and checkout URL generation",
+      "dependencies": [
+        "IGenericUnitOfWork", "IPaymentIntentRepository", "IRegistrationQueryRepository",
+        "IRegistrationCommandRepository", "IEventQueryRepository", "ITransactionRepository",
+        "IWalletRepository", "IMembershipPlanRepository", "IMembershipEnrollmentService",
+        "IPayOsService", "BillingOptions (IOptionsSnapshot)", "PayOsOptions (IOptionsSnapshot)",
+        "IQuestService", "ICommunityService", "IPlatformAccountService",
+        "UserManager<User>", "IEmailQueue", "IMembershipEmailFactory",
+        "IUserMembershipRepository", "ILogger<PaymentService>"
+      ],
+      "methods": {
+        "BuyMembershipAsync": {
+          "signature": "Task<Result<MembershipPurchaseResultDto>> BuyMembershipAsync(Guid userId, Guid planId, CancellationToken ct)",
+          "description": "Purchase a membership plan. If user has sufficient wallet balance, deduct immediately. Otherwise create a PaymentIntent for external payment.",
+          "flow": [
+            "1. Get membership plan by ID, validate it's active",
+            "2. Ensure user wallet exists",
+            "3. Convert plan price to cents",
+            "4. If price <= 0: Free plan → assign membership directly",
+            "5. If wallet balance >= price: Debit user wallet, credit platform wallet, create OUT+IN transactions, assign membership",
+            "6. If wallet balance < price: Create PaymentIntent (Purpose=Membership, Status=RequiresPayment, expires in 15 min)",
+            "7. Return MembershipPurchaseResultDto indicating if external payment is needed"
+          ],
+          "code": "public Task<Result<MembershipPurchaseResultDto>> BuyMembershipAsync(Guid userId, Guid planId, CancellationToken ct = default)\n{\n    return _uow.ExecuteTransactionAsync<MembershipPurchaseResultDto>(async innerCt =>\n    {\n        var plan = await _membershipPlanRepository.GetByIdAsync(planId, innerCt).ConfigureAwait(false);\n        if (plan is null)\n            return Result<MembershipPurchaseResultDto>.Failure(new Error(Error.Codes.NotFound, \"Membership plan not found.\"));\n        if (!plan.IsActive)\n            return Result<MembershipPurchaseResultDto>.Failure(new Error(Error.Codes.Conflict, \"Membership plan is inactive.\"));\n\n        var wallet = await _walletRepository.EnsureAsync(userId, innerCt).ConfigureAwait(false);\n        var priceCents = ConvertPriceToCents(plan.Price);\n\n        if (priceCents <= 0)\n        {\n            var membershipInfo = await _membershipEnrollmentService.AssignAsync(userId, plan, userId, innerCt).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(innerCt).ConfigureAwait(false);\n            await SendMembershipConfirmationEmailAsync(userId, plan, innerCt).ConfigureAwait(false);\n            return Result<MembershipPurchaseResultDto>.Success(new MembershipPurchaseResultDto(false, null, membershipInfo));\n        }\n\n        if (wallet.BalanceCents >= priceCents)\n        {\n            var ensurePlatformUser = await _platformAccountService.GetOrCreatePlatformUserIdAsync(innerCt).ConfigureAwait(false);\n            if (ensurePlatformUser.IsFailure)\n                return Result<MembershipPurchaseResultDto>.Failure(ensurePlatformUser.Error);\n            var platformUserId = ensurePlatformUser.Value;\n\n            var debited = await _walletRepository.AdjustBalanceAsync(userId, -priceCents, innerCt).ConfigureAwait(false);\n            if (!debited)\n                return Result<MembershipPurchaseResultDto>.Failure(new Error(Error.Codes.Forbidden, \"Insufficient wallet balance.\"));\n\n            var credited = await _walletRepository.AdjustBalanceAsync(platformUserId, priceCents, innerCt).ConfigureAwait(false);\n            if (!credited)\n                return Result<MembershipPurchaseResultDto>.Failure(new Error(Error.Codes.Unexpected, \"Failed to credit platform wallet.\"));\n\n            var platformWallet = await _walletRepository.EnsureAsync(platformUserId, innerCt).ConfigureAwait(false);\n\n            var outTx = new Transaction\n            {\n                Id = Guid.NewGuid(), WalletId = wallet.Id, AmountCents = priceCents,\n                Direction = TransactionDirection.Out, Method = TransactionMethod.Wallet,\n                Status = TransactionStatus.Succeeded, Provider = \"LOCAL\",\n                Metadata = CreateMembershipMetadata(plan.Id, plan.Name), CreatedBy = userId,\n            };\n            var inTx = new Transaction\n            {\n                Id = Guid.NewGuid(), WalletId = platformWallet.Id, AmountCents = priceCents,\n                Direction = TransactionDirection.In, Method = TransactionMethod.Wallet,\n                Status = TransactionStatus.Succeeded, Provider = \"LOCAL\",\n                Metadata = CreateMembershipMetadata(plan.Id, plan.Name), CreatedBy = platformUserId,\n            };\n\n            await _transactionRepository.CreateAsync(outTx, innerCt).ConfigureAwait(false);\n            await _transactionRepository.CreateAsync(inTx, innerCt).ConfigureAwait(false);\n\n            var membershipInfo = await _membershipEnrollmentService.AssignAsync(userId, plan, userId, innerCt).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(innerCt).ConfigureAwait(false);\n            await SendMembershipConfirmationEmailAsync(userId, plan, innerCt).ConfigureAwait(false);\n\n            return Result<MembershipPurchaseResultDto>.Success(new MembershipPurchaseResultDto(false, null, membershipInfo));\n        }\n\n        var now = DateTime.UtcNow;\n        var pendingIntent = new PaymentIntent\n        {\n            Id = Guid.NewGuid(), UserId = userId, AmountCents = priceCents,\n            Purpose = PaymentPurpose.Membership, MembershipPlanId = plan.Id,\n            Status = PaymentIntentStatus.RequiresPayment,\n            ClientSecret = Guid.NewGuid().ToString(\"N\"),\n            ExpiresAt = now.AddMinutes(15), CreatedAtUtc = now, CreatedBy = userId,\n        };\n\n        await _paymentIntentRepository.CreateAsync(pendingIntent, innerCt).ConfigureAwait(false);\n        await _uow.SaveChangesAsync(innerCt).ConfigureAwait(false);\n\n        return Result<MembershipPurchaseResultDto>.Success(new MembershipPurchaseResultDto(true, pendingIntent.Id, null));\n    }, ct: ct);\n}"
+        },
+        "CreateWalletTopUpIntentAsync": {
+          "signature": "Task<Result<Guid>> CreateWalletTopUpIntentAsync(Guid userId, long amountCents, CancellationToken ct)",
+          "description": "Creates a PaymentIntent for wallet top-up via external payment (called from WalletController, documented here for completeness)",
+          "code": "public Task<Result<Guid>> CreateWalletTopUpIntentAsync(Guid userId, long amountCents, CancellationToken ct = default)\n{\n    return _uow.ExecuteTransactionAsync<Guid>(async innerCt =>\n    {\n        if (amountCents <= 0)\n            return Result<Guid>.Failure(new Error(Error.Codes.Validation, \"Top-up amount must be positive.\"));\n\n        var maxWallet = _billingOptions.MaxWalletTopUpAmountCents;\n        if (maxWallet > 0 && amountCents > maxWallet)\n            return Result<Guid>.Failure(new Error(Error.Codes.Validation, \"Top-up amount exceeds the allowed limit.\"));\n\n        await _walletRepository.EnsureAsync(userId, innerCt).ConfigureAwait(false);\n\n        var paymentIntent = new PaymentIntent\n        {\n            Id = Guid.NewGuid(), UserId = userId, AmountCents = amountCents,\n            Purpose = PaymentPurpose.WalletTopUp,\n            Status = PaymentIntentStatus.RequiresPayment,\n            ClientSecret = Guid.NewGuid().ToString(\"N\"),\n            ExpiresAt = DateTime.UtcNow.AddMinutes(15), CreatedBy = userId,\n        };\n\n        try\n        {\n            await _paymentIntentRepository.CreateAsync(paymentIntent, innerCt).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(innerCt).ConfigureAwait(false);\n        }\n        catch (DbUpdateException ex) when (IsWalletTopUpPurposeConstraintViolation(ex))\n        {\n            return Result<Guid>.Failure(new Error(Error.Codes.Validation, \"WalletTopUpNotEnabledBySchema\"));\n        }\n\n        return Result<Guid>.Success(paymentIntent.Id);\n    }, ct: ct);\n}"
+        },
+        "ConfirmAsync": {
+          "signature": "Task<Result> ConfirmAsync(Guid userId, Guid paymentIntentId, CancellationToken ct)",
+          "description": "Manual confirmation of a payment intent (wallet-based payment). Only EventTicket is confirmable manually.",
+          "code": "public async Task<Result> ConfirmAsync(Guid userId, Guid paymentIntentId, CancellationToken ct = default)\n{\n    return await _uow.ExecuteTransactionAsync(async innerCt =>\n    {\n        var pi = await _paymentIntentRepository.GetByIdAsync(paymentIntentId, innerCt).ConfigureAwait(false);\n        if (pi is null)\n            return Result.Failure(new Error(Error.Codes.NotFound, \"Payment intent not found.\"));\n        if (pi.UserId != userId)\n            return Result.Failure(new Error(Error.Codes.Forbidden, \"Payment intent does not belong to the user.\"));\n        if (pi.Status == PaymentIntentStatus.Succeeded)\n            return Result.Success();\n        if (pi.Status == PaymentIntentStatus.Canceled)\n            return Result.Failure(new Error(Error.Codes.Conflict, \"Payment intent has been canceled.\"));\n        if (pi.ExpiresAt <= DateTime.UtcNow)\n            return Result.Failure(new Error(Error.Codes.Forbidden, \"Payment intent has expired.\"));\n\n        return pi.Purpose switch\n        {\n            PaymentPurpose.EventTicket => await ConfirmEventTicketAsync(userId, pi, innerCt).ConfigureAwait(false),\n            PaymentPurpose.TopUp => Result.Failure(new Error(Error.Codes.Validation, \"Event escrow top-ups are no longer supported.\")),\n            PaymentPurpose.Membership => Result.Failure(new Error(Error.Codes.Validation, \"Membership purchases are settled immediately and do not require manual confirmation.\")),\n            PaymentPurpose.WalletTopUp => Result.Failure(new Error(Error.Codes.Validation, \"WalletTopUpRequiresProviderCallback\")),\n            _ => Result.Failure(new Error(Error.Codes.Validation, \"Unsupported payment purpose.\")),\n        };\n    }, ct: ct);\n}"
+        },
+        "CreateHostedCheckoutUrlAsync": {
+          "signature": "Task<Result<string>> CreateHostedCheckoutUrlAsync(Guid userId, Guid paymentIntentId, string? returnUrl, string clientIp, CancellationToken ct)",
+          "description": "Generates a PayOS checkout URL for a given PaymentIntent",
+          "flow": [
+            "1. Get PaymentIntent, verify ownership and status (must be RequiresPayment)",
+            "2. Check expiration",
+            "3. For EventTicket: Validate registration and price match",
+            "4. Resolve return/cancel URLs from request or config",
+            "5. Generate or reuse OrderCode (15-digit unique number)",
+            "6. Build description (max 25 chars, e.g., 'Membership#123456')",
+            "7. Call PayOsService.CreatePaymentLinkAsync → get checkout URL",
+            "8. Store checkout URL in ClientSecret field",
+            "9. Return the checkout URL"
+          ],
+          "orderCodeGeneration": {
+            "algorithm": "ms = UnixTimeMilliseconds % 1_000_000_000_000 (12 digits) * 1000 + random(100-999) = 15 digits",
+            "retries": "Up to 5 attempts if collision, then fallback DB refresh",
+            "code": "private static long NewOrderCode()\n{\n    var ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 1_000_000_000_000L;\n    var rnd = RandomNumberGenerator.GetInt32(100, 1000);\n    return ms * 1000 + rnd;\n}"
+          },
+          "code": "public async Task<Result<string>> CreateHostedCheckoutUrlAsync(Guid userId, Guid paymentIntentId, string? returnUrl, string clientIp, CancellationToken ct = default)\n{\n    _ = clientIp;\n    return await _uow.ExecuteTransactionAsync<string>(async innerCt =>\n    {\n        var pi = await _paymentIntentRepository.GetByIdAsync(paymentIntentId, innerCt).ConfigureAwait(false);\n        if (pi is null)\n            return Result<string>.Failure(new Error(Error.Codes.NotFound, \"Payment intent not found.\"));\n        if (pi.UserId != userId)\n            return Result<string>.Failure(new Error(Error.Codes.Forbidden, \"Payment intent does not belong to the user.\"));\n        if (pi.Status != PaymentIntentStatus.RequiresPayment)\n            return Result<string>.Failure(new Error(Error.Codes.Conflict, \"Payment intent is not in RequiresPayment status.\"));\n        if (pi.ExpiresAt <= DateTime.UtcNow)\n            return Result<string>.Failure(new Error(Error.Codes.Forbidden, \"Payment intent has expired.\"));\n\n        if (pi.Purpose == PaymentPurpose.EventTicket && pi.EventRegistrationId.HasValue)\n        {\n            var reg = await _registrationQueryRepository.GetByIdAsync(pi.EventRegistrationId.Value, innerCt).ConfigureAwait(false);\n            if (reg is null) return Result<string>.Failure(new Error(Error.Codes.NotFound, \"Registration not found.\"));\n            var ev = await _eventQueryRepository.GetByIdAsync(reg.EventId, innerCt).ConfigureAwait(false);\n            if (ev is null) return Result<string>.Failure(new Error(Error.Codes.NotFound, \"Event not found.\"));\n            if (pi.AmountCents != ev.PriceCents)\n                return Result<string>.Failure(new Error(Error.Codes.Validation, \"Payment amount does not match ticket price.\"));\n        }\n\n        var resolvedReturnUrl = ResolveReturnUrl(returnUrl);\n        if (string.IsNullOrWhiteSpace(resolvedReturnUrl))\n            return Result<string>.Failure(new Error(Error.Codes.Validation, \"Return URL is not allowed.\"));\n\n        var cancelUrl = ResolveCancelUrl(returnUrl) ?? resolvedReturnUrl;\n        var orderCode = await EnsureOrderCodeAsync(pi, innerCt).ConfigureAwait(false);\n        var description = BuildDescription(pi, orderCode);\n\n        var request = new PayOsCreatePaymentRequest\n        {\n            OrderCode = orderCode, Amount = pi.AmountCents,\n            Description = description, ReturnUrl = resolvedReturnUrl, CancelUrl = cancelUrl,\n        };\n\n        var linkResult = await _payOsService.CreatePaymentLinkAsync(request, innerCt).ConfigureAwait(false);\n        if (linkResult.IsFailure) return Result<string>.Failure(linkResult.Error);\n\n        pi.ClientSecret = linkResult.Value!;\n        pi.UpdatedBy = userId;\n        await _paymentIntentRepository.UpdateAsync(pi, innerCt).ConfigureAwait(false);\n        await _uow.SaveChangesAsync(innerCt).ConfigureAwait(false);\n\n        return Result<string>.Success(linkResult.Value!);\n    }, ct: ct);\n}"
+        }
+      },
+      "privateHelpers": {
+        "ConfirmEventTicketAsync": "Validates registration, checks capacity, debits wallet, creates Transaction, confirms registration, triggers quest",
+        "ConvertPriceToCents": "Converts decimal price to long (VND has no sub-unit, just rounds)",
+        "CreateMembershipMetadata": "Creates JSON metadata { note, membershipPlanId, planName }",
+        "CreateMetadata": "Creates JSON metadata { note, eventId?, counterpartyUserId? }",
+        "BuildDescription": "Returns purpose-specific description ≤25 chars (e.g. 'Membership#123456')",
+        "ResolveReturnUrl": "Resolves return URL from request → FrontendBaseUrl config → ReturnUrl config",
+        "ResolveCancelUrl": "Resolves cancel URL from config → request → frontend fallback",
+        "BuildFrontendUrl": "Combines FrontendBaseUrl with a relative path",
+        "EnsureOrderCodeAsync": "Reuses existing OrderCode or generates new (up to 5 retries)",
+        "SendMembershipConfirmationEmailAsync": "Sends email (best-effort, does not fail transaction)",
+        "IsWalletTopUpPurposeConstraintViolation": "Detects DB CHECK constraint violation"
+      }
+    },
+
+    "PayOsService": {
+      "file": "Services/Implementations/PayOsService.cs",
+      "description": "PayOS payment gateway integration - API calls, webhook verification, payment confirmation",
+      "dependencies": [
+        "HttpClient (typed)", "PayOsOptions (IOptionsSnapshot)", "IMemoryCache",
+        "IConnectionMultiplexer? (Redis, optional)", "IGenericUnitOfWork",
+        "IPaymentIntentRepository", "IRegistrationQueryRepository", "IRegistrationCommandRepository",
+        "IEventQueryRepository", "ITransactionRepository", "IWalletRepository",
+        "IMembershipPlanRepository", "IMembershipEnrollmentService", "IEscrowRepository",
+        "IQuestService", "ICommunityService", "UserManager<User>",
+        "IEmailQueue", "IMembershipEmailFactory", "IUserMembershipRepository"
+      ],
+      "methods": {
+        "CreatePaymentLinkAsync": {
+          "description": "Creates a payment link via PayOS API v2",
+          "endpoint": "POST {BaseUrl}/v2/payment-requests",
+          "headers": {
+            "x-client-id": "PayOsOptions.ClientId",
+            "x-api-key": "PayOsOptions.ApiKey"
+          },
+          "signatureComputation": "data = 'amount={amount}&cancelUrl={cancelUrl}&description={desc}&orderCode={orderCode}&returnUrl={returnUrl}'; signature = HMAC-SHA256(data, SecretKey).ToHexLower()",
+          "requestPayload": {
+            "orderCode": "long",
+            "amount": "long (VND)",
+            "description": "string (max 25 chars)",
+            "returnUrl": "string",
+            "cancelUrl": "string",
+            "signature": "string (HMAC-SHA256)"
+          },
+          "response": "PayOsPaymentResponse.Data.CheckoutUrl",
+          "errorCodes": {
+            "231": "Order already exists → Conflict",
+            "214": "Payment gateway unavailable → ServiceUnavailable"
+          },
+          "code": "public async Task<Result<string>> CreatePaymentLinkAsync(PayOsCreatePaymentRequest req, CancellationToken ct = default)\n{\n    ArgumentNullException.ThrowIfNull(req);\n    try\n    {\n        var orderCode = req.OrderCode;\n        var returnUrl = string.IsNullOrWhiteSpace(req.ReturnUrl) ? _options.ReturnUrl : req.ReturnUrl!;\n        var cancelUrl = string.IsNullOrWhiteSpace(req.CancelUrl) ? (_options.CancelUrl ?? returnUrl) : req.CancelUrl!;\n        var description = req.Description ?? string.Empty;\n\n        var createSig = BuildCreateSignature(orderCode, req.Amount, description, returnUrl, cancelUrl, null);\n\n        var payload = new\n        {\n            orderCode, amount = req.Amount, description, returnUrl, cancelUrl,\n            buyerName = req.BuyerName, buyerEmail = req.BuyerEmail, buyerPhone = req.BuyerPhone,\n            signature = createSig\n        };\n\n        using var request = new HttpRequestMessage(HttpMethod.Post, BuildPaymentsEndpointV2())\n        {\n            Content = JsonContent.Create(payload)\n        };\n        request.Headers.TryAddWithoutValidation(\"x-client-id\", _options.ClientId);\n        request.Headers.TryAddWithoutValidation(\"x-api-key\", _options.ApiKey);\n\n        var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);\n        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n\n        if (!response.IsSuccessStatusCode)\n            return Result<string>.Failure(new Error(Error.Codes.Unexpected, $\"Failed to create PayOS payment link. Status: {response.StatusCode}\"));\n\n        var parsed = JsonSerializer.Deserialize<PayOsPaymentResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });\n        if (parsed is null || !string.Equals(parsed.Code, \"00\", StringComparison.OrdinalIgnoreCase))\n            return Result<string>.Failure(new Error(Error.Codes.Validation, $\"PayOS error: {parsed?.Desc ?? \"Unknown\"}\"));\n\n        var checkoutUrl = parsed.Data?.CheckoutUrl;\n        if (string.IsNullOrWhiteSpace(checkoutUrl))\n            return Result<string>.Failure(new Error(Error.Codes.Unexpected, \"PayOS response missing checkout url.\"));\n\n        return Result<string>.Success(checkoutUrl);\n    }\n    catch (OperationCanceledException) { throw; }\n    catch (Exception ex)\n    {\n        _logger.LogError(ex, \"Unexpected error creating payOS link. OrderCode={OrderCode}\", req.OrderCode);\n        return Result<string>.Failure(new Error(Error.Codes.Unexpected, \"Unexpected error while creating PayOS payment link.\"));\n    }\n}"
+        },
+        "HandleWebhookAsync": {
+          "description": "Processes incoming PayOS webhook, verifies signature, routes to purpose-specific confirmation",
+          "flow": [
+            "1. Validate header signature (HMAC-SHA256 of raw body using SecretKey)",
+            "2. Extract orderCode from payload.Data",
+            "3. Acquire replay lease (Redis or MemoryCache, TTL=10min) to prevent duplicate processing",
+            "4. Verify payload signature (HMAC-SHA256 of sorted data fields)",
+            "5. Determine if paid (code='00' && success=true)",
+            "6. Not paid → mark intent Canceled",
+            "7. Paid → route to: ConfirmEventTicketAsync | ConfirmEscrowTopUpAsync | ConfirmMembershipPurchaseAsync | ConfirmWalletTopUpAsync"
+          ],
+          "replayProtection": {
+            "redisKey": "payos:webhook:{orderCode}:{fingerprint}",
+            "ttl": "10 minutes",
+            "fallback": "IMemoryCache when Redis unavailable"
+          },
+          "signatureVerification": {
+            "algorithm": [
+              "1. Parse 'data' object from raw JSON body",
+              "2. Sort all key-value pairs alphabetically by key",
+              "3. Join as 'key1=value1&key2=value2&...'",
+              "4. Compute HMAC-SHA256 with SecretKey",
+              "5. Compare hex string with payload.Signature (case-insensitive)"
+            ],
+            "code": "public bool VerifyWebhookSignature(PayOsWebhookPayload payload, string rawBody)\n{\n    if (payload?.Data is null || string.IsNullOrWhiteSpace(payload.Signature)) return false;\n    if (string.IsNullOrWhiteSpace(_options.SecretKey)) return false;\n\n    using var doc = JsonDocument.Parse(rawBody);\n    if (!doc.RootElement.TryGetProperty(\"data\", out var dataElement)) return false;\n\n    var dataDict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(dataElement.GetRawText());\n    if (dataDict == null) return false;\n\n    var sortedPairs = dataDict\n        .OrderBy(kv => kv.Key, StringComparer.Ordinal)\n        .Select(kv => $\"{kv.Key}={NormalizeValue(kv.Value)}\");\n    var sortedData = string.Join(\"&\", sortedPairs);\n\n    var expectedSignature = ComputeHmacSha256(sortedData, _options.SecretKey);\n    return string.Equals(expectedSignature, payload.Signature, StringComparison.OrdinalIgnoreCase);\n}\n\nprivate static string NormalizeValue(JsonElement element)\n{\n    return element.ValueKind switch\n    {\n        JsonValueKind.Null => string.Empty,\n        JsonValueKind.String => element.GetString() ?? string.Empty,\n        JsonValueKind.Number => element.GetRawText(),\n        JsonValueKind.True => \"true\",\n        JsonValueKind.False => \"false\",\n        JsonValueKind.Array => JsonSerializer.Serialize(element),\n        JsonValueKind.Object => JsonSerializer.Serialize(element),\n        _ => element.GetRawText()\n    };\n}\n\nprivate static string ComputeHmacSha256(string data, string secret)\n{\n    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));\n    var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));\n    return BitConverter.ToString(hash).Replace(\"-\", \"\").ToLowerInvariant();\n}"
+          },
+          "code": "public async Task<Result<PayOsWebhookOutcome>> HandleWebhookAsync(PayOsWebhookPayload payload, string rawBody, string? signatureHeader, CancellationToken ct = default)\n{\n    ArgumentNullException.ThrowIfNull(payload);\n    var isManualSync = string.Equals(payload.Signature, \"manual-sync\", StringComparison.OrdinalIgnoreCase);\n\n    if (!isManualSync && !string.IsNullOrWhiteSpace(signatureHeader))\n    {\n        if (!ValidatePayOsSignature(rawBody, signatureHeader, _options.SecretKey))\n            return Result<PayOsWebhookOutcome>.Failure(new Error(Error.Codes.Validation, \"Invalid signature.\"));\n    }\n\n    if (payload.Data is null)\n        return Result<PayOsWebhookOutcome>.Failure(new Error(Error.Codes.Validation, \"Webhook missing data.\"));\n\n    var orderCode = payload.Data.OrderCode;\n    if (orderCode <= 0)\n        return Result<PayOsWebhookOutcome>.Failure(new Error(Error.Codes.Validation, \"Invalid order code.\"));\n\n    var providerRef = payload.Data.Reference ?? payload.Data.PaymentLinkId ?? orderCode.ToString(CultureInfo.InvariantCulture);\n    var fingerprint = BuildReplayFingerprint(signatureHeader, payload.Signature, orderCode);\n    var lease = await AcquireReplayLeaseAsync(orderCode, fingerprint).ConfigureAwait(false);\n    if (!lease.Acquired)\n        return Result<PayOsWebhookOutcome>.Success(PayOsWebhookOutcome.Ignored);\n\n    if (!isManualSync && !VerifyWebhookSignature(payload, rawBody))\n    {\n        await lease.ReleaseAsync().ConfigureAwait(false);\n        return Result<PayOsWebhookOutcome>.Failure(new Error(Error.Codes.Validation, \"Invalid payload signature.\"));\n    }\n\n    var isPaid = payload.Success && string.Equals(payload.Code, \"00\", StringComparison.OrdinalIgnoreCase);\n\n    try\n    {\n        var businessResult = await _uow.ExecuteTransactionAsync(async innerCt =>\n        {\n            var pi = await _paymentIntentRepository.GetByOrderCodeAsync(orderCode, innerCt).ConfigureAwait(false);\n            if (pi is null) return Result.Success(); // Unknown order → ignore\n\n            if (payload.Data.Amount != pi.AmountCents)\n                return Result.Failure(new Error(Error.Codes.Validation, \"Amount mismatch.\"));\n\n            if (!isPaid)\n            {\n                if (pi.Status != PaymentIntentStatus.Canceled && pi.Status != PaymentIntentStatus.Succeeded)\n                {\n                    pi.Status = PaymentIntentStatus.Canceled;\n                    pi.UpdatedBy = pi.UserId;\n                    await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n                    await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n                }\n                return Result.Success();\n            }\n\n            return pi.Purpose switch\n            {\n                PaymentPurpose.EventTicket => await ConfirmEventTicketAsync(pi, providerRef, innerCt).ConfigureAwait(false),\n                PaymentPurpose.TopUp => await ConfirmEscrowTopUpAsync(pi, providerRef, innerCt).ConfigureAwait(false),\n                PaymentPurpose.Membership => await ConfirmMembershipPurchaseAsync(pi, providerRef, innerCt).ConfigureAwait(false),\n                PaymentPurpose.WalletTopUp => await ConfirmWalletTopUpAsync(pi, providerRef, innerCt).ConfigureAwait(false),\n                _ => Result.Failure(new Error(Error.Codes.Validation, \"Unsupported payment purpose.\"))\n            };\n        }, ct: ct).ConfigureAwait(false);\n\n        if (businessResult.IsFailure)\n        {\n            await lease.ReleaseAsync().ConfigureAwait(false);\n            return Result<PayOsWebhookOutcome>.Failure(businessResult.Error);\n        }\n        return Result<PayOsWebhookOutcome>.Success(PayOsWebhookOutcome.Processed);\n    }\n    catch\n    {\n        await lease.ReleaseAsync().ConfigureAwait(false);\n        throw;\n    }\n}"
+        },
+        "ConfirmMembershipPurchaseAsync": {
+          "description": "Assigns membership after successful PayOS payment",
+          "code": "private async Task<Result> ConfirmMembershipPurchaseAsync(PaymentIntent pi, string providerRef, CancellationToken ct)\n{\n    if (pi.AmountCents <= 0)\n        return Result.Failure(new Error(Error.Codes.Validation, \"Membership amount must be positive.\"));\n    if (!pi.MembershipPlanId.HasValue)\n        return Result.Failure(new Error(Error.Codes.Validation, \"Membership plan information is required.\"));\n\n    var plan = await _membershipPlanRepository.GetByIdAsync(pi.MembershipPlanId.Value, ct).ConfigureAwait(false);\n    if (plan is null)\n        return Result.Failure(new Error(Error.Codes.NotFound, \"Membership plan not found.\"));\n\n    // Idempotency: check if transaction already exists\n    var txExists = await _transactionRepository.ExistsByProviderRefAsync(Provider, providerRef, ct).ConfigureAwait(false);\n    if (txExists)\n    {\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded;\n            pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        // Ensure membership is assigned even on replay\n        var existingMembership = await _userMembershipRepository.GetByUserIdAsync(pi.UserId, ct).ConfigureAwait(false);\n        if (existingMembership is null || existingMembership.MembershipPlanId != plan.Id)\n        {\n            _ = await _membershipEnrollmentService.AssignAsync(pi.UserId, plan, pi.UserId, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        return Result.Success();\n    }\n\n    var wallet = await _walletRepository.EnsureAsync(pi.UserId, ct).ConfigureAwait(false);\n    var tx = new Transaction\n    {\n        Id = Guid.NewGuid(), WalletId = wallet.Id, AmountCents = pi.AmountCents,\n        Direction = TransactionDirection.In, Method = TransactionMethod.Gateway,\n        Status = TransactionStatus.Succeeded, Provider = Provider, ProviderRef = providerRef,\n        Metadata = CreateMembershipMetadata(plan.Id, plan.Name), CreatedBy = pi.UserId,\n    };\n\n    try\n    {\n        await _transactionRepository.CreateAsync(tx, ct).ConfigureAwait(false);\n        await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n    }\n    catch (DbUpdateException ex) when (ex.IsUniqueConstraintViolation())\n    {\n        // Duplicate tx → idempotent success\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        return Result.Success();\n    }\n\n    _ = await _membershipEnrollmentService.AssignAsync(pi.UserId, plan, pi.UserId, ct).ConfigureAwait(false);\n    pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n    await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n    await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n\n    // Send confirmation email (best-effort)\n    try\n    {\n        var user = await _userManager.FindByIdAsync(pi.UserId.ToString()).ConfigureAwait(false);\n        if (user is not null && !string.IsNullOrWhiteSpace(user.Email))\n        {\n            var membership = await _userMembershipRepository.GetByUserIdAsync(pi.UserId, ct).ConfigureAwait(false);\n            if (membership is not null)\n            {\n                var emailMessage = _membershipEmailFactory.BuildMembershipPurchaseConfirmation(user, plan, membership);\n                await _emailQueue.EnqueueAsync(emailMessage, ct).ConfigureAwait(false);\n            }\n        }\n    }\n    catch (Exception ex) { _logger.LogWarning(ex, \"Failed to send membership email for user {UserId}\", pi.UserId); }\n\n    return Result.Success();\n}"
+        },
+        "ConfirmWalletTopUpAsync": {
+          "description": "Credits user wallet after successful PayOS payment",
+          "code": "private async Task<Result> ConfirmWalletTopUpAsync(PaymentIntent pi, string providerRef, CancellationToken ct)\n{\n    if (pi.AmountCents <= 0)\n        return Result.Failure(new Error(Error.Codes.Validation, \"Top-up amount must be positive.\"));\n\n    var txExists = await _transactionRepository.ExistsByProviderRefAsync(Provider, providerRef, ct).ConfigureAwait(false);\n    if (txExists)\n    {\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        return Result.Success();\n    }\n\n    var wallet = await _walletRepository.EnsureAsync(pi.UserId, ct).ConfigureAwait(false);\n    var tx = new Transaction\n    {\n        Id = Guid.NewGuid(), WalletId = wallet.Id, AmountCents = pi.AmountCents,\n        Direction = TransactionDirection.In, Method = TransactionMethod.Gateway,\n        Status = TransactionStatus.Succeeded, Provider = Provider, ProviderRef = providerRef,\n        Metadata = CreateMetadata(\"WALLET_TOP_UP\", null, null), CreatedBy = pi.UserId,\n    };\n\n    try\n    {\n        await _transactionRepository.CreateAsync(tx, ct).ConfigureAwait(false);\n        await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n    }\n    catch (DbUpdateException ex) when (ex.IsUniqueConstraintViolation())\n    {\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        return Result.Success();\n    }\n\n    var credited = await _walletRepository.AdjustBalanceAsync(pi.UserId, pi.AmountCents, ct).ConfigureAwait(false);\n    if (!credited)\n        return Result.Failure(new Error(Error.Codes.Unexpected, \"Failed to credit wallet.\"));\n\n    pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n    await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n    await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n    return Result.Success();\n}"
+        },
+        "ConfirmEventTicketAsync": {
+          "description": "Confirms event registration after PayOS payment",
+          "code": "private async Task<Result> ConfirmEventTicketAsync(PaymentIntent pi, string providerRef, CancellationToken ct)\n{\n    if (!pi.EventRegistrationId.HasValue)\n        return Result.Failure(new Error(Error.Codes.Validation, \"Ticket payment intent missing registration.\"));\n\n    var registration = await _registrationQueryRepository.GetByIdAsync(pi.EventRegistrationId.Value, ct).ConfigureAwait(false);\n    if (registration is null) return Result.Failure(new Error(Error.Codes.NotFound, \"Registration not found.\"));\n\n    if (registration.Status is EventRegistrationStatus.Confirmed or EventRegistrationStatus.CheckedIn)\n    {\n        await TriggerAttendQuestAsync(registration.UserId, registration.EventId, ct).ConfigureAwait(false);\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        return Result.Success();\n    }\n\n    if (registration.Status is EventRegistrationStatus.Canceled or EventRegistrationStatus.Refunded)\n        return Result.Failure(new Error(Error.Codes.Conflict, \"Registration is no longer active.\"));\n\n    var ev = await _eventQueryRepository.GetForUpdateAsync(registration.EventId, ct).ConfigureAwait(false)\n             ?? await _eventQueryRepository.GetByIdAsync(registration.EventId, ct).ConfigureAwait(false);\n    if (ev is null) return Result.Failure(new Error(Error.Codes.NotFound, \"Event not found.\"));\n    if (pi.AmountCents != ev.PriceCents)\n        return Result.Failure(new Error(Error.Codes.Validation, \"Payment amount does not match ticket price.\"));\n    if (ev.Capacity.HasValue)\n    {\n        var confirmed = await _eventQueryRepository.CountConfirmedAsync(ev.Id, ct).ConfigureAwait(false);\n        if (confirmed >= ev.Capacity.Value)\n            return Result.Failure(new Error(Error.Codes.Forbidden, \"Event capacity reached.\"));\n    }\n\n    var txExists = await _transactionRepository.ExistsByProviderRefAsync(Provider, providerRef, ct).ConfigureAwait(false);\n    if (txExists)\n    {\n        if (pi.Status != PaymentIntentStatus.Succeeded)\n        {\n            pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n            await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n            await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n        }\n        await TriggerAttendQuestAsync(registration.UserId, registration.EventId, ct).ConfigureAwait(false);\n        return Result.Success();\n    }\n\n    var wallet = await _walletRepository.EnsureAsync(registration.UserId, ct).ConfigureAwait(false);\n    var tx = new Transaction\n    {\n        Id = Guid.NewGuid(), WalletId = wallet.Id, EventId = ev.Id,\n        AmountCents = pi.AmountCents, Direction = TransactionDirection.Out,\n        Method = TransactionMethod.Gateway, Status = TransactionStatus.Succeeded,\n        Provider = Provider, ProviderRef = providerRef,\n        Metadata = CreateMetadata(\"EVENT_TICKET\", ev.Id, null), CreatedBy = registration.UserId,\n    };\n    await _transactionRepository.CreateAsync(tx, ct).ConfigureAwait(false);\n\n    registration.Status = EventRegistrationStatus.Confirmed;\n    registration.PaidTransactionId = tx.Id;\n    registration.UpdatedBy = registration.UserId;\n    registration.UpdatedAtUtc = DateTime.UtcNow;\n    await _registrationCommandRepository.UpdateAsync(registration, ct).ConfigureAwait(false);\n\n    pi.Status = PaymentIntentStatus.Succeeded; pi.UpdatedBy = pi.UserId;\n    await _paymentIntentRepository.UpdateAsync(pi, ct).ConfigureAwait(false);\n    await _uow.SaveChangesAsync(ct).ConfigureAwait(false);\n\n    await TriggerAttendQuestAsync(registration.UserId, registration.EventId, ct).ConfigureAwait(false);\n    return Result.Success();\n}"
+        },
+        "GetPaymentInfoAsync": {
+          "description": "Gets payment status from PayOS API (for debug/sync)",
+          "endpoint": "GET {BaseUrl}/v2/payment-requests/{orderCode}",
+          "code": "public async Task<Result<PayOsPaymentInfo>> GetPaymentInfoAsync(long orderCode, CancellationToken ct = default)\n{\n    var endpoint = $\"{BuildPaymentsEndpointV2()}/{orderCode}\";\n    using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);\n    request.Headers.TryAddWithoutValidation(\"x-client-id\", _options.ClientId);\n    request.Headers.TryAddWithoutValidation(\"x-api-key\", _options.ApiKey);\n\n    var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);\n    var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n    if (!response.IsSuccessStatusCode)\n        return Result<PayOsPaymentInfo>.Failure(new Error(Error.Codes.Unexpected, $\"Failed to get payment info. Status: {response.StatusCode}\"));\n\n    var parsed = JsonSerializer.Deserialize<PayOsGetPaymentResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });\n    if (parsed?.Data is null)\n        return Result<PayOsPaymentInfo>.Failure(new Error(Error.Codes.Unexpected, \"PayOS response missing data.\"));\n\n    return Result<PayOsPaymentInfo>.Success(new PayOsPaymentInfo\n    {\n        OrderCode = parsed.Data.OrderCode, Amount = parsed.Data.Amount,\n        Status = parsed.Data.Status ?? \"\",\n        Reference = parsed.Data.Reference ?? parsed.Data.Id,\n        TransactionDateTime = parsed.Data.TransactionDateTime\n    });\n}"
+        }
+      },
+      "internalHelpers": {
+        "BuildCreateSignature": "HMAC-SHA256 of 'amount={}&cancelUrl={}&description={}&orderCode={}&returnUrl={}' with SecretKey",
+        "ValidatePayOsSignature": "HMAC-SHA256 of raw body with SecretKey, compare with header signature",
+        "BuildPaymentsEndpointV2": "Returns '{BaseUrl}/v2/payment-requests'",
+        "AcquireReplayLeaseAsync": "Redis SET NX with TTL or MemoryCache fallback",
+        "BuildReplayCacheKey": "'payos:webhook:{orderCode}:{fingerprint}'",
+        "BuildReplayFingerprint": "Uses header signature > payload signature > orderCode as fingerprint"
+      }
+    },
+
+    "PaymentReadService": {
+      "file": "Services/Implementations/PaymentReadService.cs",
+      "code": "using System.Globalization;\nusing BusinessObjects;\nusing Repositories.Interfaces;\n\nnamespace Services.Implementations;\n\npublic sealed class PaymentReadService : IPaymentReadService\n{\n    private const string Provider = \"PAYOS\";\n    private readonly IPaymentIntentRepository _paymentIntentRepository;\n    private readonly ITransactionRepository _transactionRepository;\n\n    public PaymentReadService(IPaymentIntentRepository paymentIntentRepository, ITransactionRepository transactionRepository)\n    {\n        _paymentIntentRepository = paymentIntentRepository ?? throw new ArgumentNullException(nameof(paymentIntentRepository));\n        _transactionRepository = transactionRepository ?? throw new ArgumentNullException(nameof(transactionRepository));\n    }\n\n    public async Task<Result<PaymentIntentDto>> GetAsync(Guid userId, Guid paymentIntentId, CancellationToken ct = default)\n    {\n        var pi = await _paymentIntentRepository.GetByIdForUserAsync(paymentIntentId, userId, ct).ConfigureAwait(false);\n        if (pi is null)\n            return Result<PaymentIntentDto>.Failure(new Error(Error.Codes.NotFound, \"Payment intent not found.\"));\n\n        var transaction = await ResolveTransactionAsync(pi, ct).ConfigureAwait(false);\n        var metadataJson = transaction?.Metadata?.RootElement.GetRawText();\n        var transactionReference = transaction?.ProviderRef ?? pi.OrderCode?.ToString(CultureInfo.InvariantCulture);\n        var providerName = transaction?.Provider ?? (transactionReference is not null ? Provider : null);\n\n        var dto = new PaymentIntentDto(\n            pi.Id, pi.AmountCents, pi.Purpose, pi.EventRegistrationId, pi.EventId,\n            pi.Status, pi.ExpiresAt, pi.ClientSecret, providerName, transactionReference,\n            metadataJson, pi.OrderCode ?? 0, pi.CreatedAtUtc);\n\n        return Result<PaymentIntentDto>.Success(dto);\n    }\n\n    public async Task<Result<Guid>> ResolveIntentIdByOrderCodeAsync(long orderCode, CancellationToken ct = default)\n    {\n        if (orderCode <= 0)\n            return Result<Guid>.Failure(new Error(Error.Codes.Validation, \"Order code must be positive.\"));\n        var pi = await _paymentIntentRepository.GetByOrderCodeAsync(orderCode, ct).ConfigureAwait(false);\n        if (pi is null)\n            return Result<Guid>.Failure(new Error(Error.Codes.NotFound, \"Payment intent not found.\"));\n        return Result<Guid>.Success(pi.Id);\n    }\n\n    private async Task<Transaction?> ResolveTransactionAsync(PaymentIntent pi, CancellationToken ct)\n    {\n        if (pi.EventRegistration?.PaidTransaction is not null)\n            return pi.EventRegistration.PaidTransaction;\n        if (!pi.OrderCode.HasValue) return null;\n        var providerRef = pi.OrderCode.Value.ToString(CultureInfo.InvariantCulture);\n        return await _transactionRepository.GetByProviderRefAsync(Provider, providerRef, ct).ConfigureAwait(false);\n    }\n}"
+    }
+  },
+
+  "controller": {
+    "PaymentsController": {
+      "file": "WebAPI/Controllers/PaymentsController.cs",
+      "route": "api/payments",
+      "auth": "Authorize (JWT Bearer)",
+      "dependencies": ["IPaymentService", "IPaymentReadService", "IPayOsService", "ILogger", "PayOsOptions"],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "api/payments/{intentId:guid}/confirm",
+          "handler": "Confirm",
+          "description": "Confirm a payment intent (wallet-based payment for event tickets)",
+          "rateLimit": "PaymentsWrite",
+          "auth": "Authorize",
+          "responses": { "204": "Confirmed", "400": "Validation", "403": "Forbidden/Expired", "404": "Not found", "409": "Canceled" }
+        },
+        {
+          "method": "GET",
+          "path": "api/payments/{intentId:guid}",
+          "handler": "Get",
+          "description": "Get payment intent details",
+          "rateLimit": "ReadsLight",
+          "responses": { "200": "PaymentIntentDto", "404": "Not found" }
+        },
+        {
+          "method": "POST",
+          "path": "api/payments/buy-membership/{planId:guid}",
+          "handler": "BuyMembership",
+          "description": "Purchase a membership plan (auto-deducts from wallet or creates PaymentIntent)",
+          "rateLimit": "PaymentsWrite",
+          "responses": { "200": "MembershipPurchaseResultDto", "404": "Plan not found", "409": "Plan inactive" }
+        },
+        {
+          "method": "POST",
+          "path": "api/payments/payos/create",
+          "handler": "CreatePayOsCheckout",
+          "description": "Create PayOS checkout URL for a payment intent",
+          "rateLimit": "PaymentsWrite",
+          "requestBody": "PayOsCheckoutRequest { IntentId: Guid, ReturnUrl?: string }",
+          "responses": { "200": "{ checkoutUrl: string }", "404": "Intent not found", "409": "Wrong status" }
+        },
+        {
+          "method": "POST",
+          "path": "api/payments/payos/webhook",
+          "handler": "PayOsWebhook",
+          "description": "PayOS webhook - receives payment status updates",
+          "rateLimit": "PaymentsWebhook",
+          "auth": "AllowAnonymous",
+          "cors": "DisableCors",
+          "important": "ALWAYS returns 200 OK to prevent PayOS retries. Reads raw body for signature verification.",
+          "responses": { "200": "{ status: 'ok'|'ignored'|'error' }" }
+        },
+        {
+          "method": "GET",
+          "path": "api/payments/payos/return",
+          "handler": "PayOsReturn",
+          "description": "PayOS return URL - redirects user to frontend after payment",
+          "auth": "AllowAnonymous",
+          "queryParams": { "status": "PAID|SUCCESS|COMPLETED...", "orderCode": "PayOS order code" },
+          "responses": { "302": "Redirect to /payment/result?status=success&intentId={guid}" }
+        },
+        {
+          "method": "POST",
+          "path": "api/payments/debug/check-payment/{intentId:guid}",
+          "handler": "CheckPaymentStatus",
+          "description": "Debug: check payment intent status"
+        },
+        {
+          "method": "POST",
+          "path": "api/payments/debug/sync-payment/{intentId:guid}",
+          "handler": "SyncPaymentFromPayOs",
+          "description": "Debug: manually sync payment from PayOS if webhook failed"
+        }
+      ],
+      "code": "using DTOs.Payments.PayOs;\nusing DTOs.Memberships;\nusing DTOs.Registrations;\nusing Microsoft.AspNetCore.Authorization;\nusing Microsoft.AspNetCore.Cors;\nusing Microsoft.AspNetCore.Mvc;\nusing Microsoft.AspNetCore.RateLimiting;\nusing Microsoft.AspNetCore.WebUtilities;\nusing System.Text;\nusing System.Text.Json;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Options;\nusing Services.Interfaces;\nusing Services.Configuration;\n\nnamespace WebAPI.Controllers;\n\n[ApiController]\n[Authorize]\n[Route(\"api/[controller]\")]\npublic sealed class PaymentsController : ControllerBase\n{\n    private readonly IPaymentService _paymentService;\n    private readonly IPaymentReadService _paymentReadService;\n    private readonly IPayOsService _payOsService;\n    private readonly ILogger<PaymentsController> _logger;\n    private readonly PayOsOptions _payOsOptions;\n\n    public PaymentsController(\n        IPaymentService paymentService, IPaymentReadService paymentReadService,\n        IPayOsService payOsService, ILogger<PaymentsController> logger,\n        IOptionsSnapshot<PayOsOptions> payOsOptions)\n    {\n        _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));\n        _paymentReadService = paymentReadService ?? throw new ArgumentNullException(nameof(paymentReadService));\n        _payOsService = payOsService ?? throw new ArgumentNullException(nameof(payOsService));\n        _logger = logger ?? throw new ArgumentNullException(nameof(logger));\n        _payOsOptions = payOsOptions?.Value ?? throw new ArgumentNullException(nameof(payOsOptions));\n    }\n\n    [HttpPost(\"{intentId:guid}/confirm\")]\n    [EnableRateLimiting(\"PaymentsWrite\")]\n    public async Task<ActionResult> Confirm(Guid intentId, CancellationToken ct)\n    {\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var result = await _paymentService.ConfirmAsync(currentUserId.Value, intentId, ct).ConfigureAwait(false);\n        return this.ToActionResult(result);\n    }\n\n    [HttpGet(\"{intentId:guid}\")]\n    [EnableRateLimiting(\"ReadsLight\")]\n    public async Task<ActionResult> Get(Guid intentId, CancellationToken ct)\n    {\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result<PaymentIntentDto>.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var result = await _paymentReadService.GetAsync(currentUserId.Value, intentId, ct).ConfigureAwait(false);\n        return this.ToActionResult(result, v => v, StatusCodes.Status200OK);\n    }\n\n    [HttpPost(\"buy-membership/{planId:guid}\")]\n    [EnableRateLimiting(\"PaymentsWrite\")]\n    public async Task<ActionResult> BuyMembership(Guid planId, CancellationToken ct)\n    {\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result<MembershipPurchaseResultDto>.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var result = await _paymentService.BuyMembershipAsync(currentUserId.Value, planId, ct).ConfigureAwait(false);\n        return this.ToActionResult(result, dto => dto, StatusCodes.Status200OK);\n    }\n\n    [HttpPost(\"payos/create\")]\n    [EnableRateLimiting(\"PaymentsWrite\")]\n    public async Task<ActionResult> CreatePayOsCheckout([FromBody] PayOsCheckoutRequest? request, CancellationToken ct)\n    {\n        if (request is null || request.IntentId == Guid.Empty)\n            return this.ToActionResult(Result<string>.Failure(new Error(Error.Codes.Validation, \"A valid payment intent is required.\")));\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result<string>.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var clientIp = HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString() ?? \"127.0.0.1\";\n        var result = await _paymentService.CreateHostedCheckoutUrlAsync(currentUserId.Value, request.IntentId, request.ReturnUrl, clientIp, ct).ConfigureAwait(false);\n        return this.ToActionResult(result, url => new { checkoutUrl = url }, StatusCodes.Status200OK);\n    }\n\n    [HttpPost(\"payos/webhook\")]\n    [AllowAnonymous]\n    [IgnoreAntiforgeryToken]\n    [DisableCors]\n    [EnableRateLimiting(\"PaymentsWebhook\")]\n    public async Task<ActionResult> PayOsWebhook(CancellationToken ct)\n    {\n        string rawBody;\n        using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))\n            rawBody = await reader.ReadToEndAsync(ct).ConfigureAwait(false);\n        if (Request.Body.CanSeek) Request.Body.Position = 0;\n\n        _logger.LogInformation(\"PayOS webhook received. Body={Body}\", rawBody);\n\n        if (string.IsNullOrWhiteSpace(rawBody) || rawBody.Trim() == \"{}\" || rawBody.Trim() == \"[]\")\n            return Ok(new { status = \"ok\", message = \"Test webhook received successfully\" });\n\n        PayOsWebhookPayload? payload = null;\n        try\n        {\n            payload = JsonSerializer.Deserialize<PayOsWebhookPayload>(rawBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });\n        }\n        catch (JsonException ex)\n        {\n            _logger.LogWarning(ex, \"Failed to deserialize PayOS webhook.\");\n            return Ok(new { status = \"error\", message = \"Invalid JSON format\" });\n        }\n\n        if (payload?.Data is null)\n            return Ok(new { status = \"ok\", message = \"Test webhook received\" });\n\n        string? signatureHeader = null;\n        if (Request.Headers.TryGetValue(\"x-signature\", out var sig)) signatureHeader = sig.ToString();\n        else if (Request.Headers.TryGetValue(\"X-Signature\", out var sigAlt)) signatureHeader = sigAlt.ToString();\n\n        var result = await _payOsService.HandleWebhookAsync(payload, rawBody, signatureHeader, ct).ConfigureAwait(false);\n\n        // ALWAYS return 200 OK\n        if (result.IsSuccess)\n        {\n            var statusLabel = result.Value == PayOsWebhookOutcome.Ignored ? \"ignored\" : \"ok\";\n            return Ok(new { status = statusLabel });\n        }\n        _logger.LogWarning(\"PayOS webhook processing failed. Error={Error}\", result.Error.Message);\n        return Ok(new { status = \"error\", error = result.Error.Message });\n    }\n\n    [HttpGet(\"payos/return\")]\n    [AllowAnonymous]\n    public async Task<ActionResult> PayOsReturn(CancellationToken ct)\n    {\n        var status = Request.Query[\"status\"].ToString();\n        var orderCode = Request.Query[\"orderCode\"].ToString();\n        if (IsSuccessStatus(status) && long.TryParse(orderCode, out var orderCodeValue))\n        {\n            var intentResult = await _paymentReadService.ResolveIntentIdByOrderCodeAsync(orderCodeValue, ct).ConfigureAwait(false);\n            if (intentResult.IsSuccess)\n                return Redirect(BuildResultUrl(\"success\", intentResult.Value));\n        }\n        return Redirect(BuildResultUrl(\"failed\", null));\n    }\n\n    [HttpPost(\"debug/check-payment/{intentId:guid}\")]\n    [EnableRateLimiting(\"ReadsLight\")]\n    public async Task<ActionResult> CheckPaymentStatus(Guid intentId, CancellationToken ct)\n    {\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result<object>.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var intentResult = await _paymentReadService.GetAsync(currentUserId.Value, intentId, ct).ConfigureAwait(false);\n        if (intentResult.IsFailure)\n            return this.ToActionResult(Result<object>.Failure(intentResult.Error));\n        var intent = intentResult.Value;\n        return Ok(new { intentId = intent.Id, status = intent.Status, orderCode = intent.OrderCode, amount = intent.AmountCents, purpose = intent.Purpose, createdAt = intent.CreatedAt });\n    }\n\n    [HttpPost(\"debug/sync-payment/{intentId:guid}\")]\n    [EnableRateLimiting(\"PaymentsWrite\")]\n    public async Task<ActionResult> SyncPaymentFromPayOs(Guid intentId, CancellationToken ct)\n    {\n        var currentUserId = User.GetUserId();\n        if (!currentUserId.HasValue)\n            return this.ToActionResult(Result<object>.Failure(new Error(Error.Codes.Unauthorized, \"User identity is required.\")));\n        var intentResult = await _paymentReadService.GetAsync(currentUserId.Value, intentId, ct).ConfigureAwait(false);\n        if (intentResult.IsFailure) return this.ToActionResult(Result<object>.Failure(intentResult.Error));\n        var intent = intentResult.Value;\n        if (intent.Status == PaymentIntentStatus.Succeeded)\n            return Ok(new { status = \"already_completed\", message = \"Payment already confirmed.\" });\n\n        var payosInfoResult = await _payOsService.GetPaymentInfoAsync(intent.OrderCode, ct).ConfigureAwait(false);\n        if (payosInfoResult.IsFailure) return this.ToActionResult(Result<object>.Failure(payosInfoResult.Error));\n        var payosInfo = payosInfoResult.Value;\n        if (!IsSuccessStatus(payosInfo.Status))\n            return Ok(new { status = \"not_paid\", payosStatus = payosInfo.Status });\n\n        var webhookPayload = new PayOsWebhookPayload\n        {\n            Code = \"00\", Desc = \"success\", Success = true,\n            Data = new PayOsWebhookData\n            {\n                OrderCode = payosInfo.OrderCode, Amount = payosInfo.Amount,\n                Description = $\"Manual sync for order {payosInfo.OrderCode}\",\n                AccountNumber = \"\", Reference = payosInfo.Reference ?? payosInfo.OrderCode.ToString(),\n                TransactionDateTime = payosInfo.TransactionDateTime ?? DateTimeOffset.UtcNow.ToString(\"o\"),\n                PaymentLinkId = payosInfo.Reference\n            },\n            Signature = \"manual-sync\"\n        };\n\n        var webhookResult = await _payOsService.HandleWebhookAsync(webhookPayload, JsonSerializer.Serialize(webhookPayload), null, ct).ConfigureAwait(false);\n        if (webhookResult.IsFailure) return this.ToActionResult(Result<object>.Failure(webhookResult.Error));\n        return Ok(new { status = \"synced\", webhookOutcome = webhookResult.Value.ToString() });\n    }\n\n    private static bool IsSuccessStatus(string? status)\n    {\n        if (string.IsNullOrWhiteSpace(status)) return false;\n        return status.Equals(\"PAID\", StringComparison.OrdinalIgnoreCase)\n            || status.Equals(\"SUCCESS\", StringComparison.OrdinalIgnoreCase)\n            || status.Equals(\"COMPLETED\", StringComparison.OrdinalIgnoreCase);\n    }\n\n    private string BuildResultUrl(string status, Guid? intentId)\n    {\n        var query = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase) { [\"status\"] = status };\n        if (intentId.HasValue) query[\"intentId\"] = intentId.Value.ToString();\n        var basePath = \"/payment/result\";\n        var frontendBase = _payOsOptions.FrontendBaseUrl?.Trim();\n        if (!string.IsNullOrWhiteSpace(frontendBase) && Uri.TryCreate(frontendBase, UriKind.Absolute, out var baseUri))\n        {\n            var targetUri = new Uri(baseUri, basePath);\n            return QueryHelpers.AddQueryString(targetUri.ToString(), query);\n        }\n        return QueryHelpers.AddQueryString(basePath, query);\n    }\n}\n\npublic sealed record PayOsCheckoutRequest\n{\n    public Guid IntentId { get; init; }\n    public string? ReturnUrl { get; init; }\n}"
+    }
+  },
+
+  "apiFlowExamples": {
+    "membershipPurchaseInsufficientBalance": {
+      "description": "Complete flow: User buys membership without enough wallet balance → PayOS payment",
+      "steps": [
+        {
+          "step": 1,
+          "action": "POST /api/payments/buy-membership/{planId}",
+          "headers": { "Authorization": "Bearer {jwt}" },
+          "response": { "status": 200, "body": { "requiresExternalPayment": true, "paymentIntentId": "abc123-...", "membership": null } }
+        },
+        {
+          "step": 2,
+          "action": "POST /api/payments/payos/create",
+          "body": { "intentId": "abc123-...", "returnUrl": "https://frontend.com/payment/result" },
+          "response": { "status": 200, "body": { "checkoutUrl": "https://pay.payos.vn/web/..." } }
+        },
+        {
+          "step": 3,
+          "action": "User opens checkoutUrl in browser → pays via QR/bank transfer"
+        },
+        {
+          "step": 4,
+          "action": "PayOS sends POST /api/payments/payos/webhook",
+          "body": {
+            "code": "00", "desc": "success", "success": true,
+            "data": { "orderCode": 123456789012345, "amount": 100000, "description": "Membership#345678", "reference": "FT12345" },
+            "signature": "hmac-sha256-hex"
+          },
+          "serverSideEffects": [
+            "Transaction created (Direction=In, Method=Gateway, Provider=PAYOS)",
+            "Membership assigned to user via IMembershipEnrollmentService",
+            "PaymentIntent status → Succeeded",
+            "Confirmation email queued"
+          ]
+        },
+        {
+          "step": 5,
+          "action": "User redirected to GET /api/payments/payos/return?status=PAID&orderCode=123456789012345",
+          "response": "302 Redirect → https://frontend.com/payment/result?status=success&intentId=abc123-..."
+        }
+      ]
+    },
+    "membershipPurchaseWithSufficientBalance": {
+      "description": "User buys membership with enough wallet balance (instant, no PayOS)",
+      "steps": [
+        {
+          "step": 1,
+          "action": "POST /api/payments/buy-membership/{planId}",
+          "response": {
+            "status": 200,
+            "body": {
+              "requiresExternalPayment": false,
+              "paymentIntentId": null,
+              "membership": { "membershipPlanId": "guid", "planName": "Premium", "monthlyEventLimit": 20, "startDate": "...", "endDate": "...", "isActive": true }
+            }
+          },
+          "serverSideEffects": [
+            "User wallet debited", "Platform wallet credited",
+            "2 transactions (OUT user, IN platform)", "Membership assigned", "Email queued"
+          ]
+        }
+      ]
+    },
+    "eventTicketConfirmViaWallet": {
+      "description": "Confirm event ticket payment using wallet balance",
+      "steps": [
+        {
+          "step": 1,
+          "action": "POST /api/payments/{intentId}/confirm",
+          "response": { "status": 204 },
+          "serverSideEffects": [ "Wallet debited", "Transaction created", "Registration confirmed" ]
+        }
+      ]
+    }
+  },
+
+  "keyDesignDecisions": [
+    "PaymentIntent is the central entity tracking all payment lifecycle states",
+    "OrderCode is a 15-digit unique number required by PayOS (NOT a UUID)",
+    "Idempotency: Webhook handlers check for duplicate transactions via ProviderRef before creating",
+    "Replay protection: Redis-based distributed lock (or MemoryCache fallback) prevents duplicate webhook processing",
+    "Webhook ALWAYS returns 200 OK to prevent PayOS retries (errors logged, not returned as HTTP errors)",
+    "All monetary amounts in VND (long), Currency always 'VND'",
+    "Transactions record all movements with Provider (LOCAL/PAYOS) and ProviderRef for traceability",
+    "Manual sync endpoint exists for cases where webhook delivery fails",
+    "Membership purchase has 3 paths: free (price=0), wallet (sufficient balance), PayOS (insufficient balance)"
+  ]
+}
