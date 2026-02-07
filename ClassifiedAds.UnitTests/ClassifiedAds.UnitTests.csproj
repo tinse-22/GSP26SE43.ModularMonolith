@@ -38,6 +38,8 @@
             Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
         <ProjectReference
             Include="..\ClassifiedAds.Modules.Identity\ClassifiedAds.Modules.Identity.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
     </ItemGroup>
 
     <ItemGroup>
