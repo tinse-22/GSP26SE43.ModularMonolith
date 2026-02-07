@@ -4,6 +4,7 @@ using ClassifiedAds.Modules.Subscription.ConfigurationOptions;
 using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.HostedServices;
 using ClassifiedAds.Modules.Subscription.Persistence;
+using ClassifiedAds.Modules.Subscription.RateLimiterPolicies;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -18,8 +19,14 @@ public static class SubscriptionServiceCollectionExtensions
     {
         var settings = new SubscriptionModuleOptions();
         configureOptions(settings);
+        settings.ConnectionStrings ??= new ConnectionStringsOptions();
 
         services.Configure(configureOptions);
+
+        if (string.IsNullOrWhiteSpace(settings.ConnectionStrings.Default))
+        {
+            throw new InvalidOperationException("Chưa cấu hình chuỗi kết nối cho module Subscription.");
+        }
 
         services.AddDbContext<SubscriptionDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
         {
@@ -47,6 +54,11 @@ public static class SubscriptionServiceCollectionExtensions
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
+
+        services.AddRateLimiter(options =>
+        {
+            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
+        });
 
         return services;
     }
