@@ -7,6 +7,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="dotenv.net" Version="4.0.0" />
 		<PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
 		<PackageReference Include="Microsoft.OpenApi" Version="2.3.0" />
@@ -19,25 +20,16 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference
-			Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj"
-			IsAspireSharedProject="true" />
+		<ProjectReference Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj" IsAspireSharedProject="true" />
 		<ProjectReference Include="..\ClassifiedAds.Application\ClassifiedAds.Application.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Domain\ClassifiedAds.Domain.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.AuditLog\ClassifiedAds.Modules.AuditLog.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Configuration\ClassifiedAds.Modules.Configuration.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Identity\ClassifiedAds.Modules.Identity.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Notification\ClassifiedAds.Modules.Notification.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
-		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.AuditLog\ClassifiedAds.Modules.AuditLog.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Configuration\ClassifiedAds.Modules.Configuration.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Identity\ClassifiedAds.Modules.Identity.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Notification\ClassifiedAds.Modules.Notification.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
 	</ItemGroup>
 
 	<PropertyGroup>

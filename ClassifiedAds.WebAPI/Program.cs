@@ -36,6 +36,18 @@ using System.Threading.Tasks;
 // - CORS, rate limiting, global exception handling
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Load environment variables from .env file (private data, not committed to git)
+// Priority: .env.local > .env (allows per-developer overrides)
+// Docker uses its own .env.docker via docker-compose env_file
+// ═══════════════════════════════════════════════════════════════════════════════════
+// Load .env file for private configuration (not committed to git)
+// Probes up parent directories to find .env at solution root
+dotenv.net.DotEnv.Fluent()
+    .WithTrimValues()
+    .WithProbeForEnv(probeLevelsToSearch: 6)
+    .Load();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)

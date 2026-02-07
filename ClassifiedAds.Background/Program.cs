@@ -28,6 +28,12 @@ using System;
 // Aspire ServiceDefaults added via ConfigureServices (activates only under Aspire)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+// Load .env file for private configuration (not committed to git)
+dotenv.net.DotEnv.Fluent()
+    .WithTrimValues()
+    .WithProbeForEnv(probeLevelsToSearch: 6)
+    .Load();
+
 Host.CreateDefaultBuilder(args)
 .UseWindowsService()
 .UseClassifiedAdsLogger(configuration =>
