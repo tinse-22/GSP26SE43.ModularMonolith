@@ -1,5 +1,6 @@
 using ClassifiedAds.Application;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Domain.Events;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.Entities;
 using System;
@@ -11,27 +12,35 @@ namespace ClassifiedAds.Modules.Subscription.Commands;
 
 public class DeletePlanCommand : ICommand
 {
-    public SubscriptionPlan Plan { get; set; }
+    public Guid PlanId { get; set; }
 }
 
 public class DeletePlanCommandHandler : ICommandHandler<DeletePlanCommand>
 {
-    private readonly ICrudService<SubscriptionPlan> _planService;
+    private readonly Dispatcher _dispatcher;
+    private readonly IRepository<SubscriptionPlan, Guid> _planRepository;
     private readonly IRepository<UserSubscription, Guid> _userSubscriptionRepository;
 
     public DeletePlanCommandHandler(
-        ICrudService<SubscriptionPlan> planService,
+        Dispatcher dispatcher,
+        IRepository<SubscriptionPlan, Guid> planRepository,
         IRepository<UserSubscription, Guid> userSubscriptionRepository)
     {
-        _planService = planService;
+        _dispatcher = dispatcher;
+        _planRepository = planRepository;
         _userSubscriptionRepository = userSubscriptionRepository;
     }
 
     public async Task HandleAsync(DeletePlanCommand command, CancellationToken cancellationToken = default)
     {
-        var plan = command.Plan;
+        var plan = await _planRepository.FirstOrDefaultAsync(
+            _planRepository.GetQueryableSet().Where(p => p.Id == command.PlanId));
 
-        // Check for active subscribers
+        if (plan == null)
+        {
+            throw new NotFoundException($"Không tìm thấy gói cước với mã '{command.PlanId}'.");
+        }
+
         var activeStatuses = new[]
         {
             SubscriptionStatus.Trial,
@@ -39,21 +48,28 @@ public class DeletePlanCommandHandler : ICommandHandler<DeletePlanCommand>
             SubscriptionStatus.PastDue,
         };
 
-        var activeSubscriberCount = await _userSubscriptionRepository.ToListAsync(
+        var activeSubscribers = await _userSubscriptionRepository.ToListAsync(
             _userSubscriptionRepository.GetQueryableSet()
                 .Where(s => s.PlanId == plan.Id && activeStatuses.Contains(s.Status)));
 
-        if (activeSubscriberCount.Count > 0)
+        if (activeSubscribers.Count > 0)
         {
             throw new ValidationException(
-                $"Cannot deactivate plan '{plan.DisplayName}' because it has {activeSubscriberCount.Count} active subscriber(s). Migrate subscribers to another plan first.");
+                $"Không thể ngừng kích hoạt gói '{plan.DisplayName}' vì vẫn còn {activeSubscribers.Count} thuê bao đang hoạt động. Vui lòng chuyển thuê bao sang gói khác trước.");
         }
 
-        // Soft delete: set IsActive to false
+        if (!plan.IsActive)
+        {
+            return;
+        }
+
         plan.IsActive = false;
 
-        // Use CrudService which triggers EntityUpdatedEvent (we treat soft-delete as update)
-        // We dispatch EntityDeletedEvent manually via the controller to distinguish the action
-        await _planService.AddOrUpdateAsync(plan, cancellationToken);
+        await _planRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
+        {
+            await _planRepository.UpdateAsync(plan, ct);
+            await _planRepository.UnitOfWork.SaveChangesAsync(ct);
+            await _dispatcher.DispatchAsync(new EntityDeletedEvent<SubscriptionPlan>(plan, DateTime.UtcNow), ct);
+        }, cancellationToken: cancellationToken);
     }
 }

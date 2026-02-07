@@ -27,5 +27,5 @@ public class PlanModel
 
     public DateTimeOffset? UpdatedDateTime { get; set; }
 
-    public List<PlanLimitModel> Limits { get; set; } = [];
+    public List<PlanLimitModel> Limits { get; set; } = new List<PlanLimitModel>();
 }

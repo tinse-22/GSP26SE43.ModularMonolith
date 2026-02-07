@@ -27,7 +27,7 @@ public static class PlanModelMappingConfiguration
             SortOrder = entity.SortOrder,
             CreatedDateTime = entity.CreatedDateTime,
             UpdatedDateTime = entity.UpdatedDateTime,
-            Limits = limits?.Select(l => l.ToModel()).ToList() ?? [],
+            Limits = limits?.Select(l => l.ToModel()).ToList() ?? new List<PlanLimitModel>(),
         };
     }
 
@@ -74,7 +74,7 @@ public static class PlanModelMappingConfiguration
             if (!Enum.TryParse<LimitType>(l.LimitType, true, out var limitType))
             {
                 throw new CrossCuttingConcerns.Exceptions.ValidationException(
-                    $"Invalid LimitType: '{l.LimitType}'. Valid values: {string.Join(", ", Enum.GetNames<LimitType>())}");
+                    $"Loại giới hạn '{l.LimitType}' không hợp lệ. Giá trị hợp lệ: {string.Join(", ", Enum.GetNames<LimitType>())}.");
             }
 
             return new PlanLimit
@@ -84,6 +84,6 @@ public static class PlanModelMappingConfiguration
                 LimitValue = l.IsUnlimited ? null : l.LimitValue,
                 IsUnlimited = l.IsUnlimited,
             };
-        }).ToList() ?? [];
+        }).ToList() ?? new List<PlanLimit>();
     }
 }

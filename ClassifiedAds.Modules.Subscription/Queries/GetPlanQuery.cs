@@ -38,7 +38,7 @@ public class GetPlanQueryHandler : IQueryHandler<GetPlanQuery, PlanModel>
 
         if (query.ThrowNotFoundIfNull && plan == null)
         {
-            throw new NotFoundException($"Plan {query.Id} not found.");
+            throw new NotFoundException($"Không tìm thấy gói cước với mã '{query.Id}'.");
         }
 
         if (plan == null)

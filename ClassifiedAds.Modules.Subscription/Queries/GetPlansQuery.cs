@@ -44,7 +44,7 @@ public class GetPlansQueryHandler : IQueryHandler<GetPlansQuery, List<PlanModel>
             var search = query.Search.Trim().ToLower();
             plansQuery = plansQuery.Where(p =>
                 p.Name.ToLower().Contains(search) ||
-                p.DisplayName.ToLower().Contains(search));
+                (p.DisplayName != null && p.DisplayName.ToLower().Contains(search)));
         }
 
         plansQuery = plansQuery.OrderBy(p => p.SortOrder).ThenBy(p => p.Name);
