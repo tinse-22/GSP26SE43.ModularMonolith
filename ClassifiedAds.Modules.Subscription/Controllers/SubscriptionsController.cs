@@ -30,7 +30,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.GetSubscription)]
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<SubscriptionModel>> Get(Guid id)
@@ -42,6 +42,22 @@ public class SubscriptionsController : ControllerBase
         });
 
         return Ok(item);
+    }
+
+    [Authorize(Permissions.GetPlans)]
+    [HttpGet("plans")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<PlanModel>>> GetPlans(
+        [FromQuery] bool? isActive = true,
+        [FromQuery] string search = null)
+    {
+        var items = await _dispatcher.DispatchAsync(new GetPlansQuery
+        {
+            IsActive = isActive,
+            Search = search,
+        });
+
+        return Ok(items);
     }
 
     [Authorize(Permissions.GetCurrentSubscription)]
@@ -82,7 +98,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.UpdateSubscription)]
-    [HttpPut("{id}")]
+    [HttpPut("{id:guid}")]
     [Consumes("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -106,7 +122,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.CancelSubscription)]
-    [HttpPost("{id}/cancel")]
+    [HttpPost("{id:guid}/cancel")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -128,7 +144,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.GetSubscriptionHistory)]
-    [HttpGet("{id}/history")]
+    [HttpGet("{id:guid}/history")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<SubscriptionHistoryModel>>> GetHistory(Guid id)
     {
@@ -141,7 +157,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.GetPaymentTransactions)]
-    [HttpGet("{id}/payments")]
+    [HttpGet("{id:guid}/payments")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<PaymentTransactionModel>>> GetPayments(
         Guid id,
@@ -157,7 +173,7 @@ public class SubscriptionsController : ControllerBase
     }
 
     [Authorize(Permissions.AddPaymentTransaction)]
-    [HttpPost("{id}/payments")]
+    [HttpPost("{id:guid}/payments")]
     [Consumes("application/json")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
