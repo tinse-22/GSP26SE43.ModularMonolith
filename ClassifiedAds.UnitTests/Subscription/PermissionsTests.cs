@@ -76,6 +76,10 @@ public class PermissionsTests
     [InlineData("Permission:AddPaymentTransaction")]
     [InlineData("Permission:GetUsageTracking")]
     [InlineData("Permission:UpdateUsageTracking")]
+    [InlineData("Permission:CreateSubscriptionPayment")]
+    [InlineData("Permission:GetPaymentIntent")]
+    [InlineData("Permission:CreatePayOsCheckout")]
+    [InlineData("Permission:SyncPayment")]
     public void Permissions_Should_ContainRequiredValues(string expectedPermission)
     {
         // Arrange
@@ -99,7 +103,7 @@ public class PermissionsTests
             .ToList();
 
         // Assert
-        fields.Should().HaveCount(15, "Subscription module should have exactly 15 permissions");
+        fields.Should().HaveCount(19, "Subscription module should have exactly 19 permissions");
     }
 
     #endregion
@@ -194,6 +198,30 @@ public class PermissionsTests
     public void UpdateUsageTracking_Should_HaveCorrectValue()
     {
         Permissions.UpdateUsageTracking.Should().Be("Permission:UpdateUsageTracking");
+    }
+
+    [Fact]
+    public void CreateSubscriptionPayment_Should_HaveCorrectValue()
+    {
+        Permissions.CreateSubscriptionPayment.Should().Be("Permission:CreateSubscriptionPayment");
+    }
+
+    [Fact]
+    public void GetPaymentIntent_Should_HaveCorrectValue()
+    {
+        Permissions.GetPaymentIntent.Should().Be("Permission:GetPaymentIntent");
+    }
+
+    [Fact]
+    public void CreatePayOsCheckout_Should_HaveCorrectValue()
+    {
+        Permissions.CreatePayOsCheckout.Should().Be("Permission:CreatePayOsCheckout");
+    }
+
+    [Fact]
+    public void SyncPayment_Should_HaveCorrectValue()
+    {
+        Permissions.SyncPayment.Should().Be("Permission:SyncPayment");
     }
 
     #endregion

@@ -112,6 +112,14 @@ Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.Storage.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
+    .AddSubscriptionModule(opt =>
+    {
+        configuration.GetSection("Modules:Subscription").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.PayOS ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.PayOsOptions();
+        configuration.GetSection("PayOS").Bind(opt.PayOS);
+    })
     .AddApplicationServices();
 
     // Add HTML and PDF utilities (used by notification module)
@@ -156,4 +164,5 @@ static void AddHostedServices(IServiceCollection services)
     services.AddHostedServicesNotificationModule();
     services.AddHostedServicesProductModule();
     services.AddHostedServicesStorageModule();
+    services.AddHostedServicesSubscriptionModule();
 }

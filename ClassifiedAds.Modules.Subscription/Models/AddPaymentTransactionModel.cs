@@ -17,6 +17,12 @@ public class AddPaymentTransactionModel
     [StringLength(50)]
     public string PaymentMethod { get; set; }
 
+    [StringLength(20)]
+    public string Provider { get; set; }
+
+    [StringLength(200)]
+    public string ProviderRef { get; set; }
+
     [StringLength(200)]
     public string ExternalTxnId { get; set; }
 

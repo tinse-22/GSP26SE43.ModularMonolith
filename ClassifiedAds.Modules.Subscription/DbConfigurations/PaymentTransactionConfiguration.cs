@@ -11,19 +11,30 @@ public class PaymentTransactionConfiguration : IEntityTypeConfiguration<PaymentT
         builder.ToTable("PaymentTransactions");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
 
-        builder.Property(x => x.Amount).HasPrecision(10, 2);
+        builder.Property(x => x.Amount).HasPrecision(18, 2);
         builder.Property(x => x.Currency).HasMaxLength(3);
         builder.Property(x => x.PaymentMethod).HasMaxLength(50);
+        builder.Property(x => x.Provider).HasMaxLength(20);
+        builder.Property(x => x.ProviderRef).HasMaxLength(200);
         builder.Property(x => x.ExternalTxnId).HasMaxLength(200);
         builder.Property(x => x.InvoiceUrl).HasMaxLength(500);
 
         builder.HasIndex(x => x.UserId);
         builder.HasIndex(x => x.SubscriptionId);
+        builder.HasIndex(x => x.PaymentIntentId);
         builder.HasIndex(x => x.Status);
+        builder.HasIndex(x => new { x.Provider, x.ProviderRef })
+            .IsUnique()
+            .HasFilter("\"ProviderRef\" IS NOT NULL");
 
         builder.HasOne(x => x.Subscription)
             .WithMany()
             .HasForeignKey(x => x.SubscriptionId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(x => x.PaymentIntent)
+            .WithMany()
+            .HasForeignKey(x => x.PaymentIntentId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

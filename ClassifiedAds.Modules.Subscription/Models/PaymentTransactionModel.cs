@@ -11,6 +11,8 @@ public class PaymentTransactionModel
 
     public Guid SubscriptionId { get; set; }
 
+    public Guid? PaymentIntentId { get; set; }
+
     public decimal Amount { get; set; }
 
     public string Currency { get; set; }
@@ -18,6 +20,10 @@ public class PaymentTransactionModel
     public PaymentStatus Status { get; set; }
 
     public string PaymentMethod { get; set; }
+
+    public string Provider { get; set; }
+
+    public string ProviderRef { get; set; }
 
     public string ExternalTxnId { get; set; }
 

@@ -73,6 +73,22 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(command.Model.ProviderRef))
+        {
+            var provider = string.IsNullOrWhiteSpace(command.Model.Provider)
+                ? "MANUAL"
+                : command.Model.Provider.Trim().ToUpperInvariant();
+            var providerRef = command.Model.ProviderRef.Trim();
+            var existing = await _paymentTransactionRepository.FirstOrDefaultAsync(
+                _paymentTransactionRepository.GetQueryableSet()
+                    .Where(x => x.Provider == provider && x.ProviderRef == providerRef));
+            if (existing != null)
+            {
+                command.SavedTransactionId = existing.Id;
+                return;
+            }
+        }
+
         var transaction = new PaymentTransaction
         {
             Id = Guid.NewGuid(),
@@ -82,6 +98,10 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             Currency = command.Model.Currency?.Trim().ToUpperInvariant() ?? "USD",
             Status = command.Model.Status,
             PaymentMethod = command.Model.PaymentMethod?.Trim(),
+            Provider = string.IsNullOrWhiteSpace(command.Model.Provider)
+                ? "MANUAL"
+                : command.Model.Provider.Trim().ToUpperInvariant(),
+            ProviderRef = command.Model.ProviderRef?.Trim(),
             ExternalTxnId = command.Model.ExternalTxnId?.Trim(),
             InvoiceUrl = command.Model.InvoiceUrl?.Trim(),
             FailureReason = command.Model.FailureReason?.Trim(),

@@ -18,4 +18,9 @@ public static class Permissions
     public const string AddPaymentTransaction = "Permission:AddPaymentTransaction";
     public const string GetUsageTracking = "Permission:GetUsageTracking";
     public const string UpdateUsageTracking = "Permission:UpdateUsageTracking";
+
+    public const string CreateSubscriptionPayment = "Permission:CreateSubscriptionPayment";
+    public const string GetPaymentIntent = "Permission:GetPaymentIntent";
+    public const string CreatePayOsCheckout = "Permission:CreatePayOsCheckout";
+    public const string SyncPayment = "Permission:SyncPayment";
 }
