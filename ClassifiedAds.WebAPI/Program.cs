@@ -275,7 +275,6 @@ services.AddDinkToPdfConverter();
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 services.AddHostedServicesNotificationModule();
-services.AddHostedServicesSubscriptionModule();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ASP.NET Core Data Protection

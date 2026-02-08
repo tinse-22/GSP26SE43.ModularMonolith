@@ -72,11 +72,6 @@ public static class SubscriptionServiceCollectionExtensions
 
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
-        services.AddRateLimiter(options =>
-        {
-            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
-        });
-
         return services;
     }
 
