@@ -26,6 +26,9 @@ public class SubscriptionDbContext : DbContextUnitOfWork<SubscriptionDbContext>
     public DbSet<UsageTracking> UsageTrackings { get; set; }
 
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
+    public DbSet<AuditLogEntry> AuditLogEntries { get; set; }
+    public DbSet<OutboxMessage> OutboxMessages { get; set; }
+    public DbSet<PaymentIntent> PaymentIntents { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
