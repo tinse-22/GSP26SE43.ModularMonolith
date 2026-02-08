@@ -4,6 +4,7 @@ using ClassifiedAds.Modules.Subscription.ConfigurationOptions;
 using ClassifiedAds.Modules.Subscription.Constants;
 using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.IntegrationEvents;
+using ClassifiedAds.Modules.Subscription.Models;
 using ClassifiedAds.Modules.Subscription.Outbox;
 using ClassifiedAds.Modules.Subscription.Services;
 using Microsoft.Extensions.Logging;

@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.Subscription.Authorization;
 using ClassifiedAds.Modules.Subscription.Commands;
 using ClassifiedAds.Modules.Subscription.Entities;
@@ -8,9 +9,11 @@ using ClassifiedAds.Modules.Subscription.RateLimiterPolicies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.Subscription.Controllers;
@@ -35,11 +38,7 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<SubscriptionModel>> Get(Guid id)
     {
-        var item = await _dispatcher.DispatchAsync(new GetSubscriptionQuery
-        {
-            Id = id,
-            ThrowNotFoundIfNull = true,
-        });
+        var item = await EnsureSubscriptionOwnershipAsync(id);
 
         return Ok(item);
     }
@@ -66,9 +65,26 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<SubscriptionModel>> GetCurrentByUser(Guid userId)
     {
+        var targetUserId = ResolveUserId(userId);
+
         var item = await _dispatcher.DispatchAsync(new GetCurrentSubscriptionByUserQuery
         {
-            UserId = userId,
+            UserId = targetUserId,
+            ThrowNotFoundIfNull = true,
+        });
+
+        return Ok(item);
+    }
+
+    [Authorize(Permissions.GetCurrentSubscription)]
+    [HttpGet("me/current")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SubscriptionModel>> GetCurrent()
+    {
+        var item = await _dispatcher.DispatchAsync(new GetCurrentSubscriptionByUserQuery
+        {
+            UserId = GetCurrentUserId(),
             ThrowNotFoundIfNull = true,
         });
 
@@ -82,6 +98,13 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<SubscriptionModel>> Post([FromBody] CreateUpdateSubscriptionModel model)
     {
+        if (model == null)
+        {
+            return BadRequest(new { Error = "Thong tin dang ky la bat buoc." });
+        }
+
+        model.UserId = GetCurrentUserId();
+
         var command = new AddUpdateSubscriptionCommand
         {
             Model = model,
@@ -105,6 +128,13 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<SubscriptionModel>> Put(Guid id, [FromBody] CreateUpdateSubscriptionModel model)
     {
+        if (model == null)
+        {
+            return BadRequest(new { Error = "Thong tin dang ky la bat buoc." });
+        }
+
+        var existingSubscription = await EnsureSubscriptionOwnershipAsync(id);
+        model.UserId = existingSubscription.UserId;
         var command = new AddUpdateSubscriptionCommand
         {
             SubscriptionId = id,
@@ -128,6 +158,8 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<SubscriptionModel>> Cancel(Guid id, [FromBody] CancelSubscriptionModel model)
     {
+        await EnsureSubscriptionOwnershipAsync(id);
+
         await _dispatcher.DispatchAsync(new CancelSubscriptionCommand
         {
             SubscriptionId = id,
@@ -148,6 +180,8 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<SubscriptionHistoryModel>>> GetHistory(Guid id)
     {
+        await EnsureSubscriptionOwnershipAsync(id);
+
         var items = await _dispatcher.DispatchAsync(new GetSubscriptionHistoriesQuery
         {
             SubscriptionId = id,
@@ -163,9 +197,12 @@ public class SubscriptionsController : ControllerBase
         Guid id,
         [FromQuery] PaymentStatus? status)
     {
+        await EnsureSubscriptionOwnershipAsync(id);
+
         var items = await _dispatcher.DispatchAsync(new GetPaymentTransactionsQuery
         {
             SubscriptionId = id,
+            UserId = IsCurrentUserAdmin() ? null : GetCurrentUserId(),
             Status = status,
         });
 
@@ -180,22 +217,17 @@ public class SubscriptionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PaymentTransactionModel>> AddPayment(
         Guid id,
-        [FromBody] AddPaymentTransactionModel model)
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] AddPaymentTransactionModel model = null)
     {
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = id,
+            UserId = IsCurrentUserAdmin() ? Guid.Empty : GetCurrentUserId(),
             Model = model,
         };
         await _dispatcher.DispatchAsync(command);
 
-        var items = await _dispatcher.DispatchAsync(new GetPaymentTransactionsQuery
-        {
-            SubscriptionId = id,
-        });
-
-        var created = items.Find(x => x.Id == command.SavedTransactionId);
-        return Created($"/api/subscriptions/{id}/payments/{command.SavedTransactionId}", created);
+        return Created($"/api/subscriptions/{id}/payments/{command.SavedTransactionId}", command.SavedTransaction);
     }
 
     [Authorize(Permissions.GetUsageTracking)]
@@ -206,9 +238,11 @@ public class SubscriptionsController : ControllerBase
         [FromQuery] DateOnly? periodStart,
         [FromQuery] DateOnly? periodEnd)
     {
+        var targetUserId = ResolveUserId(userId);
+
         var items = await _dispatcher.DispatchAsync(new GetUsageTrackingsQuery
         {
-            UserId = userId,
+            UserId = targetUserId,
             PeriodStart = periodStart,
             PeriodEnd = periodEnd,
         });
@@ -225,19 +259,67 @@ public class SubscriptionsController : ControllerBase
         Guid userId,
         [FromBody] UpsertUsageTrackingModel model)
     {
+        var targetUserId = ResolveUserId(userId);
+
         await _dispatcher.DispatchAsync(new UpsertUsageTrackingCommand
         {
-            UserId = userId,
+            UserId = targetUserId,
             Model = model,
         });
 
         var items = await _dispatcher.DispatchAsync(new GetUsageTrackingsQuery
         {
-            UserId = userId,
+            UserId = targetUserId,
             PeriodStart = model.PeriodStart,
             PeriodEnd = model.PeriodEnd,
         });
 
         return Ok(items);
+    }
+
+    private Guid ResolveUserId(Guid requestedUserId)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (!IsCurrentUserAdmin())
+        {
+            return currentUserId;
+        }
+
+        return requestedUserId == Guid.Empty ? currentUserId : requestedUserId;
+    }
+
+    private async Task<SubscriptionModel> EnsureSubscriptionOwnershipAsync(Guid subscriptionId)
+    {
+        var subscription = await _dispatcher.DispatchAsync(new GetSubscriptionQuery
+        {
+            Id = subscriptionId,
+            ThrowNotFoundIfNull = true,
+        });
+
+        if (!IsCurrentUserAdmin() && subscription.UserId != GetCurrentUserId())
+        {
+            throw new NotFoundException($"Khong tim thay dang ky voi ma '{subscriptionId}'.");
+        }
+
+        return subscription;
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("uid");
+
+        if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
+        {
+            throw new ValidationException("Thong tin nguoi dung la bat buoc.");
+        }
+
+        return userId;
+    }
+
+    private bool IsCurrentUserAdmin()
+    {
+        return User.IsInRole("Admin");
     }
 }
