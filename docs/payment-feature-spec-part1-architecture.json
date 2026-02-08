@@ -1,143 +1,291 @@
 {
   "$schema": "payment-feature-specification",
-  "version": "1.1.0",
-  "title": "StudentGamerHub Payment Feature - Architecture & Business Objects",
-  "description": "Tài liệu mô tả kiến trúc và entities của tính năng Payment. Chỉ bao gồm Payment, không bao gồm Wallet.",
+  "version": "2.0.0",
+  "title": "ClassifiedAds.ModularMonolith Payment Feature - Architecture & Entities",
+  "description": "Tài liệu mô tả kiến trúc và entities của tính năng Payment tích hợp PayOS vào module Subscription. Phù hợp với kiến trúc Modular Monolith, CQRS (Dispatcher pattern), Entity<Guid> base class, schema isolation per module.",
   "techStack": {
-    "framework": ".NET 8 (ASP.NET Core Web API)",
-    "database": "PostgreSQL (via Entity Framework Core + Npgsql)",
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL (via Entity Framework Core 10.0 + Npgsql.EntityFrameworkCore.PostgreSQL 10.0)",
     "paymentGateway": "PayOS (Vietnamese payment gateway - https://payos.vn)",
-    "cache": "Redis (optional, fallback to IMemoryCache)",
-    "authentication": "ASP.NET Core Identity + JWT Bearer",
-    "validation": "FluentValidation",
+    "authentication": "ASP.NET Core Identity + JWT Bearer (SymmetricSecurityKey)",
+    "validation": "DataAnnotations + FluentValidation",
     "di": "Built-in Microsoft DI",
-    "architecture": "Clean Architecture (BusinessObjects → DTOs → Repositories → Services → WebAPI)"
+    "logging": "Serilog",
+    "monitoring": "OpenTelemetry (via Aspire ServiceDefaults)",
+    "realtime": "SignalR",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, CrudService<T>, Schema isolation per module)"
   },
 
-  "part": "1/3 - Architecture & Business Objects",
+  "part": "1/3 - Architecture & Entities",
 
   "architecture": {
+    "description": "Payment feature mở rộng module ClassifiedAds.Modules.Subscription hiện có. Thêm entity PaymentIntent và tích hợp PayOS gateway cho thanh toán subscription plan.",
+    "moduleStructure": {
+      "description": "Tất cả code payment nằm trong ClassifiedAds.Modules.Subscription, tuân theo cấu trúc module chuẩn của dự án",
+      "addedFiles": [
+        { "path": "Entities/PaymentIntent.cs", "description": "Entity PaymentIntent + enum PaymentPurpose, PaymentIntentStatus" },
+        { "path": "Models/PaymentIntentModel.cs", "description": "Response DTO cho PaymentIntent" },
+        { "path": "Models/CreatePaymentIntentModel.cs", "description": "Request DTO tạo payment intent (subscribe)" },
+        { "path": "Models/PayOsCheckoutModel.cs", "description": "Request DTO tạo PayOS checkout" },
+        { "path": "Models/PayOsWebhookPayload.cs", "description": "Webhook payload từ PayOS" },
+        { "path": "Models/PayOsModels.cs", "description": "Các DTOs cho PayOS API (request/response)" },
+        { "path": "Models/SubscriptionPurchaseResultModel.cs", "description": "Kết quả mua subscription" },
+        { "path": "Models/PaymentIntentModelMappingConfiguration.cs", "description": "Manual mapping entity ↔ DTO" },
+        { "path": "Commands/CreateSubscriptionPaymentCommand.cs", "description": "Command tạo payment cho subscription" },
+        { "path": "Commands/ConfirmPaymentIntentCommand.cs", "description": "Command xác nhận thanh toán" },
+        { "path": "Commands/CreatePayOsCheckoutCommand.cs", "description": "Command tạo PayOS checkout URL" },
+        { "path": "Commands/HandlePayOsWebhookCommand.cs", "description": "Command xử lý webhook từ PayOS" },
+        { "path": "Queries/GetPaymentIntentQuery.cs", "description": "Query lấy thông tin payment intent" },
+        { "path": "Queries/GetPaymentIntentByOrderCodeQuery.cs", "description": "Query tìm payment intent theo order code" },
+        { "path": "Controllers/PaymentsController.cs", "description": "API Controller cho payment endpoints" },
+        { "path": "DbConfigurations/PaymentIntentConfiguration.cs", "description": "EF Core configuration cho PaymentIntent" },
+        { "path": "Services/PayOsService.cs", "description": "Service gọi PayOS API (typed HttpClient)" },
+        { "path": "Services/IPayOsService.cs", "description": "Interface cho PayOS service" },
+        { "path": "ConfigurationOptions/PayOsOptions.cs", "description": "PayOS configuration options" }
+      ],
+      "modifiedFiles": [
+        { "path": "Entities/PaymentTransaction.cs", "description": "Thêm PaymentIntentId, Provider, ProviderRef" },
+        { "path": "Persistence/SubscriptionDbContext.cs", "description": "Thêm DbSet<PaymentIntent>" },
+        { "path": "DbConfigurations/PaymentTransactionConfiguration.cs", "description": "Thêm FK PaymentIntentId, index Provider+ProviderRef" },
+        { "path": "ServiceCollectionExtensions.cs", "description": "Đăng ký PaymentIntent repository, PayOsService, PayOsOptions" },
+        { "path": "Authorization/Permissions.cs", "description": "Thêm permissions cho payment" }
+      ]
+    },
     "layers": [
-      { "name": "BusinessObjects", "description": "Entity models, enums, base classes, Result pattern", "project": "BusinessObjects.csproj" },
-      { "name": "DTOs", "description": "Data Transfer Objects for API requests/responses", "project": "DTOs.csproj" },
-      { "name": "Repositories", "description": "Data access layer: EF Core DbContext, Repository interfaces/implementations, Migrations", "project": "Repositories.csproj" },
-      { "name": "Services", "description": "Business logic: Service interfaces/implementations, Configuration, Validation", "project": "Services.csproj" },
-      { "name": "WebAPI", "description": "Presentation layer: Controllers, Middleware, Extensions, Hubs", "project": "WebAPI.csproj" }
+      { "name": "Entities", "description": "Entity models kế thừa Entity<Guid>, IAggregateRoot. Enums định nghĩa cùng file.", "folder": "Entities/" },
+      { "name": "Models", "description": "DTOs (request/response), manual mapping via extension methods", "folder": "Models/" },
+      { "name": "Commands", "description": "CQRS Commands: ICommand + ICommandHandler<T> cùng file, xử lý write business logic", "folder": "Commands/" },
+      { "name": "Queries", "description": "CQRS Queries: IQuery<TResult> + IQueryHandler<TQuery, TResult>, read operations", "folder": "Queries/" },
+      { "name": "Controllers", "description": "API Controllers, inject Dispatcher, gọi Commands/Queries", "folder": "Controllers/" },
+      { "name": "DbConfigurations", "description": "EF Core IEntityTypeConfiguration<T>, Fluent API", "folder": "DbConfigurations/" },
+      { "name": "Persistence", "description": "Module DbContext (schema 'subscription') + Repository<T, TKey>", "folder": "Persistence/" },
+      { "name": "Services", "description": "External service integration (PayOS API calls), không phải business logic service", "folder": "Services/" }
     ],
     "paymentFlows": [
       {
-        "name": "Membership Purchase (wallet balance sufficient)",
+        "name": "Subscription Purchase - Free Plan (không cần thanh toán)",
         "steps": [
-          "1. User calls POST /api/payments/buy-membership/{planId}",
-          "2. PaymentService.BuyMembershipAsync checks wallet balance vs plan price",
-          "3. Sufficient → Debit user wallet, credit platform wallet, create OUT+IN transactions, assign membership",
-          "4. Return { requiresExternalPayment: false, membership: {...} }"
+          "1. User calls POST /api/payments/subscribe/{planId}",
+          "2. CreateSubscriptionPaymentCommand handler kiểm tra plan",
+          "3. Plan price = 0 (Free) → tạo UserSubscription trực tiếp, tạo SubscriptionHistory (ChangeType=Created)",
+          "4. Return SubscriptionPurchaseResultModel { requiresPayment: false, subscription: {...} }"
         ]
       },
       {
-        "name": "Membership Purchase via PayOS (insufficient balance)",
+        "name": "Subscription Purchase via PayOS (Paid Plan)",
         "steps": [
-          "1. POST /api/payments/buy-membership/{planId} → insufficient balance detected",
-          "2. Creates PaymentIntent (Purpose=Membership, Status=RequiresPayment, expires 15 min)",
-          "3. Returns { requiresExternalPayment: true, paymentIntentId: guid }",
+          "1. POST /api/payments/subscribe/{planId} với billingCycle (Monthly/Yearly)",
+          "2. CreateSubscriptionPaymentCommand tính giá theo billingCycle, tạo PaymentIntent (Purpose=SubscriptionPurchase, Status=RequiresPayment, expires 15 min)",
+          "3. Return { requiresPayment: true, paymentIntentId: guid }",
           "4. User calls POST /api/payments/payos/create { intentId, returnUrl }",
-          "5. PaymentService generates OrderCode, calls PayOS API → returns { checkoutUrl }",
-          "6. User redirected to PayOS → pays via QR/bank transfer",
-          "7. PayOS sends webhook POST /api/payments/payos/webhook",
-          "8. PayOsService verifies signature, ConfirmMembershipPurchaseAsync creates Transaction, assigns membership",
-          "9. User redirected back via GET /api/payments/payos/return"
+          "5. CreatePayOsCheckoutCommand → gọi PayOS API → trả về { checkoutUrl }",
+          "6. User mở checkoutUrl → thanh toán qua QR/chuyển khoản ngân hàng",
+          "7. PayOS gửi webhook POST /api/payments/payos/webhook",
+          "8. HandlePayOsWebhookCommand xác minh HMAC-SHA256 signature, tạo PaymentTransaction (Provider=PAYOS), tạo/cập nhật UserSubscription (Status=Active), tạo SubscriptionHistory",
+          "9. User redirect về GET /api/payments/payos/return → redirect tới frontend với status"
         ]
       },
       {
-        "name": "Event Ticket Purchase",
+        "name": "Subscription Upgrade via PayOS",
         "steps": [
-          "1. User registers for event → PaymentIntent created (Purpose=EventTicket)",
-          "2. Option A: POST /api/payments/{intentId}/confirm (wallet payment) → debit wallet, confirm registration",
-          "3. Option B: POST /api/payments/payos/create → PayOS checkout → webhook → ConfirmEventTicketAsync"
+          "1. POST /api/payments/subscribe/{newPlanId} → phát hiện user đã có subscription active",
+          "2. Tính price của plan mới (theo billingCycle)",
+          "3. Tạo PaymentIntent (Purpose=SubscriptionUpgrade, SubscriptionId=existing)",
+          "4. Flow PayOS checkout tương tự mua mới",
+          "5. Webhook xác nhận → cập nhật UserSubscription (PlanId=newPlan), tạo SubscriptionHistory (ChangeType=Upgraded)"
+        ]
+      },
+      {
+        "name": "Subscription Renewal via PayOS",
+        "steps": [
+          "1. Background job (PublishEventWorker) kiểm tra subscription sắp hết hạn",
+          "2. Hoặc user chủ động POST /api/payments/renew/{subscriptionId}",
+          "3. Tạo PaymentIntent (Purpose=SubscriptionRenewal)",
+          "4. User thanh toán qua PayOS → gia hạn subscription (EndDate mới, NextBillingDate mới)",
+          "5. Tạo SubscriptionHistory (ChangeType=Reactivated)"
         ]
       }
     ]
   },
 
-  "businessObjects": {
+  "entities": {
     "baseClass": {
-      "name": "AuditableEntity",
-      "file": "BusinessObjects/Common/AuditableEntity.cs",
-      "code": "namespace BusinessObjects.Common;\n\npublic interface IAuditable\n{\n    DateTime CreatedAtUtc { get; set; }\n    Guid? CreatedBy { get; set; }\n    DateTime? UpdatedAtUtc { get; set; }\n    Guid? UpdatedBy { get; set; }\n}\n\npublic interface ISoftDelete\n{\n    bool IsDeleted { get; set; }\n    DateTime? DeletedAtUtc { get; set; }\n    Guid? DeletedBy { get; set; }\n}\n\npublic abstract class AuditableEntity : IAuditable, ISoftDelete\n{\n    public Guid Id { get; set; }\n    public DateTime CreatedAtUtc { get; set; }\n    public Guid? CreatedBy { get; set; }\n    public DateTime? UpdatedAtUtc { get; set; }\n    public Guid? UpdatedBy { get; set; }\n    public bool IsDeleted { get; set; }\n    public DateTime? DeletedAtUtc { get; set; }\n    public Guid? DeletedBy { get; set; }\n}"
+      "name": "Entity<TKey>",
+      "file": "ClassifiedAds.Domain/Entities/Entity.cs",
+      "description": "Base class cho tất cả entities trong dự án. Kế thừa IHasKey<TKey> và ITrackable.",
+      "code": "using System;\nusing System.ComponentModel.DataAnnotations;\n\nnamespace ClassifiedAds.Domain.Entities;\n\npublic abstract class Entity<TKey> : IHasKey<TKey>, ITrackable\n{\n    public TKey Id { get; set; }\n\n    [Timestamp]\n    public byte[] RowVersion { get; set; }\n\n    public DateTimeOffset CreatedDateTime { get; set; }\n\n    public DateTimeOffset? UpdatedDateTime { get; set; }\n}",
+      "interfaces": {
+        "IHasKey<T>": "T Id { get; set; }",
+        "ITrackable": "byte[] RowVersion, DateTimeOffset CreatedDateTime, DateTimeOffset? UpdatedDateTime",
+        "IAggregateRoot": "Marker interface, tất cả root entities phải implement"
+      },
+      "autoTracking": "CreatedDateTime được tự động set bởi DbContextRepository.AddAsync(). UpdatedDateTime được tự động set bởi DbContextRepository.UpdateAsync(). Sử dụng IDateTimeProvider."
     },
-    "entities": {
-      "PaymentIntent": {
-        "file": "BusinessObjects/User.cs (within file)",
-        "description": "Represents a payment intent - tracks lifecycle of a payment from creation to completion",
-        "code": "[Index(nameof(EventId))]\npublic sealed class PaymentIntent : AuditableEntity\n{\n    public Guid UserId { get; set; }\n    public User? User { get; set; }\n\n    public long AmountCents { get; set; }\n    public PaymentPurpose Purpose { get; set; }\n\n    public Guid? EventRegistrationId { get; set; }\n    public EventRegistration? EventRegistration { get; set; }\n\n    public Guid? EventId { get; set; }\n    public Event? Event { get; set; }\n\n    public Guid? MembershipPlanId { get; set; }\n    public MembershipPlan? MembershipPlan { get; set; }\n\n    public PaymentIntentStatus Status { get; set; } = PaymentIntentStatus.RequiresPayment;\n    public string ClientSecret { get; set; } = default!;\n    public DateTime ExpiresAt { get; set; }\n    public long? OrderCode { get; set; }\n}",
-        "properties": {
-          "Id": "Guid - Primary key (from AuditableEntity)",
-          "UserId": "Guid - FK to User who owns this payment intent",
-          "AmountCents": "long - Amount in VND",
-          "Purpose": "PaymentPurpose enum - TopUp, EventTicket, WalletTopUp, Membership",
-          "EventRegistrationId": "Guid? - FK to EventRegistration (for EventTicket purpose)",
-          "EventId": "Guid? - FK to Event (for TopUp/EventTicket purposes)",
-          "MembershipPlanId": "Guid? - FK to MembershipPlan (for Membership purpose)",
-          "Status": "PaymentIntentStatus enum - RequiresPayment, Processing, Succeeded, Canceled",
-          "ClientSecret": "string - Stores PayOS checkout URL after creation",
-          "ExpiresAt": "DateTime - When this intent expires (typically 15 minutes)",
-          "OrderCode": "long? - Unique PayOS order code (15-digit number)"
+    "existingEntities": {
+      "PaymentTransaction": {
+        "file": "ClassifiedAds.Modules.Subscription/Entities/PaymentTransaction.cs",
+        "description": "Entity đã tồn tại - ghi nhận giao dịch thanh toán. Cần mở rộng thêm fields cho PayOS.",
+        "currentCode": "using ClassifiedAds.Domain.Entities;\nusing System;\n\nnamespace ClassifiedAds.Modules.Subscription.Entities;\n\npublic class PaymentTransaction : Entity<Guid>, IAggregateRoot\n{\n    public Guid UserId { get; set; }\n    public Guid SubscriptionId { get; set; }\n    public decimal Amount { get; set; }\n    public string Currency { get; set; }\n    public PaymentStatus Status { get; set; }\n    public string PaymentMethod { get; set; }\n    public string ExternalTxnId { get; set; }\n    public string InvoiceUrl { get; set; }\n    public string FailureReason { get; set; }\n    public UserSubscription Subscription { get; set; }\n}\n\npublic enum PaymentStatus\n{\n    Pending = 0,\n    Succeeded = 1,\n    Failed = 2,\n    Refunded = 3\n}",
+        "proposedChanges": [
+          "Thêm property PaymentIntentId (Guid?) - FK tới PaymentIntent",
+          "Thêm property Provider (string) - 'PAYOS' hoặc 'MANUAL'",
+          "Thêm property ProviderRef (string) - Reference ID từ PayOS (paymentLinkId hoặc orderCode)",
+          "Thêm navigation property PaymentIntent",
+          "Giữ nguyên ExternalTxnId cho backward compatibility với Stripe"
+        ],
+        "proposedCode": "using ClassifiedAds.Domain.Entities;\nusing System;\n\nnamespace ClassifiedAds.Modules.Subscription.Entities;\n\n/// <summary>\n/// Payment transaction record.\n/// </summary>\npublic class PaymentTransaction : Entity<Guid>, IAggregateRoot\n{\n    /// <summary>User who made the payment.</summary>\n    public Guid UserId { get; set; }\n\n    /// <summary>Associated subscription.</summary>\n    public Guid SubscriptionId { get; set; }\n\n    /// <summary>Associated payment intent (if created via PayOS flow).</summary>\n    public Guid? PaymentIntentId { get; set; }\n\n    /// <summary>Payment amount.</summary>\n    public decimal Amount { get; set; }\n\n    /// <summary>Currency code (e.g., \"USD\", \"VND\").</summary>\n    public string Currency { get; set; }\n\n    /// <summary>Payment status: Pending, Succeeded, Failed, Refunded.</summary>\n    public PaymentStatus Status { get; set; }\n\n    /// <summary>Payment method (e.g., \"bank_transfer\", \"qr_code\").</summary>\n    public string PaymentMethod { get; set; }\n\n    /// <summary>Payment provider identifier (e.g., \"PAYOS\", \"MANUAL\").</summary>\n    public string Provider { get; set; }\n\n    /// <summary>Provider-specific reference ID (PayOS paymentLinkId or orderCode).</summary>\n    public string ProviderRef { get; set; }\n\n    /// <summary>External payment intent/transaction ID (Stripe or other).</summary>\n    public string ExternalTxnId { get; set; }\n\n    /// <summary>Invoice URL from payment provider.</summary>\n    public string InvoiceUrl { get; set; }\n\n    /// <summary>Reason for failure if status is Failed.</summary>\n    public string FailureReason { get; set; }\n\n    // Navigation properties\n    public UserSubscription Subscription { get; set; }\n    public PaymentIntent PaymentIntent { get; set; }\n}\n\npublic enum PaymentStatus\n{\n    Pending = 0,\n    Succeeded = 1,\n    Failed = 2,\n    Refunded = 3\n}"
+      },
+      "SubscriptionPlan": {
+        "file": "ClassifiedAds.Modules.Subscription/Entities/SubscriptionPlan.cs",
+        "description": "Entity đã tồn tại - định nghĩa subscription plan. KHÔNG thay đổi. Sử dụng PriceMonthly/PriceYearly cho tính giá.",
+        "keyProperties": {
+          "Id": "Guid - Primary key",
+          "Name": "string - Tên nội bộ (Free, Pro, Enterprise)",
+          "DisplayName": "string - Tên hiển thị",
+          "PriceMonthly": "decimal? - Giá hàng tháng (null = không hỗ trợ monthly)",
+          "PriceYearly": "decimal? - Giá hàng năm (null = không hỗ trợ yearly)",
+          "Currency": "string - Mã tiền tệ",
+          "IsActive": "bool - Plan đang hoạt động"
         }
       },
-      "Transaction": {
-        "file": "BusinessObjects/User.cs (within file)",
-        "description": "Records a financial transaction in the system",
-        "code": "[Index(nameof(EventId))]\npublic sealed class Transaction : AuditableEntity\n{\n    public Guid? WalletId { get; set; }\n    public Wallet? Wallet { get; set; }\n    public Guid? EventId { get; set; }\n    public Event? Event { get; set; }\n\n    public long AmountCents { get; set; }\n    public string Currency { get; set; } = \"VND\";\n\n    public TransactionDirection Direction { get; set; } = TransactionDirection.Out;\n    public TransactionMethod Method { get; set; } = TransactionMethod.Wallet;\n    public TransactionStatus Status { get; set; } = TransactionStatus.Pending;\n\n    public string? Provider { get; set; }\n    public string? ProviderRef { get; set; }\n    public JsonDocument? Metadata { get; set; }\n}",
+      "UserSubscription": {
+        "file": "ClassifiedAds.Modules.Subscription/Entities/UserSubscription.cs",
+        "description": "Entity đã tồn tại - subscription của user. Sẽ được tạo/cập nhật khi thanh toán thành công.",
+        "keyProperties": {
+          "Id": "Guid - Primary key",
+          "UserId": "Guid - FK tới User",
+          "PlanId": "Guid - FK tới SubscriptionPlan",
+          "Status": "SubscriptionStatus - Trial, Active, PastDue, Cancelled, Expired",
+          "BillingCycle": "BillingCycle? - Monthly, Yearly",
+          "StartDate": "DateOnly - Ngày bắt đầu",
+          "EndDate": "DateOnly? - Ngày kết thúc",
+          "NextBillingDate": "DateOnly? - Ngày thanh toán tiếp theo",
+          "AutoRenew": "bool - Tự động gia hạn"
+        }
+      }
+    },
+    "newEntities": {
+      "PaymentIntent": {
+        "file": "ClassifiedAds.Modules.Subscription/Entities/PaymentIntent.cs",
+        "description": "Entity MỚI - theo dõi lifecycle thanh toán từ khởi tạo đến hoàn thành. Là trung tâm của tính năng payment PayOS.",
+        "code": "using ClassifiedAds.Domain.Entities;\nusing System;\n\nnamespace ClassifiedAds.Modules.Subscription.Entities;\n\n/// <summary>\n/// Represents a payment intent - tracks lifecycle of a payment from creation to completion.\n/// </summary>\npublic class PaymentIntent : Entity<Guid>, IAggregateRoot\n{\n    /// <summary>User who initiated this payment.</summary>\n    public Guid UserId { get; set; }\n\n    /// <summary>Amount to be paid (in the plan's currency).</summary>\n    public decimal Amount { get; set; }\n\n    /// <summary>Currency code (e.g., \"VND\", \"USD\").</summary>\n    public string Currency { get; set; } = \"VND\";\n\n    /// <summary>Purpose of this payment.</summary>\n    public PaymentPurpose Purpose { get; set; }\n\n    /// <summary>Associated subscription plan.</summary>\n    public Guid PlanId { get; set; }\n\n    /// <summary>Billing cycle chosen by user.</summary>\n    public BillingCycle BillingCycle { get; set; }\n\n    /// <summary>Associated subscription (for upgrades/renewals).</summary>\n    public Guid? SubscriptionId { get; set; }\n\n    /// <summary>Current status of this payment intent.</summary>\n    public PaymentIntentStatus Status { get; set; } = PaymentIntentStatus.RequiresPayment;\n\n    /// <summary>PayOS checkout URL (stored after PayOS link creation).</summary>\n    public string CheckoutUrl { get; set; }\n\n    /// <summary>When this intent expires.</summary>\n    public DateTimeOffset ExpiresAt { get; set; }\n\n    /// <summary>Unique PayOS order code (15-digit number).</summary>\n    public long? OrderCode { get; set; }\n\n    // Navigation properties\n    public SubscriptionPlan Plan { get; set; }\n    public UserSubscription Subscription { get; set; }\n}\n\n/// <summary>\n/// Purpose of a payment intent.\n/// </summary>\npublic enum PaymentPurpose\n{\n    /// <summary>New subscription purchase.</summary>\n    SubscriptionPurchase = 0,\n\n    /// <summary>Subscription upgrade (plan change).</summary>\n    SubscriptionUpgrade = 1,\n\n    /// <summary>Subscription renewal.</summary>\n    SubscriptionRenewal = 2\n}\n\n/// <summary>\n/// Status of a payment intent.\n/// </summary>\npublic enum PaymentIntentStatus\n{\n    /// <summary>Awaiting payment.</summary>\n    RequiresPayment = 0,\n\n    /// <summary>Payment is being processed.</summary>\n    Processing = 1,\n\n    /// <summary>Payment succeeded.</summary>\n    Succeeded = 2,\n\n    /// <summary>Payment was canceled.</summary>\n    Canceled = 3,\n\n    /// <summary>Payment intent expired.</summary>\n    Expired = 4\n}",
         "properties": {
-          "WalletId": "Guid? - FK to Wallet (wallet là entity riêng, xem Wallet docs)",
-          "EventId": "Guid? - FK to Event",
-          "AmountCents": "long - Transaction amount in VND",
-          "Currency": "string - Always 'VND'",
-          "Direction": "TransactionDirection - In (credit) or Out (debit)",
-          "Method": "TransactionMethod - Wallet, Card, or Gateway",
-          "Status": "TransactionStatus - Pending, Succeeded, Failed, Refunded, Disputed",
-          "Provider": "string? - 'LOCAL' for wallet transfers, 'PAYOS' for PayOS transactions",
-          "ProviderRef": "string? - External reference ID from payment provider",
-          "Metadata": "JsonDocument? - JSON metadata (note, eventId, planId, etc.)"
+          "Id": "Guid - Primary key (from Entity<Guid>, auto gen_random_uuid())",
+          "UserId": "Guid - User khởi tạo thanh toán",
+          "Amount": "decimal - Số tiền cần thanh toán",
+          "Currency": "string - Mã tiền tệ, mặc định 'VND'",
+          "Purpose": "PaymentPurpose - SubscriptionPurchase, SubscriptionUpgrade, SubscriptionRenewal",
+          "PlanId": "Guid - FK tới SubscriptionPlan",
+          "BillingCycle": "BillingCycle - Monthly hoặc Yearly",
+          "SubscriptionId": "Guid? - FK tới UserSubscription (cho upgrade/renewal)",
+          "Status": "PaymentIntentStatus - RequiresPayment, Processing, Succeeded, Canceled, Expired",
+          "CheckoutUrl": "string - URL checkout PayOS",
+          "ExpiresAt": "DateTimeOffset - Thời hạn thanh toán (15 phút)",
+          "OrderCode": "long? - Mã đơn hàng PayOS (15 chữ số, unique)",
+          "RowVersion": "byte[] - Concurrency token (from Entity<Guid>)",
+          "CreatedDateTime": "DateTimeOffset - Thời điểm tạo (auto-set bởi DbContextRepository)",
+          "UpdatedDateTime": "DateTimeOffset? - Thời điểm cập nhật cuối (auto-set bởi DbContextRepository)"
         }
       }
     },
     "enums": {
-      "file": "BusinessObjects/Common/Enums.cs",
-      "paymentRelated": {
-        "TransactionDirection": { "In": 0, "Out": 1 },
-        "TransactionMethod": { "Wallet": 0, "Card": 1, "Gateway": 2 },
-        "TransactionStatus": { "Pending": 0, "Succeeded": 1, "Failed": 2, "Refunded": 3, "Disputed": 4 },
-        "PaymentPurpose": { "TopUp": 0, "EventTicket": 1, "WalletTopUp": 2, "Membership": 3 },
-        "PaymentIntentStatus": { "RequiresPayment": 0, "Processing": 1, "Succeeded": 2, "Canceled": 3 }
-      }
-    },
-    "resultPattern": {
-      "file": "BusinessObjects/Common/Results/Result.cs",
-      "description": "Railway-oriented Result pattern for error handling without exceptions",
-      "code": "namespace BusinessObjects.Common.Results\n{\n    public class Result\n    {\n        public bool IsSuccess { get; }\n        public bool IsFailure => !IsSuccess;\n        public Error Error { get; }\n\n        protected Result(bool isSuccess, Error error)\n        {\n            IsSuccess = isSuccess;\n            Error = error;\n        }\n\n        public static Result Success() => new(true, Error.None);\n        public static Result Failure(Error error) => new(false, error);\n\n        public static Result Combine(params Result[] results)\n        {\n            foreach (var r in results) if (r.IsFailure) return r;\n            return Success();\n        }\n    }\n\n    public sealed class Result<T> : Result\n    {\n        public T? Value { get; }\n        private Result(T? value, bool isSuccess, Error error) : base(isSuccess, error) => Value = value;\n        public static Result<T> Success(T value) => new(value, true, Error.None);\n        public static new Result<T> Failure(Error error) => new(default, false, error);\n        public static implicit operator Result<T>(T value) => Success(value);\n        public static Result<T> FromNullable(T? value, Error ifNull)\n            => value is null ? Failure(ifNull) : Success(value);\n    }\n}",
-      "errorCodes": {
-        "Error.Codes.NotFound": "404 Not Found",
-        "Error.Codes.Validation": "400 Bad Request",
-        "Error.Codes.Unauthorized": "401 Unauthorized",
-        "Error.Codes.Forbidden": "403 Forbidden",
-        "Error.Codes.Conflict": "409 Conflict",
-        "Error.Codes.Unexpected": "500 Internal Server Error",
-        "Error.Codes.ServiceUnavailable": "503 Service Unavailable"
+      "existingEnums": {
+        "location": "ClassifiedAds.Modules.Subscription/Entities/",
+        "PaymentStatus": { "Pending": 0, "Succeeded": 1, "Failed": 2, "Refunded": 3 },
+        "SubscriptionStatus": { "Trial": 0, "Active": 1, "PastDue": 2, "Cancelled": 3, "Expired": 4 },
+        "BillingCycle": { "Monthly": 0, "Yearly": 1 },
+        "ChangeType": { "Created": 0, "Upgraded": 1, "Downgraded": 2, "Cancelled": 3, "Reactivated": 4 }
+      },
+      "newEnums": {
+        "location": "ClassifiedAds.Modules.Subscription/Entities/PaymentIntent.cs",
+        "PaymentPurpose": { "SubscriptionPurchase": 0, "SubscriptionUpgrade": 1, "SubscriptionRenewal": 2 },
+        "PaymentIntentStatus": { "RequiresPayment": 0, "Processing": 1, "Succeeded": 2, "Canceled": 3, "Expired": 4 }
       }
     }
   },
 
   "dbContext": {
-    "file": "Repositories/Persistence/AppDbContext.cs",
-    "dbSets": [
-      "public DbSet<Transaction> Transactions => Set<Transaction>();",
-      "public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();"
+    "file": "ClassifiedAds.Modules.Subscription/Persistence/SubscriptionDbContext.cs",
+    "schema": "subscription",
+    "description": "Thêm DbSet<PaymentIntent> vào SubscriptionDbContext hiện có. Configurations được auto-apply từ assembly.",
+    "addedDbSet": "public DbSet<PaymentIntent> PaymentIntents { get; set; }",
+    "existingDbSets": [
+      "public DbSet<SubscriptionPlan> SubscriptionPlans { get; set; }",
+      "public DbSet<PlanLimit> PlanLimits { get; set; }",
+      "public DbSet<UserSubscription> UserSubscriptions { get; set; }",
+      "public DbSet<SubscriptionHistory> SubscriptionHistories { get; set; }",
+      "public DbSet<UsageTracking> UsageTrackings { get; set; }",
+      "public DbSet<PaymentTransaction> PaymentTransactions { get; set; }"
     ],
     "paymentIntentConfiguration": {
-      "description": "EF Core Fluent API configuration for PaymentIntent",
-      "code": "b.Entity<PaymentIntent>(e =>\n{\n    e.Property(x => x.Purpose).HasConversion<string>();\n    e.Property(x => x.Status).HasConversion<string>();\n    e.Property(x => x.ClientSecret).IsRequired();\n\n    e.HasOne(x => x.User)\n     .WithMany()\n     .HasForeignKey(x => x.UserId)\n     .OnDelete(DeleteBehavior.Restrict);\n\n    e.HasOne(x => x.Event)\n     .WithMany()\n     .HasForeignKey(x => x.EventId)\n     .OnDelete(DeleteBehavior.SetNull);\n\n    e.HasOne(x => x.MembershipPlan)\n     .WithMany()\n     .HasForeignKey(x => x.MembershipPlanId)\n     .OnDelete(DeleteBehavior.SetNull);\n\n    e.HasIndex(x => x.UserId);\n    e.HasIndex(x => x.EventRegistrationId).IsUnique();\n    e.HasIndex(x => x.EventId);\n    e.HasIndex(x => x.MembershipPlanId);\n\n    e.HasIndex(x => x.OrderCode)\n     .IsUnique()\n     .HasFilter(\"\\\"OrderCode\\\" IS NOT NULL\");\n\n    e.HasIndex(x => new { x.Status, x.CreatedAtUtc });\n    e.HasIndex(x => new { x.Status, x.Purpose });\n\n    e.HasCheckConstraint(\n        \"chk_payment_intent_amount_positive\",\n        isNpgsql ? \"\\\"AmountCents\\\" > 0\" : \"[AmountCents] > 0\");\n\n    e.HasCheckConstraint(\"chk_payment_intent_purpose_allowed\",\n        isNpgsql\n            ? \"\\\"Purpose\\\" IN ('TopUp','EventTicket','WalletTopUp','Membership')\"\n            : \"[Purpose] IN ('TopUp','EventTicket','WalletTopUp','Membership')\");\n\n    e.HasCheckConstraint(\"chk_payment_intent_status_allowed\",\n        isNpgsql\n            ? \"\\\"Status\\\" IN ('RequiresPayment','Succeeded','Canceled','Expired')\"\n            : \"[Status] IN ('RequiresPayment','Succeeded','Canceled','Expired')\");\n});"
+      "file": "ClassifiedAds.Modules.Subscription/DbConfigurations/PaymentIntentConfiguration.cs",
+      "description": "EF Core Fluent API configuration cho PaymentIntent",
+      "code": "using ClassifiedAds.Modules.Subscription.Entities;\nusing Microsoft.EntityFrameworkCore;\nusing Microsoft.EntityFrameworkCore.Metadata.Builders;\n\nnamespace ClassifiedAds.Modules.Subscription.DbConfigurations;\n\npublic class PaymentIntentConfiguration : IEntityTypeConfiguration<PaymentIntent>\n{\n    public void Configure(EntityTypeBuilder<PaymentIntent> builder)\n    {\n        builder.ToTable(\"PaymentIntents\");\n        builder.Property(x => x.Id).HasDefaultValueSql(\"gen_random_uuid()\");\n\n        builder.Property(x => x.Amount).HasPrecision(18, 2);\n        builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();\n        builder.Property(x => x.Purpose).HasConversion<string>().HasMaxLength(30);\n        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);\n        builder.Property(x => x.BillingCycle).HasConversion<string>().HasMaxLength(10);\n        builder.Property(x => x.CheckoutUrl).HasMaxLength(500);\n\n        builder.HasIndex(x => x.UserId);\n        builder.HasIndex(x => x.PlanId);\n        builder.HasIndex(x => x.SubscriptionId);\n        builder.HasIndex(x => x.Status);\n\n        builder.HasIndex(x => x.OrderCode)\n            .IsUnique()\n            .HasFilter(\"\\\"OrderCode\\\" IS NOT NULL\");\n\n        builder.HasIndex(x => new { x.Status, x.CreatedDateTime });\n        builder.HasIndex(x => new { x.Status, x.Purpose });\n\n        builder.HasOne(x => x.Plan)\n            .WithMany()\n            .HasForeignKey(x => x.PlanId)\n            .OnDelete(DeleteBehavior.Restrict);\n\n        builder.HasOne(x => x.Subscription)\n            .WithMany()\n            .HasForeignKey(x => x.SubscriptionId)\n            .OnDelete(DeleteBehavior.SetNull);\n    }\n}"
     },
-    "note": "Transaction entity và EventRegistration↔PaymentIntent FK cũng được configure trong AppDbContext, xem file gốc để biết chi tiết."
-  }
+    "paymentTransactionConfigurationUpdate": {
+      "file": "ClassifiedAds.Modules.Subscription/DbConfigurations/PaymentTransactionConfiguration.cs",
+      "description": "Cập nhật configuration cho PaymentTransaction - thêm FK PaymentIntentId, Provider+ProviderRef index",
+      "proposedCode": "using ClassifiedAds.Modules.Subscription.Entities;\nusing Microsoft.EntityFrameworkCore;\nusing Microsoft.EntityFrameworkCore.Metadata.Builders;\n\nnamespace ClassifiedAds.Modules.Subscription.DbConfigurations;\n\npublic class PaymentTransactionConfiguration : IEntityTypeConfiguration<PaymentTransaction>\n{\n    public void Configure(EntityTypeBuilder<PaymentTransaction> builder)\n    {\n        builder.ToTable(\"PaymentTransactions\");\n        builder.Property(x => x.Id).HasDefaultValueSql(\"gen_random_uuid()\");\n\n        builder.Property(x => x.Amount).HasPrecision(18, 2);\n        builder.Property(x => x.Currency).HasMaxLength(3);\n        builder.Property(x => x.PaymentMethod).HasMaxLength(50);\n        builder.Property(x => x.Provider).HasMaxLength(20);\n        builder.Property(x => x.ProviderRef).HasMaxLength(200);\n        builder.Property(x => x.ExternalTxnId).HasMaxLength(200);\n        builder.Property(x => x.InvoiceUrl).HasMaxLength(500);\n\n        builder.HasIndex(x => x.UserId);\n        builder.HasIndex(x => x.SubscriptionId);\n        builder.HasIndex(x => x.PaymentIntentId);\n        builder.HasIndex(x => x.Status);\n        builder.HasIndex(x => new { x.Provider, x.ProviderRef }).IsUnique()\n            .HasFilter(\"\\\"ProviderRef\\\" IS NOT NULL\");\n\n        builder.HasOne(x => x.Subscription)\n            .WithMany()\n            .HasForeignKey(x => x.SubscriptionId)\n            .OnDelete(DeleteBehavior.Restrict);\n\n        builder.HasOne(x => x.PaymentIntent)\n            .WithMany()\n            .HasForeignKey(x => x.PaymentIntentId)\n            .OnDelete(DeleteBehavior.SetNull);\n    }\n}"
+    },
+    "migrationNote": "Sau khi implement, chạy: dotnet ef migrations add AddPaymentIntentAndPayOsFields --project ClassifiedAds.Migrator --startup-project ClassifiedAds.WebAPI --context SubscriptionDbContext"
+  },
+
+  "repositoryPattern": {
+    "description": "Dự án sử dụng IRepository<T, Guid> generic pattern. KHÔNG cần tạo custom repository interface cho PaymentIntent.",
+    "interface": {
+      "file": "ClassifiedAds.Domain/Repositories/IRepository.cs",
+      "keyMethods": [
+        "Task AddAsync(T entity, CancellationToken ct)",
+        "Task UpdateAsync(T entity, CancellationToken ct)",
+        "void Delete(T entity)",
+        "IQueryable<T> GetQueryableSet()",
+        "Task<T> FirstOrDefaultAsync(IQueryable<T> query)",
+        "Task<List<T>> ToListAsync(IQueryable<T> query)",
+        "IUnitOfWork UnitOfWork { get; }"
+      ]
+    },
+    "implementation": {
+      "file": "ClassifiedAds.Modules.Subscription/Persistence/Repository.cs",
+      "code": "using ClassifiedAds.CrossCuttingConcerns.DateTimes;\nusing ClassifiedAds.Domain.Entities;\nusing ClassifiedAds.Persistence.PostgreSQL;\n\nnamespace ClassifiedAds.Modules.Subscription.Persistence;\n\npublic class Repository<T, TKey> : DbContextRepository<SubscriptionDbContext, T, TKey>\n    where T : Entity<TKey>, IAggregateRoot\n{\n    public Repository(SubscriptionDbContext dbContext, IDateTimeProvider dateTimeProvider)\n        : base(dbContext, dateTimeProvider)\n    {\n    }\n}",
+      "note": "Repository đã có sẵn, chỉ cần đăng ký IRepository<PaymentIntent, Guid> trong DI"
+    },
+    "registration": "services.AddScoped<IRepository<PaymentIntent, Guid>, Repository<PaymentIntent, Guid>>();",
+    "transactionPattern": {
+      "description": "Sử dụng UnitOfWork.ExecuteInTransactionAsync() cho operations cần transaction",
+      "code": "await _repository.UnitOfWork.ExecuteInTransactionAsync(async ct =>\n{\n    await _paymentIntentRepo.AddAsync(paymentIntent, ct);\n    await _paymentTransactionRepo.AddAsync(transaction, ct);\n    await _subscriptionRepo.UpdateAsync(subscription, ct);\n    await _repository.UnitOfWork.SaveChangesAsync(ct);\n}, cancellationToken: cancellationToken);"
+    }
+  },
+
+  "cqrsPattern": {
+    "description": "Dự án sử dụng CQRS pattern với Dispatcher. Command/Query class và Handler class nằm CÙNG FILE.",
+    "command": {
+      "interface": "ICommand (marker interface, không return value)",
+      "handler": "ICommandHandler<TCommand> { Task HandleAsync(TCommand command, CancellationToken cancellationToken = default) }",
+      "pattern": "Command chứa input properties + output property (e.g., SavedIntentId). Handler inject IRepository<T, Guid>.",
+      "errorHandling": "Throw ValidationException hoặc NotFoundException từ ClassifiedAds.CrossCuttingConcerns.Exceptions",
+      "example": "// File: Commands/AddPaymentTransactionCommand.cs\npublic class AddPaymentTransactionCommand : ICommand\n{\n    public Guid SubscriptionId { get; set; }\n    public AddPaymentTransactionModel Model { get; set; }\n    public Guid SavedTransactionId { get; set; }  // Output\n}\n\npublic class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTransactionCommand>\n{\n    private readonly IRepository<PaymentTransaction, Guid> _repo;\n    // ... HandleAsync logic\n}"
+    },
+    "query": {
+      "interface": "IQuery<TResult> (generic marker với return type)",
+      "handler": "IQueryHandler<TQuery, TResult> { Task<TResult> HandleAsync(TQuery query, CancellationToken cancellationToken = default) }",
+      "pattern": "Query chứa filter params. Handler dùng _repository.GetQueryableSet() + LINQ + manual mapping."
+    },
+    "dispatcher": {
+      "usage": "// Controller:\nawait _dispatcher.DispatchAsync(new CreateSubscriptionPaymentCommand { PlanId = planId, ... });\nvar result = await _dispatcher.DispatchAsync(new GetPaymentIntentQuery { IntentId = id });"
+    }
+  },
+
+  "keyDesignDecisions": [
+    "PaymentIntent là entity trung tâm theo dõi lifecycle thanh toán",
+    "OrderCode là số 15 chữ số unique do PayOS yêu cầu (KHÔNG phải UUID)",
+    "Idempotency: Webhook handler kiểm tra duplicate transaction qua Provider+ProviderRef (unique index) trước khi tạo mới",
+    "Webhook LUÔN trả về 200 OK để tránh PayOS retry (errors chỉ log, không trả HTTP error)",
+    "Amount dùng decimal (không phải long cents) để nhất quán với SubscriptionPlan.PriceMonthly/PriceYearly hiện có",
+    "Currency cho phép multi-currency (VND, USD) tùy plan",
+    "PaymentTransaction ghi nhận mọi giao dịch với Provider (PAYOS/MANUAL) và ProviderRef",
+    "Tuân theo module pattern: Entity<Guid>, IAggregateRoot, CQRS Dispatcher, IRepository<T,Guid>, schema isolation",
+    "KHÔNG sử dụng Result pattern - dùng exceptions (ValidationException, NotFoundException) theo chuẩn dự án",
+    "PayOS service là typed HttpClient, chỉ gọi external API, không chứa business logic",
+    "Debug/sync endpoint cho trường hợp webhook delivery thất bại từ PayOS"
+  ]
 }

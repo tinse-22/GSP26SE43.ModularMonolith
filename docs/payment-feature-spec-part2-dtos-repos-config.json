@@ -1,69 +1,84 @@
 {
   "$schema": "payment-feature-specification",
-  "version": "1.1.0",
-  "title": "StudentGamerHub Payment Feature - DTOs, Repository & Configuration",
-  "part": "2/3 - DTOs, Repository, Configuration",
+  "version": "2.0.0",
+  "title": "ClassifiedAds.ModularMonolith Payment Feature - Models (DTOs), Configuration & DI",
+  "part": "2/3 - Models (DTOs), PayOS Configuration, DI Registration",
 
-  "dtos": {
-    "PaymentIntentDto": {
-      "file": "DTOs/Registrations/PaymentIntentDto.cs",
-      "description": "DTO returned when querying a payment intent",
-      "code": "namespace DTOs.Registrations;\n\npublic sealed record PaymentIntentDto(\n    Guid Id,\n    long AmountCents,\n    PaymentPurpose Purpose,\n    Guid? EventRegistrationId,\n    Guid? EventId,\n    PaymentIntentStatus Status,\n    DateTime ExpiresAt,\n    string ClientSecret,\n    string? ProviderName,\n    string? TransactionId,\n    string? MetadataJson,\n    long OrderCode,\n    DateTime CreatedAt);"
+  "models": {
+    "_note": "Dự án sử dụng 'Models' thay vì 'DTOs'. Request models dùng DataAnnotations validation. Response models là POCOs đơn giản. Manual mapping qua extension methods.",
+
+    "PaymentIntentModel": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/PaymentIntentModel.cs",
+      "description": "Response DTO cho PaymentIntent",
+      "code": "using ClassifiedAds.Modules.Subscription.Entities;\nusing System;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\npublic class PaymentIntentModel\n{\n    public Guid Id { get; set; }\n\n    public Guid UserId { get; set; }\n\n    public decimal Amount { get; set; }\n\n    public string Currency { get; set; }\n\n    public PaymentPurpose Purpose { get; set; }\n\n    public Guid PlanId { get; set; }\n\n    public string PlanName { get; set; }\n\n    public BillingCycle BillingCycle { get; set; }\n\n    public Guid? SubscriptionId { get; set; }\n\n    public PaymentIntentStatus Status { get; set; }\n\n    public string CheckoutUrl { get; set; }\n\n    public DateTimeOffset ExpiresAt { get; set; }\n\n    public long? OrderCode { get; set; }\n\n    public DateTimeOffset CreatedDateTime { get; set; }\n\n    public DateTimeOffset? UpdatedDateTime { get; set; }\n}"
     },
-    "MembershipPurchaseResultDto": {
-      "file": "DTOs/Memberships/MembershipPlanDtos.cs (bottom of file)",
-      "code": "public sealed record MembershipPurchaseResultDto(\n    bool RequiresExternalPayment,\n    Guid? PaymentIntentId,\n    UserMembershipInfoDto? Membership);\n\npublic sealed record UserMembershipInfoDto(\n    Guid MembershipPlanId,\n    string PlanName,\n    int MonthlyEventLimit,\n    DateTime StartDate,\n    DateTime EndDate,\n    int? RemainingEventQuota,\n    bool IsActive);"
+
+    "SubscriptionPurchaseResultModel": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/SubscriptionPurchaseResultModel.cs",
+      "description": "Kết quả mua subscription - cho biết cần thanh toán hay đã xong",
+      "code": "using System;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\npublic class SubscriptionPurchaseResultModel\n{\n    /// <summary>True nếu cần thanh toán qua PayOS.</summary>\n    public bool RequiresPayment { get; set; }\n\n    /// <summary>PaymentIntent ID (nếu cần thanh toán).</summary>\n    public Guid? PaymentIntentId { get; set; }\n\n    /// <summary>Subscription info (nếu free plan, đã active ngay).</summary>\n    public SubscriptionModel Subscription { get; set; }\n}"
     },
-    "PayOsCreatePaymentRequest": {
-      "file": "DTOs/Payments/PayOs/PayOsCreatePaymentRequest.cs",
-      "description": "Request DTO sent to PayOS API to create a payment link",
-      "code": "namespace DTOs.Payments.PayOs;\n\npublic sealed record PayOsCreatePaymentRequest\n{\n    public required long OrderCode { get; init; }\n    public required long Amount { get; init; }\n    public string Description { get; init; } = string.Empty;\n    public string ReturnUrl { get; init; } = string.Empty;\n    public string CancelUrl { get; init; } = string.Empty;\n    public string? WebhookUrl { get; init; }\n    public string? BuyerName { get; init; }\n    public string? BuyerEmail { get; init; }\n    public string? BuyerPhone { get; init; }\n}"
+
+    "CreateSubscriptionPaymentModel": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/CreateSubscriptionPaymentModel.cs",
+      "description": "Request DTO cho việc mua/upgrade subscription",
+      "code": "using ClassifiedAds.Modules.Subscription.Entities;\nusing System.ComponentModel.DataAnnotations;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\npublic class CreateSubscriptionPaymentModel\n{\n    /// <summary>Billing cycle: Monthly hoặc Yearly.</summary>\n    [Required]\n    public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;\n}"
     },
-    "PayOsPaymentResponse": {
-      "file": "DTOs/Payments/PayOs/PayOsPaymentResponse.cs",
-      "description": "Response from PayOS API when creating payment link",
-      "code": "namespace DTOs.Payments.PayOs;\n\npublic sealed record PayOsPaymentResponse\n{\n    public string Code { get; init; } = \"\";\n    public string Desc { get; init; } = \"\";\n    public bool Success { get; init; }\n    public PayOsPaymentResponseData? Data { get; init; }\n    public sealed record PayOsPaymentResponseData\n    {\n        public string? CheckoutUrl { get; init; }\n        public long? OrderCode { get; init; }\n        public string? PaymentLinkId { get; init; }\n    }\n}"
+
+    "PayOsCheckoutModel": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/PayOsCheckoutModel.cs",
+      "description": "Request/Response models cho PayOS checkout",
+      "code": "using System;\nusing System.ComponentModel.DataAnnotations;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\n/// <summary>\n/// Request body for POST /api/payments/payos/create.\n/// </summary>\npublic class PayOsCheckoutRequestModel\n{\n    [Required]\n    public Guid IntentId { get; set; }\n\n    [StringLength(500)]\n    public string ReturnUrl { get; set; }\n}\n\n/// <summary>\n/// Response from PayOS checkout creation.\n/// </summary>\npublic class PayOsCheckoutResponseModel\n{\n    public string CheckoutUrl { get; set; }\n\n    public long OrderCode { get; set; }\n}"
     },
+
+    "PayOsModels": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/PayOsModels.cs",
+      "description": "Internal models cho PayOS API communication",
+      "code": "using System.Text.Json.Serialization;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\n/// <summary>\n/// Request payload gửi tới PayOS API v2 để tạo payment link.\n/// </summary>\npublic class PayOsCreatePaymentRequest\n{\n    public long OrderCode { get; set; }\n\n    public long Amount { get; set; }\n\n    public string Description { get; set; } = string.Empty;\n\n    public string ReturnUrl { get; set; } = string.Empty;\n\n    public string CancelUrl { get; set; } = string.Empty;\n\n    public string BuyerName { get; set; }\n\n    public string BuyerEmail { get; set; }\n\n    public string BuyerPhone { get; set; }\n}\n\n/// <summary>\n/// Response từ PayOS API khi tạo payment link.\n/// </summary>\npublic class PayOsPaymentResponse\n{\n    [JsonPropertyName(\"code\")]\n    public string Code { get; set; } = \"\";\n\n    [JsonPropertyName(\"desc\")]\n    public string Desc { get; set; } = \"\";\n\n    [JsonPropertyName(\"data\")]\n    public PayOsPaymentResponseData Data { get; set; }\n}\n\npublic class PayOsPaymentResponseData\n{\n    [JsonPropertyName(\"checkoutUrl\")]\n    public string CheckoutUrl { get; set; }\n\n    [JsonPropertyName(\"orderCode\")]\n    public long? OrderCode { get; set; }\n\n    [JsonPropertyName(\"paymentLinkId\")]\n    public string PaymentLinkId { get; set; }\n}\n\n/// <summary>\n/// Response từ PayOS API khi query payment info.\n/// </summary>\npublic class PayOsGetPaymentResponse\n{\n    [JsonPropertyName(\"code\")]\n    public string Code { get; set; } = \"\";\n\n    [JsonPropertyName(\"data\")]\n    public PayOsGetPaymentData Data { get; set; }\n}\n\npublic class PayOsGetPaymentData\n{\n    [JsonPropertyName(\"id\")]\n    public string Id { get; set; }\n\n    [JsonPropertyName(\"orderCode\")]\n    public long OrderCode { get; set; }\n\n    [JsonPropertyName(\"amount\")]\n    public long Amount { get; set; }\n\n    [JsonPropertyName(\"status\")]\n    public string Status { get; set; }\n\n    [JsonPropertyName(\"reference\")]\n    public string Reference { get; set; }\n\n    [JsonPropertyName(\"transactionDateTime\")]\n    public string TransactionDateTime { get; set; }\n}\n\n/// <summary>\n/// Kết quả xử lý webhook.\n/// </summary>\npublic enum PayOsWebhookOutcome\n{\n    Processed = 0,\n    Ignored = 1\n}"
+    },
+
     "PayOsWebhookPayload": {
-      "file": "DTOs/Payments/PayOs/PayOsWebhookPayload.cs",
-      "description": "Webhook payload sent by PayOS when payment status changes",
-      "code": "using System.Text.Json.Serialization;\n\nnamespace DTOs.Payments.PayOs;\n\npublic sealed record PayOsWebhookPayload\n{\n    [JsonPropertyName(\"code\")]\n    public string Code { get; init; } = \"\";\n\n    [JsonPropertyName(\"desc\")]\n    public string Desc { get; init; } = \"\";\n\n    [JsonPropertyName(\"success\")]\n    public bool Success { get; init; }\n\n    [JsonPropertyName(\"data\")]\n    public PayOsWebhookData Data { get; init; } = new();\n\n    [JsonPropertyName(\"signature\")]\n    public string Signature { get; init; } = \"\";\n}\n\npublic sealed record PayOsWebhookData\n{\n    [JsonPropertyName(\"orderCode\")]\n    public long OrderCode { get; init; }\n\n    [JsonPropertyName(\"amount\")]\n    public long Amount { get; init; }\n\n    [JsonPropertyName(\"description\")]\n    public string Description { get; init; } = \"\";\n\n    [JsonPropertyName(\"reference\")]\n    public string? Reference { get; init; }\n\n    [JsonPropertyName(\"transactionDateTime\")]\n    public string TransactionDateTime { get; init; } = \"\";\n\n    [JsonPropertyName(\"currency\")]\n    public string Currency { get; init; } = \"VND\";\n\n    [JsonPropertyName(\"paymentLinkId\")]\n    public string? PaymentLinkId { get; init; }\n\n    [JsonPropertyName(\"accountNumber\")]\n    public string? AccountNumber { get; init; }\n\n    [JsonPropertyName(\"counterAccountBankId\")]\n    public string? CounterAccountBankId { get; init; }\n\n    [JsonPropertyName(\"counterAccountBankName\")]\n    public string? CounterAccountBankName { get; init; }\n\n    [JsonPropertyName(\"counterAccountName\")]\n    public string? CounterAccountName { get; init; }\n\n    [JsonPropertyName(\"counterAccountNumber\")]\n    public string? CounterAccountNumber { get; init; }\n\n    [JsonPropertyName(\"virtualAccountName\")]\n    public string? VirtualAccountName { get; init; }\n\n    [JsonPropertyName(\"virtualAccountNumber\")]\n    public string? VirtualAccountNumber { get; init; }\n\n    [JsonPropertyName(\"code\")]\n    public string? Code { get; init; }\n\n    [JsonPropertyName(\"desc\")]\n    public string? Desc { get; init; }\n}"
+      "file": "ClassifiedAds.Modules.Subscription/Models/PayOsWebhookPayload.cs",
+      "description": "Webhook payload từ PayOS khi trạng thái thanh toán thay đổi",
+      "code": "using System.Text.Json.Serialization;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\n/// <summary>\n/// Webhook payload sent by PayOS when payment status changes.\n/// </summary>\npublic class PayOsWebhookPayload\n{\n    [JsonPropertyName(\"code\")]\n    public string Code { get; set; } = \"\";\n\n    [JsonPropertyName(\"desc\")]\n    public string Desc { get; set; } = \"\";\n\n    [JsonPropertyName(\"success\")]\n    public bool Success { get; set; }\n\n    [JsonPropertyName(\"data\")]\n    public PayOsWebhookData Data { get; set; }\n\n    [JsonPropertyName(\"signature\")]\n    public string Signature { get; set; } = \"\";\n}\n\npublic class PayOsWebhookData\n{\n    [JsonPropertyName(\"orderCode\")]\n    public long OrderCode { get; set; }\n\n    [JsonPropertyName(\"amount\")]\n    public long Amount { get; set; }\n\n    [JsonPropertyName(\"description\")]\n    public string Description { get; set; } = \"\";\n\n    [JsonPropertyName(\"reference\")]\n    public string Reference { get; set; }\n\n    [JsonPropertyName(\"transactionDateTime\")]\n    public string TransactionDateTime { get; set; } = \"\";\n\n    [JsonPropertyName(\"currency\")]\n    public string Currency { get; set; } = \"VND\";\n\n    [JsonPropertyName(\"paymentLinkId\")]\n    public string PaymentLinkId { get; set; }\n\n    [JsonPropertyName(\"accountNumber\")]\n    public string AccountNumber { get; set; }\n\n    [JsonPropertyName(\"counterAccountBankId\")]\n    public string CounterAccountBankId { get; set; }\n\n    [JsonPropertyName(\"counterAccountBankName\")]\n    public string CounterAccountBankName { get; set; }\n\n    [JsonPropertyName(\"counterAccountName\")]\n    public string CounterAccountName { get; set; }\n\n    [JsonPropertyName(\"counterAccountNumber\")]\n    public string CounterAccountNumber { get; set; }\n\n    [JsonPropertyName(\"virtualAccountName\")]\n    public string VirtualAccountName { get; set; }\n\n    [JsonPropertyName(\"virtualAccountNumber\")]\n    public string VirtualAccountNumber { get; set; }\n\n    [JsonPropertyName(\"code\")]\n    public string Code { get; set; }\n\n    [JsonPropertyName(\"desc\")]\n    public string Desc { get; set; }\n}"
     },
-    "PayOsWebhookOutcome": {
-      "file": "Services/Interfaces/PayOsWebhookOutcome.cs",
-      "code": "namespace Services.Interfaces;\n\npublic enum PayOsWebhookOutcome\n{\n    Processed = 0,\n    Ignored = 1\n}"
-    },
-    "PayOsCheckoutRequest": {
-      "file": "WebAPI/Controllers/PaymentsController.cs (inline record)",
-      "description": "Request body for POST /api/payments/payos/create",
-      "code": "public sealed record PayOsCheckoutRequest\n{\n    public Guid IntentId { get; init; }\n    public string? ReturnUrl { get; init; }\n}"
-    },
-    "AdminPaymentIntentDto": {
-      "file": "DTOs/Admin/AdminPaymentIntentDto.cs",
-      "description": "Detailed payment intent info for admin dashboard",
-      "code": "using BusinessObjects;\n\nnamespace DTOs.Admin;\n\npublic record AdminPaymentIntentDto\n{\n    public Guid Id { get; init; }\n    public Guid UserId { get; init; }\n    public string? UserName { get; init; }\n    public string? UserEmail { get; init; }\n    public long AmountCents { get; init; }\n    public PaymentPurpose Purpose { get; init; }\n    public string PurposeDisplay { get; init; } = string.Empty;\n    public Guid? EventId { get; init; }\n    public string? EventTitle { get; init; }\n    public Guid? EventRegistrationId { get; init; }\n    public Guid? MembershipPlanId { get; init; }\n    public string? MembershipPlanName { get; init; }\n    public PaymentIntentStatus Status { get; init; }\n    public string StatusDisplay { get; init; } = string.Empty;\n    public long? OrderCode { get; init; }\n    public DateTime ExpiresAt { get; init; }\n    public DateTime CreatedAtUtc { get; init; }\n    public DateTime? UpdatedAtUtc { get; init; }\n}"
-    },
-    "AdminPaymentIntentFilter": {
-      "file": "DTOs/Admin/Filters/AdminPaymentIntentFilter.cs",
-      "code": "using BusinessObjects;\n\nnamespace DTOs.Admin.Filters;\n\npublic class AdminPaymentIntentFilter\n{\n    public Guid? UserId { get; set; }\n    public Guid? EventId { get; set; }\n    public Guid? MembershipPlanId { get; set; }\n    public PaymentPurpose? Purpose { get; set; }\n    public PaymentIntentStatus? Status { get; set; }\n    public DateTime? FromDate { get; set; }\n    public DateTime? ToDate { get; set; }\n    public string? Period { get; set; }\n    public long? MinAmountCents { get; set; }\n    public long? MaxAmountCents { get; set; }\n    public long? OrderCode { get; set; }\n}"
-    }
-  },
 
-  "repository": {
-    "IPaymentIntentRepository": {
-      "file": "Repositories/Interfaces/IPaymentIntentRepository.cs",
-      "code": "namespace Repositories.Interfaces;\n\npublic interface IPaymentIntentRepository\n{\n    Task<PaymentIntent?> GetByIdAsync(Guid id, CancellationToken ct = default);\n    Task<PaymentIntent?> GetByIdForUserAsync(Guid id, Guid userId, CancellationToken ct = default);\n    Task<PaymentIntent?> GetByProviderRefAsync(string providerRef, CancellationToken ct = default);\n    Task CreateAsync(PaymentIntent pi, CancellationToken ct = default);\n    Task UpdateAsync(PaymentIntent pi, CancellationToken ct = default);\n    Task<int> CountActivePendingByEventAsync(Guid eventId, DateTime nowUtc, CancellationToken ct = default);\n    Task<PaymentIntent?> GetByOrderCodeAsync(long orderCode, CancellationToken ct = default);\n    Task<bool> TrySetOrderCodeAsync(Guid id, long orderCode, CancellationToken ct = default);\n    Task<bool> HasActiveTopUpIntentAsync(Guid eventId, Guid userId, CancellationToken ct = default);\n}"
+    "PaymentIntentModelMappingConfiguration": {
+      "file": "ClassifiedAds.Modules.Subscription/Models/PaymentIntentModelMappingConfiguration.cs",
+      "description": "Manual mapping giữa PaymentIntent entity và PaymentIntentModel DTO",
+      "code": "using ClassifiedAds.Modules.Subscription.Entities;\nusing System.Collections.Generic;\nusing System.Linq;\n\nnamespace ClassifiedAds.Modules.Subscription.Models;\n\npublic static class PaymentIntentModelMappingConfiguration\n{\n    public static PaymentIntentModel ToModel(this PaymentIntent entity)\n    {\n        if (entity == null)\n        {\n            return null;\n        }\n\n        return new PaymentIntentModel\n        {\n            Id = entity.Id,\n            UserId = entity.UserId,\n            Amount = entity.Amount,\n            Currency = entity.Currency,\n            Purpose = entity.Purpose,\n            PlanId = entity.PlanId,\n            PlanName = entity.Plan?.DisplayName ?? entity.Plan?.Name,\n            BillingCycle = entity.BillingCycle,\n            SubscriptionId = entity.SubscriptionId,\n            Status = entity.Status,\n            CheckoutUrl = entity.CheckoutUrl,\n            ExpiresAt = entity.ExpiresAt,\n            OrderCode = entity.OrderCode,\n            CreatedDateTime = entity.CreatedDateTime,\n            UpdatedDateTime = entity.UpdatedDateTime,\n        };\n    }\n\n    public static List<PaymentIntentModel> ToModels(this IEnumerable<PaymentIntent> entities)\n    {\n        return entities?.Select(x => x.ToModel()).ToList() ?? new List<PaymentIntentModel>();\n    }\n}"
     },
-    "PaymentIntentRepository": {
-      "file": "Repositories/Implements/PaymentIntentRepository.cs",
-      "code": "using Microsoft.EntityFrameworkCore;\n\nnamespace Repositories.Implements;\n\npublic sealed class PaymentIntentRepository : IPaymentIntentRepository\n{\n    private readonly AppDbContext _context;\n\n    public PaymentIntentRepository(AppDbContext context)\n    {\n        _context = context ?? throw new ArgumentNullException(nameof(context));\n    }\n\n    public Task<PaymentIntent?> GetByIdAsync(Guid id, CancellationToken ct = default)\n        => _context.PaymentIntents\n            .AsNoTracking()\n            .FirstOrDefaultAsync(pi => pi.Id == id, ct);\n\n    public Task<PaymentIntent?> GetByIdForUserAsync(Guid id, Guid userId, CancellationToken ct = default)\n        => _context.PaymentIntents\n            .Where(pi => pi.UserId == userId && pi.Id == id)\n            .Include(pi => pi.EventRegistration)\n                .ThenInclude(r => r.PaidTransaction)\n            .AsNoTracking()\n            .FirstOrDefaultAsync(ct);\n\n    public Task<PaymentIntent?> GetByProviderRefAsync(string providerRef, CancellationToken ct = default)\n        => _context.PaymentIntents\n            .AsNoTracking()\n            .FirstOrDefaultAsync(pi => pi.ClientSecret == providerRef, ct);\n\n    public async Task CreateAsync(PaymentIntent pi, CancellationToken ct = default)\n    {\n        ArgumentNullException.ThrowIfNull(pi);\n        await _context.PaymentIntents.AddAsync(pi, ct).ConfigureAwait(false);\n    }\n\n    public Task UpdateAsync(PaymentIntent pi, CancellationToken ct = default)\n    {\n        ArgumentNullException.ThrowIfNull(pi);\n        _context.PaymentIntents.Update(pi);\n        return Task.CompletedTask;\n    }\n\n    public Task<int> CountActivePendingByEventAsync(Guid eventId, DateTime nowUtc, CancellationToken ct = default)\n    {\n        return _context.EventRegistrations\n            .AsNoTracking()\n            .Where(r => r.EventId == eventId && r.Status == EventRegistrationStatus.Pending)\n            .Join(\n                _context.PaymentIntents.AsNoTracking(),\n                r => r.Id,\n                pi => pi.EventRegistrationId,\n                (r, pi) => new { Registration = r, Intent = pi })\n            .Where(x => x.Intent.Purpose == PaymentPurpose.EventTicket &&\n                        x.Intent.Status == PaymentIntentStatus.RequiresPayment &&\n                        x.Intent.ExpiresAt > nowUtc)\n            .CountAsync(ct);\n    }\n\n    public async Task<PaymentIntent?> GetByOrderCodeAsync(long orderCode, CancellationToken ct = default)\n    {\n        return await _context.PaymentIntents\n            .AsNoTracking()\n            .FirstOrDefaultAsync(x => x.OrderCode == orderCode, ct);\n    }\n\n    public async Task<bool> TrySetOrderCodeAsync(Guid id, long orderCode, CancellationToken ct = default)\n    {\n        try\n        {\n            var updated = await _context.PaymentIntents\n                .Where(x => x.Id == id && x.OrderCode == null)\n                .ExecuteUpdateAsync(\n                    setters => setters.SetProperty(pi => pi.OrderCode, orderCode),\n                    ct).ConfigureAwait(false);\n\n            if (updated > 0) return true;\n\n            return await _context.PaymentIntents\n                .AsNoTracking()\n                .AnyAsync(x => x.Id == id && x.OrderCode.HasValue, ct).ConfigureAwait(false);\n        }\n        catch (InvalidOperationException ex) when (ex.Message.Contains(\"ExecuteUpdate\", StringComparison.OrdinalIgnoreCase))\n        {\n            var entity = await _context.PaymentIntents.FirstOrDefaultAsync(x => x.Id == id, ct).ConfigureAwait(false);\n            if (entity is null) return false;\n            if (entity.OrderCode.HasValue) return entity.OrderCode.Value == orderCode;\n            entity.OrderCode = orderCode;\n            try\n            {\n                await _context.SaveChangesAsync(ct).ConfigureAwait(false);\n                _context.Entry(entity).State = EntityState.Detached;\n                return true;\n            }\n            catch (DbUpdateException retryEx) when (retryEx.IsUniqueConstraintViolation())\n            {\n                _context.Entry(entity).State = EntityState.Detached;\n                return false;\n            }\n        }\n        catch (DbUpdateException ex) when (ex.IsUniqueConstraintViolation())\n        {\n            return false;\n        }\n    }\n\n    public Task<bool> HasActiveTopUpIntentAsync(Guid eventId, Guid userId, CancellationToken ct = default)\n    {\n        return _context.PaymentIntents\n            .AsNoTracking()\n            .AnyAsync(pi =>\n                pi.EventId == eventId &&\n                pi.UserId == userId &&\n                pi.Purpose == PaymentPurpose.TopUp &&\n                (pi.Status == PaymentIntentStatus.RequiresPayment || pi.Status == PaymentIntentStatus.Succeeded),\n                ct);\n    }\n}"
+
+    "existingModels": {
+      "PaymentTransactionModel": {
+        "file": "ClassifiedAds.Modules.Subscription/Models/PaymentTransactionModel.cs",
+        "description": "Đã tồn tại - cần thêm Provider, ProviderRef, PaymentIntentId",
+        "proposedAdditions": [
+          "public Guid? PaymentIntentId { get; set; }",
+          "public string Provider { get; set; }",
+          "public string ProviderRef { get; set; }"
+        ]
+      },
+      "AddPaymentTransactionModel": {
+        "file": "ClassifiedAds.Modules.Subscription/Models/AddPaymentTransactionModel.cs",
+        "description": "Đã tồn tại - cần thêm Provider, ProviderRef fields",
+        "proposedAdditions": [
+          "[StringLength(20)]\npublic string Provider { get; set; }",
+          "[StringLength(200)]\npublic string ProviderRef { get; set; }"
+        ]
+      },
+      "SubscriptionModel": {
+        "file": "ClassifiedAds.Modules.Subscription/Models/SubscriptionModel.cs",
+        "description": "Đã tồn tại - giữ nguyên, được dùng trong SubscriptionPurchaseResultModel"
+      }
     }
   },
 
   "configuration": {
     "PayOsOptions": {
-      "file": "Services/Configuration/PayOsOptions.cs",
-      "code": "namespace Services.Configuration;\n\npublic sealed class PayOsOptions\n{\n    private string _secretKey = string.Empty;\n\n    public string ClientId { get; set; } = string.Empty;\n    public string ApiKey { get; set; } = string.Empty;\n\n    public string SecretKey\n    {\n        get => _secretKey;\n        set => _secretKey = value?.Trim() ?? string.Empty;\n    }\n\n    // Back-compat aliases\n    public string ChecksumKey { get => SecretKey; set => SecretKey = value; }\n    public string WebhookSecret { get => SecretKey; set => SecretKey = value; }\n\n    public string BaseUrl { get; set; } = \"https://api-merchant.payos.vn\";\n    public string ReturnUrl { get; set; } = string.Empty;\n    public string WebhookUrl { get; set; } = string.Empty;\n    public string? CancelUrl { get; set; }\n    public string FrontendBaseUrl { get; set; } = string.Empty;\n    public TimeSpan WebhookTolerance { get; set; } = TimeSpan.FromMinutes(5);\n}",
+      "file": "ClassifiedAds.Modules.Subscription/ConfigurationOptions/PayOsOptions.cs",
+      "description": "PayOS gateway configuration. Được bind từ appsettings section 'PayOS'.",
+      "code": "namespace ClassifiedAds.Modules.Subscription.ConfigurationOptions;\n\n/// <summary>\n/// Configuration options for PayOS payment gateway integration.\n/// </summary>\npublic class PayOsOptions\n{\n    /// <summary>PayOS Client ID from dashboard.</summary>\n    public string ClientId { get; set; } = string.Empty;\n\n    /// <summary>PayOS API Key from dashboard.</summary>\n    public string ApiKey { get; set; } = string.Empty;\n\n    /// <summary>PayOS Secret Key (used for HMAC-SHA256 signature).</summary>\n    public string SecretKey { get; set; } = string.Empty;\n\n    /// <summary>PayOS API base URL.</summary>\n    public string BaseUrl { get; set; } = \"https://api-merchant.payos.vn\";\n\n    /// <summary>Default return URL after payment (backend endpoint).</summary>\n    public string ReturnUrl { get; set; } = string.Empty;\n\n    /// <summary>Webhook URL for PayOS to send payment status updates.</summary>\n    public string WebhookUrl { get; set; } = string.Empty;\n\n    /// <summary>Cancel URL (optional, defaults to ReturnUrl).</summary>\n    public string CancelUrl { get; set; }\n\n    /// <summary>Frontend base URL for redirecting after payment.</summary>\n    public string FrontendBaseUrl { get; set; } = string.Empty;\n\n    /// <summary>PayOS payment intent expiration time.</summary>\n    public int IntentExpirationMinutes { get; set; } = 15;\n}",
       "appsettingsExample": {
         "PayOS": {
           "ClientId": "your-client-id-from-payos-dashboard",
@@ -73,50 +88,74 @@
           "ReturnUrl": "https://your-api-domain.com/api/payments/payos/return",
           "WebhookUrl": "https://your-api-domain.com/api/payments/payos/webhook",
           "CancelUrl": "https://your-frontend.com/payment/cancel",
-          "FrontendBaseUrl": "https://your-frontend.com"
+          "FrontendBaseUrl": "https://your-frontend.com",
+          "IntentExpirationMinutes": 15
         }
       }
     },
-    "BillingOptions": {
-      "file": "Services/Configuration/BillingOptions.cs",
-      "description": "Only the fields relevant to payments are shown",
-      "code": "namespace Services.Configuration;\n\npublic sealed class BillingOptions\n{\n    public const string SectionName = \"Billing\";\n    public long EventCreationFeeCents { get; set; } = 50_000;\n    public Guid? PlatformUserId { get; set; }\n    public string PlatformUserEmail { get; set; } = \"platform@studentgamerhub.local\";\n    public string PlatformUserName { get; set; } = \"Platform Wallet\";\n    public long MaxEventEscrowTopUpAmountCents { get; set; } = 50_000_000;\n    public long MaxWalletTopUpAmountCents { get; set; } = 20_000_000;\n}"
-    },
-    "dependencyInjection": {
-      "file": "WebAPI/Extensions/ServiceCollectionExtensions.cs",
-      "registrations": [
-        "services.Configure<Services.Configuration.PayOsOptions>(configuration.GetSection(\"PayOS\"));",
-        "services.Configure<Services.Configuration.BillingOptions>(configuration.GetSection(\"Billing\"));",
-        "services.AddHttpClient<IPayOsService, Services.Implementations.PayOsService>();",
-        "services.AddScoped<IPaymentService, Services.Implementations.PaymentService>();",
-        "services.AddScoped<IPaymentReadService, Services.Implementations.PaymentReadService>();",
-        "services.AddScoped<IPaymentIntentRepository, Repositories.Implements.PaymentIntentRepository>();",
-        "services.AddScoped<ITransactionRepository, Repositories.Implements.TransactionRepository>();"
-      ],
-      "notes": [
-        "PayOsService registered via AddHttpClient (typed HttpClient pattern)",
-        "IConnectionMultiplexer (Redis) is optional - injected as null if not configured",
-        "FluentValidation validators auto-registered via AddValidatorsFromAssembly"
-      ]
-    },
-    "rateLimiting": {
-      "policies": {
-        "PaymentsWrite": "Strict rate limit for payment write operations",
-        "PaymentsWebhook": "Rate limit for incoming webhooks from PayOS",
-        "ReadsLight": "Standard rate limit for read operations"
-      }
+
+    "SubscriptionModuleOptions": {
+      "file": "ClassifiedAds.Modules.Subscription/ConfigurationOptions/SubscriptionModuleOptions.cs",
+      "description": "Module options đã tồn tại. Thêm PayOsOptions vào.",
+      "currentCode": "namespace ClassifiedAds.Modules.Subscription.ConfigurationOptions;\n\npublic class SubscriptionModuleOptions\n{\n    public ConnectionStringsOptions ConnectionStrings { get; set; }\n}",
+      "proposedCode": "namespace ClassifiedAds.Modules.Subscription.ConfigurationOptions;\n\npublic class SubscriptionModuleOptions\n{\n    public ConnectionStringsOptions ConnectionStrings { get; set; }\n\n    public PayOsOptions PayOS { get; set; } = new();\n}"
     }
   },
 
-  "helperExtensions": {
-    "ClaimsPrincipalExtensions": {
-      "file": "Services/Common/Auth/ClaimsPrincipalExtensions.cs",
-      "code": "using System.Security.Claims;\n\nnamespace Services.Common.Auth\n{\n    public static class ClaimsPrincipalExtensions\n    {\n        public static Guid? GetUserId(this ClaimsPrincipal? user)\n        {\n            if (user is null) return null;\n            foreach (var t in new[] { ClaimTypes.NameIdentifier, \"sub\", \"uid\" })\n            {\n                var v = user.FindFirst(t)?.Value;\n                if (!string.IsNullOrWhiteSpace(v) && Guid.TryParse(v, out var id))\n                    return id;\n            }\n            return null;\n        }\n    }\n}"
-    },
-    "ResultHttpExtensions": {
-      "file": "WebAPI/Common/ResultHttpExtensions.cs",
-      "description": "Maps Result<T> to ASP.NET Core ActionResult with proper HTTP status codes",
-      "code": "using Microsoft.AspNetCore.Mvc;\n\nnamespace WebApi.Common;\n\npublic static class ResultHttpExtensions\n{\n    public static ActionResult ToActionResult(this ControllerBase ctrl, Result r)\n    {\n        if (r.IsSuccess) return ctrl.NoContent();\n        return ctrl.Problem(r.Error);\n    }\n\n    public static ActionResult ToActionResult<T>(this ControllerBase ctrl, Result<T> r, Func<T, object?>? shape = null, int successStatus = StatusCodes.Status200OK)\n    {\n        if (r.IsSuccess)\n        {\n            var payload = shape is null ? r.Value : shape(r.Value!);\n            return ctrl.StatusCode(successStatus, payload);\n        }\n        return ctrl.Problem(r.Error);\n    }\n}"
+  "dependencyInjection": {
+    "file": "ClassifiedAds.Modules.Subscription/ServiceCollectionExtensions.cs",
+    "description": "Cập nhật DI registration để thêm PaymentIntent repository, PayOS service, và PayOS options.",
+    "addedRegistrations": [
+      "// PaymentIntent repository",
+      "services.AddScoped<IRepository<PaymentIntent, Guid>, Repository<PaymentIntent, Guid>>();",
+      "",
+      "// PayOS configuration",
+      "services.Configure<PayOsOptions>(opt => { opt.ClientId = settings.PayOS.ClientId; opt.ApiKey = settings.PayOS.ApiKey; opt.SecretKey = settings.PayOS.SecretKey; opt.BaseUrl = settings.PayOS.BaseUrl; opt.ReturnUrl = settings.PayOS.ReturnUrl; opt.WebhookUrl = settings.PayOS.WebhookUrl; opt.CancelUrl = settings.PayOS.CancelUrl; opt.FrontendBaseUrl = settings.PayOS.FrontendBaseUrl; opt.IntentExpirationMinutes = settings.PayOS.IntentExpirationMinutes; });",
+      "",
+      "// PayOS HTTP client (typed HttpClient pattern)",
+      "services.AddHttpClient<IPayOsService, PayOsService>();"
+    ],
+    "fullProposedMethod": "public static IServiceCollection AddSubscriptionModule(this IServiceCollection services, Action<SubscriptionModuleOptions> configureOptions)\n{\n    var settings = new SubscriptionModuleOptions();\n    configureOptions(settings);\n    settings.ConnectionStrings ??= new ConnectionStringsOptions();\n\n    services.Configure(configureOptions);\n\n    if (string.IsNullOrWhiteSpace(settings.ConnectionStrings.Default))\n    {\n        throw new InvalidOperationException(\"Chưa cấu hình chuỗi kết nối cho module Subscription.\");\n    }\n\n    services.AddDbContext<SubscriptionDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>\n    {\n        if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))\n        {\n            sql.MigrationsAssembly(settings.ConnectionStrings.MigrationsAssembly);\n        }\n\n        if (settings.ConnectionStrings.CommandTimeout.HasValue)\n        {\n            sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);\n        }\n    }));\n\n    services\n        .AddScoped<IRepository<SubscriptionPlan, Guid>, Repository<SubscriptionPlan, Guid>>()\n        .AddScoped<IRepository<PlanLimit, Guid>, Repository<PlanLimit, Guid>>()\n        .AddScoped<IRepository<UserSubscription, Guid>, Repository<UserSubscription, Guid>>()\n        .AddScoped<IRepository<SubscriptionHistory, Guid>, Repository<SubscriptionHistory, Guid>>()\n        .AddScoped<IRepository<UsageTracking, Guid>, Repository<UsageTracking, Guid>>()\n        .AddScoped<IRepository<PaymentTransaction, Guid>, Repository<PaymentTransaction, Guid>>()\n        .AddScoped<IRepository<PaymentIntent, Guid>, Repository<PaymentIntent, Guid>>()\n        .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()\n        .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();\n\n    // PayOS configuration & service\n    services.Configure<PayOsOptions>(opt =>\n    {\n        var payos = settings.PayOS ?? new PayOsOptions();\n        opt.ClientId = payos.ClientId;\n        opt.ApiKey = payos.ApiKey;\n        opt.SecretKey = payos.SecretKey;\n        opt.BaseUrl = payos.BaseUrl;\n        opt.ReturnUrl = payos.ReturnUrl;\n        opt.WebhookUrl = payos.WebhookUrl;\n        opt.CancelUrl = payos.CancelUrl;\n        opt.FrontendBaseUrl = payos.FrontendBaseUrl;\n        opt.IntentExpirationMinutes = payos.IntentExpirationMinutes;\n    });\n\n    services.AddHttpClient<IPayOsService, PayOsService>();\n\n    services.AddMessageHandlers(Assembly.GetExecutingAssembly());\n    services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());\n\n    services.AddRateLimiter(options =>\n    {\n        options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);\n    });\n\n    return services;\n}",
+    "webApiRegistration": {
+      "file": "ClassifiedAds.WebAPI/Program.cs",
+      "description": "Cập nhật cấu hình module trong Program.cs để truyền PayOS options",
+      "example": "services.AddSubscriptionModule(opt =>\n{\n    opt.ConnectionStrings = new ConnectionStringsOptions\n    {\n        Default = connectionString,\n        MigrationsAssembly = typeof(Program).Assembly.GetName().Name,\n    };\n    opt.PayOS = new PayOsOptions\n    {\n        ClientId = configuration[\"PayOS:ClientId\"],\n        ApiKey = configuration[\"PayOS:ApiKey\"],\n        SecretKey = configuration[\"PayOS:SecretKey\"],\n        BaseUrl = configuration[\"PayOS:BaseUrl\"] ?? \"https://api-merchant.payos.vn\",\n        ReturnUrl = configuration[\"PayOS:ReturnUrl\"],\n        WebhookUrl = configuration[\"PayOS:WebhookUrl\"],\n        CancelUrl = configuration[\"PayOS:CancelUrl\"],\n        FrontendBaseUrl = configuration[\"PayOS:FrontendBaseUrl\"],\n    };\n});"
     }
+  },
+
+  "permissions": {
+    "file": "ClassifiedAds.Modules.Subscription/Authorization/Permissions.cs",
+    "description": "Thêm permissions cho payment endpoints",
+    "addedPermissions": {
+      "CreateSubscriptionPayment": "Permission:CreateSubscriptionPayment",
+      "GetPaymentIntent": "Permission:GetPaymentIntent",
+      "CreatePayOsCheckout": "Permission:CreatePayOsCheckout",
+      "SyncPayment": "Permission:SyncPayment"
+    },
+    "proposedCode": "namespace ClassifiedAds.Modules.Subscription.Authorization;\n\npublic static class Permissions\n{\n    // Plans\n    public const string GetPlans = \"Permission:GetPlans\";\n    public const string AddPlan = \"Permission:AddPlan\";\n    public const string UpdatePlan = \"Permission:UpdatePlan\";\n    public const string DeletePlan = \"Permission:DeletePlan\";\n    public const string GetPlanAuditLogs = \"Permission:GetPlanAuditLogs\";\n\n    // Subscriptions\n    public const string GetSubscription = \"Permission:GetSubscription\";\n    public const string GetCurrentSubscription = \"Permission:GetCurrentSubscription\";\n    public const string AddSubscription = \"Permission:AddSubscription\";\n    public const string UpdateSubscription = \"Permission:UpdateSubscription\";\n    public const string CancelSubscription = \"Permission:CancelSubscription\";\n    public const string GetSubscriptionHistory = \"Permission:GetSubscriptionHistory\";\n    public const string GetPaymentTransactions = \"Permission:GetPaymentTransactions\";\n    public const string AddPaymentTransaction = \"Permission:AddPaymentTransaction\";\n    public const string GetUsageTracking = \"Permission:GetUsageTracking\";\n    public const string UpdateUsageTracking = \"Permission:UpdateUsageTracking\";\n\n    // Payments (PayOS)\n    public const string CreateSubscriptionPayment = \"Permission:CreateSubscriptionPayment\";\n    public const string GetPaymentIntent = \"Permission:GetPaymentIntent\";\n    public const string CreatePayOsCheckout = \"Permission:CreatePayOsCheckout\";\n    public const string SyncPayment = \"Permission:SyncPayment\";\n}"
+  },
+
+  "rateLimiting": {
+    "file": "ClassifiedAds.Modules.Subscription/RateLimiterPolicies/",
+    "description": "Sử dụng DefaultRateLimiterPolicy đã có. Webhook endpoint dùng AllowAnonymous, không rate limit riêng hoặc tạo policy riêng nếu cần.",
+    "existingPolicy": "RateLimiterPolicyNames.DefaultPolicy",
+    "note": "Có thể tạo thêm PaymentWritePolicy và PaymentWebhookPolicy nếu cần phân biệt rate limit cho payment vs subscription endpoints."
+  },
+
+  "environmentVariables": {
+    "description": "Thêm vào .env hoặc appsettings.Development.json",
+    "required": [
+      "PayOS__ClientId",
+      "PayOS__ApiKey",
+      "PayOS__SecretKey"
+    ],
+    "optional": [
+      "PayOS__BaseUrl (default: https://api-merchant.payos.vn)",
+      "PayOS__ReturnUrl",
+      "PayOS__WebhookUrl",
+      "PayOS__CancelUrl",
+      "PayOS__FrontendBaseUrl",
+      "PayOS__IntentExpirationMinutes (default: 15)"
+    ]
   }
 }
