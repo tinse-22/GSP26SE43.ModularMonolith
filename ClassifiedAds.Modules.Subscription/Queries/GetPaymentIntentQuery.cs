@@ -42,7 +42,7 @@ public class GetPaymentIntentQueryHandler : IQueryHandler<GetPaymentIntentQuery,
         {
             if (query.ThrowNotFoundIfNull)
             {
-                throw new NotFoundException($"Payment intent '{query.IntentId}' was not found.");
+                throw new NotFoundException($"Không tìm thấy yêu cầu thanh toán với mã '{query.IntentId}'.");
             }
 
             return null;

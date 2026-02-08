@@ -46,7 +46,7 @@ public class GetCurrentSubscriptionByUserQueryHandler : IQueryHandler<GetCurrent
 
         if (subscription == null && query.ThrowNotFoundIfNull)
         {
-            throw new NotFoundException($"No active subscription was found for user '{query.UserId}'.");
+            throw new NotFoundException($"Không tìm thấy đăng ký đang hoạt động cho người dùng '{query.UserId}'.");
         }
 
         if (subscription == null)

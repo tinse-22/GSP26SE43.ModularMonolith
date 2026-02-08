@@ -39,17 +39,17 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
     {
         if (command.Model == null)
         {
-            throw new ValidationException("Subscription model is required.");
+            throw new ValidationException("Thông tin đăng ký là bắt buộc.");
         }
 
         if (command.Model.UserId == Guid.Empty)
         {
-            throw new ValidationException("UserId is required.");
+            throw new ValidationException("Mã người dùng là bắt buộc.");
         }
 
         if (command.Model.PlanId == Guid.Empty)
         {
-            throw new ValidationException("PlanId is required.");
+            throw new ValidationException("Mã gói cước là bắt buộc.");
         }
 
         var targetPlan = await _planRepository.FirstOrDefaultAsync(
@@ -57,12 +57,12 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
 
         if (targetPlan == null)
         {
-            throw new NotFoundException($"Plan '{command.Model.PlanId}' was not found.");
+            throw new NotFoundException($"Không tìm thấy gói cước với mã '{command.Model.PlanId}'.");
         }
 
         if (!targetPlan.IsActive)
         {
-            throw new ValidationException($"Plan '{targetPlan.Name}' is not active.");
+            throw new ValidationException($"Gói cước '{targetPlan.Name}' chưa được kích hoạt.");
         }
 
         ValidateBilling(command.Model, targetPlan);
@@ -88,7 +88,7 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
         }
         else if (existingSubscription.UserId != command.Model.UserId)
         {
-            throw new ValidationException("Cannot change owner of existing subscription.");
+            throw new ValidationException("Không thể thay đổi chủ sở hữu của đăng ký hiện có.");
         }
 
         existingSubscription.PlanId = targetPlan.Id;
@@ -144,7 +144,7 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
                 _subscriptionRepository.GetQueryableSet().Where(x => x.Id == command.SubscriptionId.Value));
             if (byId == null)
             {
-                throw new NotFoundException($"Subscription '{command.SubscriptionId.Value}' was not found.");
+                throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId.Value}'.");
             }
 
             return byId;
@@ -173,7 +173,7 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
         {
             if (model.TrialDays <= 0)
             {
-                throw new ValidationException("TrialDays must be greater than zero when trial is enabled.");
+                throw new ValidationException("Số ngày dùng thử phải lớn hơn 0 khi kích hoạt dùng thử.");
             }
 
             return;
@@ -187,17 +187,17 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
 
         if (!model.BillingCycle.HasValue)
         {
-            throw new ValidationException("BillingCycle is required for paid plans.");
+            throw new ValidationException("Chu kỳ thanh toán là bắt buộc cho gói cước trả phí.");
         }
 
         if (model.BillingCycle == Entities.BillingCycle.Monthly && !plan.PriceMonthly.HasValue)
         {
-            throw new ValidationException("Monthly billing is not available for this plan.");
+            throw new ValidationException("Gói cước này không hỗ trợ thanh toán theo tháng.");
         }
 
         if (model.BillingCycle == Entities.BillingCycle.Yearly && !plan.PriceYearly.HasValue)
         {
-            throw new ValidationException("Yearly billing is not available for this plan.");
+            throw new ValidationException("Gói cước này không hỗ trợ thanh toán theo năm.");
         }
     }
 

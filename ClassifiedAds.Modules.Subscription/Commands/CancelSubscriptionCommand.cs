@@ -34,7 +34,7 @@ public class CancelSubscriptionCommandHandler : ICommandHandler<CancelSubscripti
     {
         if (command.SubscriptionId == Guid.Empty)
         {
-            throw new ValidationException("SubscriptionId is required.");
+            throw new ValidationException("Mã đăng ký là bắt buộc.");
         }
 
         var subscription = await _subscriptionRepository.FirstOrDefaultAsync(
@@ -42,7 +42,7 @@ public class CancelSubscriptionCommandHandler : ICommandHandler<CancelSubscripti
 
         if (subscription == null)
         {
-            throw new NotFoundException($"Subscription '{command.SubscriptionId}' was not found.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId}'.");
         }
 
         if (subscription.Status == SubscriptionStatus.Cancelled)

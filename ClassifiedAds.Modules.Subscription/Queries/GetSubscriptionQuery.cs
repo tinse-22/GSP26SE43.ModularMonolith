@@ -37,7 +37,7 @@ public class GetSubscriptionQueryHandler : IQueryHandler<GetSubscriptionQuery, S
 
         if (subscription == null && query.ThrowNotFoundIfNull)
         {
-            throw new NotFoundException($"Subscription '{query.Id}' was not found.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{query.Id}'.");
         }
 
         if (subscription == null)

@@ -115,7 +115,7 @@ public class HandlePayOsWebhookCommandHandler : ICommandHandler<HandlePayOsWebho
                         providerRef,
                         command.Payload,
                         PaymentStatus.Failed,
-                        failureReason: command.Payload.Desc ?? command.Payload.Data.Desc ?? "Payment failed.");
+                        failureReason: command.Payload.Desc ?? command.Payload.Data.Desc ?? "Thanh toán thất bại.");
                     await _paymentTransactionRepository.AddAsync(failedTransaction, ct);
                 }
             }

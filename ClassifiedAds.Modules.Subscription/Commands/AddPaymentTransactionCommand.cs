@@ -39,19 +39,19 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
     {
         if (command.Model == null)
         {
-            throw new ValidationException("Payment transaction model is required.");
+            throw new ValidationException("Thông tin giao dịch thanh toán là bắt buộc.");
         }
 
         if (command.SubscriptionId == Guid.Empty)
         {
-            throw new ValidationException("SubscriptionId is required.");
+            throw new ValidationException("Mã đăng ký là bắt buộc.");
         }
 
         var subscription = await _subscriptionRepository.FirstOrDefaultAsync(
             _subscriptionRepository.GetQueryableSet().Where(x => x.Id == command.SubscriptionId));
         if (subscription == null)
         {
-            throw new NotFoundException($"Subscription '{command.SubscriptionId}' was not found.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId}'.");
         }
 
         if (!string.IsNullOrWhiteSpace(command.Model.ExternalTxnId))
@@ -82,7 +82,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
 
         if (string.IsNullOrWhiteSpace(command.Model.PaymentMethod))
         {
-            throw new ValidationException("PaymentMethod is required.");
+            throw new ValidationException("Phương thức thanh toán là bắt buộc.");
         }
 
         var plan = await _planRepository.FirstOrDefaultAsync(
@@ -91,7 +91,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         var amount = ResolveAmount(subscription, plan, command.Model.Amount);
         if (amount <= 0)
         {
-            throw new ValidationException("Amount must be greater than zero.");
+            throw new ValidationException("Số tiền phải lớn hơn 0.");
         }
 
         var transaction = new PaymentTransaction
@@ -112,7 +112,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
 
         if (transaction.Status == PaymentStatus.Failed && string.IsNullOrWhiteSpace(transaction.FailureReason))
         {
-            transaction.FailureReason = "Payment failed.";
+            transaction.FailureReason = "Thanh toán thất bại.";
         }
 
         await _paymentTransactionRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>

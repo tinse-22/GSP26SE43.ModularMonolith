@@ -256,7 +256,7 @@ public class PaymentsController : ControllerBase
 
         if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
         {
-            throw new ValidationException("User identity is required.");
+            throw new ValidationException("Thông tin người dùng là bắt buộc.");
         }
 
         return userId;

@@ -66,7 +66,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
     {
         if (command.Model == null)
         {
-            throw new ValidationException("Plan model is required.");
+            throw new ValidationException("Thông tin gói cước là bắt buộc.");
         }
 
         var isCreate = !command.PlanId.HasValue || command.PlanId == Guid.Empty;
@@ -98,7 +98,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         }
         catch (DbUpdateException ex) when (IsDuplicatePlanNameException(ex))
         {
-            throw new ValidationException($"Plan name '{command.Model.Name?.Trim()}' already exists.");
+            throw new ValidationException($"Tên gói cước '{command.Model.Name?.Trim()}' đã tồn tại.");
         }
 
         command.SavedPlanId = plan.Id;
@@ -119,7 +119,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
 
         if (plan == null)
         {
-            throw new NotFoundException($"Plan '{planId}' was not found.");
+            throw new NotFoundException($"Không tìm thấy gói cước với mã '{planId}'.");
         }
 
         return plan;
@@ -142,7 +142,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         var normalizedName = name?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
-            throw new ValidationException("Plan name is required.");
+            throw new ValidationException("Tên gói cước là bắt buộc.");
         }
 
         var query = _planRepository.GetQueryableSet()
@@ -156,7 +156,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         var existing = await _planRepository.FirstOrDefaultAsync(query);
         if (existing != null)
         {
-            throw new ValidationException($"Plan name '{name.Trim()}' already exists.");
+            throw new ValidationException($"Tên gói cước '{name.Trim()}' đã tồn tại.");
         }
     }
 
@@ -211,7 +211,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             }
 
             var planName = string.IsNullOrWhiteSpace(plan.DisplayName) ? plan.Name : plan.DisplayName;
-            var subject = $"[ClassifiedAds] Price update notice for {planName}";
+            var subject = $"[ClassifiedAds] Thông báo cập nhật giá gói {planName}";
             var body = BuildPriceChangeEmailBody(plan, oldPricing);
 
             foreach (var user in usersToNotify)
@@ -258,12 +258,12 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         var newYearly = FormatPrice(plan.PriceYearly, currency);
 
         return $@"
-<p>Hi,</p>
-<p>We are notifying you that pricing for plan <strong>{planName}</strong> has been updated.</p>
-<p>Monthly: <strong>{oldMonthly}</strong> -> <strong>{newMonthly}</strong></p>
-<p>Yearly: <strong>{oldYearly}</strong> -> <strong>{newYearly}</strong></p>
-<p>Your current active subscription is not changed immediately. The new price may apply from the next billing period, based on your subscription policy.</p>
-<p>Thanks,<br/>ClassifiedAds Team</p>";
+<p>Xin chào,</p>
+<p>Chúng tôi thông báo giá gói cước <strong>{planName}</strong> đã được cập nhật.</p>
+<p>Hàng tháng: <strong>{oldMonthly}</strong> -> <strong>{newMonthly}</strong></p>
+<p>Hàng năm: <strong>{oldYearly}</strong> -> <strong>{newYearly}</strong></p>
+<p>Đăng ký hiện tại của bạn không bị thay đổi ngay lập tức. Giá mới có thể được áp dụng từ kỳ thanh toán tiếp theo, tùy theo chính sách đăng ký của bạn.</p>
+<p>Trân trọng,<br/>Đội ngũ ClassifiedAds</p>";
     }
 
     private static bool HasPricingChanged(PlanPricingSnapshot oldPricing, SubscriptionPlan plan)
@@ -303,7 +303,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         if (duplicates.Count > 0)
         {
             throw new ValidationException(
-                $"Duplicate limit types detected: {string.Join(", ", duplicates)}. Each type can appear only once per plan.");
+                $"Phát hiện loại giới hạn bị trùng: {string.Join(", ", duplicates)}. Mỗi loại chỉ được xuất hiện một lần trong mỗi gói.");
         }
 
         foreach (var limit in limits)
@@ -311,7 +311,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             if (!limit.IsUnlimited && (!limit.LimitValue.HasValue || limit.LimitValue.Value <= 0))
             {
                 throw new ValidationException(
-                    $"Limit value must be greater than zero for '{limit.LimitType}' when IsUnlimited is false.");
+                    $"Giá trị giới hạn phải lớn hơn 0 cho '{limit.LimitType}' khi không được đặt là không giới hạn.");
             }
 
             if (limit.IsUnlimited)
