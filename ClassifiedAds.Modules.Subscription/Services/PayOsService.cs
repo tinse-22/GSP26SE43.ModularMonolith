@@ -73,7 +73,7 @@ public class PayOsService : IPayOsService
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("PayOS CreatePaymentLink failed. Status={Status}, Body={Body}", response.StatusCode, body);
-            throw new ValidationException($"Failed to create PayOS payment link. Status: {response.StatusCode}");
+            throw new ValidationException($"Không thể tạo liên kết thanh toán PayOS. Mã trạng thái: {response.StatusCode}");
         }
 
         var parsed = JsonSerializer.Deserialize<PayOsPaymentResponse>(body, new JsonSerializerOptions
@@ -83,13 +83,13 @@ public class PayOsService : IPayOsService
 
         if (parsed is null || !string.Equals(parsed.Code, "00", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ValidationException($"PayOS error: {parsed?.Desc ?? "Unknown"}");
+            throw new ValidationException($"Lỗi PayOS: {parsed?.Desc ?? "Không xác định"}");
         }
 
         var checkoutUrl = parsed.Data?.CheckoutUrl;
         if (string.IsNullOrWhiteSpace(checkoutUrl))
         {
-            throw new ValidationException("PayOS response missing checkout URL.");
+            throw new ValidationException("Phản hồi PayOS thiếu URL thanh toán.");
         }
 
         return checkoutUrl;
@@ -142,7 +142,7 @@ public class PayOsService : IPayOsService
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new ValidationException($"Failed to get PayOS payment info. Status: {response.StatusCode}");
+            throw new ValidationException($"Không thể lấy thông tin thanh toán PayOS. Mã trạng thái: {response.StatusCode}");
         }
 
         var parsed = JsonSerializer.Deserialize<PayOsGetPaymentResponse>(body, new JsonSerializerOptions
@@ -152,7 +152,7 @@ public class PayOsService : IPayOsService
 
         if (parsed?.Data is null)
         {
-            throw new ValidationException("PayOS response missing data.");
+            throw new ValidationException("Phản hồi PayOS thiếu dữ liệu.");
         }
 
         return parsed.Data;
@@ -164,7 +164,7 @@ public class PayOsService : IPayOsService
             || string.IsNullOrWhiteSpace(_options.ApiKey)
             || string.IsNullOrWhiteSpace(_options.SecretKey))
         {
-            throw new ValidationException("PayOS is not configured. Please set ClientId, ApiKey and SecretKey.");
+            throw new ValidationException("PayOS chưa được cấu hình. Vui lòng thiết lập ClientId, ApiKey và SecretKey.");
         }
     }
 

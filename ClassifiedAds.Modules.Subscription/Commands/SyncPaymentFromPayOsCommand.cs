@@ -42,12 +42,12 @@ public class SyncPaymentFromPayOsCommandHandler : ICommandHandler<SyncPaymentFro
     {
         if (command.UserId == Guid.Empty)
         {
-            throw new ValidationException("UserId is required.");
+            throw new ValidationException("Mã người dùng là bắt buộc.");
         }
 
         if (command.IntentId == Guid.Empty)
         {
-            throw new ValidationException("IntentId is required.");
+            throw new ValidationException("Mã yêu cầu thanh toán là bắt buộc.");
         }
 
         var intent = await _paymentIntentRepository.FirstOrDefaultAsync(
@@ -55,12 +55,12 @@ public class SyncPaymentFromPayOsCommandHandler : ICommandHandler<SyncPaymentFro
 
         if (intent == null)
         {
-            throw new NotFoundException("Payment intent not found.");
+            throw new NotFoundException("Không tìm thấy yêu cầu thanh toán.");
         }
 
         if (!intent.OrderCode.HasValue)
         {
-            throw new ValidationException("Payment intent does not have an order code yet.");
+            throw new ValidationException("Yêu cầu thanh toán chưa có mã đơn hàng.");
         }
 
         if (intent.Status == PaymentIntentStatus.Succeeded)

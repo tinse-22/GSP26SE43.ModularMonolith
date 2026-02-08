@@ -32,17 +32,17 @@ public class UpsertUsageTrackingCommandHandler : ICommandHandler<UpsertUsageTrac
     {
         if (command.UserId == Guid.Empty)
         {
-            throw new ValidationException("UserId is required.");
+            throw new ValidationException("Mã người dùng là bắt buộc.");
         }
 
         if (command.Model == null)
         {
-            throw new ValidationException("Usage tracking model is required.");
+            throw new ValidationException("Thông tin theo dõi sử dụng là bắt buộc.");
         }
 
         if (command.Model.PeriodStart > command.Model.PeriodEnd)
         {
-            throw new ValidationException("PeriodStart must be less than or equal to PeriodEnd.");
+            throw new ValidationException("Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.");
         }
 
         ValidateUsageValues(command.Model);
@@ -110,7 +110,7 @@ public class UpsertUsageTrackingCommandHandler : ICommandHandler<UpsertUsageTrac
             || model.LlmCallCount < 0
             || model.StorageUsedMB < 0)
         {
-            throw new ValidationException("Usage values cannot be negative.");
+            throw new ValidationException("Giá trị sử dụng không được âm.");
         }
     }
 }

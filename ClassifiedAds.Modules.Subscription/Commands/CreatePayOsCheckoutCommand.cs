@@ -44,12 +44,12 @@ public class CreatePayOsCheckoutCommandHandler : ICommandHandler<CreatePayOsChec
     {
         if (command.UserId == Guid.Empty)
         {
-            throw new ValidationException("UserId is required.");
+            throw new ValidationException("Mã người dùng là bắt buộc.");
         }
 
         if (command.IntentId == Guid.Empty)
         {
-            throw new ValidationException("IntentId is required.");
+            throw new ValidationException("Mã yêu cầu thanh toán là bắt buộc.");
         }
 
         var intent = await _paymentIntentRepository.FirstOrDefaultAsync(
@@ -57,22 +57,22 @@ public class CreatePayOsCheckoutCommandHandler : ICommandHandler<CreatePayOsChec
 
         if (intent == null)
         {
-            throw new NotFoundException("Payment intent not found.");
+            throw new NotFoundException("Không tìm thấy yêu cầu thanh toán.");
         }
 
         if (intent.UserId != command.UserId)
         {
-            throw new NotFoundException("Payment intent not found.");
+            throw new NotFoundException("Không tìm thấy yêu cầu thanh toán.");
         }
 
         if (intent.Status == PaymentIntentStatus.Succeeded)
         {
-            throw new ValidationException("Payment intent has already succeeded.");
+            throw new ValidationException("Yêu cầu thanh toán đã được xử lý thành công.");
         }
 
         if (intent.Status == PaymentIntentStatus.Canceled || intent.Status == PaymentIntentStatus.Expired)
         {
-            throw new ValidationException($"Payment intent is {intent.Status}.");
+            throw new ValidationException($"Yêu cầu thanh toán đang ở trạng thái {intent.Status}.");
         }
 
         if (intent.ExpiresAt <= DateTimeOffset.UtcNow)
@@ -80,7 +80,7 @@ public class CreatePayOsCheckoutCommandHandler : ICommandHandler<CreatePayOsChec
             intent.Status = PaymentIntentStatus.Expired;
             await _paymentIntentRepository.UpdateAsync(intent, cancellationToken);
             await _paymentIntentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-            throw new ValidationException("Payment intent has expired.");
+            throw new ValidationException("Yêu cầu thanh toán đã hết hạn.");
         }
 
         var orderCode = intent.OrderCode ?? await GenerateUniqueOrderCodeAsync(cancellationToken);
@@ -135,7 +135,7 @@ public class CreatePayOsCheckoutCommandHandler : ICommandHandler<CreatePayOsChec
             await Task.Delay(5, cancellationToken);
         }
 
-        throw new ValidationException("Could not generate a unique PayOS order code.");
+        throw new ValidationException("Không thể tạo mã đơn hàng PayOS duy nhất.");
     }
 
     private static string BuildDescription(SubscriptionPlan plan, PaymentIntent intent)

@@ -26,7 +26,7 @@ public static class SubscriptionServiceCollectionExtensions
 
         if (string.IsNullOrWhiteSpace(settings.ConnectionStrings.Default))
         {
-            throw new InvalidOperationException("Chưa cấu hình chuỗi kết nối cho module Subscription.");
+            throw new InvalidOperationException("Connection string for Subscription module is not configured.");
         }
 
         services.AddDbContext<SubscriptionDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>

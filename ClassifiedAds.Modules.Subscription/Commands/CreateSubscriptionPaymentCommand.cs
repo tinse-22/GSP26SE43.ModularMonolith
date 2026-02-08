@@ -49,17 +49,17 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
     {
         if (command.UserId == Guid.Empty)
         {
-            throw new ValidationException("UserId is required.");
+            throw new ValidationException("Mã người dùng là bắt buộc.");
         }
 
         if (command.PlanId == Guid.Empty)
         {
-            throw new ValidationException("PlanId is required.");
+            throw new ValidationException("Mã gói cước là bắt buộc.");
         }
 
         if (command.Model == null)
         {
-            throw new ValidationException("Model is required.");
+            throw new ValidationException("Thông tin yêu cầu là bắt buộc.");
         }
 
         var plan = await _planRepository.FirstOrDefaultAsync(
@@ -67,12 +67,12 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
 
         if (plan == null)
         {
-            throw new NotFoundException($"Subscription plan '{command.PlanId}' was not found.");
+            throw new NotFoundException($"Không tìm thấy gói cước với mã '{command.PlanId}'.");
         }
 
         if (!plan.IsActive)
         {
-            throw new ValidationException("Subscription plan is inactive.");
+            throw new ValidationException("Gói cước đã ngừng hoạt động.");
         }
 
         var billingCycle = command.Model.BillingCycle;
@@ -80,7 +80,7 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
 
         if (price is null)
         {
-            throw new ValidationException($"Plan '{plan.Name}' does not support {billingCycle} billing.");
+            throw new ValidationException($"Gói cước '{plan.Name}' không hỗ trợ thanh toán {billingCycle}.");
         }
 
         var existingSubscription = await _subscriptionRepository.FirstOrDefaultAsync(

@@ -34,7 +34,7 @@ public class PlanOutboxMessagePublisher : IOutboxMessagePublisher
     public Task HandleAsync(PublishingOutboxMessage outbox, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
-            "Đã ghi nhận sự kiện gói cước {EventType} (OutboxId: {OutboxId}) để sẵn sàng tích hợp liên module.",
+            "Recorded plan event {EventType} (OutboxId: {OutboxId}) for cross-module integration.",
             outbox.EventType,
             outbox.Id);
 

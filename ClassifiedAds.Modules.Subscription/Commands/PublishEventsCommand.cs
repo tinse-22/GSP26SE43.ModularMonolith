@@ -64,13 +64,13 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
             catch (InvalidOperationException ex) when (ex.Message.Contains("No publisher registered"))
             {
                 _logger.LogError(ex,
-                    "Không thể phát sự kiện outbox {EventType} (ID: {OutboxId}) vì chưa có publisher tương ứng. Sự kiện sẽ được thử lại.",
+                    "Cannot publish outbox event {EventType} (ID: {OutboxId}) because no matching publisher was registered. Event will be retried.",
                     eventLog.EventType, eventLog.Id);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Lỗi không mong muốn khi phát sự kiện outbox {EventType} (ID: {OutboxId})",
+                    "Unexpected error while publishing outbox event {EventType} (ID: {OutboxId})",
                     eventLog.EventType, eventLog.Id);
                 throw;
             }

@@ -26,7 +26,7 @@ public class PublishEventWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Worker phát sự kiện outbox của Subscription đang khởi động.");
+        _logger.LogDebug("Subscription outbox event publish worker is starting.");
         await DoWork(cancellationToken);
     }
 
@@ -36,7 +36,7 @@ public class PublishEventWorker : BackgroundService
         {
             if (!_outboxPublishingToggle.IsEnabled())
             {
-                _logger.LogInformation("Worker outbox Subscription đang tạm dừng. Sẽ thử lại sau 10 giây.");
+                _logger.LogInformation("Subscription outbox worker is paused. Will retry in 10 seconds.");
                 try
                 {
                     await Task.Delay(10000, cancellationToken);
@@ -49,7 +49,7 @@ public class PublishEventWorker : BackgroundService
                 continue;
             }
 
-            _logger.LogDebug("Worker outbox Subscription đang xử lý nền.");
+            _logger.LogDebug("Subscription outbox worker is processing in background.");
 
             try
             {
@@ -73,7 +73,7 @@ public class PublishEventWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Có lỗi khi phát sự kiện outbox của Subscription.");
+                _logger.LogError(ex, "Error occurred while publishing Subscription outbox events.");
                 try
                 {
                     await Task.Delay(10000, cancellationToken);
@@ -85,6 +85,6 @@ public class PublishEventWorker : BackgroundService
             }
         }
 
-        _logger.LogDebug("Worker phát sự kiện outbox của Subscription đang dừng.");
+        _logger.LogDebug("Subscription outbox event publish worker is stopping.");
     }
 }
