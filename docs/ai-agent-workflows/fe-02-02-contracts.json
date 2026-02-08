@@ -1,0 +1,330 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-02-contracts",
+  "requirementId": "FE-02-02",
+  "title": "API Specification Upload — Contracts & Cross-Module Integration Guide",
+  "storageModuleIntegration": {
+    "description": "ApiSpecification.OriginalFileId lien ket voi FileEntry.Id cua Storage module. Khong co FK constraint — cross-module by convention.",
+    "storageModuleLocation": "ClassifiedAds.Modules.Storage/",
+    "fileEntryKeyProperties": {
+      "Id": "Guid — PK",
+      "FileName": "string — original file name",
+      "ContentType": "string — MIME type",
+      "FileSize": "long — bytes",
+      "FileCategory": "FileCategory enum (ApiSpec = 0)",
+      "OwnerId": "Guid? — uploading user"
+    },
+    "uploadApproach": {
+      "recommended": "Dung Storage module's existing service/repository to create FileEntry and save file content.",
+      "steps": [
+        "1. Read IFormFile into byte array: await file.OpenReadStream().",
+        "2. Create FileEntry { FileName = file.FileName, ContentType, FileSize = file.Length, FileCategory = FileCategory.ApiSpec, OwnerId = currentUserId }.",
+        "3. Save FileEntry via ICrudService<FileEntry> or IRepository<FileEntry, Guid>.",
+        "4. Save file bytes via IFileStorageManager (disk/cloud) if available, hoac luu vao DB.",
+        "5. Return FileEntry.Id de gan vao ApiSpecification.OriginalFileId."
+      ],
+      "alternativeApproach": "Neu Storage module co REST endpoint (POST /api/file-entries), co the goi internal HTTP. Nhung DI-based approach tot hon cho modular monolith.",
+      "dependencyNote": "Add project reference: ClassifiedAds.Modules.ApiDocumentation → ClassifiedAds.Modules.Storage (hoac su dung shared contract interface)."
+    }
+  },
+  "transactionDetails": {
+    "uploadWithAutoActivate": {
+      "description": "Upload file TRUOC transaction (cross-module call). Transaction chi bao gom DB operations trong apidoc schema.",
+      "pseudocode": [
+        "// STEP 1: Upload file (OUTSIDE transaction)",
+        "var fileEntry = await UploadFileToStorage(command.File, command.CurrentUserId, ct);",
+        "",
+        "// STEP 2: Create spec + activate (INSIDE transaction)",
+        "await _specRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>",
+        "{",
+        "    // Create spec",
+        "    var spec = new ApiSpecification",
+        "    {",
+        "        ProjectId = command.ProjectId,",
+        "        OriginalFileId = fileEntry.Id,",
+        "        Name = command.Name,",
+        "        SourceType = command.SourceType,",
+        "        Version = command.Version,",
+        "        ParseStatus = ParseStatus.Pending,",
+        "        IsActive = false",
+        "    };",
+        "    await _specRepository.AddAsync(spec, ct);",
+        "",
+        "    // Auto-activate if requested",
+        "    if (command.AutoActivate)",
+        "    {",
+        "        // Deactivate old spec",
+        "        if (project.ActiveSpecId.HasValue)",
+        "        {",
+        "            var oldSpec = await _specRepository.FirstOrDefaultAsync(",
+        "                s => s.Id == project.ActiveSpecId.Value, ct);",
+        "            if (oldSpec != null) { oldSpec.IsActive = false; }",
+        "        }",
+        "        spec.IsActive = true;",
+        "        project.ActiveSpecId = spec.Id;",
+        "        await _projectRepository.UpdateAsync(project, ct);",
+        "    }",
+        "",
+        "    await _specRepository.UnitOfWork.SaveChangesAsync(ct);",
+        "}, cancellationToken: cancellationToken);",
+        "",
+        "// STEP 3: Raise domain event (AFTER transaction)",
+        "await _dispatcher.DispatchAsync(",
+        "    new EntityCreatedEvent<ApiSpecification>(spec, DateTime.UtcNow), ct);"
+      ],
+      "orphanFileRisk": {
+        "scenario": "File upload thanh cong nhung transaction fail → file ton tai trong Storage nhung khong co ApiSpecification record.",
+        "mitigation": "Acceptable risk. Co the tao cleanup job sau de xoa orphan files (FileEntry khong co ApiSpecification nao reference).",
+        "priority": "Low — handle in future maintenance task."
+      }
+    },
+    "activateDeactivate": {
+      "description": "Activate/deactivate spec can update 2-3 entities atomically.",
+      "pseudocode": [
+        "await _specRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>",
+        "{",
+        "    if (command.Activate)",
+        "    {",
+        "        // Deactivate current active spec (if any, if different)",
+        "        if (project.ActiveSpecId.HasValue && project.ActiveSpecId != command.SpecId)",
+        "        {",
+        "            var oldSpec = await _specRepository.FirstOrDefaultAsync(",
+        "                s => s.Id == project.ActiveSpecId.Value, ct);",
+        "            if (oldSpec != null) { oldSpec.IsActive = false; }",
+        "        }",
+        "        spec.IsActive = true;",
+        "        project.ActiveSpecId = spec.Id;",
+        "    }",
+        "    else // Deactivate",
+        "    {",
+        "        if (project.ActiveSpecId != command.SpecId)",
+        "            throw new ValidationException('Specification này không đang được kích hoạt.');",
+        "        spec.IsActive = false;",
+        "        project.ActiveSpecId = null;",
+        "    }",
+        "    await _projectRepository.UpdateAsync(project, ct);",
+        "    await _specRepository.UnitOfWork.SaveChangesAsync(ct);",
+        "}, cancellationToken: cancellationToken);"
+      ]
+    },
+    "deleteWithDeactivate": {
+      "description": "Xoa spec can deactivate truoc neu dang active.",
+      "pseudocode": [
+        "await _specRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>",
+        "{",
+        "    if (project.ActiveSpecId == command.SpecId)",
+        "    {",
+        "        project.ActiveSpecId = null;",
+        "        await _projectRepository.UpdateAsync(project, ct);",
+        "    }",
+        "    _specRepository.Delete(spec);  // cascade: endpoints, params, responses, security",
+        "    await _specRepository.UnitOfWork.SaveChangesAsync(ct);",
+        "}, cancellationToken: cancellationToken);"
+      ]
+    }
+  },
+  "outboxIntegrationEvents": {
+    "specOutboxEvents": {
+      "file": "IntegrationEvents/SpecOutboxEvents.cs",
+      "events": [
+        {
+          "name": "SpecUploadedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            { "name": "SpecId", "type": "Guid" },
+            { "name": "ProjectId", "type": "Guid" },
+            { "name": "Name", "type": "string" },
+            { "name": "SourceType", "type": "string" },
+            { "name": "Version", "type": "string?" },
+            { "name": "OriginalFileId", "type": "Guid?" },
+            { "name": "ParseStatus", "type": "string" }
+          ],
+          "futureConsumer": "FE-03 Parser se listen cho event nay de tu dong start parsing."
+        },
+        {
+          "name": "SpecActivatedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            { "name": "SpecId", "type": "Guid" },
+            { "name": "ProjectId", "type": "Guid" },
+            { "name": "PreviousActiveSpecId", "type": "Guid?" }
+          ]
+        },
+        {
+          "name": "SpecDeletedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            { "name": "SpecId", "type": "Guid" },
+            { "name": "ProjectId", "type": "Guid" },
+            { "name": "OriginalFileId", "type": "Guid?", "note": "De cleanup file trong Storage module" }
+          ]
+        }
+      ]
+    }
+  },
+  "validationRules": {
+    "uploadCommand": [
+      {
+        "field": "File",
+        "rule": "Required",
+        "errorVi": "File là bắt buộc.",
+        "errorEn": "File is required."
+      },
+      {
+        "field": "File.Length",
+        "rule": "Max 10MB (10 * 1024 * 1024 bytes)",
+        "errorVi": "Kích thước file không được vượt quá 10MB.",
+        "errorEn": "File size exceeds 10MB limit."
+      },
+      {
+        "field": "File extension",
+        "rule": "Must be .json, .yaml, or .yml",
+        "errorVi": "Chỉ hỗ trợ file .json, .yaml, .yml.",
+        "errorEn": "Only .json, .yaml, .yml files are supported."
+      },
+      {
+        "field": "Name",
+        "rule": "Required, maxlen 200",
+        "errorVi": "Tên specification là bắt buộc.",
+        "errorEn": "Specification name is required."
+      },
+      {
+        "field": "SourceType",
+        "rule": "Must be OpenAPI (0) or Postman (1)",
+        "errorVi": "Loại nguồn phải là OpenAPI hoặc Postman.",
+        "errorEn": "Source type must be OpenAPI or Postman."
+      },
+      {
+        "field": "ProjectId",
+        "rule": "Must exist and belong to current user",
+        "errorVi": "Project không tồn tại hoặc bạn không có quyền.",
+        "errorEn": "Project not found or access denied."
+      }
+    ],
+    "activateCommand": [
+      {
+        "field": "SpecId",
+        "rule": "Must exist and belong to ProjectId",
+        "errorVi": "Specification không tồn tại trong project này.",
+        "errorEn": "Specification not found in this project."
+      },
+      {
+        "field": "Deactivate check",
+        "rule": "Can only deactivate if Project.ActiveSpecId == SpecId",
+        "errorVi": "Specification này không đang được kích hoạt.",
+        "errorEn": "This specification is not currently active."
+      }
+    ]
+  },
+  "logCatalog": [
+    {
+      "eventCode": "APIDOC_SPEC_UPLOADED",
+      "uiMessageVi": "Đã upload file API spec thành công. Đang chờ phân tích.",
+      "systemMessageEn": "API specification uploaded. ParseStatus=Pending. SpecId={specId}, SourceType={sourceType}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_SPEC_ACTIVATED",
+      "uiMessageVi": "Đã kích hoạt phiên bản spec mới.",
+      "systemMessageEn": "Specification activated. SpecId={specId}, PreviousActiveSpecId={oldSpecId}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_SPEC_DEACTIVATED",
+      "uiMessageVi": "Đã hủy kích hoạt spec.",
+      "systemMessageEn": "Specification deactivated. SpecId={specId}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_SPEC_DELETED",
+      "uiMessageVi": "Đã xóa spec.",
+      "systemMessageEn": "Specification deleted. SpecId={specId}, CascadeEndpoints={endpointCount}.",
+      "level": "Warning"
+    },
+    {
+      "eventCode": "APIDOC_FILE_UPLOAD_FAILED",
+      "uiMessageVi": "Không thể upload file. Vui lòng thử lại.",
+      "systemMessageEn": "File upload to storage failed. Error={errorMessage}.",
+      "level": "Error"
+    },
+    {
+      "eventCode": "APIDOC_SPEC_VALIDATION_FAILED",
+      "uiMessageVi": "Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.",
+      "systemMessageEn": "Specification validation failed. Field={field}, Error={error}.",
+      "level": "Warning"
+    }
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Upload OpenAPI JSON file",
+      "given": "User co project 'E-Commerce API' dang Active",
+      "when": "POST upload voi file openapi.json, sourceType=OpenAPI, name='v3.1'",
+      "then": "201 Created, ApiSpecification created voi ParseStatus=Pending, OriginalFileId set"
+    },
+    {
+      "id": "TS-02",
+      "name": "Upload OpenAPI YAML file",
+      "given": "User co project Active",
+      "when": "POST upload voi file openapi.yaml, sourceType=OpenAPI",
+      "then": "201 Created thanh cong"
+    },
+    {
+      "id": "TS-03",
+      "name": "Upload Postman Collection",
+      "given": "User co project Active",
+      "when": "POST upload voi file collection.json, sourceType=Postman",
+      "then": "201 Created voi SourceType=Postman"
+    },
+    {
+      "id": "TS-04",
+      "name": "Upload file qua lon",
+      "given": "User co project Active",
+      "when": "POST upload voi file 15MB",
+      "then": "400 Bad Request: 'Kích thước file không được vượt quá 10MB.'"
+    },
+    {
+      "id": "TS-05",
+      "name": "Upload file extension khong hop le",
+      "given": "User co project Active",
+      "when": "POST upload voi file test.exe",
+      "then": "400 Bad Request: 'Chỉ hỗ trợ file .json, .yaml, .yml.'"
+    },
+    {
+      "id": "TS-06",
+      "name": "Upload voi autoActivate=true",
+      "given": "Project co 1 spec dang active",
+      "when": "POST upload voi autoActivate=true",
+      "then": "Spec cu deactivate, spec moi activate, Project.ActiveSpecId = spec moi"
+    },
+    {
+      "id": "TS-07",
+      "name": "Activate specification",
+      "given": "Project co 2 specs, spec-A dang active",
+      "when": "PUT activate spec-B",
+      "then": "spec-A.IsActive=false, spec-B.IsActive=true, Project.ActiveSpecId=spec-B"
+    },
+    {
+      "id": "TS-08",
+      "name": "Deactivate specification",
+      "given": "Project co spec-A dang active",
+      "when": "PUT deactivate spec-A",
+      "then": "spec-A.IsActive=false, Project.ActiveSpecId=null"
+    },
+    {
+      "id": "TS-09",
+      "name": "Delete active specification",
+      "given": "Project co spec-A dang active",
+      "when": "DELETE spec-A",
+      "then": "Project.ActiveSpecId set null, spec-A deleted, cascade delete endpoints"
+    },
+    {
+      "id": "TS-10",
+      "name": "Upload vao project khong thuoc user",
+      "given": "User A co project-X, User B dang login",
+      "when": "User B POST upload vao project-X",
+      "then": "404 Not Found hoac 403 Forbidden"
+    }
+  ]
+}

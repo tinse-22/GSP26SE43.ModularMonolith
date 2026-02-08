@@ -1,0 +1,166 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-01-workflow",
+  "workflow": {
+    "id": "wf-llm-failure-explanation-v1",
+    "requirementId": "FE-09-01",
+    "name": "LLM Failure Explanation Async Flow",
+    "mode": "event-driven",
+    "triggerEvent": "test.execution.failed.v1"
+  },
+  "actors": [
+    {
+      "name": "TestExecutionProducer",
+      "module": "ClassifiedAds.Modules.TestExecution",
+      "responsibility": "Publish failed test events."
+    },
+    {
+      "name": "LlmAssistantWorker",
+      "module": "ClassifiedAds.Modules.LlmAssistant",
+      "responsibility": "Generate explanation, persist interaction, emit completion events."
+    },
+    {
+      "name": "UiNotificationConsumer",
+      "module": "ClassifiedAds.Modules.TestReporting",
+      "responsibility": "Show progress and final result to UI."
+    }
+  ],
+  "routing": {
+    "exchange": "classifiedads.events",
+    "queues": {
+      "requestQueue": "llm.failure.explanation.request",
+      "resultQueue": "llm.failure.explanation.result",
+      "deadLetterQueue": "llm.failure.explanation.dlq"
+    },
+    "routingKeys": {
+      "request": "llm.failure.explanation.requested.v1",
+      "result": "llm.failure.explanation.completed.v1",
+      "error": "llm.failure.explanation.failed.v1"
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "CaptureFailedTest",
+      "action": "TestExecution producer emits failed test payload.",
+      "input": "test.execution.failed.v1",
+      "output": "llm.failure.explanation.requested.v1",
+      "uiLogVi": "Da ghi nhan test loi, dang xep hang doi tao giai thich.",
+      "systemLogEn": "Failed test event captured and explanation job queued."
+    },
+    {
+      "step": 2,
+      "name": "AcquireIdempotencyLock",
+      "action": "Worker checks Redis lock by fingerprint before processing.",
+      "input": "job message",
+      "output": "lock acquired or duplicate skipped",
+      "uiLogVi": "Dang kiem tra trung lap yeu cau giai thich.",
+      "systemLogEn": "Checking Redis lock for idempotent processing."
+    },
+    {
+      "step": 3,
+      "name": "CheckRedisCache",
+      "action": "Worker checks explanation cache by fingerprint.",
+      "input": "cache key",
+      "output": "cache hit or miss",
+      "uiLogVi": "Dang tim giai thich co san trong bo nho dem.",
+      "systemLogEn": "Looking up explanation cache entry."
+    },
+    {
+      "step": 4,
+      "name": "CallLlmWhenCacheMiss",
+      "action": "If cache miss, build prompt and call LLM provider.",
+      "input": "normalized failure context",
+      "output": "explanation payload",
+      "uiLogVi": "Dang tao giai thich loi bang AI.",
+      "systemLogEn": "Invoking LLM provider for failure explanation."
+    },
+    {
+      "step": 5,
+      "name": "PersistAndCache",
+      "action": "Save LlmInteraction and cache explanation in Redis.",
+      "input": "LLM response",
+      "output": "stored interaction id",
+      "uiLogVi": "Da luu ket qua giai thich.",
+      "systemLogEn": "LLM interaction persisted and cache updated."
+    },
+    {
+      "step": 6,
+      "name": "PublishCompletionEvent",
+      "action": "Publish completion event for UI/reporting consumers.",
+      "input": "explanation result",
+      "output": "llm.failure.explanation.completed.v1",
+      "uiLogVi": "Da san sang giai thich loi cho nguoi dung.",
+      "systemLogEn": "Explanation completion event published."
+    },
+    {
+      "step": 7,
+      "name": "HandleFailureAndRetry",
+      "action": "On transient errors, retry with backoff then route to DLQ.",
+      "input": "exception",
+      "output": "retry or dead letter",
+      "uiLogVi": "Tam thoi chua tao duoc giai thich, he thong dang thu lai.",
+      "systemLogEn": "Transient failure detected, retry policy applied."
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      "Queued",
+      "Locked",
+      "CacheHit",
+      "Generating",
+      "Completed",
+      "Retrying",
+      "Failed",
+      "DeadLettered"
+    ],
+    "transitions": [
+      "Queued -> Locked",
+      "Locked -> CacheHit",
+      "Locked -> Generating",
+      "CacheHit -> Completed",
+      "Generating -> Completed",
+      "Generating -> Retrying",
+      "Retrying -> Generating",
+      "Retrying -> DeadLettered"
+    ]
+  },
+  "retryPolicy": {
+    "maxAttempts": 3,
+    "backoffStrategy": "exponential",
+    "backoffSeconds": [
+      2,
+      6,
+      18
+    ],
+    "transientErrorTypes": [
+      "HttpTimeout",
+      "ProviderRateLimit",
+      "TemporaryNetworkFailure"
+    ],
+    "nonRetryableErrorTypes": [
+      "InvalidPayload",
+      "MissingRequiredField",
+      "PromptTemplateError"
+    ]
+  },
+  "observability": {
+    "metrics": [
+      "llm_explanation_jobs_total",
+      "llm_explanation_cache_hit_total",
+      "llm_explanation_latency_ms",
+      "llm_explanation_retries_total",
+      "llm_explanation_dlq_total"
+    ],
+    "tracing": {
+      "requiredTags": [
+        "trace_id",
+        "run_id",
+        "test_case_id",
+        "job_id",
+        "llm_model"
+      ]
+    }
+  }
+}

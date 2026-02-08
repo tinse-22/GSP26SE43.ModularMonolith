@@ -1,0 +1,184 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-01-contracts",
+  "requirementId": "FE-09-01",
+  "messageContracts": {
+    "requestEvent": {
+      "name": "llm.failure.explanation.requested.v1",
+      "description": "Produced when a deterministic test fails and explanation is needed.",
+      "fields": [
+        { "name": "eventId", "type": "string", "required": true },
+        { "name": "occurredAt", "type": "datetime", "required": true },
+        { "name": "traceId", "type": "string", "required": true },
+        { "name": "projectId", "type": "guid", "required": true },
+        { "name": "testRunId", "type": "guid", "required": true },
+        { "name": "testCaseId", "type": "guid", "required": true },
+        { "name": "userId", "type": "guid", "required": true },
+        { "name": "endpoint", "type": "string", "required": true },
+        { "name": "httpMethod", "type": "string", "required": true },
+        { "name": "expectedStatus", "type": "int", "required": true },
+        { "name": "actualStatus", "type": "int", "required": true },
+        { "name": "assertionErrors", "type": "array<string>", "required": true },
+        { "name": "responseSample", "type": "string", "required": false },
+        { "name": "schemaVersion", "type": "string", "required": true }
+      ]
+    },
+    "resultEvent": {
+      "name": "llm.failure.explanation.completed.v1",
+      "description": "Published after explanation is generated or served from cache.",
+      "fields": [
+        { "name": "eventId", "type": "string", "required": true },
+        { "name": "traceId", "type": "string", "required": true },
+        { "name": "testRunId", "type": "guid", "required": true },
+        { "name": "testCaseId", "type": "guid", "required": true },
+        { "name": "interactionId", "type": "guid", "required": false },
+        { "name": "cacheHit", "type": "bool", "required": true },
+        { "name": "provider", "type": "string", "required": true },
+        { "name": "model", "type": "string", "required": true },
+        { "name": "latencyMs", "type": "int", "required": true },
+        { "name": "tokensUsed", "type": "int", "required": true },
+        { "name": "summaryVi", "type": "string", "required": true },
+        { "name": "detailsEn", "type": "string", "required": false },
+        { "name": "schemaVersion", "type": "string", "required": true }
+      ]
+    },
+    "failureEvent": {
+      "name": "llm.failure.explanation.failed.v1",
+      "description": "Published when all retries are exhausted.",
+      "fields": [
+        { "name": "eventId", "type": "string", "required": true },
+        { "name": "traceId", "type": "string", "required": true },
+        { "name": "testRunId", "type": "guid", "required": true },
+        { "name": "testCaseId", "type": "guid", "required": true },
+        { "name": "errorCode", "type": "string", "required": true },
+        { "name": "errorMessageEn", "type": "string", "required": true },
+        { "name": "retryCount", "type": "int", "required": true },
+        { "name": "schemaVersion", "type": "string", "required": true }
+      ]
+    }
+  },
+  "redisContracts": {
+    "keyPatterns": [
+      {
+        "purpose": "Idempotency lock",
+        "pattern": "llm:failure:lock:{testRunId}:{testCaseId}:{fingerprint}",
+        "ttlSeconds": 300
+      },
+      {
+        "purpose": "Explanation cache",
+        "pattern": "llm:failure:cache:{fingerprint}",
+        "ttlSeconds": 86400
+      },
+      {
+        "purpose": "UI progress status",
+        "pattern": "llm:failure:status:{testRunId}:{testCaseId}",
+        "ttlSeconds": 604800
+      }
+    ],
+    "cachePayload": {
+      "fields": [
+        "summaryVi",
+        "detailsEn",
+        "rootCauseCandidates",
+        "suggestedNextActions",
+        "model",
+        "tokensUsed",
+        "generatedAt"
+      ]
+    }
+  },
+  "rabbitMqContracts": {
+    "providerRequirement": "Messaging:Provider must be RabbitMQ",
+    "exchange": "classifiedads.events",
+    "queues": [
+      "llm.failure.explanation.request",
+      "llm.failure.explanation.result",
+      "llm.failure.explanation.dlq"
+    ],
+    "routingKeys": [
+      "llm.failure.explanation.requested.v1",
+      "llm.failure.explanation.completed.v1",
+      "llm.failure.explanation.failed.v1"
+    ],
+    "delivery": {
+      "durable": true,
+      "prefetchCount": 20,
+      "ackMode": "manual",
+      "deadLettering": true
+    }
+  },
+  "logCatalog": [
+    {
+      "eventCode": "LLM_FE_QUEUED",
+      "uiMessageVi": "Da dua yeu cau giai thich vao hang doi.",
+      "systemMessageEn": "Explanation request queued.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "LLM_FE_CACHE_HIT",
+      "uiMessageVi": "Da dung ket qua giai thich da co.",
+      "systemMessageEn": "Explanation served from cache.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "LLM_FE_GENERATING",
+      "uiMessageVi": "Dang tao giai thich loi bang AI.",
+      "systemMessageEn": "Generating explanation via LLM provider.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "LLM_FE_RETRYING",
+      "uiMessageVi": "He thong dang thu lai viec tao giai thich.",
+      "systemMessageEn": "Retrying explanation generation after transient failure.",
+      "level": "Warning"
+    },
+    {
+      "eventCode": "LLM_FE_COMPLETED",
+      "uiMessageVi": "Da hoan tat giai thich loi.",
+      "systemMessageEn": "Explanation generation completed successfully.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "LLM_FE_FAILED",
+      "uiMessageVi": "Khong tao duoc giai thich. Vui long thu lai sau.",
+      "systemMessageEn": "Explanation generation failed after max retries.",
+      "level": "Error"
+    }
+  ],
+  "samples": {
+    "requestEventSample": {
+      "eventId": "evt_01J001",
+      "occurredAt": "2026-02-08T10:00:00Z",
+      "traceId": "trace-abc-001",
+      "projectId": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+      "testRunId": "f0fd8b3e-bf22-4c18-aa3c-f7292d3e1101",
+      "testCaseId": "9d343850-12a1-4bcd-859f-3db88a3f2201",
+      "userId": "01138b70-8761-4a67-b9a0-717e2f4f3301",
+      "endpoint": "/api/users/{id}",
+      "httpMethod": "GET",
+      "expectedStatus": 200,
+      "actualStatus": 500,
+      "assertionErrors": [
+        "Expected status 200 but got 500",
+        "Response schema mismatch: field 'email' is missing"
+      ],
+      "schemaVersion": "v1"
+    },
+    "resultEventSample": {
+      "eventId": "evt_01J002",
+      "traceId": "trace-abc-001",
+      "testRunId": "f0fd8b3e-bf22-4c18-aa3c-f7292d3e1101",
+      "testCaseId": "9d343850-12a1-4bcd-859f-3db88a3f2201",
+      "interactionId": "eaf034f8-2487-487d-8f6c-833e8704a441",
+      "cacheHit": false,
+      "provider": "OpenAI",
+      "model": "gpt-4.1-mini",
+      "latencyMs": 2140,
+      "tokensUsed": 882,
+      "summaryVi": "API tra ve loi 500 vi du lieu dau ra khong dung schema du kien.",
+      "detailsEn": "Most likely a server-side mapping issue where required output field 'email' is not populated.",
+      "schemaVersion": "v1"
+    }
+  }
+}

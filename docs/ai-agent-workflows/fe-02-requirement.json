@@ -1,0 +1,247 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-requirement",
+  "requirement": {
+    "id": "FE-02",
+    "title": "Upload & Manage API Documentation Inputs",
+    "goal": "Cho phép người dùng tạo project, upload file API spec (OpenAPI/Postman), quản lý version và kích hoạt spec để phục vụ các bước tạo test case phía sau.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "Đây là điểm vào bắt buộc của toàn bộ luồng testing — không có API doc thì không thể tạo test.",
+      "Entity đã có sẵn đầy đủ trong module ApiDocumentation (9 entities, 8 enums).",
+      "Module Storage đã implemented hoàn chỉnh, có thể sử dụng lưu file upload.",
+      "Cần xây dựng CQRS layer (Commands/Queries), Controllers, DTOs, Authorization, Outbox pattern giống Subscription module."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-02-01",
+      "title": "Project CRUD — Tạo, xem, sửa, archive project",
+      "file": "fe-02-01-requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-02-02",
+      "title": "API Specification Upload & Version Management",
+      "file": "fe-02-02-requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "CRUD project (tạo, xem, sửa, archive/unarchive).",
+      "Upload file OpenAPI (JSON/YAML) hoặc Postman Collection (JSON).",
+      "Lưu file qua Storage module (FileEntry cross-reference).",
+      "Tạo ApiSpecification record với SourceType và ParseStatus=Pending.",
+      "Quản lý nhiều version spec trong một project.",
+      "Kích hoạt (activate) 1 version spec cho project.",
+      "Outbox pattern cho audit log và integration events.",
+      "Authorization theo permission-based policy."
+    ],
+    "outOfScope": [
+      "Parse nội dung file spec (FE-03 — Parse & Normalize).",
+      "Manual entry mode (FE-11).",
+      "cURL import (FE-13).",
+      "Path-parameter templating (FE-12).",
+      "Test case generation từ parsed endpoints (FE-05, FE-06)."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "skeleton-only",
+        "hasEntities": true,
+        "hasControllers": false,
+        "hasCommands": false,
+        "hasQueries": false
+      },
+      {
+        "name": "ClassifiedAds.Modules.Storage",
+        "status": "fully-implemented",
+        "usage": "Lưu file upload (OpenAPI/Postman) và trả về FileEntry.Id"
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "fully-implemented",
+        "usage": "ICurrentUser để lấy UserId cho OwnerId"
+      },
+      {
+        "name": "ClassifiedAds.Contracts.AuditLog",
+        "status": "fully-implemented",
+        "usage": "IAuditLogService để forward audit log entries"
+      }
+    ],
+    "infrastructure": {
+      "database": "PostgreSQL (schema: apidoc)",
+      "messageBroker": "RabbitMQ (qua Outbox pattern, không cần trực tiếp)",
+      "cache": "Không bắt buộc cho FE-02 (có thể dùng HybridCache cho query listing nếu cần)"
+    }
+  },
+  "existingEntities": {
+    "schema": "apidoc",
+    "entities": [
+      "Project",
+      "ApiSpecification",
+      "ApiEndpoint",
+      "EndpointParameter",
+      "EndpointResponse",
+      "EndpointSecurityReq",
+      "SecurityScheme",
+      "AuditLogEntry",
+      "OutboxMessage"
+    ],
+    "enums": [
+      "ProjectStatus (Active, Archived)",
+      "SourceType (OpenAPI, Postman, Manual, cURL)",
+      "ParseStatus (Pending, Success, Failed)",
+      "HttpMethod (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)",
+      "ParameterLocation (Path, Query, Header, Body, Cookie)",
+      "SecurityType (Bearer, ApiKey, OAuth2, Basic, OpenIdConnect)",
+      "SchemeType (Http, ApiKey, OAuth2, OpenIdConnect)",
+      "ApiKeyLocation (Header, Query, Cookie)"
+    ]
+  },
+  "architecturePatterns": {
+    "referenceModule": "ClassifiedAds.Modules.Subscription",
+    "patterns": [
+      {
+        "pattern": "CQRS",
+        "description": "Command và Query tách biệt. Command + Handler cùng file. Query + Handler cùng file.",
+        "interfaces": [
+          "ICommand",
+          "ICommandHandler<TCommand>",
+          "IQuery<TResult>",
+          "IQueryHandler<TQuery, TResult>"
+        ],
+        "dispatcher": "Dispatcher class resolve handler qua DI, hỗ trợ decorator pipeline."
+      },
+      {
+        "pattern": "Outbox",
+        "description": "Domain event handler tạo OutboxMessage. Background worker (PublishEventWorker) poll và publish.",
+        "flow": "CommandHandler → CrudService → SaveChanges → DomainEvent → EventHandler → OutboxMessage + AuditLog → SaveChanges",
+        "components": [
+          "OutboxMessage entity",
+          "OutboxMessageFactory",
+          "EventTypeConstants",
+          "IOutboxMessagePublisher",
+          "PublishEventWorker"
+        ]
+      },
+      {
+        "pattern": "Transaction",
+        "description": "Dùng UnitOfWork.ExecuteInTransactionAsync() cho multi-entity operations. CrudService dùng implicit transaction cho single entity.",
+        "interface": "IUnitOfWork (SaveChangesAsync, ExecuteInTransactionAsync, BeginTransaction, Commit, Rollback)"
+      },
+      {
+        "pattern": "DomainEvents",
+        "description": "EntityCreatedEvent<T>, EntityUpdatedEvent<T>, EntityDeletedEvent<T> raised by CrudService AFTER SaveChanges.",
+        "handlers": "IDomainEventHandler<T> — tạo AuditLogEntry + OutboxMessage trong handler."
+      },
+      {
+        "pattern": "Authorization",
+        "description": "Permission constants (Permission:ActionName). CustomAuthorizationPolicyProvider resolve policy từ string. [Authorize(Permissions.X)] trên action.",
+        "file": "Authorization/Permissions.cs"
+      },
+      {
+        "pattern": "Validation",
+        "description": "Manual validation trong CommandHandler, throw ValidationException hoặc NotFoundException.",
+        "exceptionTypes": [
+          "ValidationException",
+          "NotFoundException"
+        ]
+      },
+      {
+        "pattern": "Decorators",
+        "description": "[AuditLog] và [DatabaseRetry(retryTimes)] attributes trên handlers.",
+        "available": [
+          "AuditLogCommandDecorator",
+          "DatabaseRetryCommandDecorator"
+        ]
+      }
+    ]
+  },
+  "namingConventions": {
+    "command": "{Verb}{Noun}Command (VD: AddUpdateProjectCommand)",
+    "commandHandler": "{CommandName}Handler (VD: AddUpdateProjectCommandHandler)",
+    "query": "Get{Noun}Query (VD: GetProjectsQuery)",
+    "queryHandler": "{QueryName}Handler (VD: GetProjectsQueryHandler)",
+    "domainEventHandler": "{Entity}{Action}EventHandler (VD: ProjectCreatedEventHandler)",
+    "outboxPublisher": "{Scope}OutboxMessagePublisher (VD: ProjectOutboxMessagePublisher)",
+    "permission": "Permission:{Action} (VD: Permission:GetProjects)",
+    "eventTypeConstant": "UPPER_SNAKE_CASE (VD: PROJECT_CREATED)",
+    "controller": "{Entity}Controller (VD: ProjectsController)",
+    "dto": "{Entity}Model (VD: ProjectModel)",
+    "fileLayout": "Command + Handler trong cùng 1 file .cs"
+  },
+  "nonFunctionalTargets": {
+    "fileUpload": {
+      "maxFileSizeMB": 10,
+      "allowedExtensions": [
+        ".json",
+        ".yaml",
+        ".yml"
+      ],
+      "allowedMimeTypes": [
+        "application/json",
+        "application/x-yaml",
+        "text/yaml",
+        "application/yaml"
+      ]
+    },
+    "pagination": {
+      "defaultPageSize": 20,
+      "maxPageSize": 100
+    },
+    "performance": {
+      "listProjectsP95Ms": 200,
+      "uploadSpecP95Ms": 2000
+    }
+  },
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "projectId",
+        "userId",
+        "action"
+      ]
+    }
+  },
+  "implementationOrder": [
+    "1. Authorization/Permissions.cs — khai báo permission constants.",
+    "2. Constants/EventTypeConstants.cs — khai báo outbox event types.",
+    "3. DTOs/Models — ProjectModel, ApiSpecificationModel, CreateUpdateProjectModel, UploadSpecificationModel.",
+    "4. Commands — AddUpdateProjectCommand, DeleteProjectCommand, UploadApiSpecificationCommand, ActivateSpecificationCommand.",
+    "5. Queries — GetProjectsQuery, GetProjectQuery, GetSpecificationsQuery, GetSpecificationQuery.",
+    "6. EventHandlers — ProjectCreatedEventHandler, ProjectUpdatedEventHandler, ProjectDeletedEventHandler, SpecCreatedEventHandler.",
+    "7. Outbox — OutboxMessageFactory, ProjectOutboxMessagePublisher, SpecOutboxMessagePublisher, AuditLogEntryOutboxMessagePublisher.",
+    "8. HostedServices — PublishEventWorker.",
+    "9. Controllers — ProjectsController, SpecificationsController.",
+    "10. ServiceCollectionExtensions — register tất cả services, hosted services.",
+    "11. Unit Tests."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: User có thể tạo project mới với name, description, baseUrl. Project được gán OwnerId = current user.",
+    "AC-02: User có thể xem danh sách projects của mình (có pagination, filter theo status).",
+    "AC-03: User có thể cập nhật project (name, description, baseUrl).",
+    "AC-04: User có thể archive/unarchive project (thay đổi ProjectStatus).",
+    "AC-05: User có thể upload file OpenAPI (.json/.yaml) hoặc Postman (.json) cho project.",
+    "AC-06: File upload được lưu qua Storage module, ApiSpecification record được tạo với ParseStatus=Pending.",
+    "AC-07: User có thể xem danh sách specifications của 1 project.",
+    "AC-08: User có thể activate 1 specification (set Project.ActiveSpecId).",
+    "AC-09: Mọi thao tác CRUD đều tạo audit log entry và outbox message.",
+    "AC-10: API được bảo vệ bằng permission-based authorization.",
+    "AC-11: Validation input đầy đủ (tên project bắt buộc, file size < 10MB, extension hợp lệ)."
+  ]
+}

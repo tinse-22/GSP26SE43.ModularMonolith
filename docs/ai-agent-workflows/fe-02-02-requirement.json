@@ -1,0 +1,752 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-02-requirement",
+  "requirement": {
+    "id": "FE-02-02",
+    "parentId": "FE-02",
+    "title": "API Specification Upload & Version Management",
+    "goal": "Cho phép user upload file OpenAPI/Postman vào project, quản lý nhiều version spec, kích hoạt version làm spec chính của project.",
+    "priority": "P0",
+    "implementationOrder": 2,
+    "status": "planned",
+    "rationale": [
+      "ApiSpecification là input để parser (FE-03) chuyển thành ApiEndpoint.",
+      "Cần lưu file qua Storage module (FileEntry) và tạo ApiSpecification record với ParseStatus=Pending.",
+      "Quản lý version cho phép user upload nhiều lần và so sánh.",
+      "Activate mechanism (Project.ActiveSpecId) quyết định spec nào được dùng cho test generation."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Upload file OpenAPI (.json/.yaml/.yml) hoặc Postman Collection (.json) cho 1 project.",
+      "Lưu file qua Storage module — nhận lại FileEntry.Id, gán vào ApiSpecification.OriginalFileId.",
+      "Tạo ApiSpecification record với SourceType, ParseStatus=Pending.",
+      "Xem danh sách specifications của 1 project.",
+      "Xem chi tiết 1 specification.",
+      "Activate 1 specification (set Project.ActiveSpecId) trong transaction.",
+      "Deactivate specification (set Project.ActiveSpecId = null).",
+      "Delete specification (và file liên quan).",
+      "Outbox events cho audit log và integration."
+    ],
+    "outOfScope": [
+      "Parse nội dung file thành ApiEndpoint, EndpointParameter, etc. (FE-03).",
+      "Validate schema của file OpenAPI/Postman (FE-03).",
+      "Manual entry mode (FE-11) — tạo spec bằng tay, không upload file.",
+      "cURL import (FE-13).",
+      "Diff/compare giữa 2 versions."
+    ]
+  },
+  "entityReference": {
+    "primary": {
+      "name": "ApiSpecification",
+      "table": "apidoc.ApiSpecifications",
+      "baseClass": "Entity<Guid>, IAggregateRoot",
+      "properties": [
+        {
+          "name": "Id",
+          "type": "Guid",
+          "dbConfig": "PK, gen_random_uuid()"
+        },
+        {
+          "name": "ProjectId",
+          "type": "Guid",
+          "dbConfig": "FK -> Project, cascade delete, indexed"
+        },
+        {
+          "name": "OriginalFileId",
+          "type": "Guid?",
+          "dbConfig": "references Storage.FileEntry (no FK constraint)"
+        },
+        {
+          "name": "Name",
+          "type": "string",
+          "dbConfig": "maxlen 200, required"
+        },
+        {
+          "name": "SourceType",
+          "type": "SourceType",
+          "dbConfig": "stored as string, maxlen 20, required"
+        },
+        {
+          "name": "Version",
+          "type": "string",
+          "dbConfig": "maxlen 50"
+        },
+        {
+          "name": "IsActive",
+          "type": "bool",
+          "dbConfig": "indexed"
+        },
+        {
+          "name": "ParsedAt",
+          "type": "DateTimeOffset?"
+        },
+        {
+          "name": "ParseStatus",
+          "type": "ParseStatus",
+          "dbConfig": "stored as string, maxlen 20, required"
+        },
+        {
+          "name": "ParseErrors",
+          "type": "string",
+          "dbConfig": "jsonb"
+        },
+        {
+          "name": "RowVersion",
+          "type": "byte[]"
+        },
+        {
+          "name": "CreatedDateTime",
+          "type": "DateTimeOffset"
+        },
+        {
+          "name": "UpdatedDateTime",
+          "type": "DateTimeOffset?"
+        }
+      ],
+      "navigations": [
+        {
+          "name": "Project",
+          "type": "Project"
+        },
+        {
+          "name": "Endpoints",
+          "type": "ICollection<ApiEndpoint>"
+        },
+        {
+          "name": "SecuritySchemes",
+          "type": "ICollection<SecurityScheme>"
+        }
+      ]
+    },
+    "crossModuleReference": {
+      "storagFileEntry": {
+        "module": "ClassifiedAds.Modules.Storage",
+        "entity": "FileEntry",
+        "linkedBy": "ApiSpecification.OriginalFileId = FileEntry.Id",
+        "constraint": "No database FK — cross-module by convention GUID.",
+        "fileCategory": "FileCategory.ApiSpec (enum value = 0)",
+        "uploadPattern": "Dùng Storage module API hoặc service để upload file và nhận FileEntry.Id."
+      }
+    },
+    "enums": [
+      {
+        "name": "SourceType",
+        "values": [
+          "OpenAPI = 0",
+          "Postman = 1",
+          "Manual = 2",
+          "cURL = 3"
+        ]
+      },
+      {
+        "name": "ParseStatus",
+        "values": [
+          "Pending = 0",
+          "Success = 1",
+          "Failed = 2"
+        ]
+      }
+    ]
+  },
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications",
+      "permission": "Permission:GetSpecifications",
+      "description": "Lấy danh sách specifications của 1 project.",
+      "queryParams": [
+        {
+          "name": "parseStatus",
+          "type": "ParseStatus?",
+          "description": "Filter theo Pending/Success/Failed"
+        },
+        {
+          "name": "sourceType",
+          "type": "SourceType?",
+          "description": "Filter theo OpenAPI/Postman/Manual/cURL"
+        }
+      ],
+      "response": {
+        "200": "List<SpecificationModel>",
+        "404": "NotFoundException (project not found)"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:GetSpecifications",
+      "description": "Lấy chi tiết 1 specification (bao gồm endpoint count, parse info).",
+      "response": {
+        "200": "SpecificationDetailModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/upload",
+      "permission": "Permission:AddSpecification",
+      "description": "Upload file API spec. Dùng multipart/form-data.",
+      "requestBody": {
+        "contentType": "multipart/form-data",
+        "fields": [
+          {
+            "name": "file",
+            "type": "IFormFile",
+            "required": true,
+            "description": "File OpenAPI/Postman"
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "required": true,
+            "description": "Tên spec (VD: 'OpenAPI v3.1')"
+          },
+          {
+            "name": "sourceType",
+            "type": "SourceType",
+            "required": true,
+            "description": "OpenAPI hoặc Postman"
+          },
+          {
+            "name": "version",
+            "type": "string?",
+            "required": false,
+            "description": "Version label (VD: 'v2.1.0')"
+          },
+          {
+            "name": "autoActivate",
+            "type": "bool",
+            "default": false,
+            "description": "Tự động activate sau khi upload"
+          }
+        ]
+      },
+      "response": {
+        "201": "SpecificationModel (Location header)",
+        "400": "ValidationException (file size, extension, required fields)",
+        "404": "NotFoundException (project not found)"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/activate",
+      "permission": "Permission:ActivateSpecification",
+      "description": "Activate specification — set Project.ActiveSpecId = specId. Deactivate spec cũ nếu có.",
+      "response": {
+        "200": "SpecificationModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+      "permission": "Permission:ActivateSpecification",
+      "description": "Deactivate specification — set Project.ActiveSpecId = null (chỉ khi ActiveSpecId == specId).",
+      "response": {
+        "200": "SpecificationModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:DeleteSpecification",
+      "description": "Delete specification. Nếu đang active thì deactivate trước. Cascade delete endpoints.",
+      "response": {
+        "204": "No Content",
+        "404": "NotFoundException"
+      }
+    }
+  ],
+  "commands": [
+    {
+      "name": "UploadApiSpecificationCommand",
+      "file": "Commands/UploadApiSpecificationCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        },
+        {
+          "name": "File",
+          "type": "IFormFile"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "SourceType",
+          "type": "SourceType"
+        },
+        {
+          "name": "Version",
+          "type": "string?"
+        },
+        {
+          "name": "AutoActivate",
+          "type": "bool"
+        },
+        {
+          "name": "SavedSpecId",
+          "type": "Guid",
+          "description": "Output"
+        }
+      ],
+      "handlerName": "UploadApiSpecificationCommandHandler",
+      "handlerLogic": [
+        "1. Validate input:",
+        "   - File != null → ValidationException('File là bắt buộc.')",
+        "   - File.Length > 10MB → ValidationException('Kích thước file không được vượt quá 10MB.')",
+        "   - Extension not in [.json, .yaml, .yml] → ValidationException('Chỉ hỗ trợ file .json, .yaml, .yml.')",
+        "   - Name is empty → ValidationException('Tên specification là bắt buộc.')",
+        "   - SourceType must be OpenAPI or Postman → ValidationException('Loại nguồn không hợp lệ.')",
+        "2. Load project, verify exists and OwnerId == CurrentUserId.",
+        "3. Upload file to Storage module:",
+        "   - Option A: Dùng ICrudService<FileEntry> trực tiếp (nếu project reference cho phép).",
+        "   - Option B: Dùng IFileStorageService (nếu có) để upload và nhận FileEntry.Id.",
+        "   - Set FileCategory = ApiSpec, OwnerId = CurrentUserId.",
+        "4. Wrap trong ExecuteInTransactionAsync:",
+        "   a. Tạo ApiSpecification { ProjectId, OriginalFileId = fileEntry.Id, Name, SourceType, Version, ParseStatus = Pending, IsActive = false }.",
+        "   b. await _specService.AddAsync(spec, ct).",
+        "   c. If AutoActivate: set project.ActiveSpecId = spec.Id, spec.IsActive = true, update project.",
+        "   d. SaveChangesAsync().",
+        "5. SavedSpecId = spec.Id."
+      ],
+      "transactionBoundary": "ExecuteInTransactionAsync bao gồm: tạo spec + activate project (nếu autoActivate).",
+      "crossModuleCall": {
+        "target": "Storage module",
+        "method": "Upload file và nhận FileEntry.Id",
+        "note": "File upload TRƯỚC transaction. Nếu transaction fail, file đã lưu nhưng spec không có — acceptable (orphan file cần cleanup job)."
+      }
+    },
+    {
+      "name": "ActivateSpecificationCommand",
+      "file": "Commands/ActivateSpecificationCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "SpecId",
+          "type": "Guid"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        },
+        {
+          "name": "Activate",
+          "type": "bool",
+          "description": "true = activate, false = deactivate"
+        }
+      ],
+      "handlerName": "ActivateSpecificationCommandHandler",
+      "handlerLogic": [
+        "1. Load project, verify exists and OwnerId == CurrentUserId.",
+        "2. Load specification, verify exists and belongs to project.",
+        "3. Wrap trong ExecuteInTransactionAsync:",
+        "   a. If Activate:",
+        "      - Deactivate spec cũ: nếu project.ActiveSpecId != null và != specId, set oldSpec.IsActive = false.",
+        "      - Set spec.IsActive = true.",
+        "      - Set project.ActiveSpecId = spec.Id.",
+        "   b. If Deactivate:",
+        "      - Verify project.ActiveSpecId == specId.",
+        "      - Set spec.IsActive = false.",
+        "      - Set project.ActiveSpecId = null.",
+        "   c. Update spec và project.",
+        "   d. SaveChangesAsync()."
+      ],
+      "transactionBoundary": "ExecuteInTransactionAsync bao gồm: update old spec + update new spec + update project."
+    },
+    {
+      "name": "DeleteSpecificationCommand",
+      "file": "Commands/DeleteSpecificationCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "SpecId",
+          "type": "Guid"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        }
+      ],
+      "handlerName": "DeleteSpecificationCommandHandler",
+      "handlerLogic": [
+        "1. Load project, verify OwnerId.",
+        "2. Load specification.",
+        "3. Wrap trong ExecuteInTransactionAsync:",
+        "   a. If project.ActiveSpecId == specId: set project.ActiveSpecId = null, update project.",
+        "   b. Delete specification (cascade delete endpoints, params, responses, security).",
+        "   c. SaveChangesAsync().",
+        "4. (Optional) Cleanup file in Storage — có thể làm async bằng outbox event."
+      ],
+      "transactionBoundary": "Deactivate + Delete trong 1 transaction."
+    }
+  ],
+  "queries": [
+    {
+      "name": "GetSpecificationsQuery",
+      "file": "Queries/GetSpecificationsQuery.cs",
+      "interface": "IQuery<List<SpecificationModel>>",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "OwnerId",
+          "type": "Guid"
+        },
+        {
+          "name": "ParseStatus",
+          "type": "ParseStatus?"
+        },
+        {
+          "name": "SourceType",
+          "type": "SourceType?"
+        }
+      ],
+      "handlerLogic": [
+        "1. Verify project exists and OwnerId match.",
+        "2. var query = _specRepository.GetQueryableSet().Where(s => s.ProjectId == query.ProjectId).",
+        "3. Apply filters (ParseStatus, SourceType).",
+        "4. Order by CreatedDateTime descending.",
+        "5. Map to List<SpecificationModel>."
+      ]
+    },
+    {
+      "name": "GetSpecificationQuery",
+      "file": "Queries/GetSpecificationQuery.cs",
+      "interface": "IQuery<SpecificationDetailModel>",
+      "properties": [
+        {
+          "name": "SpecId",
+          "type": "Guid"
+        },
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "OwnerId",
+          "type": "Guid"
+        }
+      ],
+      "handlerLogic": [
+        "1. Verify project exists and OwnerId match.",
+        "2. Load specification. Throw NotFoundException if null.",
+        "3. Count endpoints: _endpointRepository.GetQueryableSet().Where(e => e.ApiSpecId == specId).CountAsync().",
+        "4. Map to SpecificationDetailModel { ...spec props, EndpointCount }."
+      ]
+    }
+  ],
+  "dtos": [
+    {
+      "name": "SpecificationModel",
+      "file": "DTOs/SpecificationModel.cs",
+      "properties": [
+        {
+          "name": "Id",
+          "type": "Guid"
+        },
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "SourceType",
+          "type": "string"
+        },
+        {
+          "name": "Version",
+          "type": "string?"
+        },
+        {
+          "name": "IsActive",
+          "type": "bool"
+        },
+        {
+          "name": "ParseStatus",
+          "type": "string"
+        },
+        {
+          "name": "ParsedAt",
+          "type": "DateTimeOffset?"
+        },
+        {
+          "name": "OriginalFileId",
+          "type": "Guid?"
+        },
+        {
+          "name": "CreatedDateTime",
+          "type": "DateTimeOffset"
+        },
+        {
+          "name": "UpdatedDateTime",
+          "type": "DateTimeOffset?"
+        }
+      ]
+    },
+    {
+      "name": "SpecificationDetailModel",
+      "file": "DTOs/SpecificationDetailModel.cs",
+      "extends": "SpecificationModel",
+      "additionalProperties": [
+        {
+          "name": "EndpointCount",
+          "type": "int"
+        },
+        {
+          "name": "ParseErrors",
+          "type": "List<string>?"
+        },
+        {
+          "name": "OriginalFileName",
+          "type": "string?"
+        }
+      ]
+    },
+    {
+      "name": "SpecSummaryModel",
+      "file": "DTOs/SpecSummaryModel.cs",
+      "description": "Dùng trong ProjectDetailModel để hiển thị summary của active spec.",
+      "properties": [
+        {
+          "name": "Id",
+          "type": "Guid"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "SourceType",
+          "type": "string"
+        },
+        {
+          "name": "Version",
+          "type": "string?"
+        },
+        {
+          "name": "ParseStatus",
+          "type": "string"
+        },
+        {
+          "name": "EndpointCount",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "UploadSpecificationModel",
+      "file": "DTOs/UploadSpecificationModel.cs",
+      "description": "Bind từ form-data trong controller (không dùng cho command trực tiếp).",
+      "properties": [
+        {
+          "name": "File",
+          "type": "IFormFile"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "SourceType",
+          "type": "SourceType"
+        },
+        {
+          "name": "Version",
+          "type": "string?"
+        },
+        {
+          "name": "AutoActivate",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    }
+  ],
+  "eventHandlers": [
+    {
+      "name": "SpecCreatedEventHandler",
+      "file": "EventHandlers/SpecCreatedEventHandler.cs",
+      "handles": "EntityCreatedEvent<ApiSpecification>",
+      "logic": [
+        "1. Tạo AuditLogEntry (Action = 'SPEC_UPLOADED', ObjectId = spec.Id).",
+        "2. Tạo OutboxMessage (EventType = 'AUDIT_LOG_ENTRY_CREATED').",
+        "3. Tạo OutboxMessage (EventType = 'SPEC_UPLOADED').",
+        "4. SaveChangesAsync()."
+      ]
+    },
+    {
+      "name": "SpecDeletedEventHandler",
+      "file": "EventHandlers/SpecDeletedEventHandler.cs",
+      "handles": "EntityDeletedEvent<ApiSpecification>",
+      "logic": "Tương tự, EventType = 'SPEC_DELETED'."
+    }
+  ],
+  "constants": {
+    "additionalEventTypes": [
+      "SPEC_UPLOADED",
+      "SPEC_ACTIVATED",
+      "SPEC_DEACTIVATED",
+      "SPEC_DELETED"
+    ]
+  },
+  "outbox": {
+    "additionalPublisher": {
+      "name": "SpecOutboxMessagePublisher",
+      "file": "OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs",
+      "handles": [
+        "SPEC_UPLOADED",
+        "SPEC_ACTIVATED",
+        "SPEC_DEACTIVATED",
+        "SPEC_DELETED"
+      ],
+      "futureUse": "Sẽ trigger parsing job (FE-03) khi SPEC_UPLOADED event được publish."
+    }
+  },
+  "controllerContract": {
+    "name": "SpecificationsController",
+    "file": "Controllers/SpecificationsController.cs",
+    "route": "api/projects/{projectId}/specifications",
+    "attributes": [
+      "[Authorize]",
+      "[ApiController]",
+      "[Route(\"api/projects/{projectId}/specifications\")]"
+    ],
+    "dependencies": [
+      "Dispatcher",
+      "ICurrentUser",
+      "ILogger<SpecificationsController>"
+    ],
+    "actions": [
+      {
+        "method": "Get",
+        "httpVerb": "HttpGet",
+        "authorize": "Permissions.GetSpecifications",
+        "dispatches": "GetSpecificationsQuery { ProjectId, OwnerId = _currentUser.UserId, ParseStatus, SourceType }"
+      },
+      {
+        "method": "GetById",
+        "httpVerb": "HttpGet(\"{specId}\")",
+        "authorize": "Permissions.GetSpecifications",
+        "dispatches": "GetSpecificationQuery { SpecId, ProjectId, OwnerId }"
+      },
+      {
+        "method": "Upload",
+        "httpVerb": "HttpPost(\"upload\")",
+        "authorize": "Permissions.AddSpecification",
+        "consumes": "multipart/form-data",
+        "requestSizeLimit": "10MB",
+        "dispatches": "UploadApiSpecificationCommand { ProjectId, CurrentUserId, File, Name, SourceType, Version, AutoActivate }"
+      },
+      {
+        "method": "Activate",
+        "httpVerb": "HttpPut(\"{specId}/activate\")",
+        "authorize": "Permissions.ActivateSpecification",
+        "dispatches": "ActivateSpecificationCommand { ProjectId, SpecId, CurrentUserId, Activate = true }"
+      },
+      {
+        "method": "Deactivate",
+        "httpVerb": "HttpPut(\"{specId}/deactivate\")",
+        "authorize": "Permissions.ActivateSpecification",
+        "dispatches": "ActivateSpecificationCommand { ProjectId, SpecId, CurrentUserId, Activate = false }"
+      },
+      {
+        "method": "Delete",
+        "httpVerb": "HttpDelete(\"{specId}\")",
+        "authorize": "Permissions.DeleteSpecification",
+        "dispatches": "DeleteSpecificationCommand { ProjectId, SpecId, CurrentUserId }"
+      }
+    ]
+  },
+  "fileUploadGuidelines": {
+    "maxFileSizeMB": 10,
+    "allowedExtensions": [
+      ".json",
+      ".yaml",
+      ".yml"
+    ],
+    "allowedMimeTypes": [
+      "application/json",
+      "application/x-yaml",
+      "text/yaml",
+      "application/yaml",
+      "text/x-yaml",
+      "application/octet-stream"
+    ],
+    "storageIntegration": {
+      "step1": "Read IFormFile into byte array or stream.",
+      "step2": "Create FileEntry via Storage module service/repository.",
+      "step3": "Save file to disk/cloud via IFileStorageManager (if available).",
+      "step4": "Use returned FileEntry.Id as ApiSpecification.OriginalFileId.",
+      "fileCategory": "FileCategory.ApiSpec",
+      "note": "Check Storage module's existing upload pattern (FileEntriesController) for exact implementation."
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST upload với file .json (OpenAPI) tạo thành công ApiSpecification với ParseStatus=Pending.",
+    "AC-02: POST upload với file .yaml (OpenAPI) tạo thành công.",
+    "AC-03: POST upload với file .json (Postman) tạo thành công với SourceType=Postman.",
+    "AC-04: Upload file > 10MB bị reject với ValidationException.",
+    "AC-05: Upload file .exe/.txt bị reject với ValidationException.",
+    "AC-06: File được lưu thành công trong Storage module, OriginalFileId được set.",
+    "AC-07: GET specifications trả về danh sách specs của project, có filter.",
+    "AC-08: PUT activate set Project.ActiveSpecId và spec.IsActive = true.",
+    "AC-09: PUT activate deactivate spec cũ trước khi activate spec mới (trong transaction).",
+    "AC-10: DELETE specification cascade delete endpoints và deactivate nếu đang active.",
+    "AC-11: Mọi thao tác tạo audit log và outbox message.",
+    "AC-12: AutoActivate=true khi upload sẽ tự động activate spec mới."
+  ],
+  "samples": {
+    "uploadRequest": {
+      "method": "POST",
+      "url": "/api/projects/4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011/specifications/upload",
+      "contentType": "multipart/form-data",
+      "fields": {
+        "file": "(binary) openapi.json",
+        "name": "E-Commerce API Spec v3.1",
+        "sourceType": "OpenAPI",
+        "version": "v3.1.0",
+        "autoActivate": true
+      }
+    },
+    "uploadResponse": {
+      "status": 201,
+      "location": "/api/projects/4b99cfd1.../specifications/abc123...",
+      "body": {
+        "id": "abc123-spec-id",
+        "projectId": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+        "name": "E-Commerce API Spec v3.1",
+        "sourceType": "OpenAPI",
+        "version": "v3.1.0",
+        "isActive": true,
+        "parseStatus": "Pending",
+        "parsedAt": null,
+        "originalFileId": "file-entry-id-from-storage",
+        "createdDateTime": "2026-02-08T10:05:00+07:00"
+      }
+    }
+  }
+}
