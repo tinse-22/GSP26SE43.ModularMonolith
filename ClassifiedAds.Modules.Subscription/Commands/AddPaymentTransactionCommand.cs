@@ -87,10 +87,6 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
 
         var plan = await _planRepository.FirstOrDefaultAsync(
             _planRepository.GetQueryableSet().Where(x => x.Id == subscription.PlanId));
-        if (plan == null)
-        {
-            throw new NotFoundException($"Plan '{subscription.PlanId}' was not found for subscription '{command.SubscriptionId}'.");
-        }
 
         var amount = ResolveAmount(subscription, plan, command.Model.Amount);
         if (amount <= 0)
@@ -104,7 +100,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             UserId = subscription.UserId,
             SubscriptionId = subscription.Id,
             Amount = amount,
-            Currency = ResolveCurrency(plan, command.Model.Currency),
+            Currency = ResolveCurrency(subscription, plan, command.Model.Currency),
             Status = command.Model.Status,
             PaymentMethod = command.Model.PaymentMethod?.Trim(),
             Provider = NormalizeProvider(command.Model.Provider),
@@ -152,6 +148,12 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         SubscriptionPlan plan,
         decimal? requestedAmount)
     {
+        var snapshotAmount = GetSnapshotAmount(subscription);
+        if (snapshotAmount.HasValue && snapshotAmount.Value > 0)
+        {
+            return snapshotAmount.Value;
+        }
+
         var planAmount = GetPlanAmount(subscription, plan);
         if (planAmount.HasValue && planAmount.Value > 0)
         {
@@ -166,8 +168,33 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         return 0;
     }
 
+    private static decimal? GetSnapshotAmount(UserSubscription subscription)
+    {
+        if (subscription == null)
+        {
+            return null;
+        }
+
+        if (subscription.BillingCycle == BillingCycle.Yearly)
+        {
+            return subscription.SnapshotPriceYearly ?? subscription.SnapshotPriceMonthly;
+        }
+
+        if (subscription.BillingCycle == BillingCycle.Monthly)
+        {
+            return subscription.SnapshotPriceMonthly ?? subscription.SnapshotPriceYearly;
+        }
+
+        return subscription.SnapshotPriceMonthly ?? subscription.SnapshotPriceYearly;
+    }
+
     private static decimal? GetPlanAmount(UserSubscription subscription, SubscriptionPlan plan)
     {
+        if (plan == null)
+        {
+            return null;
+        }
+
         if (subscription.BillingCycle == BillingCycle.Yearly)
         {
             return plan.PriceYearly ?? plan.PriceMonthly;
@@ -181,19 +208,37 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         return plan.PriceMonthly ?? plan.PriceYearly;
     }
 
-    private static string ResolveCurrency(SubscriptionPlan plan, string requestedCurrency)
+    private static string ResolveCurrency(UserSubscription subscription, SubscriptionPlan plan, string requestedCurrency)
     {
-        if (!string.IsNullOrWhiteSpace(plan.Currency))
+        var snapshotCurrency = NormalizeCurrency(subscription?.SnapshotCurrency);
+        if (!string.IsNullOrWhiteSpace(snapshotCurrency))
         {
-            return plan.Currency.Trim().ToUpperInvariant();
+            return snapshotCurrency;
         }
 
-        if (!string.IsNullOrWhiteSpace(requestedCurrency))
+        var planCurrency = NormalizeCurrency(plan?.Currency);
+        if (!string.IsNullOrWhiteSpace(planCurrency))
         {
-            return requestedCurrency.Trim().ToUpperInvariant();
+            return planCurrency;
+        }
+
+        var requested = NormalizeCurrency(requestedCurrency);
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            return requested;
         }
 
         return "USD";
+    }
+
+    private static string NormalizeCurrency(string currency)
+    {
+        if (!string.IsNullOrWhiteSpace(currency))
+        {
+            return currency.Trim().ToUpperInvariant();
+        }
+
+        return null;
     }
 
     private static string NormalizeProvider(string provider)

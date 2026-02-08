@@ -99,6 +99,12 @@ public class AddUpdateSubscriptionCommandHandler : ICommandHandler<AddUpdateSubs
         existingSubscription.ExternalCustId = command.Model.ExternalCustId?.Trim();
         existingSubscription.CancelledAt = null;
 
+        // Snapshot plan details at activation time
+        existingSubscription.SnapshotPriceMonthly = targetPlan.PriceMonthly;
+        existingSubscription.SnapshotPriceYearly = targetPlan.PriceYearly;
+        existingSubscription.SnapshotCurrency = targetPlan.Currency;
+        existingSubscription.SnapshotPlanName = targetPlan.DisplayName ?? targetPlan.Name;
+
         ApplyLifecycleFields(existingSubscription, command.Model, utcNow);
 
         var history = new SubscriptionHistory

@@ -1,9 +1,14 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.Identity.DTOs;
+using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Contracts.Notification.DTOs;
+using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using System;
 using System.Collections.Generic;
@@ -24,31 +29,55 @@ public class AddUpdatePlanCommand : ICommand
 
 public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
 {
+    private static readonly SubscriptionStatus[] ActiveStatuses =
+    {
+        SubscriptionStatus.Trial,
+        SubscriptionStatus.Active,
+        SubscriptionStatus.PastDue,
+    };
+
     private readonly ICrudService<SubscriptionPlan> _planService;
     private readonly IRepository<SubscriptionPlan, Guid> _planRepository;
     private readonly IRepository<PlanLimit, Guid> _limitRepository;
+    private readonly IRepository<UserSubscription, Guid> _subscriptionRepository;
+    private readonly IUserService _userService;
+    private readonly IEmailMessageService _emailMessageService;
+    private readonly ILogger<AddUpdatePlanCommandHandler> _logger;
 
     public AddUpdatePlanCommandHandler(
         ICrudService<SubscriptionPlan> planService,
         IRepository<SubscriptionPlan, Guid> planRepository,
-        IRepository<PlanLimit, Guid> limitRepository)
+        IRepository<PlanLimit, Guid> limitRepository,
+        IRepository<UserSubscription, Guid> subscriptionRepository,
+        IUserService userService,
+        IEmailMessageService emailMessageService,
+        ILogger<AddUpdatePlanCommandHandler> logger)
     {
         _planService = planService;
         _planRepository = planRepository;
         _limitRepository = limitRepository;
+        _subscriptionRepository = subscriptionRepository;
+        _userService = userService;
+        _emailMessageService = emailMessageService;
+        _logger = logger;
     }
 
     public async Task HandleAsync(AddUpdatePlanCommand command, CancellationToken cancellationToken = default)
     {
         if (command.Model == null)
         {
-            throw new ValidationException("Dữ liệu gói cước không hợp lệ.");
+            throw new ValidationException("Plan model is required.");
         }
 
         var isCreate = !command.PlanId.HasValue || command.PlanId == Guid.Empty;
         var plan = isCreate
             ? command.Model.ToEntity()
             : await GetExistingPlanAsync(command.PlanId.Value, cancellationToken);
+
+        var oldPricing = isCreate ? null : PlanPricingSnapshot.From(plan);
+        var activeSubscriberUserIds = isCreate
+            ? new List<Guid>()
+            : await GetActiveSubscriberUserIdsAsync(plan.Id, cancellationToken);
 
         if (!isCreate)
         {
@@ -69,10 +98,18 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         }
         catch (DbUpdateException ex) when (IsDuplicatePlanNameException(ex))
         {
-            throw new ValidationException($"Tên gói cước '{command.Model.Name?.Trim()}' đã tồn tại.");
+            throw new ValidationException($"Plan name '{command.Model.Name?.Trim()}' already exists.");
         }
 
         command.SavedPlanId = plan.Id;
+
+        if (!isCreate
+            && oldPricing != null
+            && HasPricingChanged(oldPricing, plan)
+            && activeSubscriberUserIds.Count > 0)
+        {
+            await NotifyActiveSubscribersAboutPriceChangeAsync(plan, oldPricing, activeSubscriberUserIds, cancellationToken);
+        }
     }
 
     private async Task<SubscriptionPlan> GetExistingPlanAsync(Guid planId, CancellationToken cancellationToken)
@@ -82,7 +119,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
 
         if (plan == null)
         {
-            throw new NotFoundException($"Không tìm thấy gói cước với mã '{planId}'.");
+            throw new NotFoundException($"Plan '{planId}' was not found.");
         }
 
         return plan;
@@ -103,10 +140,9 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
     private async Task EnsureNameUniquenessAsync(string name, Guid? excludeId, CancellationToken cancellationToken)
     {
         var normalizedName = name?.Trim().ToLowerInvariant();
-
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
-            throw new ValidationException("Tên gói cước là bắt buộc.");
+            throw new ValidationException("Plan name is required.");
         }
 
         var query = _planRepository.GetQueryableSet()
@@ -118,10 +154,9 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         }
 
         var existing = await _planRepository.FirstOrDefaultAsync(query);
-
         if (existing != null)
         {
-            throw new ValidationException($"Tên gói cước '{name.Trim()}' đã tồn tại.");
+            throw new ValidationException($"Plan name '{name.Trim()}' already exists.");
         }
     }
 
@@ -144,6 +179,114 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         await _limitRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task<List<Guid>> GetActiveSubscriberUserIdsAsync(Guid planId, CancellationToken cancellationToken)
+    {
+        var subscriptions = await _subscriptionRepository.ToListAsync(
+            _subscriptionRepository.GetQueryableSet()
+                .Where(s => s.PlanId == planId && ActiveStatuses.Contains(s.Status)));
+
+        return subscriptions
+            .Select(s => s.UserId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+    }
+
+    private async Task NotifyActiveSubscribersAboutPriceChangeAsync(
+        SubscriptionPlan plan,
+        PlanPricingSnapshot oldPricing,
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var users = await _userService.GetUsersAsync(new UserQueryOptions());
+            var usersToNotify = users
+                .Where(u => userIds.Contains(u.Id) && !string.IsNullOrWhiteSpace(u.Email))
+                .ToList();
+
+            if (usersToNotify.Count == 0)
+            {
+                return;
+            }
+
+            var planName = string.IsNullOrWhiteSpace(plan.DisplayName) ? plan.Name : plan.DisplayName;
+            var subject = $"[ClassifiedAds] Price update notice for {planName}";
+            var body = BuildPriceChangeEmailBody(plan, oldPricing);
+
+            foreach (var user in usersToNotify)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+                    {
+                        From = "noreply@classifiedads.com",
+                        Tos = user.Email,
+                        Subject = subject,
+                        Body = body,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to send plan price update email for plan {PlanId} to user {UserId}.",
+                        plan.Id,
+                        user.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to send plan price update notifications for plan {PlanId}.",
+                plan.Id);
+        }
+    }
+
+    private static string BuildPriceChangeEmailBody(SubscriptionPlan plan, PlanPricingSnapshot oldPricing)
+    {
+        var currency = NormalizeCurrency(plan.Currency) ?? oldPricing.Currency ?? "USD";
+        var planName = string.IsNullOrWhiteSpace(plan.DisplayName) ? plan.Name : plan.DisplayName;
+
+        var oldMonthly = FormatPrice(oldPricing.PriceMonthly, currency);
+        var newMonthly = FormatPrice(plan.PriceMonthly, currency);
+        var oldYearly = FormatPrice(oldPricing.PriceYearly, currency);
+        var newYearly = FormatPrice(plan.PriceYearly, currency);
+
+        return $@"
+<p>Hi,</p>
+<p>We are notifying you that pricing for plan <strong>{planName}</strong> has been updated.</p>
+<p>Monthly: <strong>{oldMonthly}</strong> -> <strong>{newMonthly}</strong></p>
+<p>Yearly: <strong>{oldYearly}</strong> -> <strong>{newYearly}</strong></p>
+<p>Your current active subscription is not changed immediately. The new price may apply from the next billing period, based on your subscription policy.</p>
+<p>Thanks,<br/>ClassifiedAds Team</p>";
+    }
+
+    private static bool HasPricingChanged(PlanPricingSnapshot oldPricing, SubscriptionPlan plan)
+    {
+        return oldPricing.PriceMonthly != plan.PriceMonthly
+            || oldPricing.PriceYearly != plan.PriceYearly
+            || !string.Equals(oldPricing.Currency, NormalizeCurrency(plan.Currency), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatPrice(decimal? price, string currency)
+    {
+        return price.HasValue
+            ? $"{price.Value:0.##} {currency}"
+            : "N/A";
+    }
+
+    private static string NormalizeCurrency(string currency)
+    {
+        return string.IsNullOrWhiteSpace(currency)
+            ? null
+            : currency.Trim().ToUpperInvariant();
+    }
+
     private static void ValidateLimits(List<PlanLimit> limits)
     {
         if (limits == null || limits.Count == 0)
@@ -151,7 +294,6 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             return;
         }
 
-        // Check for duplicate LimitTypes
         var duplicates = limits
             .GroupBy(l => l.LimitType)
             .Where(g => g.Count() > 1)
@@ -161,7 +303,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
         if (duplicates.Count > 0)
         {
             throw new ValidationException(
-                $"Loại giới hạn bị trùng: {string.Join(", ", duplicates)}. Mỗi loại chỉ được khai báo một lần trong một gói.");
+                $"Duplicate limit types detected: {string.Join(", ", duplicates)}. Each type can appear only once per plan.");
         }
 
         foreach (var limit in limits)
@@ -169,7 +311,7 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             if (!limit.IsUnlimited && (!limit.LimitValue.HasValue || limit.LimitValue.Value <= 0))
             {
                 throw new ValidationException(
-                    $"Giá trị giới hạn phải lớn hơn 0 cho loại '{limit.LimitType}' khi không chọn không giới hạn.");
+                    $"Limit value must be greater than zero for '{limit.LimitType}' when IsUnlimited is false.");
             }
 
             if (limit.IsUnlimited)
@@ -186,7 +328,26 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             return false;
         }
 
-        return pgEx.SqlState == PostgresErrorCodes.UniqueViolation &&
-            string.Equals(pgEx.ConstraintName, "IX_SubscriptionPlans_Name", StringComparison.OrdinalIgnoreCase);
+        return pgEx.SqlState == PostgresErrorCodes.UniqueViolation
+            && string.Equals(pgEx.ConstraintName, "IX_SubscriptionPlans_Name", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class PlanPricingSnapshot
+    {
+        public decimal? PriceMonthly { get; init; }
+
+        public decimal? PriceYearly { get; init; }
+
+        public string Currency { get; init; }
+
+        public static PlanPricingSnapshot From(SubscriptionPlan plan)
+        {
+            return new PlanPricingSnapshot
+            {
+                PriceMonthly = plan.PriceMonthly,
+                PriceYearly = plan.PriceYearly,
+                Currency = NormalizeCurrency(plan.Currency),
+            };
+        }
     }
 }
