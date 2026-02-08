@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ClassifiedAds.Modules.Identity.Models;
 
@@ -20,6 +21,7 @@ public class LoginResponseModel
 {
     public string AccessToken { get; set; }
 
+    [JsonIgnore]
     public string RefreshToken { get; set; }
 
     public string TokenType { get; set; } = "Bearer";
@@ -146,7 +148,6 @@ public class ChangePasswordModel
 
 public class RefreshTokenModel
 {
-    [Required(ErrorMessage = "Refresh token is required")]
     public string RefreshToken { get; set; }
 }
 
@@ -209,11 +210,10 @@ public class UserProfileModel
 /// </summary>
 public class UpdateProfileModel
 {
-    [StringLength(256, ErrorMessage = "Username cannot exceed 256 characters")]
+    [JsonIgnore]
     public string UserName { get; set; }
 
-    [EmailAddress(ErrorMessage = "Invalid email format")]
-    [StringLength(256, ErrorMessage = "Email cannot exceed 256 characters")]
+    [JsonIgnore]
     public string Email { get; set; }
 
     [StringLength(200, ErrorMessage = "Display name cannot exceed 200 characters")]
@@ -222,8 +222,7 @@ public class UpdateProfileModel
     [StringLength(50, ErrorMessage = "Timezone cannot exceed 50 characters")]
     public string Timezone { get; set; }
 
-    [Phone(ErrorMessage = "Invalid phone number format")]
-    [StringLength(20, ErrorMessage = "Phone number cannot exceed 20 characters")]
+    [JsonIgnore]
     public string PhoneNumber { get; set; }
 }
 
