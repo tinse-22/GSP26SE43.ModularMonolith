@@ -52,7 +52,7 @@ public class AddPaymentTransactionCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_AddTransaction_AndRecoverPastDueSubscription()
+    public async Task HandleAsync_Should_AddPendingPayOsTransaction_WithPlanPricing()
     {
         // Arrange
         var subscription = new UserSubscription
@@ -85,11 +85,11 @@ public class AddPaymentTransactionCommandHandlerTests
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
+            UserId = subscription.UserId,
             Model = new AddPaymentTransactionModel
             {
-                PaymentMethod = "card",
-                Status = PaymentStatus.Succeeded,
                 ExternalTxnId = "txn_1",
+                ProviderRef = "ref_1",
             },
         };
 
@@ -98,12 +98,16 @@ public class AddPaymentTransactionCommandHandlerTests
 
         // Assert
         command.SavedTransactionId.Should().NotBe(Guid.Empty);
+        command.SavedTransaction.Should().NotBeNull();
         savedTransaction.Should().NotBeNull();
         savedTransaction.Amount.Should().Be(19.99m);
         savedTransaction.Currency.Should().Be("VND");
-        subscription.Status.Should().Be(SubscriptionStatus.Active);
+        savedTransaction.Status.Should().Be(PaymentStatus.Pending);
+        savedTransaction.PaymentMethod.Should().Be("payos");
+        savedTransaction.Provider.Should().Be("PAYOS");
+        subscription.Status.Should().Be(SubscriptionStatus.PastDue);
         _paymentRepoMock.Verify(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()), Times.Once);
-        _subscriptionRepoMock.Verify(x => x.UpdateAsync(subscription, It.IsAny<CancellationToken>()), Times.Once);
+        _subscriptionRepoMock.Verify(x => x.UpdateAsync(It.IsAny<UserSubscription>(), It.IsAny<CancellationToken>()), Times.Never);
         _unitOfWorkMock.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -119,12 +123,6 @@ public class AddPaymentTransactionCommandHandlerTests
             BillingCycle = BillingCycle.Monthly,
             Status = SubscriptionStatus.Active,
         };
-        var plan = new SubscriptionPlan
-        {
-            Id = subscription.PlanId,
-            PriceMonthly = 19.99m,
-            Currency = "USD",
-        };
         var existingTransaction = new PaymentTransaction
         {
             Id = Guid.NewGuid(),
@@ -134,17 +132,15 @@ public class AddPaymentTransactionCommandHandlerTests
 
         _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
             .ReturnsAsync(subscription);
-        _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
-            .ReturnsAsync(plan);
         _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
             .ReturnsAsync(existingTransaction);
 
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
+            UserId = subscription.UserId,
             Model = new AddPaymentTransactionModel
             {
-                PaymentMethod = "card",
                 ExternalTxnId = "dup_1",
             },
         };
@@ -154,11 +150,13 @@ public class AddPaymentTransactionCommandHandlerTests
 
         // Assert
         command.SavedTransactionId.Should().Be(existingTransaction.Id);
+        command.SavedTransaction.Should().NotBeNull();
+        command.SavedTransaction.Id.Should().Be(existingTransaction.Id);
         _paymentRepoMock.Verify(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task HandleAsync_DuplicateExternalTxn_WithoutPaymentMethod_Should_ReturnExistingId()
+    public async Task HandleAsync_DuplicateProviderRef_Should_ReturnExistingId()
     {
         // Arrange
         var subscription = new UserSubscription
@@ -173,20 +171,23 @@ public class AddPaymentTransactionCommandHandlerTests
         {
             Id = Guid.NewGuid(),
             SubscriptionId = subscription.Id,
-            ExternalTxnId = "dup_without_required_fields",
+            Provider = "PAYOS",
+            ProviderRef = "payos_ref_01",
         };
 
         _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
             .ReturnsAsync(subscription);
+
         _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
             .ReturnsAsync(existingTransaction);
 
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
+            UserId = subscription.UserId,
             Model = new AddPaymentTransactionModel
             {
-                ExternalTxnId = "dup_without_required_fields",
+                ProviderRef = "payos_ref_01",
             },
         };
 
@@ -195,7 +196,6 @@ public class AddPaymentTransactionCommandHandlerTests
 
         // Assert
         command.SavedTransactionId.Should().Be(existingTransaction.Id);
-        _planRepoMock.Verify(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()), Times.Never);
         _paymentRepoMock.Verify(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -222,14 +222,14 @@ public class AddPaymentTransactionCommandHandlerTests
             .ReturnsAsync(subscription);
         _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
             .ReturnsAsync(plan);
+        _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
+            .ReturnsAsync((PaymentTransaction)null);
 
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
-            Model = new AddPaymentTransactionModel
-            {
-                PaymentMethod = "card",
-            },
+            UserId = subscription.UserId,
+            Model = new AddPaymentTransactionModel(),
         };
 
         // Act
@@ -237,58 +237,6 @@ public class AddPaymentTransactionCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>();
-    }
-
-    [Fact]
-    public async Task HandleAsync_PlanWithoutPrice_Should_UseRequestedAmount()
-    {
-        // Arrange
-        var subscription = new UserSubscription
-        {
-            Id = Guid.NewGuid(),
-            UserId = Guid.NewGuid(),
-            PlanId = Guid.NewGuid(),
-            BillingCycle = BillingCycle.Monthly,
-            Status = SubscriptionStatus.Active,
-        };
-        var plan = new SubscriptionPlan
-        {
-            Id = subscription.PlanId,
-            PriceMonthly = null,
-            PriceYearly = null,
-            Currency = null,
-        };
-        PaymentTransaction savedTransaction = null;
-
-        _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
-            .ReturnsAsync(subscription);
-        _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
-            .ReturnsAsync(plan);
-        _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
-            .ReturnsAsync((PaymentTransaction)null);
-        _paymentRepoMock.Setup(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()))
-            .Callback<PaymentTransaction, CancellationToken>((transaction, _) => savedTransaction = transaction)
-            .Returns(Task.CompletedTask);
-
-        var command = new AddPaymentTransactionCommand
-        {
-            SubscriptionId = subscription.Id,
-            Model = new AddPaymentTransactionModel
-            {
-                Amount = 88.5m,
-                Currency = "usd",
-                PaymentMethod = "bank_transfer",
-                Status = PaymentStatus.Succeeded,
-            },
-        };
-
-        // Act
-        await _handler.HandleAsync(command);
-
-        // Assert
-        savedTransaction.Should().NotBeNull();
-        savedTransaction.Amount.Should().Be(88.5m);
-        savedTransaction.Currency.Should().Be("USD");
     }
 
     [Fact]
@@ -326,12 +274,8 @@ public class AddPaymentTransactionCommandHandlerTests
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
-            Model = new AddPaymentTransactionModel
-            {
-                Amount = 10m,
-                Currency = "eur",
-                PaymentMethod = "bank_transfer",
-            },
+            UserId = subscription.UserId,
+            Model = new AddPaymentTransactionModel(),
         };
 
         // Act
@@ -344,7 +288,7 @@ public class AddPaymentTransactionCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_UseSnapshotAmount_WhenPlanNotFound()
+    public async Task HandleAsync_OtherUserSubscription_Should_ThrowNotFoundException()
     {
         // Arrange
         var subscription = new UserSubscription
@@ -352,39 +296,26 @@ public class AddPaymentTransactionCommandHandlerTests
             Id = Guid.NewGuid(),
             UserId = Guid.NewGuid(),
             PlanId = Guid.NewGuid(),
-            BillingCycle = BillingCycle.Yearly,
+            BillingCycle = BillingCycle.Monthly,
             Status = SubscriptionStatus.Active,
-            SnapshotPriceYearly = 199m,
-            SnapshotCurrency = "usd",
+            SnapshotPriceMonthly = 10m,
+            SnapshotCurrency = "VND",
         };
-        PaymentTransaction savedTransaction = null;
 
         _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
             .ReturnsAsync(subscription);
-        _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
-            .ReturnsAsync((SubscriptionPlan)null);
-        _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
-            .ReturnsAsync((PaymentTransaction)null);
-        _paymentRepoMock.Setup(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()))
-            .Callback<PaymentTransaction, CancellationToken>((transaction, _) => savedTransaction = transaction)
-            .Returns(Task.CompletedTask);
 
         var command = new AddPaymentTransactionCommand
         {
             SubscriptionId = subscription.Id,
-            Model = new AddPaymentTransactionModel
-            {
-                PaymentMethod = "bank_transfer",
-                Status = PaymentStatus.Succeeded,
-            },
+            UserId = Guid.NewGuid(),
+            Model = new AddPaymentTransactionModel(),
         };
 
         // Act
-        await _handler.HandleAsync(command);
+        var act = () => _handler.HandleAsync(command);
 
         // Assert
-        savedTransaction.Should().NotBeNull();
-        savedTransaction.Amount.Should().Be(199m);
-        savedTransaction.Currency.Should().Be("USD");
+        await act.Should().ThrowAsync<NotFoundException>();
     }
 }
