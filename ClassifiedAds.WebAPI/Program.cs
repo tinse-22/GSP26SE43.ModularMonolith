@@ -254,6 +254,8 @@ services.AddAuditLogModule(opt =>
     configuration.GetSection("Modules:Subscription").Bind(opt);
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
+    opt.PayOS ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.PayOsOptions();
+    configuration.GetSection("PayOS").Bind(opt.PayOS);
 })
 .AddApplicationServices();
 

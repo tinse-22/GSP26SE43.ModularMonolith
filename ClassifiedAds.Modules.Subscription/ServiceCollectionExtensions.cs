@@ -5,6 +5,7 @@ using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.HostedServices;
 using ClassifiedAds.Modules.Subscription.Persistence;
 using ClassifiedAds.Modules.Subscription.RateLimiterPolicies;
+using ClassifiedAds.Modules.Subscription.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -40,7 +41,6 @@ public static class SubscriptionServiceCollectionExtensions
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
         }));
-
         services
             .AddScoped<IRepository<SubscriptionPlan, Guid>, Repository<SubscriptionPlan, Guid>>()
             .AddScoped<IRepository<PlanLimit, Guid>, Repository<PlanLimit, Guid>>()
@@ -49,7 +49,24 @@ public static class SubscriptionServiceCollectionExtensions
             .AddScoped<IRepository<UsageTracking, Guid>, Repository<UsageTracking, Guid>>()
             .AddScoped<IRepository<PaymentTransaction, Guid>, Repository<PaymentTransaction, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
-            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
+            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>()
+            .AddScoped<IRepository<PaymentIntent, Guid>, Repository<PaymentIntent, Guid>>();
+
+        services.Configure<PayOsOptions>(options =>
+        {
+            var payOs = settings.PayOS ?? new PayOsOptions();
+            options.ClientId = payOs.ClientId ?? string.Empty;
+            options.ApiKey = payOs.ApiKey ?? string.Empty;
+            options.SecretKey = payOs.SecretKey ?? string.Empty;
+            options.BaseUrl = string.IsNullOrWhiteSpace(payOs.BaseUrl) ? "https://api-merchant.payos.vn" : payOs.BaseUrl;
+            options.ReturnUrl = payOs.ReturnUrl ?? string.Empty;
+            options.WebhookUrl = payOs.WebhookUrl ?? string.Empty;
+            options.CancelUrl = payOs.CancelUrl;
+            options.FrontendBaseUrl = payOs.FrontendBaseUrl ?? string.Empty;
+            options.IntentExpirationMinutes = payOs.IntentExpirationMinutes <= 0 ? 15 : payOs.IntentExpirationMinutes;
+        });
+
+        services.AddHttpClient<IPayOsService, PayOsService>();
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
