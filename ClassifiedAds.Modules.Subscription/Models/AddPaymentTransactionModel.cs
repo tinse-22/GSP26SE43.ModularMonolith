@@ -6,7 +6,7 @@ namespace ClassifiedAds.Modules.Subscription.Models;
 public class AddPaymentTransactionModel
 {
     [Range(typeof(decimal), "0.01", "79228162514264337593543950335")]
-    public decimal Amount { get; set; }
+    public decimal? Amount { get; set; }
 
     [RegularExpression(@"^[A-Za-z]{3}$")]
     public string Currency { get; set; } = "USD";
