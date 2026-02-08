@@ -14,6 +14,11 @@ public class UserSubscriptionConfiguration : IEntityTypeConfiguration<UserSubscr
         builder.Property(x => x.ExternalSubId).HasMaxLength(200);
         builder.Property(x => x.ExternalCustId).HasMaxLength(200);
 
+        builder.Property(x => x.SnapshotPriceMonthly).HasPrecision(10, 2);
+        builder.Property(x => x.SnapshotPriceYearly).HasPrecision(10, 2);
+        builder.Property(x => x.SnapshotCurrency).HasMaxLength(3);
+        builder.Property(x => x.SnapshotPlanName).HasMaxLength(200);
+
         builder.HasIndex(x => x.UserId);
         builder.HasIndex(x => x.PlanId);
         builder.HasIndex(x => x.Status);

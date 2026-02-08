@@ -68,6 +68,28 @@ public class UserSubscription : Entity<Guid>, IAggregateRoot
     /// </summary>
     public string ExternalCustId { get; set; }
 
+    // ── Price / plan snapshot at time of purchase ──
+
+    /// <summary>
+    /// Monthly price locked at the time of purchase / last renewal.
+    /// </summary>
+    public decimal? SnapshotPriceMonthly { get; set; }
+
+    /// <summary>
+    /// Yearly price locked at the time of purchase / last renewal.
+    /// </summary>
+    public decimal? SnapshotPriceYearly { get; set; }
+
+    /// <summary>
+    /// Currency locked at the time of purchase / last renewal.
+    /// </summary>
+    public string SnapshotCurrency { get; set; }
+
+    /// <summary>
+    /// Plan display name locked at the time of purchase / last renewal.
+    /// </summary>
+    public string SnapshotPlanName { get; set; }
+
     // Navigation properties
     public SubscriptionPlan Plan { get; set; }
 }
