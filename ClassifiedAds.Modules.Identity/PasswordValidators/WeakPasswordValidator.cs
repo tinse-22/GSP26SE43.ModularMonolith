@@ -13,7 +13,7 @@ public class WeakPasswordValidator : IPasswordValidator<User>
             return Task.FromResult(IdentityResult.Failed(new IdentityError
             {
                 Code = "WeakPassword",
-                Description = "WeakPasswordValidator testing.",
+                Description = "Mật khẩu quá yếu (đang kiểm tra thử nghiệm).",
             }));
         }
 

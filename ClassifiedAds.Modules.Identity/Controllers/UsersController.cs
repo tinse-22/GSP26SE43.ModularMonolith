@@ -125,14 +125,14 @@ public class UsersController : ControllerBase
         var role = await _roleManager.FindByNameAsync(roleName);
         if (role == null)
         {
-            return BadRequest(new { Error = $"Role '{roleName}' does not exist." });
+            return BadRequest(new { Error = $"Quyền '{roleName}' không tồn tại." });
         }
 
         // Check if email already exists
         var existingUser = await _userManager.FindByEmailAsync(model.Email);
         if (existingUser != null)
         {
-            return BadRequest(new { Error = "Email is already registered." });
+            return BadRequest(new { Error = "Email đã được đăng ký." });
         }
 
         // Admin role: EmailConfirmed = true (no email verification)
@@ -190,8 +190,8 @@ public class UsersController : ControllerBase
             Role = roleName,
             EmailConfirmationRequired = !isAdmin,
             Message = isAdmin
-                ? "Admin user created successfully."
-                : "User created successfully. Please check email to confirm your account."
+                ? "Tạo quản trị viên thành công."
+                : "Tạo người dùng thành công. Vui lòng kiểm tra email để xác nhận tài khoản."
         });
     }
 
@@ -277,7 +277,7 @@ public class UsersController : ControllerBase
 
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
@@ -292,7 +292,7 @@ public class UsersController : ControllerBase
             Body = _emailTemplates.AdminResetPassword(displayNameReset, resetUrl),
         });
 
-        return Ok(new { Message = "Password reset email sent successfully." });
+        return Ok(new { Message = "Email đặt lại mật khẩu đã được gửi thành công." });
     }
 
     /// <summary>
@@ -308,12 +308,12 @@ public class UsersController : ControllerBase
 
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         if (user.EmailConfirmed)
         {
-            return Ok(new { Message = "Email is already confirmed." });
+            return Ok(new { Message = "Email đã được xác nhận." });
         }
 
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
@@ -328,7 +328,7 @@ public class UsersController : ControllerBase
             Body = _emailTemplates.AdminConfirmEmail(displayNameConfirm, confirmationUrl),
         });
 
-        return Ok(new { Message = "Email confirmation sent successfully." });
+        return Ok(new { Message = "Email xác nhận đã được gửi thành công." });
     }
 
     /// <summary>
@@ -343,7 +343,7 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id.ToString());
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         var roleNames = await _userManager.GetRolesAsync(user);
@@ -375,19 +375,19 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id.ToString());
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         var role = await _roleManager.FindByIdAsync(model.RoleId.ToString());
         if (role == null)
         {
-            return BadRequest(new { Error = "Role not found." });
+            return BadRequest(new { Error = "Quyền không tồn tại." });
         }
 
         // Check if user already has this role
         if (await _userManager.IsInRoleAsync(user, role.Name))
         {
-            return BadRequest(new { Error = $"User already has role '{role.Name}'." });
+            return BadRequest(new { Error = $"Người dùng đã có quyền '{role.Name}'." });
         }
 
         var result = await _userManager.AddToRoleAsync(user, role.Name);
@@ -396,7 +396,7 @@ public class UsersController : ControllerBase
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
-        return Ok(new { Message = $"Role '{role.Name}' assigned successfully." });
+        return Ok(new { Message = $"Gán quyền '{role.Name}' thành công." });
     }
 
     /// <summary>
@@ -412,19 +412,19 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id.ToString());
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         var role = await _roleManager.FindByIdAsync(roleId.ToString());
         if (role == null)
         {
-            return BadRequest(new { Error = "Role not found." });
+            return BadRequest(new { Error = "Quyền không tồn tại." });
         }
 
         // Check if user has this role
         if (!await _userManager.IsInRoleAsync(user, role.Name))
         {
-            return BadRequest(new { Error = $"User does not have role '{role.Name}'." });
+            return BadRequest(new { Error = $"Người dùng không có quyền '{role.Name}'." });
         }
 
         var result = await _userManager.RemoveFromRoleAsync(user, role.Name);
@@ -433,7 +433,7 @@ public class UsersController : ControllerBase
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
-        return Ok(new { Message = $"Role '{role.Name}' removed successfully." });
+        return Ok(new { Message = $"Thoát quyền '{role.Name}' thành công." });
     }
 
     /// <summary>
@@ -449,7 +449,7 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id.ToString());
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         // Set lockout end date
@@ -480,8 +480,8 @@ public class UsersController : ControllerBase
         return Ok(new
         {
             Message = model.Permanent
-                ? "User has been permanently locked."
-                : $"User has been locked until {lockoutEnd:yyyy-MM-dd HH:mm:ss} UTC.",
+                ? "Người dùng đã bị khóa vĩnh viễn."
+                : $"Người dùng đã bị khóa đến {lockoutEnd:yyyy-MM-dd HH:mm:ss} UTC.",
             LockoutEnd = lockoutEnd
         });
     }
@@ -498,7 +498,7 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id.ToString());
         if (user == null)
         {
-            return NotFound(new { Error = "User not found." });
+            return NotFound(new { Error = "Không tìm thấy người dùng." });
         }
 
         var result = await _userManager.SetLockoutEndDateAsync(user, null);
@@ -520,6 +520,6 @@ public class UsersController : ControllerBase
             Body = _emailTemplates.AccountUnlocked(displayNameUnlock),
         });
 
-        return Ok(new { Message = "User has been unlocked." });
+        return Ok(new { Message = "Người dùng đã được mở khóa." });
     }
 }

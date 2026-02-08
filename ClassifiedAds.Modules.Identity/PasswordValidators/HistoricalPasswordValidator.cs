@@ -13,7 +13,7 @@ public class HistoricalPasswordValidator : IPasswordValidator<User>
             return Task.FromResult(IdentityResult.Failed(new IdentityError
             {
                 Code = "HistoricalPassword",
-                Description = "HistoricalPasswordValidator testing.",
+                Description = "Mật khẩu đã được sử dụng trước đây (đang kiểm tra thử nghiệm).",
             }));
         }
 
