@@ -66,6 +66,23 @@ public class PaymentsController : ControllerBase
         return Ok(command.Result);
     }
 
+    [Authorize(Permissions.GetPlans)]
+    [HttpGet("plans")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<PlanModel>>> GetPlans(
+        [FromQuery] bool? isActive = true,
+        [FromQuery] string search = null,
+        CancellationToken ct = default)
+    {
+        var items = await _dispatcher.DispatchAsync(new GetPlansQuery
+        {
+            IsActive = isActive,
+            Search = search,
+        }, ct);
+
+        return Ok(items);
+    }
+
     [Authorize(Permissions.GetPaymentIntent)]
     [HttpGet("{intentId:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]

@@ -290,4 +290,101 @@ public class AddPaymentTransactionCommandHandlerTests
         savedTransaction.Amount.Should().Be(88.5m);
         savedTransaction.Currency.Should().Be("USD");
     }
+
+    [Fact]
+    public async Task HandleAsync_Should_UseSnapshotAmountAndCurrency_WhenSnapshotExists()
+    {
+        // Arrange
+        var subscription = new UserSubscription
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            BillingCycle = BillingCycle.Monthly,
+            Status = SubscriptionStatus.Active,
+            SnapshotPriceMonthly = 49.5m,
+            SnapshotCurrency = "vnd",
+        };
+        var plan = new SubscriptionPlan
+        {
+            Id = subscription.PlanId,
+            PriceMonthly = 99m,
+            Currency = "usd",
+        };
+        PaymentTransaction savedTransaction = null;
+
+        _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
+            .ReturnsAsync(subscription);
+        _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
+            .ReturnsAsync(plan);
+        _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
+            .ReturnsAsync((PaymentTransaction)null);
+        _paymentRepoMock.Setup(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()))
+            .Callback<PaymentTransaction, CancellationToken>((transaction, _) => savedTransaction = transaction)
+            .Returns(Task.CompletedTask);
+
+        var command = new AddPaymentTransactionCommand
+        {
+            SubscriptionId = subscription.Id,
+            Model = new AddPaymentTransactionModel
+            {
+                Amount = 10m,
+                Currency = "eur",
+                PaymentMethod = "bank_transfer",
+            },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        savedTransaction.Should().NotBeNull();
+        savedTransaction.Amount.Should().Be(49.5m);
+        savedTransaction.Currency.Should().Be("VND");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_UseSnapshotAmount_WhenPlanNotFound()
+    {
+        // Arrange
+        var subscription = new UserSubscription
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            BillingCycle = BillingCycle.Yearly,
+            Status = SubscriptionStatus.Active,
+            SnapshotPriceYearly = 199m,
+            SnapshotCurrency = "usd",
+        };
+        PaymentTransaction savedTransaction = null;
+
+        _subscriptionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<UserSubscription>>()))
+            .ReturnsAsync(subscription);
+        _planRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
+            .ReturnsAsync((SubscriptionPlan)null);
+        _paymentRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<PaymentTransaction>>()))
+            .ReturnsAsync((PaymentTransaction)null);
+        _paymentRepoMock.Setup(x => x.AddAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()))
+            .Callback<PaymentTransaction, CancellationToken>((transaction, _) => savedTransaction = transaction)
+            .Returns(Task.CompletedTask);
+
+        var command = new AddPaymentTransactionCommand
+        {
+            SubscriptionId = subscription.Id,
+            Model = new AddPaymentTransactionModel
+            {
+                PaymentMethod = "bank_transfer",
+                Status = PaymentStatus.Succeeded,
+            },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        savedTransaction.Should().NotBeNull();
+        savedTransaction.Amount.Should().Be(199m);
+        savedTransaction.Currency.Should().Be("USD");
+    }
 }

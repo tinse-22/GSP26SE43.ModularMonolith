@@ -35,6 +35,15 @@ public class SubscriptionModel
 
     public string ExternalCustId { get; set; }
 
+    /// <summary>Monthly price locked at the time of purchase / last renewal.</summary>
+    public decimal? SnapshotPriceMonthly { get; set; }
+
+    public decimal? SnapshotPriceYearly { get; set; }
+
+    public string SnapshotCurrency { get; set; }
+
+    public string SnapshotPlanName { get; set; }
+
     public DateTimeOffset CreatedDateTime { get; set; }
 
     public DateTimeOffset? UpdatedDateTime { get; set; }
