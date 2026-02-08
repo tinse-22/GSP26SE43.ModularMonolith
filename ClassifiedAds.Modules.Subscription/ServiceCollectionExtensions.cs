@@ -64,6 +64,15 @@ public static class SubscriptionServiceCollectionExtensions
             options.CancelUrl = payOs.CancelUrl;
             options.FrontendBaseUrl = payOs.FrontendBaseUrl ?? string.Empty;
             options.IntentExpirationMinutes = payOs.IntentExpirationMinutes <= 0 ? 15 : payOs.IntentExpirationMinutes;
+            options.CheckoutReconcileIntervalSeconds = payOs.CheckoutReconcileIntervalSeconds <= 0
+                ? 30
+                : payOs.CheckoutReconcileIntervalSeconds;
+            options.CheckoutReconcileBatchSize = payOs.CheckoutReconcileBatchSize <= 0
+                ? 50
+                : payOs.CheckoutReconcileBatchSize;
+            options.CheckoutReconcileLookbackHours = payOs.CheckoutReconcileLookbackHours <= 0
+                ? 24
+                : payOs.CheckoutReconcileLookbackHours;
         });
 
         services.AddHttpClient<IPayOsService, PayOsService>();
@@ -98,6 +107,7 @@ public static class SubscriptionServiceCollectionExtensions
         services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
 
         services.AddHostedService<PublishEventWorker>();
+        services.AddHostedService<ReconcilePayOsCheckoutWorker>();
 
         return services;
     }
