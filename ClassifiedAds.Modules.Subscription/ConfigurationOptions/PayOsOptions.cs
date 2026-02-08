@@ -19,4 +19,10 @@ public class PayOsOptions
     public string FrontendBaseUrl { get; set; } = string.Empty;
 
     public int IntentExpirationMinutes { get; set; } = 15;
+
+    public int CheckoutReconcileIntervalSeconds { get; set; } = 30;
+
+    public int CheckoutReconcileBatchSize { get; set; } = 50;
+
+    public int CheckoutReconcileLookbackHours { get; set; } = 24;
 }

@@ -73,6 +73,9 @@ public class PayOsGetPaymentData
 
     [JsonPropertyName("transactionDateTime")]
     public string TransactionDateTime { get; set; }
+
+    [JsonPropertyName("checkoutUrl")]
+    public string CheckoutUrl { get; set; }
 }
 
 public class PayOsWebhookPayload
