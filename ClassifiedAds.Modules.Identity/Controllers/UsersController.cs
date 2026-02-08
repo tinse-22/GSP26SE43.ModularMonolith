@@ -120,12 +120,24 @@ public class UsersController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UserModel>> Post([FromBody] CreateUserModel model)
     {
-        // Validate role exists
-        var roleName = string.IsNullOrWhiteSpace(model.RoleName) ? "User" : model.RoleName;
-        var role = await _roleManager.FindByNameAsync(roleName);
-        if (role == null)
+        var roleNames = (model.Roles ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (roleNames.Count == 0)
         {
-            return BadRequest(new { Error = $"Quyền '{roleName}' không tồn tại." });
+            roleNames.Add("User");
+        }
+
+        foreach (var roleName in roleNames)
+        {
+            var role = await _roleManager.FindByNameAsync(roleName);
+            if (role == null)
+            {
+                return BadRequest(new { Error = $"Quyền '{roleName}' không tồn tại." });
+            }
         }
 
         // Check if email already exists
@@ -137,7 +149,7 @@ public class UsersController : ControllerBase
 
         // Admin role: EmailConfirmed = true (no email verification)
         // User role: EmailConfirmed = false (requires email verification)
-        var isAdmin = roleName.Equals("Admin", StringComparison.OrdinalIgnoreCase);
+        var isAdmin = roleNames.Any(x => x.Equals("Admin", StringComparison.OrdinalIgnoreCase));
 
         var user = new User
         {
@@ -160,8 +172,8 @@ public class UsersController : ControllerBase
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
-        // Assign role to user
-        var roleResult = await _userManager.AddToRoleAsync(user, roleName);
+        // Assign roles to user
+        var roleResult = await _userManager.AddToRolesAsync(user, roleNames);
         if (!roleResult.Succeeded)
         {
             return BadRequest(new { Errors = roleResult.Errors.Select(e => e.Description) });
@@ -187,7 +199,7 @@ public class UsersController : ControllerBase
         return Created($"/api/users/{userModel.Id}", new
         {
             User = userModel,
-            Role = roleName,
+            Roles = roleNames,
             EmailConfirmationRequired = !isAdmin,
             Message = isAdmin
                 ? "Tạo quản trị viên thành công."

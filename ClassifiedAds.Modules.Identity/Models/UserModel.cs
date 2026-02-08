@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
 namespace ClassifiedAds.Modules.Identity.Models;
@@ -51,7 +52,7 @@ public class CreateUserModel
     [Phone(ErrorMessage = "Invalid phone number format")]
     public string PhoneNumber { get; set; }
 
-    public string RoleName { get; set; } = "User";
+    public List<string> Roles { get; set; } = new () { "User" };
 }
 
 /// <summary>

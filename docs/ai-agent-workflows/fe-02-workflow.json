@@ -1,0 +1,383 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-workflow",
+  "workflow": {
+    "id": "wf-api-documentation-management-v1",
+    "requirementId": "FE-02",
+    "name": "API Documentation Upload & Management Flow",
+    "mode": "request-response + outbox-event",
+    "description": "Luong xu ly dong bo cho CRUD operations, ket hop outbox pattern cho audit log va integration events."
+  },
+  "architectureOverview": {
+    "summary": "FE-02 hoat dong theo mo hinh request-response (khong can message broker truc tiep). Outbox pattern dam bao audit log va integration events duoc publish reliable.",
+    "noDirectMessageBrokerNeeded": true,
+    "noRedisNeeded": "Khong bat buoc. Co the dung HybridCache cho query optimization sau nay.",
+    "outboxRequired": true,
+    "transactionRequired": "Cho activate/deactivate spec (multi-entity update) va upload + auto-activate."
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Create Project",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects { name, description, baseUrl }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ProjectsController",
+          "action": "Bind model, resolve ICurrentUser.UserId, create AddUpdateProjectCommand, dispatch.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateProjectCommandHandler",
+          "action": "Validate input. Create Project entity (OwnerId = currentUser, Status = Active). Call CrudService.AddAsync().",
+          "output": "Project saved to DB",
+          "transactionNote": "CrudService.AddAsync uses implicit EF transaction for single entity."
+        },
+        {
+          "step": 4,
+          "actor": "CrudService<Project>",
+          "action": "SaveChangesAsync() → raise EntityCreatedEvent<Project>.",
+          "output": "Domain event raised"
+        },
+        {
+          "step": 5,
+          "actor": "ProjectCreatedEventHandler",
+          "action": "Create AuditLogEntry + 2 OutboxMessages (AUDIT_LOG_ENTRY_CREATED, PROJECT_CREATED). SaveChangesAsync().",
+          "output": "Audit + outbox records saved",
+          "logVi": "Đã tạo project thành công.",
+          "logEn": "Project created successfully."
+        },
+        {
+          "step": 6,
+          "actor": "ProjectsController",
+          "action": "Dispatch GetProjectQuery to fetch created project. Return Created(201) with ProjectModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Upload API Specification",
+      "type": "synchronous + cross-module",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{projectId}/specifications/upload (multipart/form-data: file, name, sourceType, version, autoActivate)",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "SpecificationsController",
+          "action": "Validate file size/extension. Create UploadApiSpecificationCommand, dispatch.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "Validate input (file size, extension, required fields). Load project, verify ownership.",
+          "output": "Validation passed"
+        },
+        {
+          "step": 4,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "Upload file to Storage module. Receive FileEntry.Id.",
+          "output": "FileEntry.Id",
+          "crossModuleNote": "File upload happens BEFORE transaction. Acceptable orphan file risk.",
+          "logEn": "File uploaded to storage. FileEntryId={fileId}, Size={bytes}."
+        },
+        {
+          "step": 5,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "ExecuteInTransactionAsync: create ApiSpecification (ParseStatus=Pending), optionally activate project.",
+          "output": "Spec + project updated atomically",
+          "transactionBoundary": {
+            "includes": [
+              "Create ApiSpecification record",
+              "If autoActivate: deactivate old spec, activate new spec, update Project.ActiveSpecId"
+            ],
+            "isolationLevel": "ReadCommitted"
+          }
+        },
+        {
+          "step": 6,
+          "actor": "CrudService<ApiSpecification>",
+          "action": "SaveChangesAsync() → raise EntityCreatedEvent<ApiSpecification>.",
+          "output": "Domain event raised"
+        },
+        {
+          "step": 7,
+          "actor": "SpecCreatedEventHandler",
+          "action": "Create AuditLogEntry + OutboxMessages. SaveChangesAsync().",
+          "output": "Audit + outbox saved",
+          "logVi": "Đã upload file API spec thành công. Đang chờ phân tích.",
+          "logEn": "API specification uploaded. ParseStatus=Pending."
+        },
+        {
+          "step": 8,
+          "actor": "SpecificationsController",
+          "action": "Return Created(201) with SpecificationModel.",
+          "output": "HTTP 201 Response"
+        }
+      ],
+      "futureExtension": "Outbox event SPEC_UPLOADED se trigger parsing job (FE-03) khi parser duoc implement."
+    },
+    {
+      "id": "flow-03",
+      "name": "Activate Specification",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/projects/{projectId}/specifications/{specId}/activate",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ActivateSpecificationCommandHandler",
+          "action": "Load project and spec. Verify ownership and spec belongs to project.",
+          "output": "Entities loaded"
+        },
+        {
+          "step": 3,
+          "actor": "ActivateSpecificationCommandHandler",
+          "action": "ExecuteInTransactionAsync: deactivate old spec → activate new spec → update project.ActiveSpecId.",
+          "output": "Atomic update complete",
+          "transactionBoundary": {
+            "includes": [
+              "Set oldSpec.IsActive = false (if exists)",
+              "Set newSpec.IsActive = true",
+              "Set project.ActiveSpecId = specId",
+              "SaveChangesAsync"
+            ]
+          },
+          "logVi": "Đã kích hoạt phiên bản spec mới.",
+          "logEn": "Specification activated. SpecId={specId}, ProjectId={projectId}."
+        },
+        {
+          "step": 4,
+          "actor": "SpecificationsController",
+          "action": "Return Ok(200) with updated SpecificationModel.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Outbox Publishing (Background)",
+      "type": "asynchronous-background",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "PublishEventWorker (HostedService)",
+          "action": "Poll every 10 seconds. Dispatch PublishEventsCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 2,
+          "actor": "PublishEventsCommandHandler",
+          "action": "Query OutboxMessage WHERE Published = false ORDER BY CreatedDateTime TAKE 50.",
+          "output": "Batch of unpublished messages"
+        },
+        {
+          "step": 3,
+          "actor": "PublishEventsCommandHandler",
+          "action": "For each message: wrap in PublishingOutboxMessage, call _messageBus.SendAsync().",
+          "output": "Message routed to IOutboxMessagePublisher"
+        },
+        {
+          "step": 4,
+          "actor": "AuditLogEntryOutboxMessagePublisher",
+          "action": "Deserialize AuditLogEntry payload, call IAuditLogService.AddAsync().",
+          "output": "Audit log forwarded to central AuditLog module"
+        },
+        {
+          "step": 5,
+          "actor": "ProjectOutboxMessagePublisher / SpecOutboxMessagePublisher",
+          "action": "Log event for integration. Future: notify other modules.",
+          "output": "Integration event processed"
+        },
+        {
+          "step": 6,
+          "actor": "PublishEventsCommandHandler",
+          "action": "Mark Published = true. SaveChangesAsync().",
+          "output": "Outbox messages marked as published"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "implicitTransactions": [
+      "Create project (single entity via CrudService)",
+      "Update project (single entity via CrudService)",
+      "Delete project (single entity via CrudService)"
+    ],
+    "explicitTransactions": [
+      {
+        "operation": "Upload spec + autoActivate",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": ["ApiSpecification (create)", "Project (update ActiveSpecId)", "Old ApiSpecification (deactivate)"]
+      },
+      {
+        "operation": "Activate specification",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": ["Old ApiSpecification (deactivate)", "New ApiSpecification (activate)", "Project (update ActiveSpecId)"]
+      },
+      {
+        "operation": "Delete specification (if active)",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": ["Project (set ActiveSpecId = null)", "ApiSpecification (delete, cascade)"]
+      }
+    ]
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "language": "vi-VN",
+      "examples": [
+        "Tên project là bắt buộc.",
+        "Kích thước file không được vượt quá 10MB.",
+        "Chỉ hỗ trợ file .json, .yaml, .yml.",
+        "Tên specification là bắt buộc.",
+        "Bạn không có quyền chỉnh sửa project này."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Project '{id}' không tồn tại.",
+        "Specification '{id}' không tồn tại."
+      ]
+    },
+    "concurrencyErrors": {
+      "httpStatus": 409,
+      "handling": "Catch DbUpdateConcurrencyException, return 409 Conflict.",
+      "note": "Entity<Guid> co RowVersion (Timestamp) — EF tu dong check concurrency."
+    }
+  },
+  "folderStructure": {
+    "target": "ClassifiedAds.Modules.ApiDocumentation/",
+    "newFolders": [
+      "Authorization/",
+      "Commands/",
+      "Constants/",
+      "Controllers/",
+      "DTOs/",
+      "EventHandlers/",
+      "HostedServices/",
+      "IntegrationEvents/",
+      "Outbox/",
+      "OutBoxEventPublishers/",
+      "Queries/"
+    ],
+    "newFiles": [
+      "Authorization/Permissions.cs",
+      "Commands/AddUpdateProjectCommand.cs",
+      "Commands/ArchiveProjectCommand.cs",
+      "Commands/DeleteProjectCommand.cs",
+      "Commands/UploadApiSpecificationCommand.cs",
+      "Commands/ActivateSpecificationCommand.cs",
+      "Commands/DeleteSpecificationCommand.cs",
+      "Commands/PublishEventsCommand.cs",
+      "Constants/EventTypeConstants.cs",
+      "Controllers/ProjectsController.cs",
+      "Controllers/SpecificationsController.cs",
+      "DTOs/ProjectModel.cs",
+      "DTOs/ProjectDetailModel.cs",
+      "DTOs/CreateUpdateProjectModel.cs",
+      "DTOs/PaginatedResult.cs",
+      "DTOs/SpecificationModel.cs",
+      "DTOs/SpecificationDetailModel.cs",
+      "DTOs/SpecSummaryModel.cs",
+      "DTOs/UploadSpecificationModel.cs",
+      "EventHandlers/ProjectCreatedEventHandler.cs",
+      "EventHandlers/ProjectUpdatedEventHandler.cs",
+      "EventHandlers/ProjectDeletedEventHandler.cs",
+      "EventHandlers/SpecCreatedEventHandler.cs",
+      "EventHandlers/SpecDeletedEventHandler.cs",
+      "HostedServices/PublishEventWorker.cs",
+      "IntegrationEvents/ProjectOutboxEvents.cs",
+      "IntegrationEvents/SpecOutboxEvents.cs",
+      "IntegrationEvents/ApiDocOutboxEventBase.cs",
+      "Outbox/OutboxMessageFactory.cs",
+      "OutBoxEventPublishers/ProjectOutBoxMessagePublisher.cs",
+      "OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs",
+      "OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs",
+      "Queries/GetProjectsQuery.cs",
+      "Queries/GetProjectQuery.cs",
+      "Queries/GetSpecificationsQuery.cs",
+      "Queries/GetSpecificationQuery.cs",
+      "Queries/GetUsersQuery.cs",
+      "Queries/GetAuditEntriesQuery.cs"
+    ],
+    "totalNewFiles": 36,
+    "referenceSource": "Copy structure from ClassifiedAds.Modules.Subscription/"
+  },
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Foundation",
+      "tasks": [
+        "Tao Authorization/Permissions.cs voi 10 permissions.",
+        "Tao Constants/EventTypeConstants.cs voi event type strings.",
+        "Tao DTOs/ — tat ca model classes.",
+        "Tao Outbox/OutboxMessageFactory.cs.",
+        "Tao IntegrationEvents/ — base class va event DTOs."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Project CRUD",
+      "tasks": [
+        "Tao Commands/ — AddUpdateProjectCommand, ArchiveProjectCommand, DeleteProjectCommand.",
+        "Tao Queries/ — GetProjectsQuery, GetProjectQuery.",
+        "Tao EventHandlers/ — ProjectCreated/Updated/DeletedEventHandler.",
+        "Tao Controllers/ProjectsController.cs.",
+        "Test manual: Create, Get, Update, Archive, Delete project."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Specification Upload & Management",
+      "tasks": [
+        "Tao Commands/ — UploadApiSpecificationCommand, ActivateSpecificationCommand, DeleteSpecificationCommand.",
+        "Tao Queries/ — GetSpecificationsQuery, GetSpecificationQuery.",
+        "Tao EventHandlers/ — SpecCreated/DeletedEventHandler.",
+        "Tao Controllers/SpecificationsController.cs.",
+        "Test manual: Upload file, list specs, activate, deactivate, delete."
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Outbox & Background",
+      "tasks": [
+        "Tao OutBoxEventPublishers/ — Project, Spec, AuditLogEntry publishers.",
+        "Tao HostedServices/PublishEventWorker.cs.",
+        "Tao Commands/PublishEventsCommand.cs.",
+        "Update ServiceCollectionExtensions.cs — register hosted services va outbox publishers.",
+        "Test: Verify outbox messages duoc publish va audit logs duoc forward."
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Polish & Proxy Queries",
+      "tasks": [
+        "Tao Queries/GetUsersQuery.cs va GetAuditEntriesQuery.cs (copy tu Subscription).",
+        "Update ServiceCollectionExtensions — register all new services.",
+        "Verify build thanh cong.",
+        "Verify API co the goi duoc end-to-end."
+      ]
+    }
+  ]
+}

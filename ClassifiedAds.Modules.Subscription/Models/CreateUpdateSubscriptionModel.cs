@@ -1,12 +1,13 @@
 using ClassifiedAds.Modules.Subscription.Entities;
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ClassifiedAds.Modules.Subscription.Models;
 
 public class CreateUpdateSubscriptionModel
 {
-    [Required]
+    [JsonIgnore]
     public Guid UserId { get; set; }
 
     [Required]
@@ -24,11 +25,14 @@ public class CreateUpdateSubscriptionModel
     public DateOnly? StartDate { get; set; }
 
     [StringLength(200)]
+    [JsonIgnore]
     public string ExternalSubId { get; set; }
 
     [StringLength(200)]
+    [JsonIgnore]
     public string ExternalCustId { get; set; }
 
     [StringLength(500)]
+    [JsonIgnore]
     public string ChangeReason { get; set; }
 }

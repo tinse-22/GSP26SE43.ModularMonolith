@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -37,6 +38,7 @@ namespace ClassifiedAds.Modules.Identity.Controllers;
 [ApiController]
 public class AuthController : ControllerBase
 {
+    private const string RefreshTokenCookieName = "ca_refresh_token";
     private readonly UserManager<User> _userManager;
     private readonly RoleManager<Role> _roleManager;
     private readonly SignInManager<User> _signInManager;
@@ -211,11 +213,11 @@ public class AuthController : ControllerBase
 
         // Generate tokens
         var (accessToken, refreshToken, expiresIn) = await _jwtTokenService.GenerateTokensAsync(user, roles);
+        SetRefreshTokenCookie(refreshToken);
 
         return Ok(new LoginResponseModel
         {
             AccessToken = accessToken,
-            RefreshToken = refreshToken,
             TokenType = "Bearer",
             ExpiresIn = expiresIn,
             User = ToUserInfoModel(user, profile, roles),
@@ -236,9 +238,11 @@ public class AuthController : ControllerBase
     [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
     [HttpPost("refresh-token")]
     [ProducesResponseType(typeof(LoginResponseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult<LoginResponseModel>> RefreshToken([FromBody] RefreshTokenModel model)
+    public async Task<ActionResult<LoginResponseModel>> RefreshToken(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RefreshTokenModel model = null)
     {
         if (!ModelState.IsValid)
         {
@@ -246,13 +250,20 @@ public class AuthController : ControllerBase
         }
 
         // Use token rotation: validate and get new tokens in one atomic operation
-        var result = await _jwtTokenService.ValidateAndRotateRefreshTokenAsync(model.RefreshToken);
+        var refreshToken = ResolveRefreshToken(model);
+        if (string.IsNullOrWhiteSpace(refreshToken))
+        {
+            return BadRequest(new { Error = "Thieu refresh token." });
+        }
+
+        var result = await _jwtTokenService.ValidateAndRotateRefreshTokenAsync(refreshToken);
         if (result == null)
         {
+            ClearRefreshTokenCookie();
             return Unauthorized(new { Error = "Mã xác thực không hợp lệ hoặc đã hết hạn." });
         }
 
-        var (accessToken, refreshToken, expiresIn, principal) = result.Value;
+        var (accessToken, newRefreshToken, expiresIn, principal) = result.Value;
 
         var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId))
@@ -268,11 +279,11 @@ public class AuthController : ControllerBase
 
         var roles = await _userManager.GetRolesAsync(user);
         var profile = await GetOrCreateUserProfileAsync(user);
+        SetRefreshTokenCookie(newRefreshToken);
 
         return Ok(new LoginResponseModel
         {
             AccessToken = accessToken,
-            RefreshToken = refreshToken, // New refresh token (old one is now invalid)
             TokenType = "Bearer",
             ExpiresIn = expiresIn,
             User = ToUserInfoModel(user, profile, roles),
@@ -292,6 +303,8 @@ public class AuthController : ControllerBase
         {
             await _jwtTokenService.RevokeRefreshTokenAsync(userGuid);
         }
+
+        ClearRefreshTokenCookie();
 
         // Blacklist the current access token so it cannot be used anymore
         BlacklistCurrentAccessToken();
@@ -452,6 +465,7 @@ public class AuthController : ControllerBase
 
         // Revoke existing refresh tokens for security
         await _jwtTokenService.RevokeRefreshTokenAsync(user.Id);
+        ClearRefreshTokenCookie();
 
         // Blacklist the current access token so it cannot be used anymore
         BlacklistCurrentAccessToken();
@@ -904,6 +918,52 @@ public class AuthController : ControllerBase
             ProfileCreatedDateTime = profile?.CreatedDateTime,
             ProfileUpdatedDateTime = profile?.UpdatedDateTime,
             Roles = roleList,
+        };
+    }
+
+    private string ResolveRefreshToken(RefreshTokenModel model)
+    {
+        if (!string.IsNullOrWhiteSpace(model?.RefreshToken))
+        {
+            return model.RefreshToken.Trim();
+        }
+
+        if (Request.Cookies.TryGetValue(RefreshTokenCookieName, out var cookieToken)
+            && !string.IsNullOrWhiteSpace(cookieToken))
+        {
+            return cookieToken.Trim();
+        }
+
+        return null;
+    }
+
+    private void SetRefreshTokenCookie(string refreshToken)
+    {
+        if (string.IsNullOrWhiteSpace(refreshToken))
+        {
+            return;
+        }
+
+        Response.Cookies.Append(
+            RefreshTokenCookieName,
+            refreshToken.Trim(),
+            BuildRefreshTokenCookieOptions(DateTimeOffset.UtcNow.AddDays(Math.Max(1, _moduleOptions.Jwt?.RefreshTokenExpirationDays ?? 7))));
+    }
+
+    private void ClearRefreshTokenCookie()
+    {
+        Response.Cookies.Delete(RefreshTokenCookieName, BuildRefreshTokenCookieOptions(DateTimeOffset.UtcNow.AddDays(-1)));
+    }
+
+    private CookieOptions BuildRefreshTokenCookieOptions(DateTimeOffset expires)
+    {
+        return new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Path = "/api/auth",
+            Expires = expires,
         };
     }
 

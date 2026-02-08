@@ -14,13 +14,20 @@ public class AddPaymentTransactionCommand : ICommand
 {
     public Guid SubscriptionId { get; set; }
 
+    public Guid UserId { get; set; }
+
     public AddPaymentTransactionModel Model { get; set; }
 
     public Guid SavedTransactionId { get; set; }
+
+    public PaymentTransactionModel SavedTransaction { get; set; }
 }
 
 public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTransactionCommand>
 {
+    private const string PaymentMethodPayOs = "payos";
+    private const string PaymentProviderPayOs = "PAYOS";
+
     private readonly IRepository<UserSubscription, Guid> _subscriptionRepository;
     private readonly IRepository<SubscriptionPlan, Guid> _planRepository;
     private readonly IRepository<PaymentTransaction, Guid> _paymentTransactionRepository;
@@ -37,61 +44,60 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
 
     public async Task HandleAsync(AddPaymentTransactionCommand command, CancellationToken cancellationToken = default)
     {
-        if (command.Model == null)
-        {
-            throw new ValidationException("Thông tin giao dịch thanh toán là bắt buộc.");
-        }
-
         if (command.SubscriptionId == Guid.Empty)
         {
-            throw new ValidationException("Mã đăng ký là bắt buộc.");
+            throw new ValidationException("Ma dang ky la bat buoc.");
         }
+
+        command.Model ??= new AddPaymentTransactionModel();
 
         var subscription = await _subscriptionRepository.FirstOrDefaultAsync(
             _subscriptionRepository.GetQueryableSet().Where(x => x.Id == command.SubscriptionId));
         if (subscription == null)
         {
-            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId}'.");
+            throw new NotFoundException($"Khong tim thay dang ky voi ma '{command.SubscriptionId}'.");
         }
 
-        if (!string.IsNullOrWhiteSpace(command.Model.ExternalTxnId))
+        if (command.UserId != Guid.Empty && subscription.UserId != command.UserId)
+        {
+            throw new NotFoundException($"Khong tim thay dang ky voi ma '{command.SubscriptionId}'.");
+        }
+
+        var externalTxnId = command.Model.ExternalTxnId?.Trim();
+        if (!string.IsNullOrWhiteSpace(externalTxnId))
         {
             var existing = await _paymentTransactionRepository.FirstOrDefaultAsync(
                 _paymentTransactionRepository.GetQueryableSet()
-                    .Where(x => x.SubscriptionId == command.SubscriptionId && x.ExternalTxnId == command.Model.ExternalTxnId));
+                    .Where(x => x.SubscriptionId == command.SubscriptionId && x.ExternalTxnId == externalTxnId));
             if (existing != null)
             {
                 command.SavedTransactionId = existing.Id;
+                command.SavedTransaction = existing.ToModel();
                 return;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(command.Model.ProviderRef))
+        var providerRef = command.Model.ProviderRef?.Trim();
+        if (!string.IsNullOrWhiteSpace(providerRef))
         {
-            var provider = NormalizeProvider(command.Model.Provider);
-            var providerRef = command.Model.ProviderRef.Trim();
             var existing = await _paymentTransactionRepository.FirstOrDefaultAsync(
                 _paymentTransactionRepository.GetQueryableSet()
-                    .Where(x => x.Provider == provider && x.ProviderRef == providerRef));
+                    .Where(x => x.Provider == PaymentProviderPayOs && x.ProviderRef == providerRef));
             if (existing != null)
             {
                 command.SavedTransactionId = existing.Id;
+                command.SavedTransaction = existing.ToModel();
                 return;
             }
-        }
-
-        if (string.IsNullOrWhiteSpace(command.Model.PaymentMethod))
-        {
-            throw new ValidationException("Phương thức thanh toán là bắt buộc.");
         }
 
         var plan = await _planRepository.FirstOrDefaultAsync(
             _planRepository.GetQueryableSet().Where(x => x.Id == subscription.PlanId));
 
-        var amount = ResolveAmount(subscription, plan, command.Model.Amount);
+        var amount = ResolveAmount(subscription, plan);
         if (amount <= 0)
         {
-            throw new ValidationException("Số tiền phải lớn hơn 0.");
+            throw new ValidationException("So tien phai lon hon 0.");
         }
 
         var transaction = new PaymentTransaction
@@ -100,53 +106,25 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             UserId = subscription.UserId,
             SubscriptionId = subscription.Id,
             Amount = amount,
-            Currency = ResolveCurrency(subscription, plan, command.Model.Currency),
-            Status = command.Model.Status,
-            PaymentMethod = command.Model.PaymentMethod?.Trim(),
-            Provider = NormalizeProvider(command.Model.Provider),
-            ProviderRef = command.Model.ProviderRef?.Trim(),
-            ExternalTxnId = command.Model.ExternalTxnId?.Trim(),
-            InvoiceUrl = command.Model.InvoiceUrl?.Trim(),
-            FailureReason = command.Model.FailureReason?.Trim(),
+            Currency = ResolveCurrency(subscription, plan),
+            Status = PaymentStatus.Pending,
+            PaymentMethod = PaymentMethodPayOs,
+            Provider = PaymentProviderPayOs,
+            ProviderRef = providerRef,
+            ExternalTxnId = externalTxnId,
         };
-
-        if (transaction.Status == PaymentStatus.Failed && string.IsNullOrWhiteSpace(transaction.FailureReason))
-        {
-            transaction.FailureReason = "Thanh toán thất bại.";
-        }
 
         await _paymentTransactionRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             await _paymentTransactionRepository.AddAsync(transaction, ct);
-
-            var subscriptionStatusChanged = false;
-            if (transaction.Status == PaymentStatus.Succeeded && subscription.Status == SubscriptionStatus.PastDue)
-            {
-                subscription.Status = SubscriptionStatus.Active;
-                subscriptionStatusChanged = true;
-            }
-
-            if (transaction.Status == PaymentStatus.Failed && subscription.Status == SubscriptionStatus.Active)
-            {
-                subscription.Status = SubscriptionStatus.PastDue;
-                subscriptionStatusChanged = true;
-            }
-
-            if (subscriptionStatusChanged)
-            {
-                await _subscriptionRepository.UpdateAsync(subscription, ct);
-            }
-
             await _paymentTransactionRepository.UnitOfWork.SaveChangesAsync(ct);
         }, cancellationToken: cancellationToken);
 
         command.SavedTransactionId = transaction.Id;
+        command.SavedTransaction = transaction.ToModel();
     }
 
-    private static decimal ResolveAmount(
-        UserSubscription subscription,
-        SubscriptionPlan plan,
-        decimal? requestedAmount)
+    private static decimal ResolveAmount(UserSubscription subscription, SubscriptionPlan plan)
     {
         var snapshotAmount = GetSnapshotAmount(subscription);
         if (snapshotAmount.HasValue && snapshotAmount.Value > 0)
@@ -158,11 +136,6 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         if (planAmount.HasValue && planAmount.Value > 0)
         {
             return planAmount.Value;
-        }
-
-        if (requestedAmount.HasValue && requestedAmount.Value > 0)
-        {
-            return requestedAmount.Value;
         }
 
         return 0;
@@ -208,7 +181,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         return plan.PriceMonthly ?? plan.PriceYearly;
     }
 
-    private static string ResolveCurrency(UserSubscription subscription, SubscriptionPlan plan, string requestedCurrency)
+    private static string ResolveCurrency(UserSubscription subscription, SubscriptionPlan plan)
     {
         var snapshotCurrency = NormalizeCurrency(subscription?.SnapshotCurrency);
         if (!string.IsNullOrWhiteSpace(snapshotCurrency))
@@ -222,13 +195,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             return planCurrency;
         }
 
-        var requested = NormalizeCurrency(requestedCurrency);
-        if (!string.IsNullOrWhiteSpace(requested))
-        {
-            return requested;
-        }
-
-        return "USD";
+        return "VND";
     }
 
     private static string NormalizeCurrency(string currency)
@@ -239,12 +206,5 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         }
 
         return null;
-    }
-
-    private static string NormalizeProvider(string provider)
-    {
-        return string.IsNullOrWhiteSpace(provider)
-            ? "MANUAL"
-            : provider.Trim().ToUpperInvariant();
     }
 }

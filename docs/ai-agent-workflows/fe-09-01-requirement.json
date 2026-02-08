@@ -1,0 +1,92 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-01-requirement",
+  "requirement": {
+    "id": "FE-09-01",
+    "parentId": "FE-09",
+    "title": "Async LLM Failure Explanation Workflow",
+    "goal": "Tao giai thich loi test bang LLM theo kieu bat dong bo, khong anh huong pass/fail rule-based.",
+    "priority": "P0",
+    "implementationOrder": 1,
+    "status": "planned",
+    "rationale": [
+      "Day la requirement AI Agent co gia tri su dung ngay sau khi test run that bai.",
+      "Phu hop gioi han LI-07: LLM chi giai thich, khong quyet dinh pass/fail.",
+      "Tan dung ha tang san co: RabbitMQ cho queue va Redis cho lock/cache."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Nhan su kien test run co test that bai.",
+      "Day yeu cau sang worker LlmAssistant qua RabbitMQ.",
+      "Su dung Redis de dedupe, lock va cache ket qua giai thich.",
+      "Luu vết LlmInteraction voi InteractionType=FailureExplanation.",
+      "Phat su kien hoan tat de UI cap nhat trang thai giai thich."
+    ],
+    "outOfScope": [
+      "LLM scenario suggestion (FE-06, FE-15, FE-16, FE-17).",
+      "Thay doi logic rule-based validation cua TestExecution (FE-08).",
+      "Tu dong sua loi API implementation.",
+      "Workflow orchestration bang n8n full-scale."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      "ClassifiedAds.Modules.TestExecution",
+      "ClassifiedAds.Modules.LlmAssistant",
+      "ClassifiedAds.Modules.TestReporting",
+      "ClassifiedAds.Infrastructure.Messaging",
+      "ClassifiedAds.Infrastructure.Caching"
+    ],
+    "infrastructure": {
+      "messageBroker": "RabbitMQ",
+      "cache": "Redis",
+      "database": "PostgreSQL"
+    }
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "p95Seconds": 8,
+      "maxSeconds": 20
+    },
+    "reliability": {
+      "successRatePercent": 99,
+      "idempotentProcessing": true
+    },
+    "costControl": {
+      "mustUseCache": true,
+      "maxRetriesPerJob": 3
+    }
+  },
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "runId",
+        "testCaseId",
+        "eventCode",
+        "durationMs"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: Khi test run co loi, he thong tao 1 job giai thich cho moi failed test case.",
+    "AC-02: Job duoc xly bat dong bo qua RabbitMQ va co retry toi da 3 lan.",
+    "AC-03: Redis lock ngan duplicate processing cung mot fingerprint trong luc worker dang chay.",
+    "AC-04: Redis cache tra lai ket qua nhanh cho input trung lap trong thoi gian TTL.",
+    "AC-05: UI hien thi log tien trinh bang tieng Viet; system log ghi bang tieng Anh.",
+    "AC-06: Neu LLM loi sau khi retry, UI van nhan duoc thong bao that bai co huong dan hanh dong tiep theo."
+  ],
+  "implementationNotes": {
+    "firstMilestone": "Chay duoc luong end-to-end cho 1 failed test case.",
+    "secondMilestone": "Bo sung cache hit/miss metrics va dashboard theo event code.",
+    "futureExtension": "Neu can orchestration phuc tap, n8n se chi dung cho operational workflow, khong thay queue core."
+  }
+}

@@ -1,0 +1,473 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-01-contracts",
+  "requirementId": "FE-02-01",
+  "title": "Project CRUD — Contracts & Implementation Guide",
+  "controllerContract": {
+    "name": "ProjectsController",
+    "file": "Controllers/ProjectsController.cs",
+    "namespace": "ClassifiedAds.Modules.ApiDocumentation.Controllers",
+    "baseClass": "ControllerBase",
+    "attributes": [
+      "[Authorize]",
+      "[Produces(\"application/json\")]",
+      "[Route(\"api/[controller]\")]",
+      "[ApiController]"
+    ],
+    "dependencies": [
+      {
+        "type": "Dispatcher",
+        "resolvedVia": "IServiceProvider.GetDispatcher()"
+      },
+      {
+        "type": "ICurrentUser",
+        "purpose": "Lấy UserId hiện tại"
+      },
+      {
+        "type": "ILogger<ProjectsController>",
+        "purpose": "Logging"
+      }
+    ],
+    "actions": [
+      {
+        "method": "Get",
+        "httpVerb": "HttpGet",
+        "authorize": "Permissions.GetProjects",
+        "parameters": [
+          "[FromQuery] ProjectStatus? status",
+          "[FromQuery] string? search",
+          "[FromQuery] int page = 1",
+          "[FromQuery] int pageSize = 20"
+        ],
+        "dispatches": "GetProjectsQuery",
+        "returns": "Ok(result)"
+      },
+      {
+        "method": "Get",
+        "httpVerb": "HttpGet(\"{id}\")",
+        "authorize": "Permissions.GetProjects",
+        "parameters": [
+          "Guid id"
+        ],
+        "dispatches": "GetProjectQuery",
+        "returns": "Ok(project)"
+      },
+      {
+        "method": "Post",
+        "httpVerb": "HttpPost",
+        "authorize": "Permissions.AddProject",
+        "parameters": [
+          "[FromBody] CreateUpdateProjectModel model"
+        ],
+        "dispatches": "AddUpdateProjectCommand { Model = model, CurrentUserId = _currentUser.UserId, ProjectId = null }",
+        "returns": "Created($\"/api/projects/{command.SavedProjectId}\", projectModel)"
+      },
+      {
+        "method": "Put",
+        "httpVerb": "HttpPut(\"{id}\")",
+        "authorize": "Permissions.UpdateProject",
+        "parameters": [
+          "Guid id",
+          "[FromBody] CreateUpdateProjectModel model"
+        ],
+        "dispatches": "AddUpdateProjectCommand { Model = model, CurrentUserId = _currentUser.UserId, ProjectId = id }",
+        "returns": "Ok(projectModel)"
+      },
+      {
+        "method": "Archive",
+        "httpVerb": "HttpPut(\"{id}/archive\")",
+        "authorize": "Permissions.ArchiveProject",
+        "parameters": [
+          "Guid id"
+        ],
+        "dispatches": "ArchiveProjectCommand { ProjectId = id, CurrentUserId = _currentUser.UserId, Archive = true }",
+        "returns": "Ok(projectModel)"
+      },
+      {
+        "method": "Unarchive",
+        "httpVerb": "HttpPut(\"{id}/unarchive\")",
+        "authorize": "Permissions.ArchiveProject",
+        "parameters": [
+          "Guid id"
+        ],
+        "dispatches": "ArchiveProjectCommand { ProjectId = id, CurrentUserId = _currentUser.UserId, Archive = false }",
+        "returns": "Ok(projectModel)"
+      },
+      {
+        "method": "Delete",
+        "httpVerb": "HttpDelete(\"{id}\")",
+        "authorize": "Permissions.DeleteProject",
+        "parameters": [
+          "Guid id"
+        ],
+        "dispatches": "DeleteProjectCommand { ProjectId = id, CurrentUserId = _currentUser.UserId }",
+        "returns": "NoContent()"
+      }
+    ]
+  },
+  "commandContracts": [
+    {
+      "name": "AddUpdateProjectCommand",
+      "file": "Commands/AddUpdateProjectCommand.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Commands",
+      "codeTemplate": {
+        "command": {
+          "implements": "ICommand",
+          "properties": [
+            "public CreateUpdateProjectModel Model { get; set; }",
+            "public Guid CurrentUserId { get; set; }",
+            "public Guid? ProjectId { get; set; }",
+            "public Guid SavedProjectId { get; set; }"
+          ]
+        },
+        "handler": {
+          "implements": "ICommandHandler<AddUpdateProjectCommand>",
+          "dependencies": [
+            "ICrudService<Project> _projectService",
+            "IRepository<Project, Guid> _projectRepository"
+          ],
+          "validationRules": [
+            "Model != null → ValidationException('Thông tin project là bắt buộc.')",
+            "Model.Name is empty → ValidationException('Tên project là bắt buộc.')",
+            "Model.Name.Length > 200 → ValidationException('Tên project không được vượt quá 200 ký tự.')",
+            "Model.BaseUrl is set and not valid URL → ValidationException('URL cơ sở không hợp lệ.')",
+            "If update: project not found → NotFoundException('Project', id)",
+            "If update: project.OwnerId != CurrentUserId → ValidationException('Bạn không có quyền chỉnh sửa project này.')"
+          ],
+          "flowSteps": [
+            "1. Validate input (throw vi-VN exceptions).",
+            "2. If ProjectId == null (Create):",
+            "   a. var project = new Project { Name, Description, BaseUrl, OwnerId = CurrentUserId, Status = ProjectStatus.Active }.",
+            "   b. await _projectService.AddAsync(project, ct).",
+            "3. If ProjectId != null (Update):",
+            "   a. var project = await _projectRepository.FirstOrDefaultAsync(p => p.Id == ProjectId).",
+            "   b. Throw NotFoundException if null.",
+            "   c. Verify OwnerId == CurrentUserId.",
+            "   d. Update Name, Description, BaseUrl.",
+            "   e. await _projectService.UpdateAsync(project, ct).",
+            "4. SavedProjectId = project.Id."
+          ]
+        }
+      }
+    },
+    {
+      "name": "ArchiveProjectCommand",
+      "file": "Commands/ArchiveProjectCommand.cs",
+      "codeTemplate": {
+        "command": {
+          "implements": "ICommand",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public Guid CurrentUserId { get; set; }",
+            "public bool Archive { get; set; }"
+          ]
+        },
+        "handler": {
+          "implements": "ICommandHandler<ArchiveProjectCommand>",
+          "dependencies": [
+            "IRepository<Project, Guid> _projectRepository"
+          ],
+          "flowSteps": [
+            "1. var project = await _projectRepository.FirstOrDefaultAsync(p => p.Id == command.ProjectId).",
+            "2. Throw NotFoundException if null.",
+            "3. Verify OwnerId == CurrentUserId.",
+            "4. project.Status = command.Archive ? ProjectStatus.Archived : ProjectStatus.Active.",
+            "5. await _projectRepository.UpdateAsync(project, ct).",
+            "6. await _projectRepository.UnitOfWork.SaveChangesAsync(ct).",
+            "Note: EntityUpdatedEvent se duoc raise boi SaveChanges interceptor hoac manual dispatch."
+          ]
+        }
+      }
+    },
+    {
+      "name": "DeleteProjectCommand",
+      "file": "Commands/DeleteProjectCommand.cs",
+      "codeTemplate": {
+        "command": {
+          "implements": "ICommand",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public Guid CurrentUserId { get; set; }"
+          ]
+        },
+        "handler": {
+          "implements": "ICommandHandler<DeleteProjectCommand>",
+          "dependencies": [
+            "ICrudService<Project> _projectService",
+            "IRepository<Project, Guid> _projectRepository"
+          ],
+          "flowSteps": [
+            "1. var project = await _projectRepository.FirstOrDefaultAsync(p => p.Id == command.ProjectId).",
+            "2. Throw NotFoundException if null.",
+            "3. Verify OwnerId == CurrentUserId.",
+            "4. await _projectService.DeleteAsync(project, ct).",
+            "Note: CrudService.DeleteAsync raises EntityDeletedEvent."
+          ]
+        }
+      }
+    },
+    {
+      "name": "PublishEventsCommand",
+      "file": "Commands/PublishEventsCommand.cs",
+      "description": "COPY EXACT PATTERN tu ClassifiedAds.Modules.Subscription/Commands/PublishEventsCommand.cs. Thay doi namespace va EventSource."
+    }
+  ],
+  "queryContracts": [
+    {
+      "name": "GetProjectsQuery",
+      "file": "Queries/GetProjectsQuery.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Queries",
+      "codeTemplate": {
+        "query": {
+          "implements": "IQuery<PaginatedResult<ProjectModel>>",
+          "properties": [
+            "public Guid OwnerId { get; set; }",
+            "public ProjectStatus? Status { get; set; }",
+            "public string? Search { get; set; }",
+            "public int Page { get; set; } = 1",
+            "public int PageSize { get; set; } = 20"
+          ]
+        },
+        "handler": {
+          "implements": "IQueryHandler<GetProjectsQuery, PaginatedResult<ProjectModel>>",
+          "dependencies": [
+            "IRepository<Project, Guid> _projectRepository"
+          ],
+          "flowSteps": [
+            "1. var query = _projectRepository.GetQueryableSet().Where(p => p.OwnerId == query.OwnerId).",
+            "2. If Status != null: query = query.Where(p => p.Status == query.Status).",
+            "3. If Search not empty: query = query.Where(p => p.Name.Contains(query.Search)).",
+            "4. var totalCount = await query.CountAsync(ct).",
+            "5. var items = await query.OrderByDescending(p => p.CreatedDateTime).Skip((Page-1)*PageSize).Take(PageSize).ToListAsync(ct).",
+            "6. Map to ProjectModel list.",
+            "7. Return new PaginatedResult<ProjectModel> { Items, TotalCount, Page, PageSize }."
+          ]
+        }
+      }
+    },
+    {
+      "name": "GetProjectQuery",
+      "file": "Queries/GetProjectQuery.cs",
+      "codeTemplate": {
+        "query": {
+          "implements": "IQuery<ProjectDetailModel>",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public Guid OwnerId { get; set; }"
+          ]
+        },
+        "handler": {
+          "implements": "IQueryHandler<GetProjectQuery, ProjectDetailModel>",
+          "dependencies": [
+            "IRepository<Project, Guid> _projectRepository",
+            "IRepository<ApiSpecification, Guid> _specRepository"
+          ],
+          "flowSteps": [
+            "1. Load project by Id. Throw NotFoundException if null.",
+            "2. Verify OwnerId match.",
+            "3. var specCount = await _specRepository.GetQueryableSet().Where(s => s.ProjectId == project.Id).CountAsync(ct).",
+            "4. SpecSummaryModel? activeSpec = null.",
+            "5. If project.ActiveSpecId != null: load spec, map to SpecSummaryModel.",
+            "6. Return ProjectDetailModel { ..project props, TotalSpecifications = specCount, ActiveSpecSummary = activeSpec }."
+          ]
+        }
+      }
+    },
+    {
+      "name": "GetUsersQuery / GetAuditEntriesQuery",
+      "file": "Queries/GetUsersQuery.cs, Queries/GetAuditEntriesQuery.cs",
+      "description": "COPY EXACT PATTERN tu ClassifiedAds.Modules.Subscription/Queries/ tuong ung."
+    }
+  ],
+  "eventHandlerContracts": [
+    {
+      "name": "ProjectCreatedEventHandler",
+      "file": "EventHandlers/ProjectCreatedEventHandler.cs",
+      "handles": "EntityCreatedEvent<Project>",
+      "dependencies": [
+        "IRepository<AuditLogEntry, Guid> _auditLogRepository",
+        "IRepository<OutboxMessage, Guid> _outboxMessageRepository"
+      ],
+      "codeTemplate": "COPY PATTERN tu ClassifiedAds.Modules.Subscription/EventHandlers/PlanCreatedEventHandler.cs",
+      "logMessage": {
+        "action": "PROJECT_CREATED",
+        "logTemplate": "{ \"projectId\": \"{Id}\", \"name\": \"{Name}\", \"ownerId\": \"{OwnerId}\" }"
+      }
+    },
+    {
+      "name": "ProjectUpdatedEventHandler",
+      "file": "EventHandlers/ProjectUpdatedEventHandler.cs",
+      "handles": "EntityUpdatedEvent<Project>",
+      "codeTemplate": "COPY PATTERN tu PlanUpdatedEventHandler, thay doi Action = 'PROJECT_UPDATED'."
+    },
+    {
+      "name": "ProjectDeletedEventHandler",
+      "file": "EventHandlers/ProjectDeletedEventHandler.cs",
+      "handles": "EntityDeletedEvent<Project>",
+      "codeTemplate": "COPY PATTERN tu PlanDeletedEventHandler, thay doi Action = 'PROJECT_DELETED'."
+    }
+  ],
+  "outboxContracts": {
+    "eventTypeConstants": {
+      "file": "Constants/EventTypeConstants.cs",
+      "values": {
+        "ProjectCreated": "PROJECT_CREATED",
+        "ProjectUpdated": "PROJECT_UPDATED",
+        "ProjectDeleted": "PROJECT_DELETED",
+        "ProjectArchived": "PROJECT_ARCHIVED",
+        "AuditLogEntryCreated": "AUDIT_LOG_ENTRY_CREATED"
+      }
+    },
+    "integrationEvents": {
+      "file": "IntegrationEvents/ProjectOutboxEvents.cs",
+      "events": [
+        {
+          "name": "ProjectCreatedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public string Name { get; set; }",
+            "public Guid OwnerId { get; set; }",
+            "public string Status { get; set; }"
+          ]
+        },
+        {
+          "name": "ProjectUpdatedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public string Name { get; set; }",
+            "public string? OldName { get; set; }"
+          ]
+        },
+        {
+          "name": "ProjectArchivedOutboxEvent",
+          "baseClass": "ApiDocOutboxEventBase",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public bool IsArchived { get; set; }"
+          ]
+        }
+      ],
+      "baseClass": {
+        "name": "ApiDocOutboxEventBase",
+        "properties": [
+          "public Guid EventId { get; set; } = Guid.NewGuid()",
+          "public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow",
+          "public string Version { get; set; } = \"1.0\""
+        ]
+      }
+    },
+    "publishers": [
+      {
+        "name": "ProjectOutboxMessagePublisher",
+        "file": "OutBoxEventPublishers/ProjectOutBoxMessagePublisher.cs",
+        "implements": "IOutboxMessagePublisher",
+        "canHandleEventSource": "ClassifiedAds.Modules.ApiDocumentation",
+        "canHandleEventTypes": [
+          "PROJECT_CREATED",
+          "PROJECT_UPDATED",
+          "PROJECT_DELETED",
+          "PROJECT_ARCHIVED"
+        ],
+        "codeTemplate": "COPY PATTERN tu ClassifiedAds.Modules.Subscription/OutBoxEventPublishers/PlanOutBoxMessagePublisher.cs"
+      },
+      {
+        "name": "AuditLogEntryOutboxMessagePublisher",
+        "file": "OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs",
+        "implements": "IOutboxMessagePublisher",
+        "canHandleEventSource": "ClassifiedAds.Modules.ApiDocumentation",
+        "canHandleEventTypes": [
+          "AUDIT_LOG_ENTRY_CREATED"
+        ],
+        "codeTemplate": "COPY EXACT PATTERN tu ClassifiedAds.Modules.Subscription/OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs"
+      }
+    ]
+  },
+  "serviceRegistration": {
+    "file": "ServiceCollectionExtensions.cs",
+    "additions": [
+      "AddMessageHandlers(Assembly.GetExecutingAssembly()) — scan Commands, Queries, EventHandlers.",
+      "AddAuthorizationPolicies(Assembly.GetExecutingAssembly()) — scan Permissions.",
+      "AddHostedServicesApiDocumentationModule() — register PublishEventWorker.",
+      "AddOutboxMessagePublishers(Assembly) — scan IOutboxMessagePublisher implementations."
+    ]
+  },
+  "logCatalog": [
+    {
+      "eventCode": "APIDOC_PROJECT_CREATED",
+      "uiMessageVi": "Đã tạo project thành công.",
+      "systemMessageEn": "Project created successfully.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PROJECT_UPDATED",
+      "uiMessageVi": "Đã cập nhật project thành công.",
+      "systemMessageEn": "Project updated successfully.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PROJECT_ARCHIVED",
+      "uiMessageVi": "Đã lưu trữ project.",
+      "systemMessageEn": "Project archived.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PROJECT_DELETED",
+      "uiMessageVi": "Đã xóa project.",
+      "systemMessageEn": "Project deleted.",
+      "level": "Warning"
+    },
+    {
+      "eventCode": "APIDOC_VALIDATION_FAILED",
+      "uiMessageVi": "Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.",
+      "systemMessageEn": "Validation failed for project operation.",
+      "level": "Warning"
+    }
+  ],
+  "samples": {
+    "createProjectRequest": {
+      "method": "POST",
+      "url": "/api/projects",
+      "body": {
+        "name": "E-Commerce API",
+        "description": "API cho ung dung thuong mai dien tu",
+        "baseUrl": "https://api.example.com/v1"
+      }
+    },
+    "createProjectResponse": {
+      "status": 201,
+      "location": "/api/projects/4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+      "body": {
+        "id": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+        "name": "E-Commerce API",
+        "description": "API cho ung dung thuong mai dien tu",
+        "baseUrl": "https://api.example.com/v1",
+        "status": "Active",
+        "activeSpecId": null,
+        "activeSpecName": null,
+        "createdDateTime": "2026-02-08T10:00:00+07:00",
+        "updatedDateTime": null
+      }
+    },
+    "listProjectsResponse": {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "id": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+            "name": "E-Commerce API",
+            "status": "Active",
+            "activeSpecName": "OpenAPI v3.1",
+            "createdDateTime": "2026-02-08T10:00:00+07:00"
+          }
+        ],
+        "totalCount": 1,
+        "page": 1,
+        "pageSize": 20,
+        "totalPages": 1
+      }
+    }
+  }
+}

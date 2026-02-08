@@ -2,6 +2,7 @@ using ClassifiedAds.Modules.Identity.Models;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Text.Json;
 using Xunit;
 using FluentAssertions;
 
@@ -158,35 +159,43 @@ public class AuthModelsTests
     }
 
     [Fact]
-    public void UpdateProfileModel_Should_ValidateEmailFormat()
+    public void UpdateProfileModel_Should_LimitTimezoneLength()
     {
         // Arrange
         var model = new UpdateProfileModel
         {
-            Email = "invalid-email",
+            Timezone = new string('z', 51),
         };
 
         // Act
         var validationResults = ValidateModel(model);
 
         // Assert
-        validationResults.Should().Contain(v => v.MemberNames.Contains("Email"));
+        validationResults.Should().Contain(v => v.MemberNames.Contains("Timezone"));
     }
 
     [Fact]
-    public void UpdateProfileModel_Should_LimitUserNameLength()
+    public void UpdateProfileModel_Should_NotSerializeSecurityFields()
     {
         // Arrange
         var model = new UpdateProfileModel
         {
-            UserName = new string('u', 300),
+            UserName = "new.username",
+            Email = "new@example.com",
+            PhoneNumber = "0123456789",
+            DisplayName = "New Display",
+            Timezone = "UTC",
         };
 
         // Act
-        var validationResults = ValidateModel(model);
+        var json = JsonSerializer.Serialize(model);
 
         // Assert
-        validationResults.Should().Contain(v => v.MemberNames.Contains("UserName"));
+        json.Should().Contain("DisplayName");
+        json.Should().Contain("Timezone");
+        json.Should().NotContain("UserName");
+        json.Should().NotContain("Email");
+        json.Should().NotContain("PhoneNumber");
     }
 
     #endregion
@@ -225,6 +234,25 @@ public class AuthModelsTests
 
         // Assert
         validationResults.Should().Contain(v => v.MemberNames.Contains("Password"));
+    }
+
+    [Fact]
+    public void LoginResponseModel_Should_NotSerializeRefreshToken()
+    {
+        // Arrange
+        var model = new LoginResponseModel
+        {
+            AccessToken = "access-token",
+            RefreshToken = "refresh-token",
+            ExpiresIn = 3600,
+        };
+
+        // Act
+        var json = JsonSerializer.Serialize(model);
+
+        // Assert
+        json.Should().Contain("AccessToken");
+        json.Should().NotContain("RefreshToken");
     }
 
     #endregion

@@ -1,0 +1,594 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-02-01-requirement",
+  "requirement": {
+    "id": "FE-02-01",
+    "parentId": "FE-02",
+    "title": "Project CRUD — Tạo, xem, sửa, archive project",
+    "goal": "Xây dựng đầy đủ CQRS layer cho entity Project: Controllers, Commands, Queries, DTOs, EventHandlers, Outbox, Authorization.",
+    "priority": "P0",
+    "implementationOrder": 1,
+    "status": "planned",
+    "rationale": [
+      "Project là aggregate root đầu tiên của module ApiDocumentation.",
+      "Mọi ApiSpecification thuộc về 1 Project — cần Project trước.",
+      "Entity Project đã có đầy đủ trong DB (schema apidoc, EF config done).",
+      "Chỉ cần xây business layer theo pattern của Subscription module."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Tạo project mới (POST /api/projects).",
+      "Xem danh sách projects của user hiện tại (GET /api/projects).",
+      "Xem chi tiết 1 project (GET /api/projects/{id}).",
+      "Cập nhật project (PUT /api/projects/{id}).",
+      "Archive project (PUT /api/projects/{id}/archive).",
+      "Unarchive project (PUT /api/projects/{id}/unarchive).",
+      "Soft delete project (DELETE /api/projects/{id}) — chuyển status sang Archived.",
+      "Audit log cho mọi thao tác CRUD.",
+      "Outbox events cho integration."
+    ],
+    "outOfScope": [
+      "Hard delete project và cascade delete specs.",
+      "Bulk operations (import/export nhiều projects).",
+      "Sharing project với nhiều users (future feature)."
+    ]
+  },
+  "entityReference": {
+    "name": "Project",
+    "table": "apidoc.Projects",
+    "baseClass": "Entity<Guid>, IAggregateRoot",
+    "properties": [
+      {
+        "name": "Id",
+        "type": "Guid",
+        "dbConfig": "PK, gen_random_uuid()"
+      },
+      {
+        "name": "OwnerId",
+        "type": "Guid",
+        "dbConfig": "indexed, required"
+      },
+      {
+        "name": "ActiveSpecId",
+        "type": "Guid?",
+        "dbConfig": "FK -> ApiSpecification, OnDelete.SetNull"
+      },
+      {
+        "name": "Name",
+        "type": "string",
+        "dbConfig": "maxlen 200, required"
+      },
+      {
+        "name": "Description",
+        "type": "string",
+        "dbConfig": "text column"
+      },
+      {
+        "name": "BaseUrl",
+        "type": "string",
+        "dbConfig": "maxlen 500"
+      },
+      {
+        "name": "Status",
+        "type": "ProjectStatus",
+        "dbConfig": "stored as string, maxlen 20, indexed"
+      },
+      {
+        "name": "RowVersion",
+        "type": "byte[]",
+        "dbConfig": "Timestamp (concurrency)"
+      },
+      {
+        "name": "CreatedDateTime",
+        "type": "DateTimeOffset",
+        "dbConfig": "auto set"
+      },
+      {
+        "name": "UpdatedDateTime",
+        "type": "DateTimeOffset?",
+        "dbConfig": "auto set"
+      }
+    ],
+    "navigations": [
+      {
+        "name": "ActiveSpec",
+        "type": "ApiSpecification",
+        "relationship": "optional 1-to-1"
+      },
+      {
+        "name": "ApiSpecifications",
+        "type": "ICollection<ApiSpecification>",
+        "relationship": "1-to-many"
+      }
+    ],
+    "enums": [
+      {
+        "name": "ProjectStatus",
+        "values": [
+          "Active = 0",
+          "Archived = 1"
+        ]
+      }
+    ]
+  },
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/projects",
+      "permission": "Permission:GetProjects",
+      "description": "Lấy danh sách projects của user hiện tại. Hỗ trợ pagination, filter status, search name.",
+      "queryParams": [
+        {
+          "name": "status",
+          "type": "ProjectStatus?",
+          "description": "Filter theo Active/Archived"
+        },
+        {
+          "name": "search",
+          "type": "string?",
+          "description": "Tìm theo tên project"
+        },
+        {
+          "name": "page",
+          "type": "int",
+          "default": 1
+        },
+        {
+          "name": "pageSize",
+          "type": "int",
+          "default": 20,
+          "max": 100
+        }
+      ],
+      "response": {
+        "200": "PaginatedResult<ProjectModel>"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{id}",
+      "permission": "Permission:GetProjects",
+      "description": "Lấy chi tiết 1 project (bao gồm ActiveSpec summary).",
+      "response": {
+        "200": "ProjectDetailModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "permission": "Permission:AddProject",
+      "description": "Tạo project mới. OwnerId = ICurrentUser.UserId.",
+      "requestBody": "CreateUpdateProjectModel",
+      "response": {
+        "201": "ProjectModel (Location header)",
+        "400": "ValidationException"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{id}",
+      "permission": "Permission:UpdateProject",
+      "description": "Cập nhật thông tin project.",
+      "requestBody": "CreateUpdateProjectModel",
+      "response": {
+        "200": "ProjectModel",
+        "400": "ValidationException",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{id}/archive",
+      "permission": "Permission:ArchiveProject",
+      "description": "Archive project (Status = Archived).",
+      "response": {
+        "200": "ProjectModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{id}/unarchive",
+      "permission": "Permission:ArchiveProject",
+      "description": "Unarchive project (Status = Active).",
+      "response": {
+        "200": "ProjectModel",
+        "404": "NotFoundException"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/projects/{id}",
+      "permission": "Permission:DeleteProject",
+      "description": "Soft delete — chuyển sang Archived. Admin only.",
+      "response": {
+        "204": "No Content",
+        "404": "NotFoundException"
+      }
+    }
+  ],
+  "commands": [
+    {
+      "name": "AddUpdateProjectCommand",
+      "file": "Commands/AddUpdateProjectCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "Model",
+          "type": "CreateUpdateProjectModel"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        },
+        {
+          "name": "ProjectId",
+          "type": "Guid?",
+          "description": "null = create, non-null = update"
+        }
+      ],
+      "handlerName": "AddUpdateProjectCommandHandler",
+      "handlerLogic": [
+        "1. Validate input: Name required, maxlen 200, BaseUrl maxlen 500.",
+        "2. If update: load project by Id, verify OwnerId == CurrentUserId.",
+        "3. If create: set OwnerId = CurrentUserId, Status = Active.",
+        "4. Call ICrudService<Project>.AddOrUpdateAsync(project).",
+        "5. CrudService internally: SaveChanges → raise EntityCreatedEvent/EntityUpdatedEvent.",
+        "6. Set command.SavedProjectId for controller to return."
+      ],
+      "outputProperty": "SavedProjectId (Guid)"
+    },
+    {
+      "name": "ArchiveProjectCommand",
+      "file": "Commands/ArchiveProjectCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        },
+        {
+          "name": "Archive",
+          "type": "bool",
+          "description": "true = archive, false = unarchive"
+        }
+      ],
+      "handlerName": "ArchiveProjectCommandHandler",
+      "handlerLogic": [
+        "1. Load project by Id. Throw NotFoundException if not found.",
+        "2. Verify OwnerId == CurrentUserId (hoặc admin role).",
+        "3. Set Status = Archive ? Archived : Active.",
+        "4. Call repository.UpdateAsync(project).",
+        "5. SaveChangesAsync() → raise EntityUpdatedEvent → EventHandler tạo outbox."
+      ]
+    },
+    {
+      "name": "DeleteProjectCommand",
+      "file": "Commands/DeleteProjectCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "CurrentUserId",
+          "type": "Guid"
+        }
+      ],
+      "handlerName": "DeleteProjectCommandHandler",
+      "handlerLogic": [
+        "1. Load project by Id. Throw NotFoundException if not found.",
+        "2. Verify OwnerId == CurrentUserId.",
+        "3. Set Status = Archived (soft delete, không hard delete).",
+        "4. SaveChangesAsync() → raise EntityDeletedEvent → EventHandler tạo outbox."
+      ]
+    },
+    {
+      "name": "PublishEventsCommand",
+      "file": "Commands/PublishEventsCommand.cs",
+      "interface": "ICommand",
+      "properties": [
+        {
+          "name": "SentEventsCount",
+          "type": "int",
+          "description": "Output — số event đã publish."
+        }
+      ],
+      "handlerName": "PublishEventsCommandHandler",
+      "handlerLogic": [
+        "1. Query OutboxMessage WHERE Published = false ORDER BY CreatedDateTime TAKE 50.",
+        "2. For each message: wrap in PublishingOutboxMessage, call _messageBus.SendAsync().",
+        "3. On success: mark Published = true, SaveChanges.",
+        "4. Set command.SentEventsCount.",
+        "COPY PATTERN TỪ: ClassifiedAds.Modules.Subscription/Commands/PublishEventsCommand.cs"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "name": "GetProjectsQuery",
+      "file": "Queries/GetProjectsQuery.cs",
+      "interface": "IQuery<PaginatedResult<ProjectModel>>",
+      "properties": [
+        {
+          "name": "OwnerId",
+          "type": "Guid"
+        },
+        {
+          "name": "Status",
+          "type": "ProjectStatus?"
+        },
+        {
+          "name": "Search",
+          "type": "string?"
+        },
+        {
+          "name": "Page",
+          "type": "int",
+          "default": 1
+        },
+        {
+          "name": "PageSize",
+          "type": "int",
+          "default": 20
+        }
+      ],
+      "handlerLogic": [
+        "1. var query = _projectRepository.GetQueryableSet().",
+        "2. Filter: .Where(p => p.OwnerId == query.OwnerId).",
+        "3. If Status != null: .Where(p => p.Status == query.Status).",
+        "4. If Search != null: .Where(p => p.Name.Contains(query.Search)).",
+        "5. Order by CreatedDateTime descending.",
+        "6. Paginate: Skip/Take.",
+        "7. Map to ProjectModel list.",
+        "8. Return PaginatedResult<ProjectModel> with TotalCount."
+      ]
+    },
+    {
+      "name": "GetProjectQuery",
+      "file": "Queries/GetProjectQuery.cs",
+      "interface": "IQuery<ProjectDetailModel>",
+      "properties": [
+        {
+          "name": "ProjectId",
+          "type": "Guid"
+        },
+        {
+          "name": "OwnerId",
+          "type": "Guid"
+        }
+      ],
+      "handlerLogic": [
+        "1. Load project by Id. Throw NotFoundException if not found.",
+        "2. Verify OwnerId matches (hoặc admin cần xem tất cả).",
+        "3. Load ActiveSpec (ApiSpecification) if ActiveSpecId != null.",
+        "4. Count total specifications.",
+        "5. Map to ProjectDetailModel."
+      ]
+    },
+    {
+      "name": "GetUsersQuery",
+      "file": "Queries/GetUsersQuery.cs",
+      "interface": "IQuery<List<UserDTO>>",
+      "description": "Proxy query để lấy user info từ Identity module. Copy pattern từ Subscription module."
+    },
+    {
+      "name": "GetAuditEntriesQuery",
+      "file": "Queries/GetAuditEntriesQuery.cs",
+      "interface": "IQuery<List<AuditLogEntryDTO>>",
+      "description": "Lấy audit log entries cho module này. Copy pattern từ Subscription module."
+    }
+  ],
+  "dtos": [
+    {
+      "name": "ProjectModel",
+      "file": "DTOs/ProjectModel.cs",
+      "properties": [
+        {
+          "name": "Id",
+          "type": "Guid"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "Description",
+          "type": "string?"
+        },
+        {
+          "name": "BaseUrl",
+          "type": "string?"
+        },
+        {
+          "name": "Status",
+          "type": "string"
+        },
+        {
+          "name": "ActiveSpecId",
+          "type": "Guid?"
+        },
+        {
+          "name": "ActiveSpecName",
+          "type": "string?"
+        },
+        {
+          "name": "CreatedDateTime",
+          "type": "DateTimeOffset"
+        },
+        {
+          "name": "UpdatedDateTime",
+          "type": "DateTimeOffset?"
+        }
+      ]
+    },
+    {
+      "name": "ProjectDetailModel",
+      "file": "DTOs/ProjectDetailModel.cs",
+      "extends": "ProjectModel",
+      "additionalProperties": [
+        {
+          "name": "TotalSpecifications",
+          "type": "int"
+        },
+        {
+          "name": "ActiveSpecSummary",
+          "type": "SpecSummaryModel?"
+        }
+      ]
+    },
+    {
+      "name": "CreateUpdateProjectModel",
+      "file": "DTOs/CreateUpdateProjectModel.cs",
+      "properties": [
+        {
+          "name": "Name",
+          "type": "string",
+          "validation": "Required, maxlen 200"
+        },
+        {
+          "name": "Description",
+          "type": "string?",
+          "validation": "maxlen 2000"
+        },
+        {
+          "name": "BaseUrl",
+          "type": "string?",
+          "validation": "maxlen 500, valid URL format"
+        }
+      ]
+    },
+    {
+      "name": "PaginatedResult<T>",
+      "file": "DTOs/PaginatedResult.cs",
+      "properties": [
+        {
+          "name": "Items",
+          "type": "List<T>"
+        },
+        {
+          "name": "TotalCount",
+          "type": "int"
+        },
+        {
+          "name": "Page",
+          "type": "int"
+        },
+        {
+          "name": "PageSize",
+          "type": "int"
+        },
+        {
+          "name": "TotalPages",
+          "type": "int"
+        }
+      ]
+    }
+  ],
+  "eventHandlers": [
+    {
+      "name": "ProjectCreatedEventHandler",
+      "file": "EventHandlers/ProjectCreatedEventHandler.cs",
+      "handles": "EntityCreatedEvent<Project>",
+      "logic": [
+        "1. Tạo AuditLogEntry (Action = 'PROJECT_CREATED', ObjectId = project.Id, Log = JSON summary).",
+        "2. Tạo OutboxMessage (EventType = 'AUDIT_LOG_ENTRY_CREATED') cho audit log.",
+        "3. Tạo OutboxMessage (EventType = 'PROJECT_CREATED') cho integration event.",
+        "4. SaveChangesAsync() — atomic save cả audit + outbox.",
+        "COPY PATTERN TỪ: ClassifiedAds.Modules.Subscription/EventHandlers/PlanCreatedEventHandler.cs"
+      ]
+    },
+    {
+      "name": "ProjectUpdatedEventHandler",
+      "file": "EventHandlers/ProjectUpdatedEventHandler.cs",
+      "handles": "EntityUpdatedEvent<Project>",
+      "logic": "Tương tự ProjectCreatedEventHandler nhưng EventType = 'PROJECT_UPDATED'."
+    },
+    {
+      "name": "ProjectDeletedEventHandler",
+      "file": "EventHandlers/ProjectDeletedEventHandler.cs",
+      "handles": "EntityDeletedEvent<Project>",
+      "logic": "Tương tự ProjectCreatedEventHandler nhưng EventType = 'PROJECT_DELETED'."
+    }
+  ],
+  "authorization": {
+    "file": "Authorization/Permissions.cs",
+    "permissions": [
+      "Permission:GetProjects",
+      "Permission:AddProject",
+      "Permission:UpdateProject",
+      "Permission:DeleteProject",
+      "Permission:ArchiveProject",
+      "Permission:GetSpecifications",
+      "Permission:AddSpecification",
+      "Permission:UpdateSpecification",
+      "Permission:DeleteSpecification",
+      "Permission:ActivateSpecification"
+    ]
+  },
+  "constants": {
+    "file": "Constants/EventTypeConstants.cs",
+    "values": [
+      "PROJECT_CREATED",
+      "PROJECT_UPDATED",
+      "PROJECT_DELETED",
+      "PROJECT_ARCHIVED",
+      "AUDIT_LOG_ENTRY_CREATED"
+    ]
+  },
+  "outbox": {
+    "factory": {
+      "file": "Outbox/OutboxMessageFactory.cs",
+      "description": "Static helper method Create<TPayload>(eventType, triggeredById, objectId, payload). Copy từ Subscription module."
+    },
+    "publishers": [
+      {
+        "name": "ProjectOutboxMessagePublisher",
+        "file": "OutBoxEventPublishers/ProjectOutBoxMessagePublisher.cs",
+        "handles": [
+          "PROJECT_CREATED",
+          "PROJECT_UPDATED",
+          "PROJECT_DELETED",
+          "PROJECT_ARCHIVED"
+        ],
+        "description": "Log cho integration. Tương lai có thể notify or sync cross-module."
+      },
+      {
+        "name": "AuditLogEntryOutboxMessagePublisher",
+        "file": "OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs",
+        "handles": [
+          "AUDIT_LOG_ENTRY_CREATED"
+        ],
+        "description": "Forward audit log đến IAuditLogService. Copy từ Subscription module."
+      }
+    ]
+  },
+  "hostedServices": {
+    "publishEventWorker": {
+      "file": "HostedServices/PublishEventWorker.cs",
+      "description": "BackgroundService poll OutboxMessage (Published = false) và dispatch qua PublishEventsCommand. Copy từ Subscription module."
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST /api/projects tạo project thành công, trả về 201 với ProjectModel.",
+    "AC-02: GET /api/projects trả về danh sách projects của user hiện tại với pagination.",
+    "AC-03: GET /api/projects/{id} trả về chi tiết project với ActiveSpec summary.",
+    "AC-04: PUT /api/projects/{id} cập nhật project thành công.",
+    "AC-05: PUT /api/projects/{id}/archive chuyển status sang Archived.",
+    "AC-06: PUT /api/projects/{id}/unarchive chuyển status về Active.",
+    "AC-07: DELETE /api/projects/{id} soft delete (chuyển Archived).",
+    "AC-08: Mọi thao tác CRUD tạo AuditLogEntry và OutboxMessage.",
+    "AC-09: API trả về 404 khi project không tồn tại.",
+    "AC-10: API trả về 400 khi validation lỗi (tên trống, tên quá dài).",
+    "AC-11: User chỉ thấy projects của mình (OwnerId filter).",
+    "AC-12: API yêu cầu authentication và permission phù hợp."
+  ]
+}
