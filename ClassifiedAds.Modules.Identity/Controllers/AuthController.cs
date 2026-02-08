@@ -95,7 +95,7 @@ public class AuthController : ControllerBase
         var existingUser = await _userManager.FindByEmailAsync(model.Email);
         if (existingUser != null)
         {
-            return BadRequest(new { Error = "Email is already registered." });
+            return BadRequest(new { Error = "Email đã được đăng ký." });
         }
 
         // Create new user with minimal required fields
@@ -153,7 +153,7 @@ public class AuthController : ControllerBase
         {
             UserId = user.Id,
             Email = user.Email,
-            Message = "Registration successful. Please check your email to confirm your account.",
+            Message = "Đăng ký thành công. Vui lòng kiểm tra email để xác nhận tài khoản.",
             EmailConfirmationRequired = true,
         });
     }
@@ -178,19 +178,19 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(model.Email);
         if (user == null)
         {
-            return Unauthorized(new { Error = "Invalid email or password." });
+            return Unauthorized(new { Error = "Email hoặc mật khẩu không đúng." });
         }
 
         // Check if email is confirmed
         if (!user.EmailConfirmed)
         {
-            return BadRequest(new { Error = "Please confirm your email address before logging in." });
+            return BadRequest(new { Error = "Vui lòng xác nhận địa chỉ email trước khi đăng nhập." });
         }
 
         // Check if user is locked out
         if (await _userManager.IsLockedOutAsync(user))
         {
-            return BadRequest(new { Error = "Account is locked. Please try again later." });
+            return BadRequest(new { Error = "Tài khoản đã bị khóa. Vui lòng thử lại sau." });
         }
 
         // Verify password
@@ -199,10 +199,10 @@ public class AuthController : ControllerBase
         {
             if (result.IsLockedOut)
             {
-                return BadRequest(new { Error = "Account is locked due to multiple failed login attempts. Please try again later." });
+                return BadRequest(new { Error = "Tài khoản bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau." });
             }
 
-            return Unauthorized(new { Error = "Invalid email or password." });
+            return Unauthorized(new { Error = "Email hoặc mật khẩu không đúng." });
         }
 
         // Get user roles
@@ -249,7 +249,7 @@ public class AuthController : ControllerBase
         var result = await _jwtTokenService.ValidateAndRotateRefreshTokenAsync(model.RefreshToken);
         if (result == null)
         {
-            return Unauthorized(new { Error = "Invalid or expired refresh token." });
+            return Unauthorized(new { Error = "Mã xác thực không hợp lệ hoặc đã hết hạn." });
         }
 
         var (accessToken, refreshToken, expiresIn, principal) = result.Value;
@@ -257,13 +257,13 @@ public class AuthController : ControllerBase
         var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId))
         {
-            return Unauthorized(new { Error = "Invalid refresh token." });
+            return Unauthorized(new { Error = "Mã xác thực không hợp lệ." });
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
         {
-            return Unauthorized(new { Error = "User not found." });
+            return Unauthorized(new { Error = "Không tìm thấy người dùng." });
         }
 
         var roles = await _userManager.GetRolesAsync(user);
@@ -296,7 +296,7 @@ public class AuthController : ControllerBase
         // Blacklist the current access token so it cannot be used anymore
         BlacklistCurrentAccessToken();
 
-        return Ok(new { Message = "Logged out successfully." });
+        return Ok(new { Message = "Đăng xuất thành công." });
     }
 
     /// <summary>
@@ -313,13 +313,13 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrEmpty(userId))
         {
-            return Unauthorized(new { Error = "User not authenticated." });
+            return Unauthorized(new { Error = "Người dùng chưa được xác thực." });
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
         {
-            return Unauthorized(new { Error = "User not found." });
+            return Unauthorized(new { Error = "Không tìm thấy người dùng." });
         }
 
         var roles = await _userManager.GetRolesAsync(user);
@@ -348,7 +348,7 @@ public class AuthController : ControllerBase
         // Always return success to prevent email enumeration
         if (user == null)
         {
-            return Ok(new { Message = "If an account with that email exists, a password reset link has been sent." });
+            return Ok(new { Message = "Nếu tài khoản tồn tại, email đặt lại mật khẩu đã được gửi." });
         }
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
@@ -363,7 +363,7 @@ public class AuthController : ControllerBase
             Body = _emailTemplates.ForgotPassword(displayName, resetUrl),
         });
 
-        return Ok(new { Message = "If an account with that email exists, a password reset link has been sent." });
+        return Ok(new { Message = "Nếu tài khoản tồn tại, email đặt lại mật khẩu đã được gửi." });
     }
 
     /// <summary>
@@ -385,7 +385,7 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(model.Email);
         if (user == null)
         {
-            return BadRequest(new { Error = "Invalid request." });
+            return BadRequest(new { Error = "Yêu cầu không hợp lệ." });
         }
 
         var normalizedToken = IdentityTokenNormalizer.Normalize(model.Token);
@@ -405,7 +405,7 @@ public class AuthController : ControllerBase
             Body = _emailTemplates.PasswordChanged(displayNameReset),
         });
 
-        return Ok(new { Message = "Password has been reset successfully." });
+        return Ok(new { Message = "Đặt lại mật khẩu thành công." });
     }
 
     /// <summary>
@@ -427,20 +427,20 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrEmpty(userId))
         {
-            return Unauthorized(new { Error = "User not authenticated." });
+            return Unauthorized(new { Error = "Người dùng chưa được xác thực." });
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
         {
-            return Unauthorized(new { Error = "User not found." });
+            return Unauthorized(new { Error = "Không tìm thấy người dùng." });
         }
 
         // Verify current password
         var isCurrentPasswordValid = await _userManager.CheckPasswordAsync(user, model.CurrentPassword);
         if (!isCurrentPasswordValid)
         {
-            return BadRequest(new { Error = "Current password is incorrect." });
+            return BadRequest(new { Error = "Mật khẩu hiện tại không đúng." });
         }
 
         // Change password
@@ -466,7 +466,7 @@ public class AuthController : ControllerBase
             Body = _emailTemplates.PasswordChanged(displayNameChange),
         });
 
-        return Ok(new { Message = "Password has been changed successfully. Please login again with your new password." });
+        return Ok(new { Message = "Đổi mật khẩu thành công. Vui lòng đăng nhập lại." });
     }
 
     /// <summary>
@@ -486,12 +486,12 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(model.Email);
         if (user == null)
         {
-            return BadRequest(new { Error = "Invalid request." });
+            return BadRequest(new { Error = "Yêu cầu không hợp lệ." });
         }
 
         if (user.EmailConfirmed)
         {
-            return Ok(new { Message = "Email is already confirmed." });
+            return Ok(new { Message = "Email đã được xác nhận." });
         }
 
         var normalizedToken = IdentityTokenNormalizer.Normalize(model.Token);
@@ -501,7 +501,7 @@ public class AuthController : ControllerBase
             return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
         }
 
-        return Ok(new { Message = "Email confirmed successfully. You can now login." });
+        return Ok(new { Message = "Xác nhận email thành công. Bạn có thể đăng nhập ngay bây giờ." });
     }
 
     /// <summary>
@@ -522,7 +522,7 @@ public class AuthController : ControllerBase
         // Always return success to prevent email enumeration
         if (user == null || user.EmailConfirmed)
         {
-            return Ok(new { Message = "If an account with that email exists and is not confirmed, a confirmation link has been sent." });
+            return Ok(new { Message = "Nếu tài khoản tồn tại và chưa được xác nhận, email xác nhận đã được gửi." });
         }
 
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
@@ -537,7 +537,7 @@ public class AuthController : ControllerBase
             Body = _emailTemplates.ResendConfirmEmail(displayNameResend, confirmationUrl),
         });
 
-        return Ok(new { Message = "If an account with that email exists and is not confirmed, a confirmation link has been sent." });
+        return Ok(new { Message = "Nếu tài khoản tồn tại và chưa được xác nhận, email xác nhận đã được gửi." });
     }
 
     /// <summary>
@@ -555,13 +555,13 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
         {
-            return Unauthorized(new { Error = "User not authenticated." });
+            return Unauthorized(new { Error = "Người dùng chưa được xác thực." });
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
         {
-            return Unauthorized(new { Error = "User not found." });
+            return Unauthorized(new { Error = "Không tìm thấy người dùng." });
         }
 
         var profile = await GetOrCreateUserProfileAsync(user);
@@ -591,13 +591,13 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
         {
-            return Unauthorized(new { Error = "User not authenticated." });
+            return Unauthorized(new { Error = "Người dùng chưa được xác thực." });
         }
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
         {
-            return Unauthorized(new { Error = "User not found." });
+            return Unauthorized(new { Error = "Không tìm thấy người dùng." });
         }
 
         var profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
@@ -609,7 +609,7 @@ public class AuthController : ControllerBase
             var newUserName = model.UserName.Trim();
             if (string.IsNullOrWhiteSpace(newUserName))
             {
-                return BadRequest(new { Error = "Username cannot be empty." });
+                return BadRequest(new { Error = "Tên đăng nhập không được để trống." });
             }
 
             if (!string.Equals(newUserName, user.UserName, StringComparison.Ordinal))
@@ -617,7 +617,7 @@ public class AuthController : ControllerBase
                 var existingUser = await _userManager.FindByNameAsync(newUserName);
                 if (existingUser != null && existingUser.Id != user.Id)
                 {
-                    return BadRequest(new { Error = "Username is already taken." });
+                    return BadRequest(new { Error = "Tên đăng nhập đã được sử dụng." });
                 }
 
                 user.UserName = newUserName;
@@ -631,7 +631,7 @@ public class AuthController : ControllerBase
             var newEmail = model.Email.Trim();
             if (string.IsNullOrWhiteSpace(newEmail))
             {
-                return BadRequest(new { Error = "Email cannot be empty." });
+                return BadRequest(new { Error = "Email không được để trống." });
             }
 
             if (!string.Equals(newEmail, user.Email, StringComparison.OrdinalIgnoreCase))
@@ -639,7 +639,7 @@ public class AuthController : ControllerBase
                 var existingUser = await _userManager.FindByEmailAsync(newEmail);
                 if (existingUser != null && existingUser.Id != user.Id)
                 {
-                    return BadRequest(new { Error = "Email is already registered." });
+                    return BadRequest(new { Error = "Email đã được đăng ký." });
                 }
 
                 user.Email = newEmail;
@@ -728,14 +728,14 @@ public class AuthController : ControllerBase
     {
         if (file is not { Length: > 0 })
         {
-            return BadRequest(new { Error = "No file uploaded." });
+            return BadRequest(new { Error = "Chưa chọn tệp tin." });
         }
 
         // Hard limit file size (max 2MB) - checked server-side before any processing
         const int maxFileSize = 2 * 1024 * 1024;
         if (file.Length > maxFileSize)
         {
-            return BadRequest(new { Error = "File size exceeds 2MB limit." });
+            return BadRequest(new { Error = "Kích thước tệp tin vượt quá giới hạn 2MB." });
         }
 
         // SECURITY: Validate magic bytes FIRST - this is the server-side source of truth.
@@ -743,7 +743,7 @@ public class AuthController : ControllerBase
         var detectedType = await DetectImageTypeFromMagicBytesAsync(file);
         if (detectedType == null)
         {
-            return BadRequest(new { Error = "File content does not match a valid image format. Allowed: JPEG, PNG, GIF, WebP." });
+            return BadRequest(new { Error = "Định dạng tệp tin không hợp lệ. Chỉ chấp nhận: JPEG, PNG, GIF, WebP." });
         }
 
         // Use server-detected extension (not user-provided filename)
@@ -754,7 +754,7 @@ public class AuthController : ControllerBase
 
         if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
         {
-            return Unauthorized(new { Error = "User not authenticated." });
+            return Unauthorized(new { Error = "Người dùng chưa được xác thực." });
         }
 
         var profile = await _dbContext.UserProfiles

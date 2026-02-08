@@ -52,6 +52,7 @@ public static class ServiceCollectionExtensions
         services.AddIdentity<User, Role>()
                 .AddTokenProviders()
                 .AddPasswordValidators()
+                .AddErrorDescriber<VietnameseIdentityErrorDescriber>()
                 .AddSignInManager<SignInManager<User>>();
 
         services.AddTransient<IUserStore<User>, UserStore>();
@@ -104,7 +105,8 @@ public static class ServiceCollectionExtensions
 
         services.AddIdentityCore<User>()
                 .AddTokenProviders()
-                .AddPasswordValidators();
+                .AddPasswordValidators()
+                .AddErrorDescriber<VietnameseIdentityErrorDescriber>();
 
         services.AddTransient<IUserStore<User>, UserStore>();
         services.AddTransient<IRoleStore<Role>, RoleStore>();
