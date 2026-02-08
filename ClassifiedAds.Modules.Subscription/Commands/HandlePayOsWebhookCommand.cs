@@ -156,6 +156,10 @@ public class HandlePayOsWebhookCommandHandler : ICommandHandler<HandlePayOsWebho
                 EndDate = endDate,
                 NextBillingDate = endDate,
                 AutoRenew = true,
+                SnapshotPriceMonthly = ResolveSnapshotMonthlyPrice(null, plan, intent),
+                SnapshotPriceYearly = ResolveSnapshotYearlyPrice(null, plan, intent),
+                SnapshotCurrency = ResolveSnapshotCurrency(null, plan, intent),
+                SnapshotPlanName = ResolveSnapshotPlanName(null, plan, oldPlanId, intent),
             };
             await _subscriptionRepository.AddAsync(subscription, ct);
         }
@@ -170,6 +174,10 @@ public class HandlePayOsWebhookCommandHandler : ICommandHandler<HandlePayOsWebho
             subscription.AutoRenew = true;
             subscription.CancelledAt = null;
             subscription.TrialEndsAt = null;
+            subscription.SnapshotPriceMonthly = ResolveSnapshotMonthlyPrice(subscription, plan, intent);
+            subscription.SnapshotPriceYearly = ResolveSnapshotYearlyPrice(subscription, plan, intent);
+            subscription.SnapshotCurrency = ResolveSnapshotCurrency(subscription, plan, intent);
+            subscription.SnapshotPlanName = ResolveSnapshotPlanName(subscription, plan, oldPlanId, intent);
             await _subscriptionRepository.UpdateAsync(subscription, ct);
         }
 
@@ -191,6 +199,66 @@ public class HandlePayOsWebhookCommandHandler : ICommandHandler<HandlePayOsWebho
         await _historyRepository.AddAsync(history, ct);
 
         return subscription;
+    }
+
+    private static decimal? ResolveSnapshotMonthlyPrice(
+        UserSubscription existingSubscription,
+        SubscriptionPlan plan,
+        PaymentIntent intent)
+    {
+        if (intent.BillingCycle == BillingCycle.Monthly && intent.Amount > 0)
+        {
+            return intent.Amount;
+        }
+
+        return existingSubscription?.SnapshotPriceMonthly ?? plan?.PriceMonthly;
+    }
+
+    private static decimal? ResolveSnapshotYearlyPrice(
+        UserSubscription existingSubscription,
+        SubscriptionPlan plan,
+        PaymentIntent intent)
+    {
+        if (intent.BillingCycle == BillingCycle.Yearly && intent.Amount > 0)
+        {
+            return intent.Amount;
+        }
+
+        return existingSubscription?.SnapshotPriceYearly ?? plan?.PriceYearly;
+    }
+
+    private static string ResolveSnapshotCurrency(
+        UserSubscription existingSubscription,
+        SubscriptionPlan plan,
+        PaymentIntent intent)
+    {
+        return NormalizeCurrency(intent.Currency)
+            ?? NormalizeCurrency(existingSubscription?.SnapshotCurrency)
+            ?? NormalizeCurrency(plan?.Currency);
+    }
+
+    private static string ResolveSnapshotPlanName(
+        UserSubscription existingSubscription,
+        SubscriptionPlan plan,
+        Guid? oldPlanId,
+        PaymentIntent intent)
+    {
+        if (existingSubscription != null
+            && oldPlanId.HasValue
+            && oldPlanId.Value == intent.PlanId
+            && !string.IsNullOrWhiteSpace(existingSubscription.SnapshotPlanName))
+        {
+            return existingSubscription.SnapshotPlanName;
+        }
+
+        return plan?.DisplayName ?? plan?.Name ?? existingSubscription?.SnapshotPlanName;
+    }
+
+    private static string NormalizeCurrency(string currency)
+    {
+        return string.IsNullOrWhiteSpace(currency)
+            ? null
+            : currency.Trim().ToUpperInvariant();
     }
 
     private static PaymentTransaction CreateTransaction(

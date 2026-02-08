@@ -110,6 +110,12 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
                 subscription.CancelledAt = null;
                 subscription.TrialEndsAt = null;
 
+                // Snapshot plan details at activation time
+                subscription.SnapshotPriceMonthly = plan.PriceMonthly;
+                subscription.SnapshotPriceYearly = plan.PriceYearly;
+                subscription.SnapshotCurrency = plan.Currency;
+                subscription.SnapshotPlanName = plan.DisplayName ?? plan.Name;
+
                 if (existingSubscription == null)
                 {
                     await _subscriptionRepository.AddAsync(subscription, ct);
