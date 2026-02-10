@@ -1,4 +1,5 @@
-﻿using ClassifiedAds.Domain.Infrastructure.Messaging;
+using ClassifiedAds.Contracts.Storage.Services;
+using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Infrastructure.HostedServices;
 using ClassifiedAds.Modules.Storage.ConfigurationOptions;
@@ -7,6 +8,7 @@ using ClassifiedAds.Modules.Storage.Entities;
 using ClassifiedAds.Modules.Storage.HostedServices;
 using ClassifiedAds.Modules.Storage.MessageBusConsumers;
 using ClassifiedAds.Modules.Storage.Persistence;
+using ClassifiedAds.Modules.Storage.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -38,7 +40,8 @@ public static class ServiceCollectionExtensions
         }))
             .AddScoped<IRepository<FileEntry, Guid>, Repository<FileEntry, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
-            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
+            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>()
+            .AddScoped<IStorageFileGatewayService, StorageFileGatewayService>();
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
