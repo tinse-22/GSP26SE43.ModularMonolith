@@ -59,6 +59,8 @@
       Include="..\ClassifiedAds.Modules.TestExecution\ClassifiedAds.Modules.TestExecution.csproj" />
     <ProjectReference
       Include="..\ClassifiedAds.Modules.TestReporting\ClassifiedAds.Modules.TestReporting.csproj" />
+    <ProjectReference
+      Include="..\ClassifiedAds.Modules.ApiDocumentation\ClassifiedAds.Modules.ApiDocumentation.csproj" />
   </ItemGroup>
 
 </Project>

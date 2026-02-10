@@ -1,0 +1,45 @@
+#nullable enable
+
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
+using System;
+using System.Threading;
+using System.Threading.RateLimiting;
+using System.Threading.Tasks;
+
+namespace ClassifiedAds.Modules.ApiDocumentation.RateLimiterPolicies;
+
+public class DefaultRateLimiterPolicy : IRateLimiterPolicy<string>
+{
+    public Func<OnRejectedContext, CancellationToken, ValueTask>? OnRejected { get; } = (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        return default;
+    };
+
+    public RateLimitPartition<string> GetPartition(HttpContext httpContext)
+    {
+        string? partitionKey = null;
+
+        if (httpContext.User.Identity?.IsAuthenticated == true)
+        {
+            partitionKey = httpContext.User.Identity.Name!;
+            return RateLimitPartition.GetFixedWindowLimiter(partitionKey,
+                partition => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 200,
+                    Window = TimeSpan.FromMinutes(1),
+                });
+        }
+
+        partitionKey = httpContext.Request.Headers.Host.ToString();
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey,
+            partition => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1),
+            });
+    }
+}

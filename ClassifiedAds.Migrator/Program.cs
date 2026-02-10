@@ -139,6 +139,14 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
+    // ApiDocumentation Module
+    .AddApiDocumentationModule(opt =>
+    {
+        configuration.GetSection("Modules:ApiDocumentation").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.ApiDocumentation.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
     .AddApplicationServices();
 
     // Add HTML and PDF utilities (some modules might reference these in migrations)
@@ -191,6 +199,9 @@ Policy.Handle<Exception>().WaitAndRetry(
 
     // Business Modules: Subscription
     app.MigrateSubscriptionDb();
+
+    // ApiDocumentation Module
+    app.MigrateApiDocumentationDb();
 
     // Run DbUp scripts (for supplemental SQL migrations not in EF Core)
     var upgrader = DeployChanges.To

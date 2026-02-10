@@ -41,6 +41,8 @@
 			Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
 		<ProjectReference
 			Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
+		<ProjectReference
+			Include="..\ClassifiedAds.Modules.ApiDocumentation\ClassifiedAds.Modules.ApiDocumentation.csproj" />
 	</ItemGroup>
 
 	<PropertyGroup>
