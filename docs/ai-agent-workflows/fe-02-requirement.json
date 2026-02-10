@@ -12,7 +12,7 @@
       "Đây là điểm vào bắt buộc của toàn bộ luồng testing — không có API doc thì không thể tạo test.",
       "Entity đã có sẵn đầy đủ trong module ApiDocumentation (9 entities, 8 enums).",
       "Module Storage đã implemented hoàn chỉnh, có thể sử dụng lưu file upload.",
-      "Cần xây dựng CQRS layer (Commands/Queries), Controllers, DTOs, Authorization, Outbox pattern giống Subscription module."
+      "Cần xây dựng CQRS layer (Commands/Queries), Controllers, Models, Authorization, Outbox pattern giống Subscription module."
     ]
   },
   "subRequirements": [
@@ -61,9 +61,14 @@
         "hasQueries": false
       },
       {
+        "name": "ClassifiedAds.Contracts.Storage (to be added)",
+        "status": "planned",
+        "usage": "Storage gateway contract for upload + metadata. Avoid direct module reference."
+      },
+      {
         "name": "ClassifiedAds.Modules.Storage",
         "status": "fully-implemented",
-        "usage": "Lưu file upload (OpenAPI/Postman) và trả về FileEntry.Id"
+        "usage": "Exposed via contract/API for file upload and metadata. Do not call Storage repository/entity directly."
       },
       {
         "name": "ClassifiedAds.Contracts.Identity",
@@ -148,6 +153,14 @@
         "file": "Authorization/Permissions.cs"
       },
       {
+        "pattern": "RateLimiting",
+        "description": "Apply module default rate limiter policy and [EnableRateLimiting] on all controllers.",
+        "components": [
+          "RateLimiterPolicies/RateLimiterPolicyNames.cs",
+          "RateLimiterPolicies/DefaultRateLimiterPolicy.cs"
+        ]
+      },
+      {
         "pattern": "Validation",
         "description": "Manual validation trong CommandHandler, throw ValidationException hoặc NotFoundException.",
         "exceptionTypes": [
@@ -175,7 +188,7 @@
     "permission": "Permission:{Action} (VD: Permission:GetProjects)",
     "eventTypeConstant": "UPPER_SNAKE_CASE (VD: PROJECT_CREATED)",
     "controller": "{Entity}Controller (VD: ProjectsController)",
-    "dto": "{Entity}Model (VD: ProjectModel)",
+    "model": "{Entity}Model (VD: ProjectModel)",
     "fileLayout": "Command + Handler trong cùng 1 file .cs"
   },
   "nonFunctionalTargets": {
@@ -220,16 +233,17 @@
   },
   "implementationOrder": [
     "1. Authorization/Permissions.cs — khai báo permission constants.",
-    "2. Constants/EventTypeConstants.cs — khai báo outbox event types.",
-    "3. DTOs/Models — ProjectModel, ApiSpecificationModel, CreateUpdateProjectModel, UploadSpecificationModel.",
-    "4. Commands — AddUpdateProjectCommand, DeleteProjectCommand, UploadApiSpecificationCommand, ActivateSpecificationCommand.",
-    "5. Queries — GetProjectsQuery, GetProjectQuery, GetSpecificationsQuery, GetSpecificationQuery.",
-    "6. EventHandlers — ProjectCreatedEventHandler, ProjectUpdatedEventHandler, ProjectDeletedEventHandler, SpecCreatedEventHandler.",
-    "7. Outbox — OutboxMessageFactory, ProjectOutboxMessagePublisher, SpecOutboxMessagePublisher, AuditLogEntryOutboxMessagePublisher.",
-    "8. HostedServices — PublishEventWorker.",
-    "9. Controllers — ProjectsController, SpecificationsController.",
-    "10. ServiceCollectionExtensions — register tất cả services, hosted services.",
-    "11. Unit Tests."
+    "2. RateLimiterPolicies/ — policy names và default policy.",
+    "3. Constants/EventTypeConstants.cs — khai báo outbox event types.",
+    "4. Models/ — ProjectModel, ApiSpecificationModel, CreateUpdateProjectModel, UploadSpecificationModel.",
+    "5. Commands — AddUpdateProjectCommand, DeleteProjectCommand, UploadApiSpecificationCommand, ActivateSpecificationCommand.",
+    "6. Queries — GetProjectsQuery, GetProjectQuery, GetSpecificationsQuery, GetSpecificationQuery.",
+    "7. EventHandlers — ProjectCreatedEventHandler, ProjectUpdatedEventHandler, ProjectDeletedEventHandler, SpecCreatedEventHandler.",
+    "8. Outbox — OutboxMessageFactory, ProjectOutboxMessagePublisher, SpecOutboxMessagePublisher, AuditLogEntryOutboxMessagePublisher.",
+    "9. HostedServices — PublishEventWorker.",
+    "10. Controllers — ProjectsController, SpecificationsController (with [EnableRateLimiting]).",
+    "11. ServiceCollectionExtensions — register tất cả services, hosted services.",
+    "12. Unit Tests."
   ],
   "acceptanceCriteria": [
     "AC-01: User có thể tạo project mới với name, description, baseUrl. Project được gán OwnerId = current user.",
@@ -242,6 +256,7 @@
     "AC-08: User có thể activate 1 specification (set Project.ActiveSpecId).",
     "AC-09: Mọi thao tác CRUD đều tạo audit log entry và outbox message.",
     "AC-10: API được bảo vệ bằng permission-based authorization.",
-    "AC-11: Validation input đầy đủ (tên project bắt buộc, file size < 10MB, extension hợp lệ)."
+    "AC-11: Validation input đầy đủ (tên project bắt buộc, file size < 10MB, extension hợp lệ).",
+    "AC-12: Controllers áp dụng [EnableRateLimiting] với default policy của module."
   ]
 }

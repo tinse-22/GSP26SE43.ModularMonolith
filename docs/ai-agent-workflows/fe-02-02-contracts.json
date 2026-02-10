@@ -5,7 +5,7 @@
   "requirementId": "FE-02-02",
   "title": "API Specification Upload — Contracts & Cross-Module Integration Guide",
   "storageModuleIntegration": {
-    "description": "ApiSpecification.OriginalFileId lien ket voi FileEntry.Id cua Storage module. Khong co FK constraint — cross-module by convention.",
+    "description": "ApiSpecification.OriginalFileId links to Storage FileEntry.Id. No FK constraint. Integration must go through contract/API boundary.",
     "storageModuleLocation": "ClassifiedAds.Modules.Storage/",
     "fileEntryKeyProperties": {
       "Id": "Guid — PK",
@@ -16,21 +16,21 @@
       "OwnerId": "Guid? — uploading user"
     },
     "uploadApproach": {
-      "recommended": "Dung Storage module's existing service/repository to create FileEntry and save file content.",
+      "recommended": "Use a Storage gateway contract (defined in ClassifiedAds.Contracts) to upload and get FileEntry.Id.",
       "steps": [
         "1. Read IFormFile into byte array: await file.OpenReadStream().",
-        "2. Create FileEntry { FileName = file.FileName, ContentType, FileSize = file.Length, FileCategory = FileCategory.ApiSpec, OwnerId = currentUserId }.",
-        "3. Save FileEntry via ICrudService<FileEntry> or IRepository<FileEntry, Guid>.",
-        "4. Save file bytes via IFileStorageManager (disk/cloud) if available, hoac luu vao DB.",
+        "2. Call storage gateway contract with FileName, ContentType, FileSize, FileCategory=ApiSpec, OwnerId.",
+        "3. Storage module persists metadata and file content internally.",
+        "4. Receive FileEntry.Id from contract response.",
         "5. Return FileEntry.Id de gan vao ApiSpecification.OriginalFileId."
       ],
-      "alternativeApproach": "Neu Storage module co REST endpoint (POST /api/file-entries), co the goi internal HTTP. Nhung DI-based approach tot hon cho modular monolith.",
-      "dependencyNote": "Add project reference: ClassifiedAds.Modules.ApiDocumentation → ClassifiedAds.Modules.Storage (hoac su dung shared contract interface)."
+      "alternativeApproach": "Fallback: call internal REST endpoint POST /api/files via typed HttpClient.",
+      "dependencyNote": "Do NOT add direct module project reference from ApiDocumentation to Storage internals."
     }
   },
   "transactionDetails": {
     "uploadWithAutoActivate": {
-      "description": "Upload file TRUOC transaction (cross-module call). Transaction chi bao gom DB operations trong apidoc schema.",
+      "description": "Upload file BEFORE transaction (through contract/API). Transaction includes only apidoc schema operations.",
       "pseudocode": [
         "// STEP 1: Upload file (OUTSIDE transaction)",
         "var fileEntry = await UploadFileToStorage(command.File, command.CurrentUserId, ct);",
@@ -216,6 +216,9 @@
         "errorEn": "This specification is not currently active."
       }
     ]
+  },
+  "controllerPolicyRequirement": {
+    "rateLimiting": "[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)] is required on SpecificationsController."
   },
   "logCatalog": [
     {

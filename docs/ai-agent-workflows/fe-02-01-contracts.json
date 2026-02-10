@@ -10,6 +10,7 @@
     "namespace": "ClassifiedAds.Modules.ApiDocumentation.Controllers",
     "baseClass": "ControllerBase",
     "attributes": [
+      "[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]",
       "[Authorize]",
       "[Produces(\"application/json\")]",
       "[Route(\"api/[controller]\")]",
@@ -18,7 +19,7 @@
     "dependencies": [
       {
         "type": "Dispatcher",
-        "resolvedVia": "IServiceProvider.GetDispatcher()"
+        "resolvedVia": "constructor injection"
       },
       {
         "type": "ICurrentUser",
@@ -102,7 +103,7 @@
           "Guid id"
         ],
         "dispatches": "DeleteProjectCommand { ProjectId = id, CurrentUserId = _currentUser.UserId }",
-        "returns": "NoContent()"
+        "returns": "Ok()"
       }
     ]
   },
@@ -194,15 +195,18 @@
         "handler": {
           "implements": "ICommandHandler<DeleteProjectCommand>",
           "dependencies": [
-            "ICrudService<Project> _projectService",
+            "Dispatcher _dispatcher",
             "IRepository<Project, Guid> _projectRepository"
           ],
           "flowSteps": [
             "1. var project = await _projectRepository.FirstOrDefaultAsync(p => p.Id == command.ProjectId).",
             "2. Throw NotFoundException if null.",
             "3. Verify OwnerId == CurrentUserId.",
-            "4. await _projectService.DeleteAsync(project, ct).",
-            "Note: CrudService.DeleteAsync raises EntityDeletedEvent."
+            "4. project.Status = ProjectStatus.Archived.",
+            "5. await _projectRepository.UpdateAsync(project, ct).",
+            "6. await _projectRepository.UnitOfWork.SaveChangesAsync(ct).",
+            "7. await _dispatcher.DispatchAsync(new EntityDeletedEvent<Project>(project, DateTime.UtcNow), ct).",
+            "Note: delete endpoint is soft delete, but keeps EntityDeletedEvent semantics for audit/outbox."
           ]
         }
       }
@@ -299,7 +303,7 @@
       "name": "ProjectUpdatedEventHandler",
       "file": "EventHandlers/ProjectUpdatedEventHandler.cs",
       "handles": "EntityUpdatedEvent<Project>",
-      "codeTemplate": "COPY PATTERN tu PlanUpdatedEventHandler, thay doi Action = 'PROJECT_UPDATED'."
+      "codeTemplate": "COPY PATTERN tu PlanUpdatedEventHandler. If Status == Archived then Action = 'PROJECT_ARCHIVED', otherwise Action = 'PROJECT_UPDATED'."
     },
     {
       "name": "ProjectDeletedEventHandler",
@@ -388,6 +392,7 @@
   "serviceRegistration": {
     "file": "ServiceCollectionExtensions.cs",
     "additions": [
+      "Register default rate limiter policy and apply [EnableRateLimiting] on controllers.",
       "AddMessageHandlers(Assembly.GetExecutingAssembly()) — scan Commands, Queries, EventHandlers.",
       "AddAuthorizationPolicies(Assembly.GetExecutingAssembly()) — scan Permissions.",
       "AddHostedServicesApiDocumentationModule() — register PublishEventWorker.",

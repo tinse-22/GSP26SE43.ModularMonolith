@@ -66,7 +66,7 @@
     {
       "id": "flow-02",
       "name": "Upload API Specification",
-      "type": "synchronous + cross-module",
+      "type": "synchronous + contract-integration",
       "steps": [
         {
           "step": 1,
@@ -89,9 +89,9 @@
         {
           "step": 4,
           "actor": "UploadApiSpecificationCommandHandler",
-          "action": "Upload file to Storage module. Receive FileEntry.Id.",
+          "action": "Upload file via Storage contract (preferred) or internal /api/files endpoint. Receive FileEntry.Id.",
           "output": "FileEntry.Id",
-          "crossModuleNote": "File upload happens BEFORE transaction. Acceptable orphan file risk.",
+          "crossModuleNote": "Do not reference Storage module entity/repository directly. File upload happens BEFORE transaction.",
           "logEn": "File uploaded to storage. FileEntryId={fileId}, Size={bytes}."
         },
         {
@@ -219,7 +219,7 @@
     "implicitTransactions": [
       "Create project (single entity via CrudService)",
       "Update project (single entity via CrudService)",
-      "Delete project (single entity via CrudService)"
+      "Delete project (soft delete: status update + domain event dispatch)"
     ],
     "explicitTransactions": [
       {
@@ -273,12 +273,13 @@
       "Commands/",
       "Constants/",
       "Controllers/",
-      "DTOs/",
+      "Models/",
       "EventHandlers/",
       "HostedServices/",
       "IntegrationEvents/",
       "Outbox/",
       "OutBoxEventPublishers/",
+      "RateLimiterPolicies/",
       "Queries/"
     ],
     "newFiles": [
@@ -293,14 +294,16 @@
       "Constants/EventTypeConstants.cs",
       "Controllers/ProjectsController.cs",
       "Controllers/SpecificationsController.cs",
-      "DTOs/ProjectModel.cs",
-      "DTOs/ProjectDetailModel.cs",
-      "DTOs/CreateUpdateProjectModel.cs",
-      "DTOs/PaginatedResult.cs",
-      "DTOs/SpecificationModel.cs",
-      "DTOs/SpecificationDetailModel.cs",
-      "DTOs/SpecSummaryModel.cs",
-      "DTOs/UploadSpecificationModel.cs",
+      "Models/ProjectModel.cs",
+      "Models/ProjectDetailModel.cs",
+      "Models/CreateUpdateProjectModel.cs",
+      "Models/PaginatedResult.cs",
+      "Models/SpecificationModel.cs",
+      "Models/SpecificationDetailModel.cs",
+      "Models/SpecSummaryModel.cs",
+      "Models/UploadSpecificationModel.cs",
+      "Models/ProjectModelMappingConfiguration.cs",
+      "Models/SpecificationModelMappingConfiguration.cs",
       "EventHandlers/ProjectCreatedEventHandler.cs",
       "EventHandlers/ProjectUpdatedEventHandler.cs",
       "EventHandlers/ProjectDeletedEventHandler.cs",
@@ -314,6 +317,8 @@
       "OutBoxEventPublishers/ProjectOutBoxMessagePublisher.cs",
       "OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs",
       "OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs",
+      "RateLimiterPolicies/RateLimiterPolicyNames.cs",
+      "RateLimiterPolicies/DefaultRateLimiterPolicy.cs",
       "Queries/GetProjectsQuery.cs",
       "Queries/GetProjectQuery.cs",
       "Queries/GetSpecificationsQuery.cs",
@@ -321,7 +326,7 @@
       "Queries/GetUsersQuery.cs",
       "Queries/GetAuditEntriesQuery.cs"
     ],
-    "totalNewFiles": 36,
+    "totalNewFiles": 42,
     "referenceSource": "Copy structure from ClassifiedAds.Modules.Subscription/"
   },
   "implementationChecklist": [
@@ -331,9 +336,10 @@
       "tasks": [
         "Tao Authorization/Permissions.cs voi 10 permissions.",
         "Tao Constants/EventTypeConstants.cs voi event type strings.",
-        "Tao DTOs/ — tat ca model classes.",
+        "Tao Models/ + mapping configuration cho model classes.",
+        "Tao RateLimiterPolicies/ (policy names + default policy).",
         "Tao Outbox/OutboxMessageFactory.cs.",
-        "Tao IntegrationEvents/ — base class va event DTOs."
+        "Tao IntegrationEvents/ — base class va event payload models."
       ]
     },
     {
@@ -374,7 +380,8 @@
       "name": "Polish & Proxy Queries",
       "tasks": [
         "Tao Queries/GetUsersQuery.cs va GetAuditEntriesQuery.cs (copy tu Subscription).",
-        "Update ServiceCollectionExtensions — register all new services.",
+        "Update ServiceCollectionExtensions — register all new services, outbox publishers, hosted worker.",
+        "Apply [EnableRateLimiting] cho ProjectsController va SpecificationsController.",
         "Verify build thanh cong.",
         "Verify API co the goi duoc end-to-end."
       ]

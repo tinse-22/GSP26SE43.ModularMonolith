@@ -6,7 +6,7 @@
     "id": "FE-02-01",
     "parentId": "FE-02",
     "title": "Project CRUD — Tạo, xem, sửa, archive project",
-    "goal": "Xây dựng đầy đủ CQRS layer cho entity Project: Controllers, Commands, Queries, DTOs, EventHandlers, Outbox, Authorization.",
+    "goal": "Xây dựng đầy đủ CQRS layer cho entity Project: Controllers, Commands, Queries, Models, EventHandlers, Outbox, Authorization.",
     "priority": "P0",
     "implementationOrder": 1,
     "status": "planned",
@@ -203,9 +203,9 @@
       "method": "DELETE",
       "path": "/api/projects/{id}",
       "permission": "Permission:DeleteProject",
-      "description": "Soft delete — chuyển sang Archived. Admin only.",
+      "description": "Soft delete — chuyển sang Archived.",
       "response": {
-        "204": "No Content",
+        "200": "Ok",
         "404": "NotFoundException"
       }
     }
@@ -288,7 +288,7 @@
         "1. Load project by Id. Throw NotFoundException if not found.",
         "2. Verify OwnerId == CurrentUserId.",
         "3. Set Status = Archived (soft delete, không hard delete).",
-        "4. SaveChangesAsync() → raise EntityDeletedEvent → EventHandler tạo outbox."
+        "4. Save project and dispatch EntityDeletedEvent manually to keep delete audit/outbox semantics."
       ]
     },
     {
@@ -387,10 +387,10 @@
       "description": "Lấy audit log entries cho module này. Copy pattern từ Subscription module."
     }
   ],
-  "dtos": [
+  "models": [
     {
       "name": "ProjectModel",
-      "file": "DTOs/ProjectModel.cs",
+      "file": "Models/ProjectModel.cs",
       "properties": [
         {
           "name": "Id",
@@ -432,7 +432,7 @@
     },
     {
       "name": "ProjectDetailModel",
-      "file": "DTOs/ProjectDetailModel.cs",
+      "file": "Models/ProjectDetailModel.cs",
       "extends": "ProjectModel",
       "additionalProperties": [
         {
@@ -447,7 +447,7 @@
     },
     {
       "name": "CreateUpdateProjectModel",
-      "file": "DTOs/CreateUpdateProjectModel.cs",
+      "file": "Models/CreateUpdateProjectModel.cs",
       "properties": [
         {
           "name": "Name",
@@ -468,7 +468,7 @@
     },
     {
       "name": "PaginatedResult<T>",
-      "file": "DTOs/PaginatedResult.cs",
+      "file": "Models/PaginatedResult.cs",
       "properties": [
         {
           "name": "Items",
@@ -510,7 +510,7 @@
       "name": "ProjectUpdatedEventHandler",
       "file": "EventHandlers/ProjectUpdatedEventHandler.cs",
       "handles": "EntityUpdatedEvent<Project>",
-      "logic": "Tương tự ProjectCreatedEventHandler nhưng EventType = 'PROJECT_UPDATED'."
+      "logic": "Emit PROJECT_ARCHIVED when status changes to Archived by archive command; otherwise emit PROJECT_UPDATED."
     },
     {
       "name": "ProjectDeletedEventHandler",
@@ -532,6 +532,13 @@
       "Permission:UpdateSpecification",
       "Permission:DeleteSpecification",
       "Permission:ActivateSpecification"
+    ]
+  },
+  "rateLimiting": {
+    "policy": "RateLimiterPolicies.DefaultPolicy",
+    "requiredOnControllers": [
+      "ProjectsController",
+      "SpecificationsController"
     ]
   },
   "constants": {
@@ -589,6 +596,7 @@
     "AC-09: API trả về 404 khi project không tồn tại.",
     "AC-10: API trả về 400 khi validation lỗi (tên trống, tên quá dài).",
     "AC-11: User chỉ thấy projects của mình (OwnerId filter).",
-    "AC-12: API yêu cầu authentication và permission phù hợp."
+    "AC-12: API yêu cầu authentication và permission phù hợp.",
+    "AC-13: ProjectsController và SpecificationsController dùng [EnableRateLimiting] với default policy."
   ]
 }

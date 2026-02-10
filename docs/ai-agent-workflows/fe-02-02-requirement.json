@@ -121,13 +121,13 @@
       ]
     },
     "crossModuleReference": {
-      "storagFileEntry": {
+      "storageFileEntry": {
         "module": "ClassifiedAds.Modules.Storage",
         "entity": "FileEntry",
         "linkedBy": "ApiSpecification.OriginalFileId = FileEntry.Id",
-        "constraint": "No database FK — cross-module by convention GUID.",
+        "constraint": "No database FK. Cross-module integration must go through contract/API, not direct repository/entity reference.",
         "fileCategory": "FileCategory.ApiSpec (enum value = 0)",
-        "uploadPattern": "Dùng Storage module API hoặc service để upload file và nhận FileEntry.Id."
+        "uploadPattern": "Use Storage contract gateway (preferred) or internal /api/files endpoint to upload and get FileEntry.Id."
       }
     },
     "enums": [
@@ -310,8 +310,9 @@
         "   - SourceType must be OpenAPI or Postman → ValidationException('Loại nguồn không hợp lệ.')",
         "2. Load project, verify exists and OwnerId == CurrentUserId.",
         "3. Upload file to Storage module:",
-        "   - Option A: Dùng ICrudService<FileEntry> trực tiếp (nếu project reference cho phép).",
-        "   - Option B: Dùng IFileStorageService (nếu có) để upload và nhận FileEntry.Id.",
+        "   - Preferred: use Storage gateway contract defined in ClassifiedAds.Contracts.",
+        "   - Fallback: call internal /api/files endpoint.",
+        "   - Do not reference Storage module repository/entity directly.",
         "   - Set FileCategory = ApiSpec, OwnerId = CurrentUserId.",
         "4. Wrap trong ExecuteInTransactionAsync:",
         "   a. Tạo ApiSpecification { ProjectId, OriginalFileId = fileEntry.Id, Name, SourceType, Version, ParseStatus = Pending, IsActive = false }.",
@@ -456,10 +457,10 @@
       ]
     }
   ],
-  "dtos": [
+  "models": [
     {
       "name": "SpecificationModel",
-      "file": "DTOs/SpecificationModel.cs",
+      "file": "Models/SpecificationModel.cs",
       "properties": [
         {
           "name": "Id",
@@ -509,7 +510,7 @@
     },
     {
       "name": "SpecificationDetailModel",
-      "file": "DTOs/SpecificationDetailModel.cs",
+      "file": "Models/SpecificationDetailModel.cs",
       "extends": "SpecificationModel",
       "additionalProperties": [
         {
@@ -528,7 +529,7 @@
     },
     {
       "name": "SpecSummaryModel",
-      "file": "DTOs/SpecSummaryModel.cs",
+      "file": "Models/SpecSummaryModel.cs",
       "description": "Dùng trong ProjectDetailModel để hiển thị summary của active spec.",
       "properties": [
         {
@@ -559,7 +560,7 @@
     },
     {
       "name": "UploadSpecificationModel",
-      "file": "DTOs/UploadSpecificationModel.cs",
+      "file": "Models/UploadSpecificationModel.cs",
       "description": "Bind từ form-data trong controller (không dùng cho command trực tiếp).",
       "properties": [
         {
@@ -631,6 +632,7 @@
     "file": "Controllers/SpecificationsController.cs",
     "route": "api/projects/{projectId}/specifications",
     "attributes": [
+      "[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]",
       "[Authorize]",
       "[ApiController]",
       "[Route(\"api/projects/{projectId}/specifications\")]"
@@ -698,11 +700,11 @@
     ],
     "storageIntegration": {
       "step1": "Read IFormFile into byte array or stream.",
-      "step2": "Create FileEntry via Storage module service/repository.",
+      "step2": "Upload file via storage contract gateway (preferred) or internal /api/files endpoint.",
       "step3": "Save file to disk/cloud via IFileStorageManager (if available).",
       "step4": "Use returned FileEntry.Id as ApiSpecification.OriginalFileId.",
       "fileCategory": "FileCategory.ApiSpec",
-      "note": "Check Storage module's existing upload pattern (FileEntriesController) for exact implementation."
+      "note": "Reference current Storage upload pattern from FilesController; avoid direct module coupling."
     }
   },
   "acceptanceCriteria": [
@@ -717,7 +719,8 @@
     "AC-09: PUT activate deactivate spec cũ trước khi activate spec mới (trong transaction).",
     "AC-10: DELETE specification cascade delete endpoints và deactivate nếu đang active.",
     "AC-11: Mọi thao tác tạo audit log và outbox message.",
-    "AC-12: AutoActivate=true khi upload sẽ tự động activate spec mới."
+    "AC-12: AutoActivate=true khi upload sẽ tự động activate spec mới.",
+    "AC-13: SpecificationsController dùng [EnableRateLimiting] với default policy."
   ],
   "samples": {
     "uploadRequest": {
