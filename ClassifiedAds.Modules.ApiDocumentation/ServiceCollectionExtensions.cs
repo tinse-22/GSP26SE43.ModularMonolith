@@ -2,8 +2,11 @@ using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.ConfigurationOptions;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
+using ClassifiedAds.Modules.ApiDocumentation.HostedServices;
 using ClassifiedAds.Modules.ApiDocumentation.Persistence;
+using ClassifiedAds.Modules.ApiDocumentation.RateLimiterPolicies;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -48,6 +51,12 @@ public static class ApiDocumentationServiceCollectionExtensions
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
+        // Register rate limiter policy used by controllers
+        services.AddRateLimiter(options =>
+        {
+            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
+        });
+
         return services;
     }
 
@@ -72,6 +81,8 @@ public static class ApiDocumentationServiceCollectionExtensions
     {
         services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
         services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
+
+        services.AddHostedService<PublishEventWorker>();
 
         return services;
     }
