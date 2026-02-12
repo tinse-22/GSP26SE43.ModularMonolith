@@ -52,10 +52,8 @@ public static class ServiceCollectionExtensions
 
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
-        services.AddRateLimiter(options =>
-        {
-            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
-        });
+        // Note: DefaultPolicy rate limiter is registered by the Identity module.
+        // Do NOT re-register it here to avoid "policy already exists" errors.
 
         services.AddScoped<ICsvReader<ImportProductsFromCsv>, ImportProductsFromCsvHandler>();
         services.AddScoped<ICsvWriter<ExportProductsToCsv>, ExportProductsToCsvHandler>();
