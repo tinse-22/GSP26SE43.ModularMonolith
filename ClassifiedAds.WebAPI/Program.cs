@@ -1,4 +1,5 @@
 using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
@@ -6,6 +7,8 @@ using ClassifiedAds.Infrastructure.Web.Validation;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Services;
 using ClassifiedAds.Modules.Notification.Hubs;
+using ClassifiedAds.Application.FeatureToggles;
+using ClassifiedAds.Infrastructure.FeatureToggles.OutboxPublishingToggle;
 using ClassifiedAds.WebAPI.ConfigurationOptions;
 using FluentValidation;
 using FluentValidation.AspNetCore;
@@ -280,6 +283,11 @@ services.AddDinkToPdfConverter();
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Registers hosted services that consume from the email channel and send via SMTP
 // ═══════════════════════════════════════════════════════════════════════════════════
+
+services.AddSingleton<IOutboxPublishingToggle, FileBasedOutboxPublishingToggle>();
+
+// Register IMessageBus for outbox PublishEventWorkers that send messages via the bus
+services.AddTransient<IMessageBus, MessageBus>();
 
 services.AddHostedServicesNotificationModule();
 services.AddHostedServicesApiDocumentationModule();
