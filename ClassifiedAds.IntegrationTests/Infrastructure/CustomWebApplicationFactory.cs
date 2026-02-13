@@ -85,6 +85,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             typeof(ClassifiedAds.Modules.Configuration.Persistence.ConfigurationDbContext),
             typeof(ClassifiedAds.Modules.Notification.Persistence.NotificationDbContext),
             typeof(ClassifiedAds.Modules.Storage.Persistence.StorageDbContext),
+            typeof(ClassifiedAds.Modules.Subscription.Persistence.SubscriptionDbContext),
         };
 
         foreach (var dbContextType in dbContextTypes)

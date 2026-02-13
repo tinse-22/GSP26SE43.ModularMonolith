@@ -1,4 +1,7 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.Subscription.DTOs;
+using ClassifiedAds.Contracts.Subscription.Enums;
+using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
@@ -25,13 +28,16 @@ public class AddUpdateProjectCommandHandler : ICommandHandler<AddUpdateProjectCo
 {
     private readonly ICrudService<Project> _projectService;
     private readonly IRepository<Project, Guid> _projectRepository;
+    private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
 
     public AddUpdateProjectCommandHandler(
         ICrudService<Project> projectService,
-        IRepository<Project, Guid> projectRepository)
+        IRepository<Project, Guid> projectRepository,
+        ISubscriptionLimitGatewayService subscriptionLimitService)
     {
         _projectService = projectService;
         _projectRepository = projectRepository;
+        _subscriptionLimitService = subscriptionLimitService;
     }
 
     public async Task HandleAsync(AddUpdateProjectCommand command, CancellationToken cancellationToken = default)
@@ -51,14 +57,50 @@ public class AddUpdateProjectCommandHandler : ICommandHandler<AddUpdateProjectCo
             throw new ValidationException("Tên project không được vượt quá 200 ký tự.");
         }
 
+        if (!string.IsNullOrWhiteSpace(command.Model.Description) && command.Model.Description.Length > 2000)
+        {
+            throw new ValidationException("Mô tả project không được vượt quá 2000 ký tự.");
+        }
+
         if (!string.IsNullOrWhiteSpace(command.Model.BaseUrl) &&
             !Uri.TryCreate(command.Model.BaseUrl, UriKind.Absolute, out _))
         {
             throw new ValidationException("URL cơ sở không hợp lệ.");
         }
 
+        // Check duplicate project name for this owner
+        var trimmedName = command.Model.Name.Trim();
+        var duplicateQuery = _projectRepository.GetQueryableSet().Where(p =>
+            p.OwnerId == command.CurrentUserId &&
+            p.Name == trimmedName &&
+            p.Status != ProjectStatus.Archived);
+
+        if (command.ProjectId.HasValue && command.ProjectId != Guid.Empty)
+        {
+            duplicateQuery = duplicateQuery.Where(p => p.Id != command.ProjectId.Value);
+        }
+
+        var existingProject = await _projectRepository.FirstOrDefaultAsync(duplicateQuery);
+
+        if (existingProject != null)
+        {
+            throw new ValidationException($"Bạn đã có project với tên '{trimmedName}'. Vui lòng chọn tên khác.");
+        }
+
         if (command.ProjectId == null || command.ProjectId == Guid.Empty)
         {
+            // Atomically check + consume subscription limit
+            var limitCheck = await _subscriptionLimitService.TryConsumeLimitAsync(
+                command.CurrentUserId,
+                LimitType.MaxProjects,
+                incrementValue: 1,
+                cancellationToken);
+
+            if (!limitCheck.IsAllowed)
+            {
+                throw new ValidationException(limitCheck.DenialReason);
+            }
+
             // Create
             var project = new Project
             {

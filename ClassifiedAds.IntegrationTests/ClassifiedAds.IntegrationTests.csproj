@@ -29,6 +29,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\ClassifiedAds.WebAPI\ClassifiedAds.WebAPI.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
     </ItemGroup>
 
     <ItemGroup>

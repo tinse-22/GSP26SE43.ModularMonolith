@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Events;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using System.Threading;
@@ -23,13 +24,16 @@ public class ArchiveProjectCommandHandler : ICommandHandler<ArchiveProjectComman
 {
     private readonly Dispatcher _dispatcher;
     private readonly IRepository<Project, Guid> _projectRepository;
+    private readonly IRepository<ApiSpecification, Guid> _specRepository;
 
     public ArchiveProjectCommandHandler(
         Dispatcher dispatcher,
-        IRepository<Project, Guid> projectRepository)
+        IRepository<Project, Guid> projectRepository,
+        IRepository<ApiSpecification, Guid> specRepository)
     {
         _dispatcher = dispatcher;
         _projectRepository = projectRepository;
+        _specRepository = specRepository;
     }
 
     public async Task HandleAsync(ArchiveProjectCommand command, CancellationToken cancellationToken = default)
@@ -45,6 +49,24 @@ public class ArchiveProjectCommandHandler : ICommandHandler<ArchiveProjectComman
         if (project.OwnerId != command.CurrentUserId)
         {
             throw new ValidationException("Bạn không có quyền thao tác project này.");
+        }
+
+        // When archiving, deactivate all specs and clear active spec reference
+        if (command.Archive)
+        {
+            if (project.ActiveSpecId.HasValue)
+            {
+                project.ActiveSpecId = null;
+            }
+
+            var activeSpecs = await _specRepository.GetQueryableSet()
+                .Where(s => s.ProjectId == command.ProjectId && s.IsActive)
+                .ToListAsync(cancellationToken);
+
+            foreach (var spec in activeSpecs)
+            {
+                spec.IsActive = false;
+            }
         }
 
         project.Status = command.Archive ? ProjectStatus.Archived : ProjectStatus.Active;

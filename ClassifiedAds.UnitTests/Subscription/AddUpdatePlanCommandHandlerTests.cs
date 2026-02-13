@@ -327,7 +327,7 @@ public class AddUpdatePlanCommandHandlerTests
 
         _emailMessageServiceMock.Verify(
             x => x.CreateEmailMessageAsync(It.Is<EmailMessageDTO>(m =>
-                m.Tos == "user1@example.com" && m.Subject.Contains("Price update notice"))),
+                m.Tos == "user1@example.com" && m.Subject.Contains("c\u1eadp nh\u1eadt gi\u00e1 g\u00f3i"))),
             Times.Once);
     }
 

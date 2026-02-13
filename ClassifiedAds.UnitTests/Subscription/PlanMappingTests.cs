@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.Models;
 using System;

@@ -128,6 +128,68 @@ public class SpecificationsController : ControllerBase
         return Created($"/api/projects/{projectId}/specifications/{result.Id}", result);
     }
 
+    [Authorize(Permissions.AddSpecification)]
+    [HttpPost("manual")]
+    [Consumes("application/json")]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SpecificationDetailModel>> CreateManual(
+        Guid projectId,
+        [FromBody] CreateManualSpecificationModel model)
+    {
+        _logger.LogInformation("Creating manual specification for project {ProjectId}.", projectId);
+
+        var command = new CreateManualSpecificationCommand
+        {
+            ProjectId = projectId,
+            CurrentUserId = _currentUser.UserId,
+            Model = model,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        var result = await _dispatcher.DispatchAsync(new GetSpecificationQuery
+        {
+            SpecId = command.SavedSpecId,
+            ProjectId = projectId,
+            OwnerId = _currentUser.UserId,
+        });
+
+        return Created($"/api/projects/{projectId}/specifications/{result.Id}", result);
+    }
+
+    [Authorize(Permissions.AddSpecification)]
+    [HttpPost("curl-import")]
+    [Consumes("application/json")]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SpecificationDetailModel>> ImportCurl(
+        Guid projectId,
+        [FromBody] ImportCurlModel model)
+    {
+        _logger.LogInformation("Importing cURL specification for project {ProjectId}.", projectId);
+
+        var command = new ImportCurlCommand
+        {
+            ProjectId = projectId,
+            CurrentUserId = _currentUser.UserId,
+            Model = model,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        var result = await _dispatcher.DispatchAsync(new GetSpecificationQuery
+        {
+            SpecId = command.SavedSpecId,
+            ProjectId = projectId,
+            OwnerId = _currentUser.UserId,
+        });
+
+        return Created($"/api/projects/{projectId}/specifications/{result.Id}", result);
+    }
+
     [Authorize(Permissions.ActivateSpecification)]
     [HttpPut("{specId}/activate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
