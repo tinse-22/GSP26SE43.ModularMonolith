@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.ConfigurationOptions;
@@ -51,6 +52,8 @@ public static class SubscriptionServiceCollectionExtensions
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>()
             .AddScoped<IRepository<PaymentIntent, Guid>, Repository<PaymentIntent, Guid>>();
+
+        services.AddScoped<ISubscriptionLimitGatewayService, SubscriptionLimitGatewayService>();
 
         services.Configure<PayOsOptions>(options =>
         {
