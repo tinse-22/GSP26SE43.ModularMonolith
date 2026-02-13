@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.Entities;
