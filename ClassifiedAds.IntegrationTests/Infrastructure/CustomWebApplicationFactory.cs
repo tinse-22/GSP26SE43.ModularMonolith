@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System;
 
 namespace ClassifiedAds.IntegrationTests.Infrastructure;
 
@@ -16,10 +17,14 @@ namespace ClassifiedAds.IntegrationTests.Infrastructure;
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _connectionString;
+    private readonly Action<IServiceCollection>? _configureAdditionalTestServices;
 
-    public CustomWebApplicationFactory(string connectionString)
+    public CustomWebApplicationFactory(
+        string connectionString,
+        Action<IServiceCollection>? configureAdditionalTestServices = null)
     {
         _connectionString = connectionString;
+        _configureAdditionalTestServices = configureAdditionalTestServices;
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -60,6 +65,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
                 TestAuthHandler.AuthenticationScheme,
                 options => { });
+
+            _configureAdditionalTestServices?.Invoke(services);
 
             // Ensure database is created and migrations applied
             var sp = services.BuildServiceProvider();
