@@ -34,8 +34,6 @@
             Include="..\ClassifiedAds.Infrastructure\ClassifiedAds.Infrastructure.csproj" />
         <ProjectReference Include="..\ClassifiedAds.WebAPI\ClassifiedAds.WebAPI.csproj" />
         <ProjectReference
-            Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
-        <ProjectReference
             Include="..\ClassifiedAds.Modules.Notification\ClassifiedAds.Modules.Notification.csproj" />
         <ProjectReference
             Include="..\ClassifiedAds.Modules.AuditLog\ClassifiedAds.Modules.AuditLog.csproj" />
