@@ -385,6 +385,94 @@ public class AddUpdatePlanCommandHandlerTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task HandleAsync_UpdatePlan_DeactivateWithActiveSubscribers_Should_ThrowValidationException()
+    {
+        var existingPlan = new SubscriptionPlan
+        {
+            Id = Guid.NewGuid(),
+            Name = "Pro",
+            DisplayName = "Pro Plan",
+            PriceMonthly = 10m,
+            PriceYearly = 100m,
+            Currency = "USD",
+            IsActive = true,
+        };
+
+        _planRepoMock.SetupSequence(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
+            .ReturnsAsync(existingPlan)
+            .ReturnsAsync((SubscriptionPlan)null);
+
+        _subscriptionRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<UserSubscription>>()))
+            .ReturnsAsync(new List<UserSubscription>
+            {
+                new UserSubscription { Id = Guid.NewGuid(), UserId = Guid.NewGuid(), PlanId = existingPlan.Id, Status = SubscriptionStatus.Active },
+            });
+
+        var command = new AddUpdatePlanCommand
+        {
+            PlanId = existingPlan.Id,
+            Model = new CreateUpdatePlanModel
+            {
+                Name = "Pro",
+                DisplayName = "Pro Plan",
+                PriceMonthly = 10m,
+                PriceYearly = 100m,
+                Currency = "USD",
+                IsActive = false,
+                SortOrder = 1,
+            },
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*thuê bao đang hoạt động*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_UpdatePlan_DeactivateWithNoActiveSubscribers_Should_Succeed()
+    {
+        var existingPlan = new SubscriptionPlan
+        {
+            Id = Guid.NewGuid(),
+            Name = "Pro",
+            DisplayName = "Pro Plan",
+            PriceMonthly = 10m,
+            PriceYearly = 100m,
+            Currency = "USD",
+            IsActive = true,
+        };
+
+        _planRepoMock.SetupSequence(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<SubscriptionPlan>>()))
+            .ReturnsAsync(existingPlan)
+            .ReturnsAsync((SubscriptionPlan)null);
+
+        _subscriptionRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<UserSubscription>>()))
+            .ReturnsAsync(new List<UserSubscription>());
+
+        var command = new AddUpdatePlanCommand
+        {
+            PlanId = existingPlan.Id,
+            Model = new CreateUpdatePlanModel
+            {
+                Name = "Pro",
+                DisplayName = "Pro Plan",
+                PriceMonthly = 10m,
+                PriceYearly = 100m,
+                Currency = "USD",
+                IsActive = false,
+                SortOrder = 1,
+            },
+        };
+
+        await _handler.HandleAsync(command);
+
+        _planServiceMock.Verify(
+            x => x.AddOrUpdateAsync(It.Is<SubscriptionPlan>(p => !p.IsActive), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     private static CreateUpdatePlanModel CreateValidModel(bool withLimits = false)
     {
         var model = new CreateUpdatePlanModel
