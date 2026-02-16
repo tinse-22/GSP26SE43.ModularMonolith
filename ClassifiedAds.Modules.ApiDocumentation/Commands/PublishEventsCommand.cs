@@ -4,7 +4,9 @@ using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,11 +38,7 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
 
     public async Task HandleAsync(PublishEventsCommand command, CancellationToken cancellationToken = default)
     {
-        var events = _outboxMessageRepository.GetQueryableSet()
-            .Where(x => !x.Published)
-            .OrderBy(x => x.CreatedDateTime)
-            .Take(50)
-            .ToList();
+        var events = GetPendingEvents();
 
         foreach (var eventLog in events)
         {
@@ -77,5 +75,23 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
         }
 
         command.SentEventsCount = events.Count(x => x.Published);
+    }
+
+    private List<OutboxMessage> GetPendingEvents()
+    {
+        try
+        {
+            return _outboxMessageRepository.GetQueryableSet()
+                .Where(x => !x.Published)
+                .OrderBy(x => x.CreatedDateTime)
+                .Take(50)
+                .ToList();
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            _logger.LogWarning(ex,
+                "Skipping ApiDocumentation outbox publishing because table apidoc.\"OutboxMessages\" does not exist. Run database migrations.");
+            return new List<OutboxMessage>();
+        }
     }
 }
