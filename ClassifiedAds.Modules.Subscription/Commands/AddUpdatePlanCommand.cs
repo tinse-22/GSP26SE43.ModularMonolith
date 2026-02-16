@@ -79,6 +79,12 @@ public class AddUpdatePlanCommandHandler : ICommandHandler<AddUpdatePlanCommand>
             ? new List<Guid>()
             : await GetActiveSubscriberUserIdsAsync(plan.Id, cancellationToken);
 
+        if (!isCreate && plan.IsActive && !command.Model.IsActive && activeSubscriberUserIds.Count > 0)
+        {
+            throw new ValidationException(
+                $"Không thể ngừng kích hoạt gói '{plan.DisplayName}' vì vẫn còn {activeSubscriberUserIds.Count} thuê bao đang hoạt động. Vui lòng chuyển thuê bao sang gói khác trước.");
+        }
+
         if (!isCreate)
         {
             ApplyModel(plan, command.Model);
