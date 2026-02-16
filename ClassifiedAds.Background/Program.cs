@@ -100,12 +100,6 @@ Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
-    .AddProductModule(opt =>
-    {
-        configuration.GetSection("Modules:Product").Bind(opt);
-        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Product.ConfigurationOptions.ConnectionStringsOptions();
-        opt.ConnectionStrings.Default = sharedConnectionString;
-    })
     .AddStorageModule(opt =>
     {
         configuration.GetSection("Modules:Storage").Bind(opt);
@@ -162,7 +156,6 @@ static void AddHostedServices(IServiceCollection services)
 {
     services.AddHostedServicesIdentityModule();
     services.AddHostedServicesNotificationModule();
-    services.AddHostedServicesProductModule();
     services.AddHostedServicesStorageModule();
     services.AddHostedServicesSubscriptionModule();
 }

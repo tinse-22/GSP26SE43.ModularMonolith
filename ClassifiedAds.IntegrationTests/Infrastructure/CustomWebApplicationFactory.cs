@@ -86,7 +86,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // We iterate through known module DbContext types
         var dbContextTypes = new[]
         {
-            typeof(ClassifiedAds.Modules.Product.Persistence.ProductDbContext),
             typeof(ClassifiedAds.Modules.Identity.Persistence.IdentityDbContext),
             typeof(ClassifiedAds.Modules.AuditLog.Persistence.AuditLogDbContext),
             typeof(ClassifiedAds.Modules.Configuration.Persistence.ConfigurationDbContext),

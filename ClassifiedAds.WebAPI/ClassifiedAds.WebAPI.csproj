@@ -36,8 +36,6 @@
 		<ProjectReference
 			Include="..\ClassifiedAds.Modules.Notification\ClassifiedAds.Modules.Notification.csproj" />
 		<ProjectReference
-			Include="..\ClassifiedAds.Modules.Product\ClassifiedAds.Modules.Product.csproj" />
-		<ProjectReference
 			Include="..\ClassifiedAds.Modules.Storage\ClassifiedAds.Modules.Storage.csproj" />
 		<ProjectReference
 			Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
@@ -50,11 +48,6 @@
 		<PreserveCompilationContext>true</PreserveCompilationContext>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<None Include="Templates\ProductList.cshtml">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</None>
-	</ItemGroup>
 
 	<ItemGroup>
 		<None Update="Certs\classifiedads.identityserver.pfx">

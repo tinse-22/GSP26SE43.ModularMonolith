@@ -57,7 +57,7 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
     // CRITICAL: Must set MigrationsAssembly to this project so EF Core finds migrations here
     // Pattern: Same as WebAPI/Background but with MigrationsAssembly override
     // Base Modules: AuditLog (cross-cutting), Identity, Storage
-    // Core Modules: Configuration, Notification, Product
+    // Core Modules: Configuration, Notification
     // Test Modules: TestGeneration, TestExecution, TestReporting
     // Business Modules: Subscription
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -96,14 +96,6 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
     {
         configuration.GetSection("Modules:Notification").Bind(opt);
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
-        opt.ConnectionStrings.Default = sharedConnectionString;
-        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
-    })
-    // Product Module
-    .AddProductModule(opt =>
-    {
-        configuration.GetSection("Modules:Product").Bind(opt);
-        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Product.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
@@ -187,10 +179,9 @@ Policy.Handle<Exception>().WaitAndRetry(
     app.MigrateIdentityDb();
     app.MigrateStorageDb();
 
-    // Core Modules: Configuration, Notification, Product
+    // Core Modules: Configuration, Notification
     app.MigrateConfigurationDb();
     app.MigrateNotificationDb();
-    app.MigrateProductDb();
 
     // Test Modules: TestGeneration, TestExecution, TestReporting
     app.MigrateTestGenerationDb();

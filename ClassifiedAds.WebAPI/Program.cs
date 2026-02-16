@@ -151,7 +151,6 @@ services.AddControllers(configure =>
 .AddConfigurationModule()
 .AddIdentityModule()
 .AddNotificationModule()
-.AddProductModule()
 .AddStorageModule()
 .AddSubscriptionModule()
 .AddApiDocumentationModule();
@@ -239,12 +238,6 @@ services.AddAuditLogModule(opt =>
 {
     configuration.GetSection("Modules:Notification").Bind(opt);
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
-    opt.ConnectionStrings.Default = sharedConnectionString;
-})
-.AddProductModule(opt =>
-{
-    configuration.GetSection("Modules:Product").Bind(opt);
-    opt.ConnectionStrings ??= new ClassifiedAds.Modules.Product.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
 .AddStorageModule(opt =>

@@ -31,9 +31,6 @@
   <Folder Name="/Modules/Notification/">
     <Project Path="ClassifiedAds.Modules.Notification/ClassifiedAds.Modules.Notification.csproj" />
   </Folder>
-  <Folder Name="/Modules/Product/">
-    <Project Path="ClassifiedAds.Modules.Product/ClassifiedAds.Modules.Product.csproj" />
-  </Folder>
   <Folder Name="/Modules/Storage/">
     <Project Path="ClassifiedAds.Modules.Storage/ClassifiedAds.Modules.Storage.csproj" />
   </Folder>

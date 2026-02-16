@@ -70,18 +70,18 @@ public class ApplicationSmokeTests : IAsyncLifetime
 
     /// <summary>
     /// Smoke Test 3: Verify protected endpoints require authentication.
-    /// Tests that the [Authorize] attribute on ProductsController properly enforces auth.
+    /// Tests that the [Authorize] attribute on FilesController properly enforces auth.
     /// Without valid credentials, the endpoint should return 401 Unauthorized.
-    /// 
-    /// Endpoint tested: GET /api/products
-    /// Controller: ClassifiedAds.Modules.Product.Controllers.ProductsController
+    ///
+    /// Endpoint tested: GET /api/files
+    /// Controller: ClassifiedAds.Modules.Storage.Controllers.FilesController
     /// </summary>
     [Fact]
     public async Task ProtectedEndpoint_ShouldReturn401_WhenCalledWithoutAuth()
     {
         // Arrange
         // Add header to skip test authentication handler (simulate unauthenticated request)
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/products");
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/files");
         request.Headers.Add("X-Skip-Auth", "true");
 
         // Act
@@ -90,6 +90,6 @@ public class ApplicationSmokeTests : IAsyncLifetime
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "Protected endpoint should return 401 Unauthorized when authentication fails. " +
-            "Endpoint tested: GET /api/products (ProductsController with [Authorize] attribute)");
+            "Endpoint tested: GET /api/files (FilesController with [Authorize] attribute)");
     }
 }
