@@ -51,8 +51,10 @@ public static class ApiDocumentationServiceCollectionExtensions
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
-        // Note: DefaultPolicy rate limiter is registered by the Identity module.
-        // Do NOT re-register it here to avoid "policy already exists" errors.
+        services.AddRateLimiter(options =>
+        {
+            options.AddPolicy<string, DefaultRateLimiterPolicy>(RateLimiterPolicyNames.DefaultPolicy);
+        });
 
         return services;
     }
