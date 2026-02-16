@@ -22,6 +22,7 @@ public class ApiDocumentationDbContext : DbContextUnitOfWork<ApiDocumentationDbC
     public DbSet<EndpointResponse> EndpointResponses { get; set; }
     public DbSet<EndpointSecurityReq> EndpointSecurityReqs { get; set; }
     public DbSet<SecurityScheme> SecuritySchemes { get; set; }
+    public DbSet<OutboxMessage> OutboxMessages { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

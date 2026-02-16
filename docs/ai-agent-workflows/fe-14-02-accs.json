@@ -1,0 +1,170 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-14-02-accs",
+  "requirement": {
+    "id": "FE-14-02",
+    "parentId": "FE-14",
+    "title": "Subscription & Billing Closure Criteria",
+    "goal": "Close FE-14 with production-ready acceptance criteria based on current Subscription module implementation.",
+    "priority": "P0",
+    "implementationOrder": 2,
+    "status": "planned",
+    "rationale": [
+      "FE-14 is marked In Progress in docs/FE_COMPLETION_TRACKER.md and needs a clear closure gate.",
+      "Core APIs and handlers already exist (Plans, Subscriptions, Payments, Usage, PayOS webhook/reconcile).",
+      "The remaining risk is inconsistent completion standards across lifecycle, payment, usage limits, and tests.",
+      "A single FE-14-02 closure spec avoids opening multiple parallel FEs."
+    ]
+  },
+  "currentStateSnapshot": {
+    "module": "ClassifiedAds.Modules.Subscription",
+    "implementedControllers": [
+      "PlansController",
+      "SubscriptionsController",
+      "PaymentsController"
+    ],
+    "implementedCoreFlows": [
+      "Plan CRUD + plan audit logs",
+      "Subscription create/update/cancel + history",
+      "Payment intent + checkout + webhook + return redirect + manual sync",
+      "Background reconcile for pending PayOS checkouts",
+      "Usage tracking + atomic limit consumption"
+    ],
+    "trackerStatus": "FE-14 currently In Progress"
+  },
+  "scope": {
+    "inScope": [
+      "Plan lifecycle acceptance: create, update, deactivate, guard active subscribers.",
+      "Subscription lifecycle acceptance: trial, active, upgrade/downgrade classification, cancel, reactivate.",
+      "Payment lifecycle acceptance: intent creation, checkout creation, webhook processing, return redirect, reconcile worker.",
+      "Usage and quota acceptance: usage tracking updates and atomic limit enforcement under concurrency.",
+      "Security acceptance: no raw cardholder data stored in module entities/models.",
+      "Test and documentation closure: build, test pass, and FE tracker update."
+    ],
+    "outOfScope": [
+      "Adding new payment providers.",
+      "Changing pricing strategy or introducing new plan types.",
+      "Implementing unrelated FEs (FE-04 to FE-13, FE-15 to FE-17).",
+      "Frontend implementation details."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      "ClassifiedAds.Modules.Subscription",
+      "ClassifiedAds.Contracts",
+      "ClassifiedAds.IntegrationTests",
+      "ClassifiedAds.UnitTests"
+    ],
+    "infrastructure": {
+      "database": "PostgreSQL",
+      "messageBroker": "RabbitMQ",
+      "cache": "Redis (optional for FE-14-02 closure)",
+      "externalGateway": "PayOS"
+    }
+  },
+  "architectureConstraints": {
+    "mustFollow": [
+      "Controller remains thin and dispatches Commands/Queries via Dispatcher.",
+      "Inter-module calls use contracts (no direct cross-module DbContext/repository access).",
+      "Async flow with CancellationToken propagation.",
+      "Outbox pattern for integration/audit events.",
+      "Permission-based authorization on all protected endpoints."
+    ],
+    "securityConstraints": [
+      "Do not store raw card number, CVV, or full PAN.",
+      "Only provider references (orderCode, paymentLinkId, provider transaction references) are allowed.",
+      "Webhook signature must be validated before processing state transitions."
+    ]
+  },
+  "apiCoverageChecklist": {
+    "plans": [
+      "GET /api/plans",
+      "GET /api/plans/{id}",
+      "POST /api/plans",
+      "PUT /api/plans/{id}",
+      "DELETE /api/plans/{id}",
+      "GET /api/plans/{id}/auditlogs"
+    ],
+    "subscriptions": [
+      "GET /api/subscriptions/{id}",
+      "GET /api/subscriptions/plans",
+      "GET /api/subscriptions/users/{userId}/current",
+      "GET /api/subscriptions/me/current",
+      "POST /api/subscriptions",
+      "PUT /api/subscriptions/{id}",
+      "POST /api/subscriptions/{id}/cancel",
+      "GET /api/subscriptions/{id}/history",
+      "GET /api/subscriptions/{id}/payments",
+      "POST /api/subscriptions/{id}/payments",
+      "GET /api/subscriptions/users/{userId}/usage",
+      "PUT /api/subscriptions/users/{userId}/usage"
+    ],
+    "payments": [
+      "POST /api/payments/subscribe/{planId}",
+      "GET /api/payments/plans",
+      "GET /api/payments/{intentId}",
+      "POST /api/payments/payos/create",
+      "POST /api/payments/payos/webhook",
+      "GET /api/payments/payos/return",
+      "POST /api/payments/debug/check-payment/{intentId}",
+      "POST /api/payments/debug/sync-payment/{intentId}"
+    ]
+  },
+  "acceptanceCriteria": [
+    "AC-01: Plan CRUD endpoints return expected status codes and enforce permission-based authorization.",
+    "AC-02: Plan name uniqueness is enforced case-insensitively for create and update paths.",
+    "AC-03: Plan deactivation is blocked when active subscribers exist (Trial/Active/PastDue), enforced on both DELETE and PUT (IsActive toggle) paths.",
+    "AC-04: Plan update replaces limits correctly and persists a valid plan-limit set.",
+    "AC-05: Subscription create supports both trial and paid flows with correct lifecycle fields.",
+    "AC-06: Subscription update records correct ChangeType (Upgraded, Downgraded, Reactivated) in history.",
+    "AC-07: Subscription cancel sets status and timestamps consistently and is idempotent for already-cancelled records.",
+    "AC-08: Free-plan subscribe flow activates subscription immediately without creating PaymentIntent.",
+    "AC-09: Paid-plan subscribe flow creates PaymentIntent in RequiresPayment state with expiration window.",
+    "AC-10: Checkout creation assigns a unique order code and persists checkout URL/status transitions.",
+    "AC-11: PayOS webhook processing validates signature and updates payment/subscription state idempotently.",
+    "AC-12: Return endpoint redirects to frontend result URL with correct success/failed semantics.",
+    "AC-13: Manual sync command can reconcile payment state when webhook is missed.",
+    "AC-14: Reconcile worker processes pending intents and updates status/checkout fields without corrupting state.",
+    "AC-15: Usage tracking endpoints and commands correctly upsert/query usage by billing period.",
+    "AC-16: Atomic limit consume prevents over-allocation under concurrency (validated by integration test).",
+    "AC-17: Module stores no raw cardholder data; only provider-level references are persisted.",
+    "AC-18: Subscription and payment changes generate required outbox/audit events.",
+    "AC-19: Solution builds cleanly and FE-14 targeted tests pass.",
+    "AC-20: docs/FE_COMPLETION_TRACKER.md is updated as final step when FE-14 is marked Completed."
+  ],
+  "testRequirements": {
+    "mustHave": [
+      "Unit tests for critical command handlers: AddUpdatePlan, DeletePlan, AddUpdateSubscription, CancelSubscription, CreateSubscriptionPayment, ConsumeLimitAtomically, HandlePayOsWebhook.",
+      "Integration test for atomic limit concurrency (50 parallel attempts with finite limit).",
+      "Integration test coverage for webhook or sync reconciliation path.",
+      "Regression checks for permission-protected endpoints."
+    ],
+    "verificationCommands": [
+      "dotnet build",
+      "dotnet test ClassifiedAds.UnitTests",
+      "dotnet test ClassifiedAds.IntegrationTests --filter Subscription"
+    ]
+  },
+  "implementationNotes": {
+    "phase1": "Run FE-14 gap audit against AC-01..AC-20 and list fails.",
+    "phase2": "Fix failing gaps in Subscription module with minimal architectural impact.",
+    "phase3": "Complete/adjust tests to cover all closure criteria.",
+    "phase4": "Update FE completion tracker and changelog after all ACs pass.",
+    "singleFePolicy": "Do not start another FE until FE-14 closure criteria are satisfied."
+  },
+  "definitionOfDone": {
+    "functional": [
+      "All AC-01..AC-20 validated as pass.",
+      "No blocker defects in plan/subscription/payment/usage flows."
+    ],
+    "quality": [
+      "Build passes and target tests are green.",
+      "No known architecture or security rule violation in touched code."
+    ],
+    "process": [
+      "FE tracker status for FE-14 updated according to rules/fe-completion-tracking.md.",
+      "Changelog entry added in docs/FE_COMPLETION_TRACKER.md for FE-14 closure."
+    ]
+  }
+}
