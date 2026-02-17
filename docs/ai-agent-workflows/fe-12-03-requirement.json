@@ -1,0 +1,329 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-03-requirement",
+  "requirement": {
+    "id": "FE-12-03",
+    "parentId": "FE-12",
+    "title": "Path Parameter Mutation for Test Generation",
+    "goal": "Tạo các biến thể (mutations) của path parameter values để phục vụ negative testing và boundary testing. Cung cấp danh sách mutation variants cho TestGeneration module consume.",
+    "priority": "P1",
+    "implementationOrder": 3,
+    "status": "planned",
+    "rationale": [
+      "FE-06 yêu cầu boundary và negative test case generation — path params là nguồn mutation quan trọng.",
+      "Mutation cần based trên DataType và Format của EndpointParameter để tạo test cases hợp lý.",
+      "TestGeneration module (FE-05, FE-06) sẽ consume mutation list từ service này khi tạo test cases.",
+      "Mỗi mutation có expected HTTP status code → giúp xác định pass/fail trong test execution."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Implement GenerateMutations(paramName, dataType, format, defaultValue) trong PathParameterTemplateService.",
+      "Support mutation strategies theo DataType: string, integer, number, boolean.",
+      "Support mutation strategies theo Format: uuid, int32, int64, email.",
+      "Mỗi mutation có: type, label, value, expectedStatusCode, description.",
+      "Expose API endpoint GET .../endpoints/{endpointId}/path-param-mutations.",
+      "Tạo GetPathParamMutationsQuery + handler.",
+      "Tích hợp với resolved URL: mỗi mutation tạo một resolved URL variant."
+    ],
+    "outOfScope": [
+      "LLM-assisted mutation suggestion (FE-06 partial — LlmAssistant module).",
+      "Actual test case creation (TestGeneration FE-05/FE-06 sẽ consume mutations).",
+      "Query parameter mutations (chỉ focus path params cho FE-12).",
+      "Request body mutations (khác scope)."
+    ]
+  },
+  "serviceEnhancement": {
+    "service": "PathParameterTemplateService",
+    "addMethod": {
+      "name": "GenerateMutations",
+      "signature": "List<PathParameterMutation> GenerateMutations(string parameterName, string dataType, string format, string defaultValue)",
+      "algorithm": [
+        "1. var mutations = new List<PathParameterMutation>();",
+        "2. var normalizedType = (dataType ?? \"string\").ToLowerInvariant();",
+        "3. var normalizedFormat = format?.ToLowerInvariant();",
+        "",
+        "// === COMMON MUTATIONS (mọi data type) ===",
+        "4. mutations.Add(new PathParameterMutation {",
+        "     MutationType = \"empty\",",
+        "     Label = $\"{parameterName} — empty value\",",
+        "     Value = \"\",",
+        "     ExpectedStatusCode = 400,",
+        "     Description = $\"Path parameter '{parameterName}' gửi giá trị rỗng.\"",
+        "   });",
+        "",
+        "5. mutations.Add(new PathParameterMutation {",
+        "     MutationType = \"specialChars\",",
+        "     Label = $\"{parameterName} — special characters\",",
+        "     Value = \"<script>alert(1)</script>\",",
+        "     ExpectedStatusCode = 400,",
+        "     Description = $\"Path parameter '{parameterName}' chứa ký tự đặc biệt/XSS payload.\"",
+        "   });",
+        "",
+        "6. mutations.Add(new PathParameterMutation {",
+        "     MutationType = \"sqlInjection\",",
+        "     Label = $\"{parameterName} — SQL injection attempt\",",
+        "     Value = \"1; DROP TABLE users--\",",
+        "     ExpectedStatusCode = 400,",
+        "     Description = $\"Path parameter '{parameterName}' chứa SQL injection payload.\"",
+        "   });",
+        "",
+        "// === TYPE-SPECIFIC MUTATIONS ===",
+        "7. switch (normalizedType) {",
+        "     case \"integer\":",
+        "     case \"int\":",
+        "     case \"long\":",
+        "       AddIntegerMutations(mutations, parameterName, normalizedFormat);",
+        "       break;",
+        "     case \"number\":",
+        "     case \"float\":",
+        "     case \"double\":",
+        "     case \"decimal\":",
+        "       AddNumberMutations(mutations, parameterName);",
+        "       break;",
+        "     case \"boolean\":",
+        "     case \"bool\":",
+        "       AddBooleanMutations(mutations, parameterName);",
+        "       break;",
+        "     case \"string\":",
+        "     default:",
+        "       AddStringMutations(mutations, parameterName, normalizedFormat);",
+        "       break;",
+        "   }",
+        "",
+        "// === NON-EXISTENT RESOURCE ===",
+        "8. mutations.Add(new PathParameterMutation {",
+        "     MutationType = \"nonExistent\",",
+        "     Label = $\"{parameterName} — non-existent resource\",",
+        "     Value = GenerateNonExistentValue(normalizedType, normalizedFormat),",
+        "     ExpectedStatusCode = 404,",
+        "     Description = $\"Path parameter '{parameterName}' trỏ tới resource không tồn tại.\"",
+        "   });",
+        "",
+        "9. return mutations;"
+      ],
+      "helperMethods": {
+        "AddIntegerMutations": {
+          "description": "Thêm mutations đặc thù cho integer path params",
+          "mutations": [
+            { "type": "wrongType", "value": "abc", "status": 400, "desc": "Gửi chữ thay vì số" },
+            { "type": "boundary_zero", "value": "0", "status": 400, "desc": "Giá trị zero (thường không hợp lệ cho ID)" },
+            { "type": "boundary_negative", "value": "-1", "status": 400, "desc": "Giá trị âm" },
+            { "type": "boundary_max_int32", "value": "2147483647", "status": 200, "desc": "Max int32 — boundary test", "condition": "format == 'int32'" },
+            { "type": "boundary_overflow_int32", "value": "2147483648", "status": 400, "desc": "Overflow int32", "condition": "format == 'int32'" },
+            { "type": "boundary_max_int64", "value": "9223372036854775807", "status": 200, "desc": "Max int64 — boundary test", "condition": "format == 'int64' or no format" },
+            { "type": "boundary_float", "value": "1.5", "status": 400, "desc": "Float thay vì integer" }
+          ]
+        },
+        "AddNumberMutations": {
+          "description": "Thêm mutations cho number (float/double) path params",
+          "mutations": [
+            { "type": "wrongType", "value": "abc", "status": 400, "desc": "Gửi chữ thay vì số" },
+            { "type": "boundary_zero", "value": "0", "status": 200, "desc": "Zero value" },
+            { "type": "boundary_negative", "value": "-1.0", "status": 400, "desc": "Giá trị âm" },
+            { "type": "boundary_veryLarge", "value": "999999999.999", "status": 200, "desc": "Giá trị rất lớn" },
+            { "type": "boundary_verySmall", "value": "0.0000001", "status": 200, "desc": "Giá trị rất nhỏ" }
+          ]
+        },
+        "AddBooleanMutations": {
+          "description": "Thêm mutations cho boolean path params",
+          "mutations": [
+            { "type": "wrongType", "value": "abc", "status": 400, "desc": "Gửi giá trị không phải boolean" },
+            { "type": "numericBoolean", "value": "2", "status": 400, "desc": "Số không phải 0/1" }
+          ]
+        },
+        "AddStringMutations": {
+          "description": "Thêm mutations cho string path params (phụ thuộc format)",
+          "mutations_uuid": [
+            { "type": "invalidFormat", "value": "not-a-uuid", "status": 400, "desc": "Chuỗi không phải UUID" },
+            { "type": "partialUuid", "value": "550e8400-e29b-41d4", "status": 400, "desc": "UUID không đầy đủ" },
+            { "type": "allZerosUuid", "value": "00000000-0000-0000-0000-000000000000", "status": 404, "desc": "UUID zero — resource không tồn tại" }
+          ],
+          "mutations_email": [
+            { "type": "invalidFormat", "value": "not-an-email", "status": 400, "desc": "Không phải email hợp lệ" },
+            { "type": "missingDomain", "value": "user@", "status": 400, "desc": "Email thiếu domain" }
+          ],
+          "mutations_default": [
+            { "type": "veryLong", "value": "a{repeated 500 times}", "status": 400, "desc": "Chuỗi quá dài (500 chars)" },
+            { "type": "unicode", "value": "用户名", "status": 400, "desc": "Ký tự Unicode" },
+            { "type": "whitespace", "value": "   ", "status": 400, "desc": "Chỉ có khoảng trắng" }
+          ]
+        },
+        "GenerateNonExistentValue": {
+          "description": "Tạo giá trị không tồn tại phù hợp với data type",
+          "logic": [
+            "integer/number → '999999999'",
+            "string (format=uuid) → '00000000-0000-0000-0000-000000000000'",
+            "string (default) → 'nonexistent-resource-id-99999'"
+          ]
+        }
+      }
+    }
+  },
+  "queryContract": {
+    "name": "GetPathParamMutationsQuery",
+    "file": "Queries/GetPathParamMutationsQuery.cs",
+    "codeTemplate": {
+      "query": {
+        "implements": "IQuery<PathParamMutationsResult>",
+        "properties": [
+          "public Guid ProjectId { get; set; }",
+          "public Guid SpecId { get; set; }",
+          "public Guid EndpointId { get; set; }",
+          "public Guid OwnerId { get; set; }"
+        ]
+      },
+      "handler": {
+        "implements": "IQueryHandler<GetPathParamMutationsQuery, PathParamMutationsResult>",
+        "dependencies": [
+          "IRepository<Project, Guid> _projectRepository",
+          "IRepository<ApiSpecification, Guid> _specRepository",
+          "IRepository<ApiEndpoint, Guid> _endpointRepository",
+          "IRepository<EndpointParameter, Guid> _parameterRepository",
+          "IPathParameterTemplateService _pathParamService"
+        ],
+        "flowSteps": [
+          "1. Verify project ownership (same pattern).",
+          "2. Verify spec belongs to project.",
+          "3. Load endpoint.",
+          "4. Load all EndpointParameters with Location == Path.",
+          "5. For each path param: call _pathParamService.GenerateMutations(name, dataType, format, defaultValue).",
+          "6. For each mutation: resolve URL with the mutated value (other params use DefaultValue).",
+          "7. Return PathParamMutationsResult with mutations per parameter and resolved URL variants."
+        ]
+      }
+    }
+  },
+  "models": [
+    {
+      "name": "PathParamMutationsResult",
+      "file": "Models/PathParamMutationsResult.cs",
+      "properties": [
+        { "name": "EndpointId", "type": "Guid" },
+        { "name": "TemplatePath", "type": "string" },
+        { "name": "TotalMutations", "type": "int" },
+        { "name": "ParameterMutations", "type": "List<ParameterMutationGroup>" }
+      ]
+    },
+    {
+      "name": "ParameterMutationGroup",
+      "file": "Models/PathParamMutationsResult.cs",
+      "properties": [
+        { "name": "ParameterName", "type": "string" },
+        { "name": "DataType", "type": "string" },
+        { "name": "Format", "type": "string" },
+        { "name": "OriginalValue", "type": "string" },
+        { "name": "Mutations", "type": "List<PathParameterMutationWithUrl>" }
+      ]
+    },
+    {
+      "name": "PathParameterMutationWithUrl",
+      "file": "Models/PathParamMutationsResult.cs",
+      "extends": "PathParameterMutation",
+      "additionalProperties": [
+        { "name": "ResolvedUrl", "type": "string", "description": "URL resolved với mutated value cho param này, other params dùng DefaultValue" }
+      ]
+    }
+  ],
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations",
+      "permission": "Permission:GetEndpoints",
+      "description": "Lấy danh sách mutation variants cho tất cả path parameters của endpoint. Dùng cho preview mutations trước khi generate test cases.",
+      "response": {
+        "200": "PathParamMutationsResult",
+        "404": "NotFoundException"
+      }
+    }
+  ],
+  "acceptanceCriteria": [
+    "AC-01: GenerateMutations('userId', 'integer', null, '42') trả về ít nhất 8 mutations bao gồm: empty, specialChars, wrongType, boundary_zero, boundary_negative, boundary_max, nonExistent, sqlInjection.",
+    "AC-02: GenerateMutations('id', 'string', 'uuid', '550e8400...') trả về mutations bao gồm: empty, invalidFormat, partialUuid, allZerosUuid, specialChars, nonExistent.",
+    "AC-03: GenerateMutations('name', 'string', null, 'test') trả về: empty, veryLong, unicode, whitespace, specialChars, nonExistent.",
+    "AC-04: GenerateMutations('active', 'boolean', null, 'true') trả về: empty, wrongType, numericBoolean, specialChars.",
+    "AC-05: Mỗi mutation có expectedStatusCode hợp lý: 400 cho invalid input, 404 cho nonExistent.",
+    "AC-06: GET .../endpoints/{id}/path-param-mutations trả về mutations grouped by parameter.",
+    "AC-07: Mỗi mutation trong API response có resolvedUrl (URL đã thay thế param với mutated value).",
+    "AC-08: Endpoint không có path params → GET .../path-param-mutations trả về result rỗng (totalMutations=0).",
+    "AC-09: Integer format='int32' → có mutation boundary_overflow_int32 (value=2147483648, expect 400).",
+    "AC-10: Mỗi mutation có description bằng tiếng Việt mô tả mục đích test."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Integer mutations — basic",
+      "given": "paramName='userId', dataType='integer', format=null, defaultValue='42'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Returns mutations including: empty, wrongType('abc'), boundary_zero('0'), boundary_negative('-1'), boundary_float('1.5'), nonExistent('999999999'), specialChars, sqlInjection"
+    },
+    {
+      "id": "TS-02",
+      "name": "Integer mutations — int32 format",
+      "given": "paramName='id', dataType='integer', format='int32', defaultValue='1'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Includes boundary_max_int32('2147483647', expect 200) and boundary_overflow_int32('2147483648', expect 400)"
+    },
+    {
+      "id": "TS-03",
+      "name": "UUID string mutations",
+      "given": "paramName='id', dataType='string', format='uuid', defaultValue='550e8400-e29b-41d4-a716-446655440000'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Returns: empty, invalidFormat('not-a-uuid'), partialUuid, allZerosUuid('00000000-...'), specialChars, nonExistent"
+    },
+    {
+      "id": "TS-04",
+      "name": "Plain string mutations",
+      "given": "paramName='slug', dataType='string', format=null, defaultValue='my-product'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Returns: empty, veryLong, unicode, whitespace, specialChars, sqlInjection, nonExistent"
+    },
+    {
+      "id": "TS-05",
+      "name": "Boolean mutations",
+      "given": "paramName='active', dataType='boolean', format=null, defaultValue='true'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Returns: empty, wrongType('abc'), numericBoolean('2'), specialChars"
+    },
+    {
+      "id": "TS-06",
+      "name": "Mutation with resolved URL",
+      "given": "Endpoint path='/api/users/{userId}/posts/{postId}', userId.default='1', postId.default='abc-123', mutation on userId='abc' (wrongType)",
+      "when": "GET .../path-param-mutations",
+      "then": "userId wrongType mutation has resolvedUrl='/api/users/abc/posts/abc-123' (postId keeps default)"
+    },
+    {
+      "id": "TS-07",
+      "name": "No path params — empty result",
+      "given": "Endpoint path='/api/health' (no placeholders)",
+      "when": "GET .../path-param-mutations",
+      "then": "{endpointId, templatePath:'/api/health', totalMutations:0, parameterMutations:[]}"
+    },
+    {
+      "id": "TS-08",
+      "name": "Number mutations",
+      "given": "paramName='price', dataType='number', format=null, defaultValue='19.99'",
+      "when": "GenerateMutations(paramName, dataType, format, defaultValue)",
+      "then": "Returns: empty, wrongType('abc'), boundary_zero('0'), boundary_negative('-1.0'), veryLarge, verySmall, specialChars"
+    }
+  ],
+  "integrationWithTestGeneration": {
+    "description": "FE-12-03 provides data that TestGeneration (FE-05/FE-06) will consume to create test cases.",
+    "consumptionPattern": {
+      "module": "ClassifiedAds.Modules.TestGeneration",
+      "entity": "TestCaseRequest",
+      "usage": [
+        "TestCaseRequest.Url = mutation.ResolvedUrl (mutated URL)",
+        "TestCaseRequest.PathParams = JSON serialization of current param values including mutated value",
+        "TestCase.Category = mutation.MutationType (e.g., 'boundary', 'negative')",
+        "TestCase expected status = mutation.ExpectedStatusCode"
+      ],
+      "note": "TestGeneration sẽ query API (hoặc call service via contract) để lấy mutations khi generating test cases. Exact integration pattern sẽ được định nghĩa trong FE-05/FE-06 specs."
+    }
+  },
+  "logCatalog": [
+    { "eventCode": "APIDOC_MUTATIONS_GENERATED", "uiMessageVi": "Đã tạo {count} mutation variants cho {paramCount} path parameters.", "systemMessageEn": "Generated {count} mutations for {paramCount} path parameters. EndpointId={endpointId}.", "level": "Information" },
+    { "eventCode": "APIDOC_MUTATIONS_EMPTY", "uiMessageVi": "Không có path parameter nào để tạo mutation.", "systemMessageEn": "No path parameters found for mutation generation. EndpointId={endpointId}, Path={path}.", "level": "Debug" }
+  ]
+}

@@ -1,0 +1,442 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-01-requirement",
+  "requirement": {
+    "id": "FE-12-01",
+    "parentId": "FE-12",
+    "title": "Path Parameter Auto-Detection & Validation",
+    "goal": "Tự động phát hiện {placeholder} trong endpoint path, validate tính nhất quán giữa path template và EndpointParameter definitions, tự động tạo missing path parameters.",
+    "priority": "P0",
+    "implementationOrder": 1,
+    "status": "planned",
+    "rationale": [
+      "Đây là core logic của FE-12 — mọi thứ khác depend vào khả năng extract và validate path params.",
+      "ImportCurlCommand đã có regex extract nhưng chưa tách thành shared service — cần refactor.",
+      "AddUpdateEndpointCommand và CreateManualSpecificationCommand chưa có validation logic cho path params.",
+      "EndpointParameter entity đã hỗ trợ Location=Path — chỉ cần thêm business logic."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Tạo IPathParameterTemplateService interface và PathParameterTemplateService implementation.",
+      "ExtractPathParameters(path) — extract tất cả {placeholder} từ path string.",
+      "ValidatePathParameterConsistency(path, parameters) — validate matching giữa placeholders và parameter definitions.",
+      "Auto-create missing path parameters khi user không khai báo đủ.",
+      "Reject extra path parameters không có trong path template.",
+      "Enhance AddUpdateEndpointCommand handler — inject service, auto-extract, validate.",
+      "Enhance CreateManualSpecificationCommand handler — same logic cho mỗi endpoint.",
+      "Refactor ImportCurlCommand — dùng shared service thay vì inline regex.",
+      "Validate path param names: chỉ chấp nhận \\w+ (alphanumeric + underscore).",
+      "Path params luôn IsRequired=true — enforce constraint."
+    ],
+    "outOfScope": [
+      "URL resolution (FE-12-02).",
+      "Mutation generation (FE-12-03).",
+      "Thay đổi database schema.",
+      "UI changes."
+    ]
+  },
+  "entityReference": {
+    "reusedEntities": [
+      {
+        "name": "ApiEndpoint",
+        "module": "ClassifiedAds.Modules.ApiDocumentation",
+        "relevantFields": [
+          { "name": "Path", "type": "string", "maxLength": 500, "usage": "Source cho placeholder extraction" }
+        ]
+      },
+      {
+        "name": "EndpointParameter",
+        "module": "ClassifiedAds.Modules.ApiDocumentation",
+        "relevantFields": [
+          { "name": "Name", "type": "string", "usage": "Phải match placeholder name trong path" },
+          { "name": "Location", "type": "ParameterLocation", "usage": "Path=0 cho path parameters" },
+          { "name": "DataType", "type": "string", "usage": "Auto-set 'string' khi auto-create" },
+          { "name": "IsRequired", "type": "bool", "usage": "Luôn true cho path params" },
+          { "name": "DefaultValue", "type": "string", "usage": "Sample value từ user" },
+          { "name": "Examples", "type": "string (JSON)", "usage": "Multiple sample values" }
+        ]
+      }
+    ],
+    "newEntities": "Không cần tạo entity mới"
+  },
+  "serviceInterface": {
+    "name": "IPathParameterTemplateService",
+    "file": "Services/IPathParameterTemplateService.cs",
+    "namespace": "ClassifiedAds.Modules.ApiDocumentation.Services",
+    "methods": [
+      {
+        "name": "ExtractPathParameters",
+        "signature": "List<PathParameterInfo> ExtractPathParameters(string path)",
+        "description": "Extract tất cả {placeholder} từ path string. Trả về danh sách PathParameterInfo với name và position.",
+        "input": "string path — endpoint path template, e.g. '/api/users/{userId}/orders/{orderId}'",
+        "output": "List<PathParameterInfo> — ordered list of extracted parameters",
+        "algorithm": [
+          "1. Nếu path null hoặc empty → return empty list.",
+          "2. Regex.Matches(path, @\"\\{(\\w+)\\}\") — find all placeholders.",
+          "3. Validate: nếu match chứa ký tự không hợp lệ (non-\\w) → throw ValidationException.",
+          "4. Check duplicate names → throw ValidationException nếu có.",
+          "5. Map each match → PathParameterInfo { Name, Position (0-based index) }.",
+          "6. Return ordered list."
+        ],
+        "edgeCases": [
+          "Path without placeholders: '/api/health' → []",
+          "Single placeholder: '/api/users/{id}' → [{name:'id', position:0}]",
+          "Multiple placeholders: '/api/users/{userId}/orders/{orderId}' → [{name:'userId', position:0}, {name:'orderId', position:1}]",
+          "Duplicate placeholder: '/api/{id}/sub/{id}' → throw ValidationException('Duplicate path parameter name: id')",
+          "Empty braces: '/api/users/{}' → skip (regex \\w+ requires at least 1 char)"
+        ]
+      },
+      {
+        "name": "ValidatePathParameterConsistency",
+        "signature": "PathTemplateValidationResult ValidatePathParameterConsistency(string path, List<ManualParameterDefinition> parameters)",
+        "description": "Validate rằng mọi {placeholder} trong path có tương ứng param definition, và mọi Location=Path param definition đều tồn tại trong path.",
+        "input": [
+          "string path — endpoint path template",
+          "List<ManualParameterDefinition> parameters — user-provided parameter definitions (có thể bao gồm Query, Header params)"
+        ],
+        "output": "PathTemplateValidationResult — contains isValid, errors, autoCreatedParams, warnings",
+        "algorithm": [
+          "1. var extracted = ExtractPathParameters(path) — lấy danh sách placeholders.",
+          "2. var pathParams = parameters.Where(p => p.Location == 'Path').ToList() — filter chỉ path params từ user input.",
+          "3. var extractedNames = extracted.Select(e => e.Name).ToHashSet(StringComparer.OrdinalIgnoreCase).",
+          "4. var definedNames = pathParams.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase).",
+          "",
+          "5. VALIDATION — Extra params (defined but not in path):",
+          "   foreach (var defined in definedNames) {",
+          "     if (!extractedNames.Contains(defined)) {",
+          "       errors.Add($\"Path parameter '{defined}' không tồn tại trong path '{path}'. Các placeholder hợp lệ: {string.Join(\", \", extractedNames)}.\");",
+          "     }",
+          "   }",
+          "",
+          "6. AUTO-CREATE — Missing params (in path but not defined):",
+          "   foreach (var extracted in extractedNames) {",
+          "     if (!definedNames.Contains(extracted)) {",
+          "       autoCreated.Add(new ManualParameterDefinition {",
+          "         Name = extracted,",
+          "         Location = \"Path\",",
+          "         DataType = \"string\",",
+          "         IsRequired = true",
+          "       });",
+          "     }",
+          "   }",
+          "",
+          "7. ENFORCE — Path params must be required:",
+          "   foreach (var p in pathParams) {",
+          "     if (!p.IsRequired) {",
+          "       warnings.Add($\"Path parameter '{p.Name}' đã được set IsRequired=true (path params luôn bắt buộc).\");",
+          "       p.IsRequired = true;",
+          "     }",
+          "   }",
+          "",
+          "8. Return PathTemplateValidationResult { IsValid, Errors, AutoCreatedParams, Warnings }."
+        ]
+      },
+      {
+        "name": "EnsurePathParameterConsistency",
+        "signature": "List<ManualParameterDefinition> EnsurePathParameterConsistency(string path, List<ManualParameterDefinition> parameters)",
+        "description": "Convenience method: validate + auto-create + return merged parameter list. Throws ValidationException nếu có lỗi không thể tự fix.",
+        "input": [
+          "string path — endpoint path template",
+          "List<ManualParameterDefinition> parameters — user-provided parameter definitions"
+        ],
+        "output": "List<ManualParameterDefinition> — merged list (user-defined + auto-created path params)",
+        "algorithm": [
+          "1. var result = ValidatePathParameterConsistency(path, parameters).",
+          "2. If result has errors → throw ValidationException(string.Join(' ', result.Errors)).",
+          "3. var merged = new List<ManualParameterDefinition>(parameters).",
+          "4. merged.AddRange(result.AutoCreatedParams).",
+          "5. Return merged."
+        ]
+      }
+    ]
+  },
+  "models": [
+    {
+      "name": "PathParameterInfo",
+      "file": "Models/PathParameterInfo.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "properties": [
+        { "name": "Name", "type": "string", "description": "Parameter name extracted from {placeholder}" },
+        { "name": "Position", "type": "int", "description": "0-based position in path (order of appearance)" }
+      ]
+    },
+    {
+      "name": "PathTemplateValidationResult",
+      "file": "Models/PathTemplateValidationResult.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "properties": [
+        { "name": "IsValid", "type": "bool", "description": "True if no blocking errors" },
+        { "name": "Errors", "type": "List<string>", "description": "Validation errors that prevent saving" },
+        { "name": "AutoCreatedParams", "type": "List<ManualParameterDefinition>", "description": "Path params auto-generated from placeholders" },
+        { "name": "Warnings", "type": "List<string>", "description": "Non-blocking warnings (e.g., IsRequired forced to true)" }
+      ]
+    }
+  ],
+  "commandEnhancements": [
+    {
+      "command": "AddUpdateEndpointCommand",
+      "file": "Commands/AddUpdateEndpointCommand.cs",
+      "changes": [
+        {
+          "type": "inject-dependency",
+          "description": "Thêm IPathParameterTemplateService vào constructor của AddUpdateEndpointCommandHandler",
+          "detail": "private readonly IPathParameterTemplateService _pathParamService;"
+        },
+        {
+          "type": "add-logic-before-create",
+          "description": "Sau validation input, trước khi tạo endpoint — gọi EnsurePathParameterConsistency",
+          "pseudocode": [
+            "// After existing validation, before entity creation",
+            "command.Model.Parameters = _pathParamService.EnsurePathParameterConsistency(",
+            "    command.Model.Path,",
+            "    command.Model.Parameters ?? new List<ManualParameterDefinition>()",
+            ");",
+            "",
+            "// Log auto-created params nếu có",
+            "// existing CreateChildren(...) method sẽ persist tất cả parameters (user-defined + auto-created)"
+          ],
+          "insertionPoint": "Sau dòng validate Path.Length > 500, trước dòng load project",
+          "affectsUpdatePath": true,
+          "note": "Logic này apply cho cả create và update — khi update, DeleteChildren + CreateChildren sẽ re-persist full list"
+        }
+      ]
+    },
+    {
+      "command": "CreateManualSpecificationCommand",
+      "file": "Commands/CreateManualSpecificationCommand.cs",
+      "changes": [
+        {
+          "type": "inject-dependency",
+          "description": "Thêm IPathParameterTemplateService vào constructor",
+          "detail": "private readonly IPathParameterTemplateService _pathParamService;"
+        },
+        {
+          "type": "add-logic-in-endpoint-loop",
+          "description": "Trong vòng lặp validate endpoints, thêm EnsurePathParameterConsistency cho mỗi endpoint",
+          "pseudocode": [
+            "// Inside the endpoint validation loop (for int i = 0; i < endpoints.Count; i++)",
+            "var ep = command.Model.Endpoints[i];",
+            "",
+            "// After existing HttpMethod and Path validation",
+            "try {",
+            "    ep.Parameters = _pathParamService.EnsurePathParameterConsistency(",
+            "        ep.Path,",
+            "        ep.Parameters ?? new List<ManualParameterDefinition>()",
+            "    );",
+            "} catch (ValidationException ex) {",
+            "    throw new ValidationException($\"Endpoint #{i + 1}: {ex.Message}\");",
+            "}"
+          ],
+          "insertionPoint": "Sau validate ep.Path.Length > 500, trước đóng vòng lặp"
+        }
+      ]
+    },
+    {
+      "command": "ImportCurlCommand",
+      "file": "Commands/ImportCurlCommand.cs",
+      "changes": [
+        {
+          "type": "inject-dependency",
+          "description": "Thêm IPathParameterTemplateService vào constructor",
+          "detail": "private readonly IPathParameterTemplateService _pathParamService;"
+        },
+        {
+          "type": "refactor-inline-regex",
+          "description": "Thay thế inline Regex.Matches logic bằng shared service call",
+          "before": [
+            "// Path parameters: extract {param} segments",
+            "var pathParamMatches = Regex.Matches(parseResult.Path ?? \"\", @\"\\{(\\w+)\\}\");",
+            "foreach (Match match in pathParamMatches)",
+            "{",
+            "    await _parameterRepository.AddAsync(new EndpointParameter",
+            "    {",
+            "        EndpointId = endpoint.Id,",
+            "        Name = match.Groups[1].Value,",
+            "        Location = ParameterLocation.Path,",
+            "        DataType = \"string\",",
+            "        IsRequired = true,",
+            "    }, ct);",
+            "}"
+          ],
+          "after": [
+            "// Path parameters: extract {param} segments using shared service",
+            "var pathParams = _pathParamService.ExtractPathParameters(parseResult.Path);",
+            "foreach (var pathParam in pathParams)",
+            "{",
+            "    await _parameterRepository.AddAsync(new EndpointParameter",
+            "    {",
+            "        EndpointId = endpoint.Id,",
+            "        Name = pathParam.Name,",
+            "        Location = ParameterLocation.Path,",
+            "        DataType = \"string\",",
+            "        IsRequired = true,",
+            "    }, ct);",
+            "}"
+          ]
+        }
+      ]
+    }
+  ],
+  "serviceRegistration": {
+    "file": "ServiceCollectionExtensions.cs",
+    "additions": [
+      "services.AddScoped<IPathParameterTemplateService, PathParameterTemplateService>();"
+    ]
+  },
+  "acceptanceCriteria": [
+    "AC-01: ExtractPathParameters('/api/users/{userId}/orders/{orderId}') trả về [{name:'userId', pos:0}, {name:'orderId', pos:1}].",
+    "AC-02: ExtractPathParameters('/api/health') trả về [].",
+    "AC-03: ExtractPathParameters('/api/{id}/sub/{id}') throw ValidationException — duplicate 'id'.",
+    "AC-04: ValidateConsistency where all placeholders have matching params → isValid=true, autoCreated=[].",
+    "AC-05: ValidateConsistency where placeholder missing param def → isValid=true, autoCreated=[{auto param}].",
+    "AC-06: ValidateConsistency where extra param not in path → isValid=false, errors=['...không tồn tại trong path...'].",
+    "AC-07: POST endpoint với path chứa placeholders và empty params → auto-create path params thành công.",
+    "AC-08: POST endpoint với path chứa placeholders và user-defined params matching → dùng user params (preserve DataType, DefaultValue).",
+    "AC-09: POST endpoint với mismatching param names → 400 ValidationException.",
+    "AC-10: PUT endpoint (update) cũng apply validate + auto-create logic.",
+    "AC-11: POST manual spec — mỗi endpoint trong list đều validate path params.",
+    "AC-12: cURL import vẫn hoạt động đúng sau refactor sang shared service."
+  ],
+  "logCatalog": [
+    { "eventCode": "APIDOC_PATH_PARAMS_EXTRACTED", "uiMessageVi": "Đã phát hiện {count} path parameter trong URL.", "systemMessageEn": "Extracted {count} path parameters from path '{path}'.", "level": "Information" },
+    { "eventCode": "APIDOC_PATH_PARAMS_AUTO_CREATED", "uiMessageVi": "Đã tự động tạo {count} path parameter: {names}.", "systemMessageEn": "Auto-created {count} path parameters: [{names}] for endpoint path '{path}'.", "level": "Information" },
+    { "eventCode": "APIDOC_PATH_PARAM_CONSISTENCY_ERROR", "uiMessageVi": "Path parameter không hợp lệ: {error}.", "systemMessageEn": "Path parameter consistency validation failed: {error}. Path={path}.", "level": "Warning" }
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Extract single path parameter",
+      "given": "path = '/api/users/{userId}'",
+      "when": "ExtractPathParameters(path)",
+      "then": "[{name:'userId', position:0}]"
+    },
+    {
+      "id": "TS-02",
+      "name": "Extract multiple path parameters",
+      "given": "path = '/api/users/{userId}/orders/{orderId}/items/{itemId}'",
+      "when": "ExtractPathParameters(path)",
+      "then": "[{name:'userId', position:0}, {name:'orderId', position:1}, {name:'itemId', position:2}]"
+    },
+    {
+      "id": "TS-03",
+      "name": "No path parameters in static path",
+      "given": "path = '/api/health'",
+      "when": "ExtractPathParameters(path)",
+      "then": "[]"
+    },
+    {
+      "id": "TS-04",
+      "name": "Null path",
+      "given": "path = null",
+      "when": "ExtractPathParameters(path)",
+      "then": "[]"
+    },
+    {
+      "id": "TS-05",
+      "name": "Empty path",
+      "given": "path = ''",
+      "when": "ExtractPathParameters(path)",
+      "then": "[]"
+    },
+    {
+      "id": "TS-06",
+      "name": "Duplicate parameter names",
+      "given": "path = '/api/{id}/sub/{id}'",
+      "when": "ExtractPathParameters(path)",
+      "then": "throw ValidationException('Tên path parameter trùng lặp: id.')"
+    },
+    {
+      "id": "TS-07",
+      "name": "Validate consistency — perfect match",
+      "given": "path = '/api/users/{userId}', params = [{name:'userId', location:'Path', dataType:'integer'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:true, errors:[], autoCreatedParams:[], warnings:[]}"
+    },
+    {
+      "id": "TS-08",
+      "name": "Validate consistency — auto-create missing",
+      "given": "path = '/api/users/{userId}/orders/{orderId}', params = [{name:'userId', location:'Path'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:true, autoCreatedParams:[{name:'orderId', location:'Path', dataType:'string', isRequired:true}]}"
+    },
+    {
+      "id": "TS-09",
+      "name": "Validate consistency — extra param error",
+      "given": "path = '/api/users/{userId}', params = [{name:'userId', location:'Path'}, {name:'extraParam', location:'Path'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:false, errors:[\"Path parameter 'extraParam' không tồn tại trong path...\"]}"
+    },
+    {
+      "id": "TS-10",
+      "name": "Validate consistency — non-path params ignored",
+      "given": "path = '/api/users/{userId}', params = [{name:'userId', location:'Path'}, {name:'page', location:'Query'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:true} — Query param 'page' is not validated against path"
+    },
+    {
+      "id": "TS-11",
+      "name": "Validate consistency — force IsRequired",
+      "given": "path = '/api/users/{userId}', params = [{name:'userId', location:'Path', isRequired:false}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:true, warnings:['...đã được set IsRequired=true...']}"
+    },
+    {
+      "id": "TS-12",
+      "name": "Validate consistency — static path with no path params",
+      "given": "path = '/api/health', params = [{name:'status', location:'Query'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:true} — no placeholders, no path params, only query param"
+    },
+    {
+      "id": "TS-13",
+      "name": "Validate consistency — static path but extra path param",
+      "given": "path = '/api/health', params = [{name:'wrongParam', location:'Path'}]",
+      "when": "ValidatePathParameterConsistency(path, params)",
+      "then": "{isValid:false, errors:[\"Path parameter 'wrongParam' không tồn tại trong path '/api/health'. Không có placeholder nào trong path.\"]}"
+    },
+    {
+      "id": "TS-14",
+      "name": "EnsurePathParameterConsistency — happy path",
+      "given": "path = '/api/items/{itemId}', params = []",
+      "when": "EnsurePathParameterConsistency(path, params)",
+      "then": "Returns [{name:'itemId', location:'Path', dataType:'string', isRequired:true}]"
+    },
+    {
+      "id": "TS-15",
+      "name": "EnsurePathParameterConsistency — error throws",
+      "given": "path = '/api/items/{itemId}', params = [{name:'badName', location:'Path'}]",
+      "when": "EnsurePathParameterConsistency(path, params)",
+      "then": "throw ValidationException"
+    },
+    {
+      "id": "TS-16",
+      "name": "AddUpdateEndpoint integration — auto-create",
+      "given": "POST endpoint with path='/api/orders/{orderId}' and parameters=[]",
+      "when": "AddUpdateEndpointCommand is dispatched",
+      "then": "Endpoint created with EndpointParameter {name:'orderId', location:Path, dataType:'string', isRequired:true}"
+    },
+    {
+      "id": "TS-17",
+      "name": "AddUpdateEndpoint integration — user-provided params",
+      "given": "POST endpoint with path='/api/orders/{orderId}' and params=[{name:'orderId', location:'Path', dataType:'integer', defaultValue:'42'}]",
+      "when": "AddUpdateEndpointCommand is dispatched",
+      "then": "Endpoint created with EndpointParameter {name:'orderId', dataType:'integer', defaultValue:'42'} — user values preserved"
+    },
+    {
+      "id": "TS-18",
+      "name": "CreateManualSpec integration — multi-endpoint validation",
+      "given": "Manual spec with 3 endpoints, one has mismatching path params",
+      "when": "CreateManualSpecificationCommand is dispatched",
+      "then": "throw ValidationException('Endpoint #2: Path parameter ... không tồn tại trong path...')"
+    },
+    {
+      "id": "TS-19",
+      "name": "ImportCurl integration — refactored regex",
+      "given": "cURL: curl -X GET 'https://api.com/users/{userId}/posts/{postId}'",
+      "when": "ImportCurlCommand is dispatched",
+      "then": "2 EndpointParameters created with Location=Path (same behavior as before refactor)"
+    }
+  ]
+}

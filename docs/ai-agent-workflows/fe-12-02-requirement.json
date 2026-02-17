@@ -1,0 +1,275 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-02-requirement",
+  "requirement": {
+    "id": "FE-12-02",
+    "parentId": "FE-12",
+    "title": "Path Parameter Resolution & URL Building",
+    "goal": "Resolve template URL (/api/users/{userId}) thành URL thực (/api/users/123) bằng cách bind placeholder với sample values từ EndpointParameter.DefaultValue và Examples.",
+    "priority": "P0",
+    "implementationOrder": 2,
+    "status": "planned",
+    "rationale": [
+      "Sau khi FE-12-01 đảm bảo path params nhất quán, bước tiếp theo là resolve URL thực cho test execution.",
+      "TestCaseRequest.Url (TestGeneration) cần URL đã resolve để gửi HTTP request thực tế.",
+      "User cần preview resolved URL trước khi chạy test để verify đúng endpoint.",
+      "ResolveUrl logic đơn giản nhưng cần handle edge cases: partial resolution, missing values, encoding."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Implement ResolveUrl(path, parameterValues) trong PathParameterTemplateService.",
+      "Bind {placeholder} → value từ DefaultValue hoặc Examples (ưu tiên DefaultValue).",
+      "Handle partial resolution: nếu thiếu value cho 1+ params → resolvedUrl=null, trả danh sách unresolved.",
+      "Expose API endpoint GET .../endpoints/{endpointId}/resolved-url.",
+      "Tạo GetResolvedUrlQuery + handler.",
+      "Thêm ResolvedUrl property vào EndpointDetailModel (computed, not persisted).",
+      "URL-encode giá trị khi substitute (handle special chars trong sample values)."
+    ],
+    "outOfScope": [
+      "Combine resolved URL with Project.BaseUrl (TestExecution sẽ handle).",
+      "Resolve query parameters (không phải path templating).",
+      "Cache resolved URLs (simple compute, không cần cache)."
+    ]
+  },
+  "serviceEnhancement": {
+    "service": "PathParameterTemplateService",
+    "addMethod": {
+      "name": "ResolveUrl",
+      "signature": "ResolvedUrlResult ResolveUrl(string path, Dictionary<string, string> parameterValues)",
+      "algorithm": [
+        "1. var extracted = ExtractPathParameters(path);",
+        "2. if (extracted.Count == 0) return new ResolvedUrlResult { TemplateUrl = path, ResolvedUrl = path, IsFullyResolved = true };",
+        "",
+        "3. var resolved = new List<ResolvedParameter>();",
+        "4. var unresolved = new List<UnresolvedParameter>();",
+        "5. var resolvedPath = path;",
+        "",
+        "6. foreach (var param in extracted) {",
+        "     if (parameterValues != null && parameterValues.TryGetValue(param.Name, out var value) && !string.IsNullOrEmpty(value)) {",
+        "       resolved.Add(new ResolvedParameter { Name = param.Name, Value = value, Source = \"defaultValue\" });",
+        "       resolvedPath = resolvedPath.Replace($\"{{{param.Name}}}\", Uri.EscapeDataString(value));",
+        "     } else {",
+        "       unresolved.Add(new UnresolvedParameter {",
+        "         Name = param.Name,",
+        "         Reason = $\"Chưa có giá trị mẫu (DefaultValue hoặc Examples) cho path parameter '{param.Name}'.\"",
+        "       });",
+        "     }",
+        "   }",
+        "",
+        "7. return new ResolvedUrlResult {",
+        "     TemplateUrl = path,",
+        "     ResolvedUrl = unresolved.Count == 0 ? resolvedPath : null,",
+        "     IsFullyResolved = unresolved.Count == 0,",
+        "     Parameters = resolved,",
+        "     UnresolvedParameters = unresolved",
+        "   };"
+      ]
+    }
+  },
+  "queryContract": {
+    "name": "GetResolvedUrlQuery",
+    "file": "Queries/GetResolvedUrlQuery.cs",
+    "codeTemplate": {
+      "query": {
+        "implements": "IQuery<ResolvedUrlResult>",
+        "properties": [
+          "public Guid ProjectId { get; set; }",
+          "public Guid SpecId { get; set; }",
+          "public Guid EndpointId { get; set; }",
+          "public Guid OwnerId { get; set; }"
+        ]
+      },
+      "handler": {
+        "implements": "IQueryHandler<GetResolvedUrlQuery, ResolvedUrlResult>",
+        "dependencies": [
+          "IRepository<Project, Guid> _projectRepository",
+          "IRepository<ApiSpecification, Guid> _specRepository",
+          "IRepository<ApiEndpoint, Guid> _endpointRepository",
+          "IRepository<EndpointParameter, Guid> _parameterRepository",
+          "IPathParameterTemplateService _pathParamService"
+        ],
+        "flowSteps": [
+          "1. var project = await _projectRepository.FirstOrDefaultAsync(p => p.Id == query.ProjectId);",
+          "   if (project == null) throw new NotFoundException(...);",
+          "   if (project.OwnerId != query.OwnerId) throw new NotFoundException(...);",
+          "",
+          "2. var spec = await _specRepository.FirstOrDefaultAsync(s => s.Id == query.SpecId && s.ProjectId == query.ProjectId);",
+          "   if (spec == null) throw new NotFoundException(...);",
+          "",
+          "3. var endpoint = await _endpointRepository.FirstOrDefaultAsync(e => e.Id == query.EndpointId && e.ApiSpecId == query.SpecId);",
+          "   if (endpoint == null) throw new NotFoundException(...);",
+          "",
+          "4. var pathParams = await _parameterRepository.GetQueryableSet()",
+          "   .Where(p => p.EndpointId == endpoint.Id && p.Location == ParameterLocation.Path)",
+          "   .ToListAsync(ct);",
+          "",
+          "5. var paramValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);",
+          "   foreach (var p in pathParams) {",
+          "     if (!string.IsNullOrEmpty(p.DefaultValue)) {",
+          "       paramValues[p.Name] = p.DefaultValue;",
+          "     } else if (!string.IsNullOrEmpty(p.Examples)) {",
+          "       // Try parse JSON array and take first example",
+          "       try {",
+          "         var examples = JsonSerializer.Deserialize<List<string>>(p.Examples);",
+          "         if (examples?.Count > 0) paramValues[p.Name] = examples[0];",
+          "       } catch { /* ignore malformed JSON */ }",
+          "     }",
+          "   }",
+          "",
+          "6. var result = _pathParamService.ResolveUrl(endpoint.Path, paramValues);",
+          "   result.EndpointId = endpoint.Id;",
+          "",
+          "7. // Enrich resolved params with DataType from entity",
+          "   foreach (var rp in result.Parameters) {",
+          "     var entity = pathParams.FirstOrDefault(p => string.Equals(p.Name, rp.Name, StringComparison.OrdinalIgnoreCase));",
+          "     if (entity != null) rp.DataType = entity.DataType;",
+          "   }",
+          "   foreach (var up in result.UnresolvedParameters) {",
+          "     var entity = pathParams.FirstOrDefault(p => string.Equals(p.Name, up.Name, StringComparison.OrdinalIgnoreCase));",
+          "     if (entity != null) up.DataType = entity.DataType;",
+          "   }",
+          "",
+          "8. return result;"
+        ]
+      }
+    }
+  },
+  "endpointDetailModelEnhancement": {
+    "file": "Models/EndpointModel.cs",
+    "change": {
+      "addProperty": "public string ResolvedUrl { get; set; }",
+      "location": "In EndpointDetailModel class, after SecurityRequirements property",
+      "description": "Computed resolved URL. Set by GetEndpointQueryHandler after building model."
+    },
+    "queryEnhancement": {
+      "file": "Queries/GetEndpointQuery.cs",
+      "addAfterMapping": [
+        "// FE-12: Compute resolved URL from path parameters",
+        "var pathParamValues = parameters",
+        "    .Where(p => p.Location == ParameterLocation.Path && !string.IsNullOrEmpty(p.DefaultValue))",
+        "    .ToDictionary(p => p.Name, p => p.DefaultValue, StringComparer.OrdinalIgnoreCase);",
+        "",
+        "var extracted = _pathParamService.ExtractPathParameters(endpoint.Path);",
+        "if (extracted.Count == 0)",
+        "{",
+        "    // Static path — resolvedUrl IS the path itself",
+        "    model.ResolvedUrl = endpoint.Path;",
+        "}",
+        "else if (pathParamValues.Count == extracted.Count)",
+        "{",
+        "    // All path params have default values — resolve URL",
+        "    var resolved = _pathParamService.ResolveUrl(endpoint.Path, pathParamValues);",
+        "    model.ResolvedUrl = resolved.ResolvedUrl;",
+        "}",
+        "else",
+        "{",
+        "    // Partial — cannot fully resolve",
+        "    model.ResolvedUrl = null;",
+        "}"
+      ]
+    }
+  },
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "permission": "Permission:GetEndpoints",
+      "description": "Preview resolved URL cho endpoint. Trả về template URL, resolved URL (nếu đủ values), danh sách params đã resolve và chưa resolve.",
+      "response": {
+        "200": "ResolvedUrlResult",
+        "404": "NotFoundException"
+      }
+    }
+  ],
+  "acceptanceCriteria": [
+    "AC-01: ResolveUrl('/api/users/{userId}', {userId:'123'}) → resolvedUrl='/api/users/123', isFullyResolved=true.",
+    "AC-02: ResolveUrl('/api/users/{userId}/orders/{orderId}', {userId:'123', orderId:'456'}) → resolvedUrl='/api/users/123/orders/456'.",
+    "AC-03: ResolveUrl('/api/users/{userId}', {}) → resolvedUrl=null, unresolvedParams=['userId'].",
+    "AC-04: ResolveUrl('/api/health', {}) → resolvedUrl='/api/health', isFullyResolved=true (no placeholders).",
+    "AC-05: ResolveUrl with special chars → URL-encoded: {name:'hello world'} → 'hello%20world'.",
+    "AC-06: GET .../endpoints/{id} response có resolvedUrl khi path params có DefaultValue.",
+    "AC-07: GET .../endpoints/{id} response có resolvedUrl=null khi path params thiếu DefaultValue.",
+    "AC-08: GET .../endpoints/{id} response có resolvedUrl = path cho static paths (không có placeholder).",
+    "AC-09: GET .../endpoints/{id}/resolved-url trả đầy đủ: templateUrl, resolvedUrl, params, unresolvedParams.",
+    "AC-10: GetResolvedUrlQuery fallback sang Examples[0] nếu DefaultValue null.",
+    "AC-11: GetResolvedUrlQuery verify ownership + spec belongs to project (same security as GetEndpointQuery)."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Resolve single parameter",
+      "given": "path='/api/users/{userId}', values={userId:'42'}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:'/api/users/42', isFullyResolved:true, params:[{name:'userId', value:'42'}], unresolved:[]}"
+    },
+    {
+      "id": "TS-02",
+      "name": "Resolve multiple parameters",
+      "given": "path='/api/users/{userId}/orders/{orderId}', values={userId:'1', orderId:'abc-123'}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:'/api/users/1/orders/abc-123', isFullyResolved:true}"
+    },
+    {
+      "id": "TS-03",
+      "name": "Partial resolution — one missing",
+      "given": "path='/api/users/{userId}/orders/{orderId}', values={userId:'1'}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:null, isFullyResolved:false, unresolved:[{name:'orderId', reason:'Chưa có giá trị mẫu...'}]}"
+    },
+    {
+      "id": "TS-04",
+      "name": "No parameters needed",
+      "given": "path='/api/health', values={}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:'/api/health', isFullyResolved:true, params:[], unresolved:[]}"
+    },
+    {
+      "id": "TS-05",
+      "name": "URL encoding special characters",
+      "given": "path='/api/search/{query}', values={query:'hello world'}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:'/api/search/hello%20world', isFullyResolved:true}"
+    },
+    {
+      "id": "TS-06",
+      "name": "Empty value treated as missing",
+      "given": "path='/api/users/{userId}', values={userId:''}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:null, isFullyResolved:false, unresolved:[{name:'userId'}]}"
+    },
+    {
+      "id": "TS-07",
+      "name": "Null values dictionary",
+      "given": "path='/api/users/{userId}', values=null",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:null, isFullyResolved:false, unresolved:[{name:'userId'}]}"
+    },
+    {
+      "id": "TS-08",
+      "name": "Case-insensitive parameter matching",
+      "given": "path='/api/users/{userId}', values={USERID:'42'}",
+      "when": "ResolveUrl(path, values)",
+      "then": "{resolvedUrl:'/api/users/42', isFullyResolved:true}"
+    },
+    {
+      "id": "TS-09",
+      "name": "GetResolvedUrlQuery fallback to Examples",
+      "given": "Endpoint with path='/api/items/{itemId}', EndpointParameter={name:'itemId', defaultValue:null, examples:'[\"99\", \"100\"]'}",
+      "when": "GET .../endpoints/{id}/resolved-url",
+      "then": "{resolvedUrl:'/api/items/99', params:[{name:'itemId', value:'99', source:'examples'}]}"
+    },
+    {
+      "id": "TS-10",
+      "name": "EndpointDetail includes ResolvedUrl",
+      "given": "Endpoint with path='/api/users/{userId}', param userId defaultValue='5'",
+      "when": "GET .../endpoints/{id}",
+      "then": "EndpointDetailModel.resolvedUrl = '/api/users/5'"
+    }
+  ],
+  "logCatalog": [
+    { "eventCode": "APIDOC_URL_RESOLVED", "uiMessageVi": "Đã resolve URL thành công.", "systemMessageEn": "URL resolved: template='{template}', resolved='{resolved}', paramCount={count}.", "level": "Debug" },
+    { "eventCode": "APIDOC_URL_RESOLUTION_INCOMPLETE", "uiMessageVi": "Không thể resolve URL — thiếu giá trị cho {count} parameter.", "systemMessageEn": "URL resolution incomplete. Template='{template}', unresolved=[{params}].", "level": "Information" }
+  ]
+}

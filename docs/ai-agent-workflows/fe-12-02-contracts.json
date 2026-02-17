@@ -1,0 +1,296 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-02-contracts",
+  "requirementId": "FE-12-02",
+  "title": "Path Parameter Resolution & URL Building — Contracts & Implementation Guide",
+  "serviceMethod": {
+    "methodName": "ResolveUrl",
+    "belongsTo": "PathParameterTemplateService (defined in fe-12-01-contracts)",
+    "codeTemplate": {
+      "flowSteps": [
+        "1. if (string.IsNullOrWhiteSpace(path)) return new ResolvedUrlResult { OriginalTemplate = path ?? \"\", ResolvedUrl = path ?? \"\" };",
+        "2. var extracted = ExtractPathParameters(path);",
+        "3. if (extracted.Count == 0) return new ResolvedUrlResult { OriginalTemplate = path, ResolvedUrl = path };",
+        "",
+        "4. var resolvedPath = path;",
+        "5. var resolvedParams = new Dictionary<string, string>();",
+        "6. var unresolvedParams = new List<string>();",
+        "",
+        "7. foreach (var param in extracted) {",
+        "     if (parameterValues != null && parameterValues.TryGetValue(param.Name, out var value)) {",
+        "       resolvedPath = resolvedPath.Replace($\"{{{param.Name}}}\", Uri.EscapeDataString(value));",
+        "       resolvedParams[param.Name] = value;",
+        "     } else {",
+        "       unresolvedParams.Add(param.Name);",
+        "     }",
+        "   }",
+        "",
+        "8. return new ResolvedUrlResult {",
+        "     OriginalTemplate = path,",
+        "     ResolvedUrl = resolvedPath,",
+        "     ResolvedParameters = resolvedParams,",
+        "     UnresolvedParameters = unresolvedParams,",
+        "     IsFullyResolved = unresolvedParams.Count == 0",
+        "   };"
+      ],
+      "notes": [
+        "Uri.EscapeDataString: encode giá trị param để đảm bảo URL hợp lệ (e.g., space → %20, / → %2F).",
+        "Case-sensitive matching: {userId} ≠ {UserId} — placeholder name phải exact match.",
+        "partial resolution cho phép: nếu một số param chưa có value, resolvedUrl sẽ vẫn chứa {placeholder} cho params đó.",
+        "Reuse ExtractPathParameters từ FE-12-01, không duplicate regex logic."
+      ]
+    }
+  },
+  "queryContract": {
+    "name": "GetResolvedUrlQuery",
+    "file": "Queries/GetResolvedUrlQuery.cs",
+    "namespace": "ClassifiedAds.Modules.ApiDocumentation.Queries",
+    "codeTemplate": {
+      "query": {
+        "implements": "IQuery<ResolvedUrlResult>",
+        "properties": [
+          "public Guid ProjectId { get; set; }",
+          "public Guid SpecId { get; set; }",
+          "public Guid EndpointId { get; set; }",
+          "public Guid OwnerId { get; set; }",
+          "public Dictionary<string, string> ParameterValues { get; set; }"
+        ],
+        "notes": [
+          "ParameterValues: dictionary chứa giá trị do user nhập cho từng path parameter.",
+          "Nếu ParameterValues null hoặc rỗng → dùng DefaultValue/Examples từ EndpointParameter entity."
+        ]
+      },
+      "handler": {
+        "implements": "IQueryHandler<GetResolvedUrlQuery, ResolvedUrlResult>",
+        "dependencies": [
+          "IRepository<Project, Guid> _projectRepository",
+          "IRepository<ApiSpecification, Guid> _specRepository",
+          "IRepository<ApiEndpoint, Guid> _endpointRepository",
+          "IRepository<EndpointParameter, Guid> _parameterRepository",
+          "IPathParameterTemplateService _pathParamService"
+        ],
+        "flowSteps": [
+          "1. var project = await _projectRepository.FirstOrDefaultAsync(new ProjectQueryOptions { Id = query.ProjectId, OwnerId = query.OwnerId, IncludeSpecifications = false });",
+          "2. if (project == null) throw new NotFoundException(\"Project\", query.ProjectId);",
+          "",
+          "3. var spec = await _specRepository.FirstOrDefaultAsync(new SpecificationQueryOptions { Id = query.SpecId, ProjectId = query.ProjectId });",
+          "4. if (spec == null) throw new NotFoundException(\"Specification\", query.SpecId);",
+          "",
+          "5. var endpoint = await _endpointRepository.FirstOrDefaultAsync(new EndpointQueryOptions { Id = query.EndpointId, ApiSpecId = query.SpecId });",
+          "6. if (endpoint == null) throw new NotFoundException(\"Endpoint\", query.EndpointId);",
+          "",
+          "7. var parameterValues = query.ParameterValues ?? new Dictionary<string, string>();",
+          "",
+          "8. // If no explicit values provided, try to use DefaultValue from EndpointParameter",
+          "   if (parameterValues.Count == 0) {",
+          "     var pathParams = await _parameterRepository.ToListAsync(new ParameterQueryOptions {",
+          "       EndpointId = query.EndpointId,",
+          "       Location = ParameterLocation.Path",
+          "     });",
+          "     foreach (var p in pathParams) {",
+          "       if (!string.IsNullOrEmpty(p.DefaultValue)) {",
+          "         parameterValues[p.Name] = p.DefaultValue;",
+          "       } else if (!string.IsNullOrEmpty(p.Examples)) {",
+          "         // Parse first example from JSON array",
+          "         try {",
+          "           var examples = JsonSerializer.Deserialize<List<string>>(p.Examples);",
+          "           if (examples?.Count > 0) parameterValues[p.Name] = examples[0];",
+          "         } catch { }",
+          "       }",
+          "     }",
+          "   }",
+          "",
+          "9. var result = _pathParamService.ResolveUrl(endpoint.Path, parameterValues);",
+          "10. return result;"
+        ],
+        "validationPattern": "Same as other ApiDocumentation query handlers: verify project ownership → spec belongs to project → endpoint belongs to spec."
+      }
+    }
+  },
+  "controllerEnhancement": {
+    "file": "ClassifiedAds.Modules.ApiDocumentation/Controllers/EndpointsController.cs",
+    "addAction": {
+      "method": "HttpGet",
+      "route": "{endpointId}/resolved-url",
+      "actionName": "GetResolvedUrl",
+      "permission": "Permission:GetEndpoints",
+      "codeTemplate": {
+        "code": [
+          "[Authorize]",
+          "[HttpGet(\"{endpointId}/resolved-url\")]",
+          "[HasPermission(\"Permission:GetEndpoints\")]",
+          "public async Task<ActionResult<ResolvedUrlResult>> GetResolvedUrl(",
+          "    Guid projectId, Guid specId, Guid endpointId,",
+          "    [FromQuery] Dictionary<string, string> paramValues)",
+          "{",
+          "    var ownerId = User.GetUserId();",
+          "    var result = await _dispatcher.DispatchAsync(new GetResolvedUrlQuery",
+          "    {",
+          "        ProjectId = projectId,",
+          "        SpecId = specId,",
+          "        EndpointId = endpointId,",
+          "        OwnerId = ownerId,",
+          "        ParameterValues = paramValues",
+          "    });",
+          "    return Ok(result);",
+          "}"
+        ]
+      },
+      "notes": [
+        "paramValues nhận từ query string: ?userId=42&postId=abc → Dictionary<string,string>.",
+        "Nếu không truyền query string → handler sẽ fallback sang DefaultValue/Examples.",
+        "Dùng HasPermission('Permission:GetEndpoints') cùng permission với GetEndpointById."
+      ]
+    }
+  },
+  "modelContracts": [
+    {
+      "name": "ResolvedUrlResult",
+      "file": "Models/ResolvedUrlResult.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "codeTemplate": {
+        "code": [
+          "namespace ClassifiedAds.Modules.ApiDocumentation.Models;",
+          "",
+          "/// <summary>",
+          "/// Result of path parameter URL resolution.",
+          "/// </summary>",
+          "public class ResolvedUrlResult",
+          "{",
+          "    /// <summary>Original path template with {placeholders}.</summary>",
+          "    public string OriginalTemplate { get; set; } = string.Empty;",
+          "",
+          "    /// <summary>Path with placeholders replaced by actual values.</summary>",
+          "    public string ResolvedUrl { get; set; } = string.Empty;",
+          "",
+          "    /// <summary>Dictionary of successfully resolved params (name → value).</summary>",
+          "    public Dictionary<string, string> ResolvedParameters { get; set; } = new();",
+          "",
+          "    /// <summary>List of param names that could not be resolved (no value provided).</summary>",
+          "    public List<string> UnresolvedParameters { get; set; } = new();",
+          "",
+          "    /// <summary>True when all path placeholders were resolved.</summary>",
+          "    public bool IsFullyResolved { get; set; }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "validationRules": [
+    {
+      "context": "GetResolvedUrlQuery handler",
+      "rules": [
+        "R1: Project phải tồn tại và thuộc OwnerId → NotFoundException('Project', id).",
+        "R2: Spec phải thuộc project → NotFoundException('Specification', id).",
+        "R3: Endpoint phải thuộc spec → NotFoundException('Endpoint', id).",
+        "R4: parameterValues rỗng → OK (sẽ fallback sang DefaultValue/Examples, unresolvedParams nếu cũng rỗng).",
+        "R5: Extra keys trong parameterValues (không match placeholder) → bỏ qua (service chỉ replace matched placeholders)."
+      ]
+    },
+    {
+      "context": "ResolveUrl service method",
+      "rules": [
+        "R6: path null/empty → trả về result rỗng (không throw exception).",
+        "R7: path không có placeholder → resolvedUrl = path nguyên bản, isFullyResolved = true.",
+        "R8: partial resolution → resolvedUrl vẫn chứa unreplaced placeholders, isFullyResolved = false.",
+        "R9: Values phải được URI-encoded khi thay thế placeholder (dùng Uri.EscapeDataString).",
+        "R10: Placeholder matching là case-sensitive: {userId} ≠ {UserId}."
+      ]
+    }
+  ],
+  "serviceRegistration": {
+    "file": "ClassifiedAds.Modules.ApiDocumentation/ServiceCollectionExtensions.cs",
+    "action": "Verify IPathParameterTemplateService is registered (should be done in FE-12-01). No additional registration needed for FE-12-02.",
+    "registration": "services.AddScoped<IPathParameterTemplateService, PathParameterTemplateService>();"
+  },
+  "samples": {
+    "resolveUrl_basic": {
+      "input": {
+        "path": "/api/projects/{projectId}/specifications/{specId}",
+        "parameterValues": { "projectId": "550e8400-e29b-41d4-a716-446655440000", "specId": "123" }
+      },
+      "output": {
+        "originalTemplate": "/api/projects/{projectId}/specifications/{specId}",
+        "resolvedUrl": "/api/projects/550e8400-e29b-41d4-a716-446655440000/specifications/123",
+        "resolvedParameters": { "projectId": "550e8400-e29b-41d4-a716-446655440000", "specId": "123" },
+        "unresolvedParameters": [],
+        "isFullyResolved": true
+      }
+    },
+    "resolveUrl_partial": {
+      "input": {
+        "path": "/api/users/{userId}/posts/{postId}",
+        "parameterValues": { "userId": "42" }
+      },
+      "output": {
+        "originalTemplate": "/api/users/{userId}/posts/{postId}",
+        "resolvedUrl": "/api/users/42/posts/{postId}",
+        "resolvedParameters": { "userId": "42" },
+        "unresolvedParameters": ["postId"],
+        "isFullyResolved": false
+      }
+    },
+    "resolveUrl_withEncoding": {
+      "input": {
+        "path": "/api/items/{name}",
+        "parameterValues": { "name": "hello world/test" }
+      },
+      "output": {
+        "originalTemplate": "/api/items/{name}",
+        "resolvedUrl": "/api/items/hello%20world%2Ftest",
+        "resolvedParameters": { "name": "hello world/test" },
+        "unresolvedParameters": [],
+        "isFullyResolved": true
+      }
+    },
+    "resolveUrl_noPlaceholders": {
+      "input": {
+        "path": "/api/health",
+        "parameterValues": { "id": "42" }
+      },
+      "output": {
+        "originalTemplate": "/api/health",
+        "resolvedUrl": "/api/health",
+        "resolvedParameters": {},
+        "unresolvedParameters": [],
+        "isFullyResolved": true
+      }
+    },
+    "api_call_withDefaults": {
+      "description": "GET request without paramValues → handler uses DefaultValue from EndpointParameter",
+      "request": "GET /api/projects/{pid}/specifications/{sid}/endpoints/{eid}/resolved-url",
+      "endpointData": {
+        "path": "/api/users/{userId}",
+        "parameters": [{ "name": "userId", "location": "Path", "defaultValue": "1" }]
+      },
+      "response": {
+        "statusCode": 200,
+        "body": {
+          "originalTemplate": "/api/users/{userId}",
+          "resolvedUrl": "/api/users/1",
+          "resolvedParameters": { "userId": "1" },
+          "unresolvedParameters": [],
+          "isFullyResolved": true
+        }
+      }
+    },
+    "api_call_withQueryParams": {
+      "description": "GET request with explicit paramValues in query string",
+      "request": "GET /api/projects/{pid}/specifications/{sid}/endpoints/{eid}/resolved-url?userId=99&postId=abc-xyz",
+      "endpointData": {
+        "path": "/api/users/{userId}/posts/{postId}"
+      },
+      "response": {
+        "statusCode": 200,
+        "body": {
+          "originalTemplate": "/api/users/{userId}/posts/{postId}",
+          "resolvedUrl": "/api/users/99/posts/abc-xyz",
+          "resolvedParameters": { "userId": "99", "postId": "abc-xyz" },
+          "unresolvedParameters": [],
+          "isFullyResolved": true
+        }
+      }
+    }
+  }
+}
