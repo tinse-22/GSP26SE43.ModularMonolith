@@ -40,7 +40,7 @@ public class ManualParameterDefinition
 
     public string Location { get; set; }
 
-    public string DataType { get; set; }
+    public EndpointParameterDataType DataType { get; set; } = EndpointParameterDataType.String;
 
     public string Format { get; set; }
 

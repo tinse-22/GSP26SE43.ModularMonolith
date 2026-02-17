@@ -144,8 +144,8 @@ public class CreateManualSpecificationCommandHandlerTests
                         Path = "/api/users/{id}",
                         Parameters = new List<ManualParameterDefinition>
                         {
-                            new() { Name = "id", Location = "Path", DataType = "guid", IsRequired = true },
-                            new() { Name = "fields", Location = "Query", DataType = "string" },
+                            new() { Name = "id", Location = "Path", DataType = EndpointParameterDataType.Uuid, IsRequired = true },
+                            new() { Name = "fields", Location = "Query", DataType = EndpointParameterDataType.String },
                         },
                     },
                 },

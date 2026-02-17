@@ -132,8 +132,8 @@ public class AddUpdateEndpointCommandHandlerTests
                 Path = "/api/users/{id}",
                 Parameters = new List<ManualParameterDefinition>
                 {
-                    new() { Name = "id", Location = "Path", DataType = "string", IsRequired = true },
-                    new() { Name = "include", Location = "Query", DataType = "string" },
+                    new() { Name = "id", Location = "Path", DataType = EndpointParameterDataType.String, IsRequired = true },
+                    new() { Name = "include", Location = "Query", DataType = EndpointParameterDataType.String },
                 },
             },
         };
