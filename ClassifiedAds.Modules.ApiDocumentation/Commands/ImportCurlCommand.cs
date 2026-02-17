@@ -168,7 +168,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
                     EndpointId = endpoint.Id,
                     Name = match.Groups[1].Value,
                     Location = ParameterLocation.Path,
-                    DataType = "string",
+                    DataType = EndpointParameterDataType.String.ToStorageValue(),
                     IsRequired = true,
                 }, ct);
             }
@@ -181,7 +181,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
                     EndpointId = endpoint.Id,
                     Name = kvp.Key,
                     Location = ParameterLocation.Query,
-                    DataType = "string",
+                    DataType = EndpointParameterDataType.String.ToStorageValue(),
                     DefaultValue = kvp.Value,
                     IsRequired = false,
                 }, ct);
@@ -205,7 +205,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
                     EndpointId = endpoint.Id,
                     Name = kvp.Key,
                     Location = ParameterLocation.Header,
-                    DataType = "string",
+                    DataType = EndpointParameterDataType.String.ToStorageValue(),
                     DefaultValue = kvp.Value,
                     IsRequired = false,
                 }, ct);

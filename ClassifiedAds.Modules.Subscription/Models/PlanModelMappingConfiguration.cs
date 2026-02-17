@@ -47,7 +47,7 @@ public static class PlanModelMappingConfiguration
         return new PlanLimitModel
         {
             Id = entity.Id,
-            LimitType = entity.LimitType.ToString(),
+            LimitType = entity.LimitType,
             LimitValue = entity.LimitValue,
             IsUnlimited = entity.IsUnlimited,
         };
@@ -72,16 +72,16 @@ public static class PlanModelMappingConfiguration
     {
         return model.Limits?.Select(l =>
         {
-            if (!Enum.TryParse<LimitType>(l.LimitType, true, out var limitType))
+            if (!l.LimitType.HasValue)
             {
                 throw new CrossCuttingConcerns.Exceptions.ValidationException(
-                    $"Loại giới hạn '{l.LimitType}' không hợp lệ. Giá trị hợp lệ: {string.Join(", ", Enum.GetNames<LimitType>())}.");
+                    "Loại giới hạn là bắt buộc.");
             }
 
             return new PlanLimit
             {
                 PlanId = planId,
-                LimitType = limitType,
+                LimitType = l.LimitType.Value,
                 LimitValue = l.IsUnlimited ? null : l.LimitValue,
                 IsUnlimited = l.IsUnlimited,
             };

@@ -48,10 +48,10 @@ public class PlanMappingTests
 
         // Assert
         model.Limits.Should().HaveCount(2);
-        model.Limits[0].LimitType.Should().Be("MaxProjects");
+        model.Limits[0].LimitType.Should().Be(LimitType.MaxProjects);
         model.Limits[0].LimitValue.Should().Be(5);
         model.Limits[0].IsUnlimited.Should().BeFalse();
-        model.Limits[1].LimitType.Should().Be("MaxTestRunsPerMonth");
+        model.Limits[1].LimitType.Should().Be(LimitType.MaxTestRunsPerMonth);
         model.Limits[1].LimitValue.Should().BeNull();
         model.Limits[1].IsUnlimited.Should().BeTrue();
     }
@@ -148,7 +148,7 @@ public class PlanMappingTests
         // Assert
         model.Should().NotBeNull();
         model.Id.Should().Be(limit.Id);
-        model.LimitType.Should().Be("MaxProjects");
+        model.LimitType.Should().Be(LimitType.MaxProjects);
         model.LimitValue.Should().Be(10);
         model.IsUnlimited.Should().BeFalse();
     }
@@ -234,8 +234,8 @@ public class PlanMappingTests
             DisplayName = "Pro Plan",
             Limits = new List<PlanLimitModel>
             {
-                new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 10, IsUnlimited = false },
-                new PlanLimitModel { LimitType = "MaxTestRunsPerMonth", IsUnlimited = true },
+                new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 10, IsUnlimited = false },
+                new PlanLimitModel { LimitType = LimitType.MaxTestRunsPerMonth, IsUnlimited = true },
             },
         };
 
@@ -254,7 +254,7 @@ public class PlanMappingTests
     }
 
     [Fact]
-    public void ToLimitEntities_Should_ThrowForInvalidLimitType()
+    public void ToLimitEntities_Should_ThrowForNullLimitType()
     {
         // Arrange
         var planId = Guid.NewGuid();
@@ -264,7 +264,7 @@ public class PlanMappingTests
             DisplayName = "Pro Plan",
             Limits = new List<PlanLimitModel>
             {
-                new PlanLimitModel { LimitType = "InvalidType", LimitValue = 10 },
+                new PlanLimitModel { LimitType = null, LimitValue = 10 },
             },
         };
 
@@ -272,8 +272,7 @@ public class PlanMappingTests
         var act = () => model.ToLimitEntities(planId);
 
         // Assert
-        act.Should().Throw<ClassifiedAds.CrossCuttingConcerns.Exceptions.ValidationException>()
-            .WithMessage("*InvalidType*");
+        act.Should().Throw<ClassifiedAds.CrossCuttingConcerns.Exceptions.ValidationException>();
     }
 
     [Fact]
@@ -307,7 +306,7 @@ public class PlanMappingTests
             DisplayName = "Enterprise Plan",
             Limits = new List<PlanLimitModel>
             {
-                new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 999, IsUnlimited = true },
+                new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 999, IsUnlimited = true },
             },
         };
 
@@ -320,15 +319,15 @@ public class PlanMappingTests
     }
 
     [Theory]
-    [InlineData("MaxProjects", LimitType.MaxProjects)]
-    [InlineData("MaxEndpointsPerProject", LimitType.MaxEndpointsPerProject)]
-    [InlineData("MaxTestCasesPerSuite", LimitType.MaxTestCasesPerSuite)]
-    [InlineData("MaxTestRunsPerMonth", LimitType.MaxTestRunsPerMonth)]
-    [InlineData("MaxConcurrentRuns", LimitType.MaxConcurrentRuns)]
-    [InlineData("RetentionDays", LimitType.RetentionDays)]
-    [InlineData("MaxLlmCallsPerMonth", LimitType.MaxLlmCallsPerMonth)]
-    [InlineData("MaxStorageMB", LimitType.MaxStorageMB)]
-    public void ToLimitEntities_Should_MapAllLimitTypes(string limitTypeName, LimitType expected)
+    [InlineData(LimitType.MaxProjects)]
+    [InlineData(LimitType.MaxEndpointsPerProject)]
+    [InlineData(LimitType.MaxTestCasesPerSuite)]
+    [InlineData(LimitType.MaxTestRunsPerMonth)]
+    [InlineData(LimitType.MaxConcurrentRuns)]
+    [InlineData(LimitType.RetentionDays)]
+    [InlineData(LimitType.MaxLlmCallsPerMonth)]
+    [InlineData(LimitType.MaxStorageMB)]
+    public void ToLimitEntities_Should_MapAllLimitTypes(LimitType limitType)
     {
         // Arrange
         var planId = Guid.NewGuid();
@@ -338,7 +337,7 @@ public class PlanMappingTests
             DisplayName = "Pro Plan",
             Limits = new List<PlanLimitModel>
             {
-                new PlanLimitModel { LimitType = limitTypeName, LimitValue = 100, IsUnlimited = false },
+                new PlanLimitModel { LimitType = limitType, LimitValue = 100, IsUnlimited = false },
             },
         };
 
@@ -346,7 +345,7 @@ public class PlanMappingTests
         var entities = model.ToLimitEntities(planId);
 
         // Assert
-        entities[0].LimitType.Should().Be(expected);
+        entities[0].LimitType.Should().Be(limitType);
     }
 
     #endregion

@@ -226,7 +226,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
                     EndpointId = endpointId,
                     Name = paramDef.Name?.Trim(),
                     Location = location,
-                    DataType = paramDef.DataType?.Trim(),
+                    DataType = paramDef.DataType.ToStorageValue(),
                     Format = paramDef.Format?.Trim(),
                     IsRequired = paramDef.IsRequired,
                     DefaultValue = paramDef.DefaultValue,
