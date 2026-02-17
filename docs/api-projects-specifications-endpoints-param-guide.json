@@ -1,0 +1,853 @@
+﻿{
+  "document": {
+    "name": "api-projects-specifications-endpoints-param-guide",
+    "version": "1.0.0",
+    "module": "ClassifiedAds.Modules.ApiDocumentation",
+    "scope": [
+      "api/Projects",
+      "api/projects/{projectId}/specifications",
+      "api/projects/{projectId}/specifications/{specId}/endpoints"
+    ],
+    "auth": {
+      "required": true,
+      "type": "Bearer token",
+      "note": "All endpoints are under [Authorize]."
+    },
+    "pathCaseNote": "ASP.NET routing is case-insensitive. /api/Projects and /api/projects both work.",
+    "sourceFiles": [
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/ProjectsController.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/SpecificationsController.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/EndpointsController.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/CreateUpdateProjectModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/UploadSpecificationModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/CreateManualSpecificationModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/ImportCurlModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/CreateUpdateEndpointModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/AddUpdateProjectCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/CreateManualSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/ImportCurlCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/AddUpdateEndpointCommand.cs"
+    ]
+  },
+  "sharedEnums": {
+    "ProjectStatus": [
+      "Active",
+      "Archived"
+    ],
+    "ParseStatus": [
+      "Pending",
+      "Success",
+      "Failed"
+    ],
+    "SourceType": [
+      "OpenAPI",
+      "Postman",
+      "Manual",
+      "cURL"
+    ],
+    "SpecificationUploadMethod": [
+      "StorageGatewayContract"
+    ],
+    "HttpMethod": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "ParameterLocation": [
+      "Path",
+      "Query",
+      "Header",
+      "Body",
+      "Cookie"
+    ],
+    "EndpointParameterDataType": [
+      "string",
+      "integer",
+      "number",
+      "boolean",
+      "object",
+      "array",
+      "uuid"
+    ]
+  },
+  "sharedSchemas": {
+    "CreateUpdateProjectModel": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "maxLength": 2000
+        },
+        {
+          "name": "baseUrl",
+          "type": "string",
+          "required": false,
+          "maxLength": 500,
+          "format": "absolute-uri"
+        }
+      ]
+    },
+    "UploadSpecificationModel(form-data)": {
+      "type": "multipart/form-data",
+      "fields": [
+        {
+          "name": "uploadMethod",
+          "type": "enum<SpecificationUploadMethod>",
+          "required": false,
+          "default": "StorageGatewayContract",
+          "allowedValues": [
+            "StorageGatewayContract"
+          ]
+        },
+        {
+          "name": "file",
+          "type": "file",
+          "required": true,
+          "maxSizeBytes": 10485760,
+          "allowedExtensions": [
+            ".json",
+            ".yaml",
+            ".yml"
+          ]
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "sourceType",
+          "type": "enum<SourceType>",
+          "required": true,
+          "allowedValues": [
+            "OpenAPI",
+            "Postman"
+          ]
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        }
+      ]
+    },
+    "ManualParameterDefinition": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "location",
+          "type": "enum<ParameterLocation>",
+          "required": false,
+          "default": "Query",
+          "fallbackWhenInvalid": "Query"
+        },
+        {
+          "name": "dataType",
+          "type": "enum<EndpointParameterDataType>",
+          "required": false,
+          "default": "string"
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "isRequired",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "defaultValue",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "examples",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    "ManualResponseDefinition": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "statusCode",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "examples",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "headers",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    "CreateManualSpecificationModel": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "endpoints",
+          "type": "array<ManualEndpointDefinition>",
+          "required": true,
+          "minItems": 1,
+          "itemSchema": {
+            "type": "object",
+            "fields": [
+              {
+                "name": "httpMethod",
+                "type": "enum<HttpMethod>",
+                "required": true
+              },
+              {
+                "name": "path",
+                "type": "string",
+                "required": true,
+                "maxLength": 500
+              },
+              {
+                "name": "operationId",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "summary",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "description",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "tags",
+                "type": "array<string>",
+                "required": false
+              },
+              {
+                "name": "isDeprecated",
+                "type": "boolean",
+                "required": false,
+                "default": false
+              },
+              {
+                "name": "parameters",
+                "type": "array<ManualParameterDefinition>",
+                "required": false,
+                "itemSchemaRef": "ManualParameterDefinition"
+              },
+              {
+                "name": "responses",
+                "type": "array<ManualResponseDefinition>",
+                "required": false,
+                "itemSchemaRef": "ManualResponseDefinition"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "ImportCurlModel": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "curlCommand",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        }
+      ]
+    },
+    "CreateUpdateEndpointModel": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "httpMethod",
+          "type": "enum<HttpMethod>",
+          "required": true
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "maxLength": 500
+        },
+        {
+          "name": "operationId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "isDeprecated",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "parameters",
+          "type": "array<ManualParameterDefinition>",
+          "required": false,
+          "itemSchemaRef": "ManualParameterDefinition"
+        },
+        {
+          "name": "responses",
+          "type": "array<ManualResponseDefinition>",
+          "required": false,
+          "itemSchemaRef": "ManualResponseDefinition"
+        }
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "id": "projects.list",
+      "method": "GET",
+      "path": "/api/Projects",
+      "permission": "Permission:GetProjects",
+      "pathParams": [],
+      "queryParams": [
+        {
+          "name": "status",
+          "type": "enum<ProjectStatus>",
+          "required": false
+        },
+        {
+          "name": "search",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "page",
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "effectiveMin": 1
+        },
+        {
+          "name": "pageSize",
+          "type": "integer",
+          "required": false,
+          "default": 20,
+          "effectiveMin": 1,
+          "effectiveMax": 100
+        }
+      ],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.get-by-id",
+      "method": "GET",
+      "path": "/api/Projects/{id}",
+      "permission": "Permission:GetProjects",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.create",
+      "method": "POST",
+      "path": "/api/Projects",
+      "permission": "Permission:AddProject",
+      "contentType": "application/json",
+      "pathParams": [],
+      "queryParams": [],
+      "bodySchemaRef": "CreateUpdateProjectModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.update",
+      "method": "PUT",
+      "path": "/api/Projects/{id}",
+      "permission": "Permission:UpdateProject",
+      "contentType": "application/json",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": "CreateUpdateProjectModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.archive",
+      "method": "PUT",
+      "path": "/api/Projects/{id}/archive",
+      "permission": "Permission:ArchiveProject",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.unarchive",
+      "method": "PUT",
+      "path": "/api/Projects/{id}/unarchive",
+      "permission": "Permission:ArchiveProject",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.delete",
+      "method": "DELETE",
+      "path": "/api/Projects/{id}",
+      "permission": "Permission:DeleteProject",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "projects.auditlogs",
+      "method": "GET",
+      "path": "/api/Projects/{id}/auditlogs",
+      "permission": "Permission:GetProjects",
+      "pathParams": [
+        {
+          "name": "id",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.list",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications",
+      "permission": "Permission:GetSpecifications",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "parseStatus",
+          "type": "enum<ParseStatus>",
+          "required": false
+        },
+        {
+          "name": "sourceType",
+          "type": "enum<SourceType>",
+          "required": false
+        }
+      ],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.get-by-id",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:GetSpecifications",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.upload-methods",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/upload-methods",
+      "permission": "Permission:AddSpecification",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.upload",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/upload",
+      "permission": "Permission:AddSpecification",
+      "contentType": "multipart/form-data",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": "UploadSpecificationModel(form-data)",
+      "extraRules": [
+        "File content must match selected sourceType (OpenAPI/Postman).",
+        "Controller and command both enforce max upload size 10MB."
+      ]
+    },
+    {
+      "id": "specifications.create-manual",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/manual",
+      "permission": "Permission:AddSpecification",
+      "contentType": "application/json",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": "CreateManualSpecificationModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.import-curl",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/curl-import",
+      "permission": "Permission:AddSpecification",
+      "contentType": "application/json",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": "ImportCurlModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.activate",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/activate",
+      "permission": "Permission:ActivateSpecification",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.deactivate",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+      "permission": "Permission:ActivateSpecification",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "specifications.delete",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:DeleteSpecification",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "endpoints.list",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "permission": "Permission:GetEndpoints",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "endpoints.get-by-id",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:GetEndpoints",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "endpointId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    },
+    {
+      "id": "endpoints.create",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "permission": "Permission:AddEndpoint",
+      "contentType": "application/json",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": "CreateUpdateEndpointModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "endpoints.update",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:UpdateEndpoint",
+      "contentType": "application/json",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "endpointId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": "CreateUpdateEndpointModel",
+      "formSchemaRef": null
+    },
+    {
+      "id": "endpoints.delete",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:DeleteEndpoint",
+      "pathParams": [
+        {
+          "name": "projectId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "specId",
+          "type": "guid",
+          "required": true
+        },
+        {
+          "name": "endpointId",
+          "type": "guid",
+          "required": true
+        }
+      ],
+      "queryParams": [],
+      "bodySchemaRef": null,
+      "formSchemaRef": null
+    }
+  ],
+  "implementationNotes": [
+    "For enum query/path/form values, send enum names (string) for readability.",
+    "For EndpointParameterDataType in JSON body, use lower-camel values: string, integer, number, boolean, object, array, uuid.",
+    "For parameter location in manual/create-update endpoint payload, invalid value will be mapped to Query.",
+    "Some fields are optional in model but may still be required by business rules (documented above)."
+  ]
+}
