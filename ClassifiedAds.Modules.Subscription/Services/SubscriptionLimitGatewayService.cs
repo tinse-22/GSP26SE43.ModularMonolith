@@ -57,8 +57,7 @@ public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
         }
 
         // 3. Find the specific limit for this LimitType
-        var limitTypeName = limitType.ToString();
-        var planLimit = plan.Limits?.FirstOrDefault(l => l.LimitType == limitTypeName);
+        var planLimit = plan.Limits?.FirstOrDefault(l => l.LimitType == limitType);
 
         // No limit defined for this type → treat as unlimited
         if (planLimit == null || planLimit.IsUnlimited)

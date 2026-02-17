@@ -3,6 +3,7 @@ using ClassifiedAds.Contracts.Identity.DTOs;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Contracts.Notification.DTOs;
 using ClassifiedAds.Contracts.Notification.Services;
+using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.Commands;
@@ -199,8 +200,8 @@ public class AddUpdatePlanCommandHandlerTests
                 DisplayName = "Pro Plan",
                 Limits = new List<PlanLimitModel>
                 {
-                    new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 5 },
-                    new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 10 },
+                    new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 5 },
+                    new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 10 },
                 },
             },
         };
@@ -222,7 +223,7 @@ public class AddUpdatePlanCommandHandlerTests
                 DisplayName = "Pro Plan",
                 Limits = new List<PlanLimitModel>
                 {
-                    new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 0, IsUnlimited = false },
+                    new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 0, IsUnlimited = false },
                 },
             },
         };
@@ -243,7 +244,7 @@ public class AddUpdatePlanCommandHandlerTests
                 DisplayName = "Pro Plan",
                 Limits = new List<PlanLimitModel>
                 {
-                    new PlanLimitModel { LimitType = "MaxProjects", LimitValue = null, IsUnlimited = false },
+                    new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = null, IsUnlimited = false },
                 },
             },
         };
@@ -264,7 +265,7 @@ public class AddUpdatePlanCommandHandlerTests
                 DisplayName = "Enterprise Plan",
                 Limits = new List<PlanLimitModel>
                 {
-                    new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 999, IsUnlimited = true },
+                    new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 999, IsUnlimited = true },
                 },
             },
         };
@@ -491,8 +492,8 @@ public class AddUpdatePlanCommandHandlerTests
         {
             model.Limits = new List<PlanLimitModel>
             {
-                new PlanLimitModel { LimitType = "MaxProjects", LimitValue = 10, IsUnlimited = false },
-                new PlanLimitModel { LimitType = "MaxTestRunsPerMonth", IsUnlimited = true },
+                new PlanLimitModel { LimitType = LimitType.MaxProjects, LimitValue = 10, IsUnlimited = false },
+                new PlanLimitModel { LimitType = LimitType.MaxTestRunsPerMonth, IsUnlimited = true },
             };
         }
 

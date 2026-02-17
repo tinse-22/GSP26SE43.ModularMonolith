@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Modules.Subscription.Models;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -239,7 +240,7 @@ public class PlanModelsTests
         // Arrange
         var model = new PlanLimitModel
         {
-            LimitType = "MaxProjects",
+            LimitType = LimitType.MaxProjects,
             LimitValue = 10,
             IsUnlimited = false,
         };
@@ -274,7 +275,7 @@ public class PlanModelsTests
         // Arrange
         var model = new PlanLimitModel
         {
-            LimitType = "MaxProjects",
+            LimitType = LimitType.MaxProjects,
             LimitValue = null,
             IsUnlimited = true,
         };
