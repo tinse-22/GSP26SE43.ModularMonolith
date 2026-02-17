@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="dotenv.net" Version="4.0.0" />
     <PackageReference Include="dbup-postgresql" Version="6.0.3" />
     <PackageReference Include="Polly" Version="8.6.4" />
     <PackageReference Include="StyleCop.Analyzers" Version="1.1.118">

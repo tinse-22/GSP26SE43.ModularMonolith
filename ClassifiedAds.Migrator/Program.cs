@@ -26,6 +26,13 @@ using System.Reflection;
 // Runs migrations then exits (not a long-running service)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+// Load .env for local parity with WebAPI/Background.
+// Prevents migrator from targeting a different DB than runtime hosts.
+dotenv.net.DotEnv.Fluent()
+    .WithTrimValues()
+    .WithProbeForEnv(probeLevelsToSearch: 6)
+    .Load();
+
 var hostBuilder = Host.CreateDefaultBuilder(args)
 .UseClassifiedAdsLogger(configuration =>
 {
@@ -50,6 +57,11 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
 
     // Get shared connection string for all modules
     var sharedConnectionString = configuration.GetConnectionString("Default");
+    if (string.IsNullOrWhiteSpace(sharedConnectionString))
+    {
+        throw new InvalidOperationException(
+            "ConnectionStrings:Default is missing. Configure it via .env/.env.docker, user-secrets, or appsettings.");
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // Module Registration for Migration

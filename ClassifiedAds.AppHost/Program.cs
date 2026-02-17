@@ -74,7 +74,7 @@ var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/Classif
 // Depends on: PostgreSQL, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
-    .WithReference(classifiedAdsDb)  // Injects ConnectionStrings__ClassifiedAds
+    .WithReference(classifiedAdsDb)  // Injects ConnectionStrings__Default
     .WithReference(rabbitmq)         // Injects RabbitMQ connection details
     .WithReference(redis)            // Injects Redis connection details
                                      // Override appsettings for Aspire environment
