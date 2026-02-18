@@ -30,6 +30,8 @@ public class EndpointModel
 
 public class EndpointDetailModel : EndpointModel
 {
+    public string ResolvedUrl { get; set; }
+
     public List<ParameterModel> Parameters { get; set; } = new();
 
     public List<ResponseModel> Responses { get; set; } = new();
