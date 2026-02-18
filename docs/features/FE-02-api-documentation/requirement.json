@@ -19,14 +19,14 @@
     {
       "id": "FE-02-01",
       "title": "Project CRUD — Tạo, xem, sửa, archive project",
-      "file": "fe-02-01-requirement.json",
+      "file": "FE-02-01/requirement.json",
       "priority": "P0",
       "implementationOrder": 1
     },
     {
       "id": "FE-02-02",
       "title": "API Specification Upload & Version Management",
-      "file": "fe-02-02-requirement.json",
+      "file": "FE-02-02/requirement.json",
       "priority": "P0",
       "implementationOrder": 2
     }

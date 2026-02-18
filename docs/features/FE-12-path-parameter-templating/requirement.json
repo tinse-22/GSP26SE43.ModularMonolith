@@ -20,21 +20,21 @@
     {
       "id": "FE-12-01",
       "title": "Path Parameter Auto-Detection & Validation — Tự động phát hiện {placeholder} và validate nhất quán với parameters",
-      "file": "fe-12-01-requirement.json",
+      "file": "FE-12-01/requirement.json",
       "priority": "P0",
       "implementationOrder": 1
     },
     {
       "id": "FE-12-02",
       "title": "Path Parameter Resolution & URL Building — Resolve template URL thành URL thực tế với giá trị mẫu",
-      "file": "fe-12-02-requirement.json",
+      "file": "FE-12-02/requirement.json",
       "priority": "P0",
       "implementationOrder": 2
     },
     {
       "id": "FE-12-03",
       "title": "Path Parameter Mutation for Test Generation — Tạo test case biến đổi path param cho negative/boundary testing",
-      "file": "fe-12-03-requirement.json",
+      "file": "FE-12-03/requirement.json",
       "priority": "P1",
       "implementationOrder": 3
     }
@@ -100,24 +100,66 @@
       {
         "name": "ApiEndpoint",
         "relevantProperties": [
-          { "name": "Path", "type": "string", "maxLength": 500, "description": "Endpoint path template, e.g. /api/users/{userId}" }
+          {
+            "name": "Path",
+            "type": "string",
+            "maxLength": 500,
+            "description": "Endpoint path template, e.g. /api/users/{userId}"
+          }
         ]
       },
       {
         "name": "EndpointParameter",
         "relevantProperties": [
-          { "name": "Name", "type": "string", "description": "Parameter name — phải match {placeholder} trong path" },
-          { "name": "Location", "type": "ParameterLocation", "description": "Path=0 cho path parameters" },
-          { "name": "DataType", "type": "string", "description": "string, integer, uuid, etc. — dùng cho validation và mutation" },
-          { "name": "Format", "type": "string", "description": "uuid, int32, int64, etc. — chi tiết hơn DataType" },
-          { "name": "IsRequired", "type": "bool", "description": "Path params luôn required=true" },
-          { "name": "DefaultValue", "type": "string", "description": "Sample value để resolve URL template" },
-          { "name": "Examples", "type": "string (JSON)", "description": "Nhiều giá trị mẫu cho boundary/mutation testing" }
+          {
+            "name": "Name",
+            "type": "string",
+            "description": "Parameter name — phải match {placeholder} trong path"
+          },
+          {
+            "name": "Location",
+            "type": "ParameterLocation",
+            "description": "Path=0 cho path parameters"
+          },
+          {
+            "name": "DataType",
+            "type": "string",
+            "description": "string, integer, uuid, etc. — dùng cho validation và mutation"
+          },
+          {
+            "name": "Format",
+            "type": "string",
+            "description": "uuid, int32, int64, etc. — chi tiết hơn DataType"
+          },
+          {
+            "name": "IsRequired",
+            "type": "bool",
+            "description": "Path params luôn required=true"
+          },
+          {
+            "name": "DefaultValue",
+            "type": "string",
+            "description": "Sample value để resolve URL template"
+          },
+          {
+            "name": "Examples",
+            "type": "string (JSON)",
+            "description": "Nhiều giá trị mẫu cho boundary/mutation testing"
+          }
         ]
       }
     ],
     "enums": [
-      { "name": "ParameterLocation", "values": ["Path = 0", "Query = 1", "Header = 2", "Body = 3", "Cookie = 4"] }
+      {
+        "name": "ParameterLocation",
+        "values": [
+          "Path = 0",
+          "Query = 1",
+          "Header = 2",
+          "Body = 3",
+          "Cookie = 4"
+        ]
+      }
     ]
   },
   "architecturePatterns": {
@@ -136,7 +178,10 @@
       {
         "pattern": "Validation in CommandHandler",
         "description": "Giữ nguyên pattern manual validation + throw ValidationException (vi-VN messages).",
-        "exceptionTypes": ["ValidationException", "NotFoundException"]
+        "exceptionTypes": [
+          "ValidationException",
+          "NotFoundException"
+        ]
       },
       {
         "pattern": "Query Enhancement",
@@ -170,7 +215,12 @@
     "system": {
       "language": "en-US",
       "style": "structured",
-      "requiredFields": ["traceId", "endpointId", "path", "action"]
+      "requiredFields": [
+        "traceId",
+        "endpointId",
+        "path",
+        "action"
+      ]
     }
   },
   "implementationOrder": [
@@ -272,11 +322,36 @@
     }
   ],
   "logCatalog": [
-    { "eventCode": "APIDOC_PATH_PARAMS_EXTRACTED", "uiMessageVi": "Đã phát hiện {count} path parameter trong URL.", "systemMessageEn": "Extracted {count} path parameters from endpoint path. EndpointId={endpointId}, Path={path}.", "level": "Information" },
-    { "eventCode": "APIDOC_PATH_PARAMS_AUTO_CREATED", "uiMessageVi": "Đã tự động tạo {count} path parameter: {names}.", "systemMessageEn": "Auto-created {count} path parameters: {names}. EndpointId={endpointId}.", "level": "Information" },
-    { "eventCode": "APIDOC_PATH_PARAM_VALIDATION_FAILED", "uiMessageVi": "Path parameter không hợp lệ.", "systemMessageEn": "Path parameter validation failed. EndpointId={endpointId}, Errors={errors}.", "level": "Warning" },
-    { "eventCode": "APIDOC_URL_RESOLVED", "uiMessageVi": "Đã resolve URL thành công.", "systemMessageEn": "URL resolved successfully. Template={template}, Resolved={resolved}.", "level": "Debug" },
-    { "eventCode": "APIDOC_URL_RESOLUTION_INCOMPLETE", "uiMessageVi": "Không thể resolve URL — thiếu giá trị cho {params}.", "systemMessageEn": "URL resolution incomplete. UnresolvedParams={params}.", "level": "Warning" }
+    {
+      "eventCode": "APIDOC_PATH_PARAMS_EXTRACTED",
+      "uiMessageVi": "Đã phát hiện {count} path parameter trong URL.",
+      "systemMessageEn": "Extracted {count} path parameters from endpoint path. EndpointId={endpointId}, Path={path}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PATH_PARAMS_AUTO_CREATED",
+      "uiMessageVi": "Đã tự động tạo {count} path parameter: {names}.",
+      "systemMessageEn": "Auto-created {count} path parameters: {names}. EndpointId={endpointId}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PATH_PARAM_VALIDATION_FAILED",
+      "uiMessageVi": "Path parameter không hợp lệ.",
+      "systemMessageEn": "Path parameter validation failed. EndpointId={endpointId}, Errors={errors}.",
+      "level": "Warning"
+    },
+    {
+      "eventCode": "APIDOC_URL_RESOLVED",
+      "uiMessageVi": "Đã resolve URL thành công.",
+      "systemMessageEn": "URL resolved successfully. Template={template}, Resolved={resolved}.",
+      "level": "Debug"
+    },
+    {
+      "eventCode": "APIDOC_URL_RESOLUTION_INCOMPLETE",
+      "uiMessageVi": "Không thể resolve URL — thiếu giá trị cho {params}.",
+      "systemMessageEn": "URL resolution incomplete. UnresolvedParams={params}.",
+      "level": "Warning"
+    }
   ],
   "samples": {
     "createEndpointWithPathParams": {
@@ -289,7 +364,10 @@
         "operationId": "getProductReview",
         "summary": "Get a specific review for a product",
         "description": "Retrieves a single review by reviewId for the specified product",
-        "tags": ["products", "reviews"],
+        "tags": [
+          "products",
+          "reviews"
+        ],
         "isDeprecated": false,
         "parameters": [
           {
@@ -401,8 +479,14 @@
         "summary": "Delete a user by ID",
         "parameters": [],
         "responses": [
-          { "statusCode": 204, "description": "User deleted successfully" },
-          { "statusCode": 404, "description": "User not found" }
+          {
+            "statusCode": 204,
+            "description": "User deleted successfully"
+          },
+          {
+            "statusCode": 404,
+            "description": "User not found"
+          }
         ]
       }
     },
@@ -428,8 +512,14 @@
           }
         ],
         "responses": [
-          { "statusCode": 204, "description": "User deleted successfully" },
-          { "statusCode": 404, "description": "User not found" }
+          {
+            "statusCode": 204,
+            "description": "User deleted successfully"
+          },
+          {
+            "statusCode": 404,
+            "description": "User not found"
+          }
         ],
         "resolvedUrl": null
       }
@@ -446,8 +536,18 @@
           "resolvedUrl": "/api/products/42/reviews/550e8400-e29b-41d4-a716-446655440000",
           "isFullyResolved": true,
           "parameters": [
-            { "name": "productId", "value": "42", "dataType": "integer", "source": "defaultValue" },
-            { "name": "reviewId", "value": "550e8400-e29b-41d4-a716-446655440000", "dataType": "string", "source": "defaultValue" }
+            {
+              "name": "productId",
+              "value": "42",
+              "dataType": "integer",
+              "source": "defaultValue"
+            },
+            {
+              "name": "reviewId",
+              "value": "550e8400-e29b-41d4-a716-446655440000",
+              "dataType": "string",
+              "source": "defaultValue"
+            }
           ],
           "unresolvedParameters": []
         }
@@ -466,7 +566,11 @@
           "isFullyResolved": false,
           "parameters": [],
           "unresolvedParameters": [
-            { "name": "userId", "dataType": "string", "reason": "Chưa có giá trị mẫu (DefaultValue hoặc Examples)." }
+            {
+              "name": "userId",
+              "dataType": "string",
+              "reason": "Chưa có giá trị mẫu (DefaultValue hoặc Examples)."
+            }
           ]
         }
       }
@@ -479,7 +583,12 @@
         "httpMethod": "GET",
         "path": "/api/users/{userId}",
         "parameters": [
-          { "name": "wrongName", "location": "Path", "dataType": "string", "isRequired": true }
+          {
+            "name": "wrongName",
+            "location": "Path",
+            "dataType": "string",
+            "isRequired": true
+          }
         ]
       },
       "response": {
@@ -515,8 +624,14 @@
               }
             ],
             "responses": [
-              { "statusCode": 200, "description": "User found" },
-              { "statusCode": 404, "description": "User not found" }
+              {
+                "statusCode": 200,
+                "description": "User found"
+              },
+              {
+                "statusCode": 404,
+                "description": "User not found"
+              }
             ]
           },
           {
@@ -542,8 +657,14 @@
               }
             ],
             "responses": [
-              { "statusCode": 200, "description": "Role assigned" },
-              { "statusCode": 404, "description": "User or role not found" }
+              {
+                "statusCode": 200,
+                "description": "Role assigned"
+              },
+              {
+                "statusCode": 404,
+                "description": "User or role not found"
+              }
             ]
           },
           {
@@ -553,7 +674,10 @@
             "summary": "Health check (no path params)",
             "parameters": [],
             "responses": [
-              { "statusCode": 200, "description": "OK" }
+              {
+                "statusCode": 200,
+                "description": "OK"
+              }
             ]
           }
         ]
