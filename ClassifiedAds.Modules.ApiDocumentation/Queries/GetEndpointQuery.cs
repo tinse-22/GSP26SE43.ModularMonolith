@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +32,7 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
     private readonly IRepository<EndpointParameter, Guid> _parameterRepository;
     private readonly IRepository<EndpointResponse, Guid> _responseRepository;
     private readonly IRepository<EndpointSecurityReq, Guid> _securityReqRepository;
+    private readonly Services.IPathParameterTemplateService _pathParamService;
 
     public GetEndpointQueryHandler(
         IRepository<Project, Guid> projectRepository,
@@ -38,7 +40,8 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
         IRepository<ApiEndpoint, Guid> endpointRepository,
         IRepository<EndpointParameter, Guid> parameterRepository,
         IRepository<EndpointResponse, Guid> responseRepository,
-        IRepository<EndpointSecurityReq, Guid> securityReqRepository)
+        IRepository<EndpointSecurityReq, Guid> securityReqRepository,
+        Services.IPathParameterTemplateService pathParamService)
     {
         _projectRepository = projectRepository;
         _specRepository = specRepository;
@@ -46,6 +49,7 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
         _parameterRepository = parameterRepository;
         _responseRepository = responseRepository;
         _securityReqRepository = securityReqRepository;
+        _pathParamService = pathParamService;
     }
 
     public async Task<EndpointDetailModel> HandleAsync(GetEndpointQuery query, CancellationToken cancellationToken = default)
@@ -97,7 +101,7 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
             .Where(sr => sr.EndpointId == endpoint.Id)
             .ToListAsync(cancellationToken);
 
-        return new EndpointDetailModel
+        var model = new EndpointDetailModel
         {
             Id = endpoint.Id,
             ApiSpecId = endpoint.ApiSpecId,
@@ -139,5 +143,34 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
                 Scopes = sr.Scopes,
             }).ToList(),
         };
+
+        // Resolve URL using DefaultValue → Examples fallback
+        var pathParamValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in parameters.Where(p => p.Location == ParameterLocation.Path))
+        {
+            if (!string.IsNullOrEmpty(p.DefaultValue))
+            {
+                pathParamValues[p.Name] = p.DefaultValue;
+            }
+            else if (!string.IsNullOrEmpty(p.Examples))
+            {
+                try
+                {
+                    var examples = JsonSerializer.Deserialize<List<string>>(p.Examples);
+                    if (examples?.Count > 0)
+                    {
+                        pathParamValues[p.Name] = examples[0];
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        var resolved = _pathParamService.ResolveUrl(endpoint.Path, pathParamValues);
+        model.ResolvedUrl = resolved.IsFullyResolved ? resolved.ResolvedUrl : null;
+
+        return model;
     }
 }
