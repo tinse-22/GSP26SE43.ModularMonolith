@@ -60,6 +60,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
     private readonly IRepository<EndpointResponse, Guid> _responseRepository;
     private readonly ICrudService<ApiSpecification> _specService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
+    private readonly Services.IPathParameterTemplateService _pathParamService;
 
     public CreateManualSpecificationCommandHandler(
         IRepository<Project, Guid> projectRepository,
@@ -68,7 +69,8 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
         IRepository<EndpointParameter, Guid> parameterRepository,
         IRepository<EndpointResponse, Guid> responseRepository,
         ICrudService<ApiSpecification> specService,
-        ISubscriptionLimitGatewayService subscriptionLimitService)
+        ISubscriptionLimitGatewayService subscriptionLimitService,
+        Services.IPathParameterTemplateService pathParamService)
     {
         _projectRepository = projectRepository;
         _specRepository = specRepository;
@@ -77,6 +79,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
         _responseRepository = responseRepository;
         _specService = specService;
         _subscriptionLimitService = subscriptionLimitService;
+        _pathParamService = pathParamService;
     }
 
     public async Task HandleAsync(CreateManualSpecificationCommand command, CancellationToken cancellationToken = default)
@@ -119,6 +122,17 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
             if (ep.Path.Length > 500)
             {
                 throw new ValidationException($"Endpoint #{i + 1}: Path không được vượt quá 500 ký tự.");
+            }
+
+            // Ensure path parameter consistency for this endpoint
+            try
+            {
+                ep.Parameters = _pathParamService.EnsurePathParameterConsistency(
+                    ep.Path, ep.Parameters ?? new());
+            }
+            catch (ValidationException ex)
+            {
+                throw new ValidationException($"Endpoint #{i + 1}: {ex.Message}");
             }
         }
 
