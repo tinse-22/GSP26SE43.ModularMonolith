@@ -1,0 +1,108 @@
+{
+    "$schema": "ai-agent-workflow-spec",
+    "version": "1.0.0",
+    "documentId": "fe-XX-workflow",
+    "workflow": {
+        "id": "wf-[feature-name]-v1",
+        "requirementId": "FE-XX",
+        "name": "[Tên workflow]",
+        "mode": "request-response + outbox-event",
+        "description": "[Mô tả tổng quát workflow bằng tiếng Việt]"
+    },
+    "architectureOverview": {
+        "summary": "[Tóm tắt kiến trúc: sync/async, outbox, transaction]",
+        "noDirectMessageBrokerNeeded": true,
+        "outboxRequired": true,
+        "transactionRequired": "[Mô tả khi nào cần explicit transaction]"
+    },
+    "flows": [
+        {
+            "id": "flow-01",
+            "name": "[Tên flow, VD: Create Entity]",
+            "type": "synchronous",
+            "steps": [
+                {
+                    "step": 1,
+                    "actor": "Client",
+                    "action": "[HTTP Method] [URL] { request body fields }",
+                    "output": "HTTP Request"
+                },
+                {
+                    "step": 2,
+                    "actor": "[Controller]",
+                    "action": "[Mô tả xử lý: bind model, create command, dispatch]",
+                    "output": "Command dispatched"
+                },
+                {
+                    "step": 3,
+                    "actor": "[CommandHandler]",
+                    "action": "[Mô tả business logic: validate, create entity, save]",
+                    "output": "[Kết quả]",
+                    "transactionNote": "[Ghi chú về transaction nếu cần]"
+                },
+                {
+                    "step": 4,
+                    "actor": "CrudService<[Entity]>",
+                    "action": "SaveChangesAsync() → raise EntityCreatedEvent<[Entity]>.",
+                    "output": "Domain event raised"
+                },
+                {
+                    "step": 5,
+                    "actor": "[EventHandler]",
+                    "action": "Create AuditLogEntry + OutboxMessage. SaveChangesAsync().",
+                    "output": "Audit + outbox records saved",
+                    "logVi": "[Thông báo tiếng Việt]",
+                    "logEn": "[English log message]"
+                },
+                {
+                    "step": 6,
+                    "actor": "[Controller]",
+                    "action": "[Return HTTP response]",
+                    "output": "HTTP [StatusCode] Response"
+                }
+            ]
+        }
+    ],
+    "transactionSummary": {
+        "implicitTransactions": [
+            "[Các operation dùng implicit EF transaction qua CrudService]"
+        ],
+        "explicitTransactions": [
+            {
+                "operation": "[Tên operation cần explicit transaction]",
+                "method": "UnitOfWork.ExecuteInTransactionAsync",
+                "entities": [
+                    "[Entity1 (action)]",
+                    "[Entity2 (action)]"
+                ]
+            }
+        ]
+    },
+    "errorHandling": {
+        "validationErrors": {
+            "httpStatus": 400,
+            "exceptionType": "ValidationException",
+            "language": "vi-VN",
+            "examples": [
+                "[Ví dụ validation error message tiếng Việt]"
+            ]
+        },
+        "notFoundErrors": {
+            "httpStatus": 404,
+            "exceptionType": "NotFoundException",
+            "examples": [
+                "[Entity] '{id}' không tồn tại."
+            ]
+        }
+    },
+    "implementationChecklist": [
+        {
+            "phase": 1,
+            "name": "[Tên phase]",
+            "tasks": [
+                "[Task 1]",
+                "[Task 2]"
+            ]
+        }
+    ]
+}

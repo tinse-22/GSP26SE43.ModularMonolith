@@ -1,0 +1,400 @@
+﻿{
+  "$schema": "ai-agent-technical-design-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-parser-flow-design",
+  "title": "ApiSpecification Upload-to-Parser Flow Technical Design",
+  "status": "design-only-no-code",
+  "createdDate": "2026-02-17",
+  "scope": {
+    "module": "ClassifiedAds.Modules.ApiDocumentation",
+    "dependsOn": [
+      "ClassifiedAds.Modules.Storage",
+      "ClassifiedAds.Contracts.Storage"
+    ],
+    "inScope": [
+      "Design async parser flow from SPEC_UPLOADED event",
+      "Design mapping from OpenAPI/Postman to ApiDocumentation entities",
+      "Design idempotency, retry, error policy, observability",
+      "Design implementation checklist and definition of done"
+    ],
+    "outOfScope": [
+      "No source code changes",
+      "No migration changes",
+      "No runtime deployment changes"
+    ]
+  },
+  "currentStateAnalysis": {
+    "uploadFlow": [
+      {
+        "fact": "Upload endpoint accepts multipart/form-data and validates file metadata",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs:75"
+      },
+      {
+        "fact": "File content is read and basic OpenAPI/Postman shape is validated",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs:112"
+      },
+      {
+        "fact": "File is persisted through Storage gateway",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs:166"
+      },
+      {
+        "fact": "ApiSpecification is created with OriginalFileId and ParseStatus=Pending",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs:191"
+      }
+    ],
+    "storageLayer": [
+      {
+        "fact": "Storage gateway currently exposes UploadAsync only",
+        "source": "ClassifiedAds.Contracts/Storage/Services/IStorageFileGatewayService.cs:7"
+      },
+      {
+        "fact": "Storage metadata schema is storage",
+        "source": "ClassifiedAds.Modules.Storage/Persistence/StorageDbContext.cs:21"
+      },
+      {
+        "fact": "ApiDocumentation schema is apidoc",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/Persistence/ApiDocumentationDbContext.cs:30"
+      }
+    ],
+    "eventing": [
+      {
+        "fact": "Background worker publishes ApiDocumentation outbox events",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/HostedServices/PublishEventWorker.cs:27"
+      },
+      {
+        "fact": "SpecOutboxMessagePublisher currently logs event only",
+        "source": "ClassifiedAds.Modules.ApiDocumentation/OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs:35"
+      }
+    ],
+    "gapSummary": [
+      "No parser job executes after SPEC_UPLOADED",
+      "No endpoint extraction from uploaded OpenAPI/Postman",
+      "ParseStatus may remain Pending indefinitely"
+    ]
+  },
+  "targetArchitecture": {
+    "trigger": "SPEC_UPLOADED outbox event",
+    "orchestrator": "ParseUploadedSpecificationCommand (new command design)",
+    "parsers": [
+      "OpenApiSpecificationParser",
+      "PostmanSpecificationParser"
+    ],
+    "storageReadContract": "Extend IStorageFileGatewayService with download/read API",
+    "persistenceStrategy": "Replace-all children of one ApiSpecification in single transaction",
+    "statusModel": [
+      "Pending",
+      "Success",
+      "Failed"
+    ],
+    "designConstraints": [
+      "Keep controller thin",
+      "Keep module boundaries via contracts",
+      "Keep outbox-based async processing",
+      "No direct cross-module DbContext access"
+    ]
+  },
+  "endToEndFlow": [
+    {
+      "step": 1,
+      "name": "Upload",
+      "description": "Client uploads OpenAPI/Postman file to upload endpoint"
+    },
+    {
+      "step": 2,
+      "name": "Pre-Validation",
+      "description": "Current upload validation checks extension, size, source type, basic content shape"
+    },
+    {
+      "step": 3,
+      "name": "Persist File",
+      "description": "Storage module saves file content and returns FileEntry Id"
+    },
+    {
+      "step": 4,
+      "name": "Persist Spec Pending",
+      "description": "ApiSpecification saved with OriginalFileId and ParseStatus=Pending"
+    },
+    {
+      "step": 5,
+      "name": "Event Trigger",
+      "description": "Outbox publishes SPEC_UPLOADED"
+    },
+    {
+      "step": 6,
+      "name": "Parser Orchestration",
+      "description": "SpecOutboxMessagePublisher dispatches ParseUploadedSpecificationCommand"
+    },
+    {
+      "step": 7,
+      "name": "Load File",
+      "description": "Parser command reads file bytes via Storage contract using OriginalFileId"
+    },
+    {
+      "step": 8,
+      "name": "Parse To Normalized Model",
+      "description": "Parser converts source document to normalized endpoint/parameter/response/security model"
+    },
+    {
+      "step": 9,
+      "name": "Persist Parsed Data",
+      "description": "In one transaction, replace children under spec and update parse metadata"
+    },
+    {
+      "step": 10,
+      "name": "Finalize Status",
+      "description": "Set ParseStatus=Success with ParsedAt or ParseStatus=Failed with ParseErrors"
+    }
+  ],
+  "entityMappingDesign": {
+    "apiEndpoint": {
+      "entity": "ApiEndpoint",
+      "table": "apidoc.ApiEndpoints",
+      "rules": [
+        "Map method/path/operationId/summary/description/tags/isDeprecated",
+        "Use method+path uniqueness per spec via existing index"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/ApiEndpointConfiguration.cs:35"
+    },
+    "endpointParameter": {
+      "entity": "EndpointParameter",
+      "table": "apidoc.EndpointParameters",
+      "rules": [
+        "Map location to Path/Query/Header/Body/Cookie",
+        "Map OpenAPI schema type to normalized dataType string",
+        "Store schema/examples as jsonb-compatible text"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/EndpointParameterConfiguration.cs:31"
+    },
+    "endpointResponse": {
+      "entity": "EndpointResponse",
+      "table": "apidoc.EndpointResponses",
+      "rules": [
+        "Map status code, description, schema, examples, headers"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/EndpointResponseConfiguration.cs:19"
+    },
+    "securitySchemes": {
+      "entity": "SecurityScheme",
+      "table": "apidoc.SecuritySchemes",
+      "rules": [
+        "Map components.securitySchemes (OpenAPI) or equivalent Postman auth model",
+        "Persist oauth details in Configuration jsonb"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/SecuritySchemeConfiguration.cs:35"
+    },
+    "endpointSecurityRequirements": {
+      "entity": "EndpointSecurityReq",
+      "table": "apidoc.EndpointSecurityReqs",
+      "rules": [
+        "Map endpoint-level security requirement to SecurityType, SchemeName, Scopes"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/EndpointSecurityReqConfiguration.cs:21"
+    },
+    "specParseState": {
+      "entity": "ApiSpecification",
+      "table": "apidoc.ApiSpecifications",
+      "rules": [
+        "Pending before parser",
+        "Success when parse and persistence complete",
+        "Failed when document is semantically invalid"
+      ],
+      "source": "ClassifiedAds.Modules.ApiDocumentation/DbConfigurations/ApiSpecificationConfiguration.cs:25"
+    }
+  },
+  "idempotencyAndConcurrencyDesign": {
+    "idempotencyKey": "SpecId",
+    "guardRules": [
+      "If spec is not Pending at command start, exit without side effects",
+      "Use replace-all strategy for children under one spec in one transaction",
+      "Event redelivery must not create duplicate endpoints"
+    ],
+    "concurrencyModel": [
+      "Single spec parse transaction",
+      "Safe against duplicate event delivery",
+      "No global lock required"
+    ]
+  },
+  "errorPolicyDesign": {
+    "validationErrors": {
+      "examples": [
+        "Invalid OpenAPI structure",
+        "Unsupported Postman shape",
+        "Missing required operation fields"
+      ],
+      "action": "Set ParseStatus=Failed, set ParseErrors, set ParsedAt, do not rethrow"
+    },
+    "transientInfraErrors": {
+      "examples": [
+        "Storage read timeout",
+        "Temporary database connectivity issue",
+        "Message bus temporary failure"
+      ],
+      "action": "Rethrow to allow outbox retry"
+    },
+    "observabilityRequirement": "All failures must include SpecId, ProjectId, SourceType, stage"
+  },
+  "contractChangesDesign": {
+    "required": [
+      {
+        "name": "Storage read contract",
+        "change": "Add download/read method to IStorageFileGatewayService",
+        "reason": "Parser must fetch file bytes using OriginalFileId"
+      }
+    ],
+    "optional": [
+      {
+        "name": "Outbox payload enrichment",
+        "change": "Include minimal parse metadata for diagnostics",
+        "reason": "Operational visibility"
+      }
+    ]
+  },
+  "observabilityDesign": {
+    "structuredLogs": [
+      "APIDOC_PARSE_STARTED",
+      "APIDOC_PARSE_SUCCEEDED",
+      "APIDOC_PARSE_FAILED_VALIDATION",
+      "APIDOC_PARSE_FAILED_INFRA",
+      "APIDOC_PARSE_SKIPPED_NOT_PENDING"
+    ],
+    "metrics": [
+      "parse_duration_ms",
+      "parsed_endpoint_count",
+      "parse_failed_count",
+      "parse_retry_count"
+    ],
+    "tracing": [
+      "propagate activity id from outbox to parser command"
+    ]
+  },
+  "securityAndBoundaryRules": [
+    "ApiDocumentation must access file content via Storage contracts only",
+    "No direct repository access from ApiDocumentation to Storage entities",
+    "Respect existing authorization ownership checks already present in query/command handlers",
+    "Do not store secrets from spec payload into plain logs"
+  ],
+  "testDesign": {
+    "unitTests": [
+      "OpenApi parser maps methods, params, responses, security correctly",
+      "Postman parser maps request definitions correctly",
+      "Idempotency guard skips when status is not Pending",
+      "Validation error path sets Failed and ParseErrors"
+    ],
+    "integrationTests": [
+      "Upload valid OpenAPI -> async parse -> spec status Success -> endpoints persisted",
+      "Upload malformed OpenAPI -> status Failed with parse errors",
+      "Duplicate SPEC_UPLOADED delivery does not duplicate children",
+      "Transient storage failure triggers retry and eventually succeeds"
+    ],
+    "regressionChecks": [
+      "Manual specification flow unchanged",
+      "cURL import flow unchanged",
+      "Projects/specifications/endpoints APIs unchanged contract"
+    ]
+  },
+  "implementationChecklist": [
+    {
+      "id": "CHK-01",
+      "task": "Finalize parser architecture decision and contract boundaries",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-02",
+      "task": "Design and approve Storage read contract extension",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-03",
+      "task": "Design ParseUploadedSpecificationCommand orchestration",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-04",
+      "task": "Design OpenAPI parser and Postman parser interfaces",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-05",
+      "task": "Design persistence replace-all transaction strategy",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-06",
+      "task": "Design parse status transition and ParseErrors model",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-07",
+      "task": "Design idempotency and retry policy",
+      "priority": "P0",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-08",
+      "task": "Define structured logs and metrics",
+      "priority": "P1",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-09",
+      "task": "Prepare unit and integration test plan",
+      "priority": "P1",
+      "status": "todo"
+    },
+    {
+      "id": "CHK-10",
+      "task": "Prepare rollout plan with feature toggle",
+      "priority": "P1",
+      "status": "todo"
+    }
+  ],
+  "definitionOfDone": [
+    "Uploaded OpenAPI/Postman specs move out of Pending automatically",
+    "Successful parse writes endpoints/parameters/responses/security into apidoc schema",
+    "Failure path writes Failed + ParseErrors without leaving inconsistent partial data",
+    "Duplicate event delivery is idempotent",
+    "Observability is sufficient to diagnose parse stage and root cause",
+    "No cross-module boundary violations"
+  ],
+  "riskRegister": [
+    {
+      "risk": "Large specs cause long parse duration",
+      "impact": "High",
+      "mitigation": "Async outbox processing, per-spec transaction, metrics and timeout policy"
+    },
+    {
+      "risk": "OpenAPI/Postman variants not fully supported",
+      "impact": "High",
+      "mitigation": "Progressive parser coverage and clear ParseErrors reporting"
+    },
+    {
+      "risk": "Event redelivery creates duplicate data",
+      "impact": "High",
+      "mitigation": "Pending guard + replace-all persistence strategy"
+    },
+    {
+      "risk": "Storage read contract delay blocks parser implementation",
+      "impact": "Medium",
+      "mitigation": "Prioritize contract change first"
+    }
+  ],
+  "rolloutPlan": [
+    "Phase 1: Implement parser behind feature toggle",
+    "Phase 2: Enable in dev, run synthetic uploads and verify metrics",
+    "Phase 3: Enable staging with retry/alert monitoring",
+    "Phase 4: Enable production gradually"
+  ],
+  "openQuestions": [
+    "Should parse run immediately in uploader path when file is very small, or always async?",
+    "What is max accepted endpoint count per spec before hard fail?",
+    "Should parse replace existing children for a spec or support merge mode?",
+    "Should failed parse auto-activate prevention be strict even when AutoActivate=true?"
+  ],
+  "note": "This document is technical design only. It intentionally contains no implementation code changes."
+}

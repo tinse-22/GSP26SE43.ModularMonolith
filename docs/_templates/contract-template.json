@@ -1,0 +1,169 @@
+{
+    "$schema": "ai-agent-contract-spec",
+    "version": "1.0.0",
+    "documentId": "fe-XX-YY-contracts",
+    "requirementId": "FE-XX-YY",
+    "title": "[Tên sub-requirement] — Contracts & Implementation Guide",
+    "controllerContract": {
+        "name": "[Entity]Controller",
+        "file": "Controllers/[Entity]Controller.cs",
+        "namespace": "ClassifiedAds.Modules.[Module].Controllers",
+        "baseClass": "ControllerBase",
+        "attributes": [
+            "[EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]",
+            "[Authorize]",
+            "[Produces(\"application/json\")]",
+            "[Route(\"api/[controller]\")]",
+            "[ApiController]"
+        ],
+        "dependencies": [
+            {
+                "type": "Dispatcher",
+                "resolvedVia": "constructor injection"
+            },
+            {
+                "type": "ICurrentUser",
+                "purpose": "Lấy UserId hiện tại"
+            },
+            {
+                "type": "ILogger<[Entity]Controller>",
+                "purpose": "Logging"
+            }
+        ],
+        "actions": [
+            {
+                "method": "[MethodName]",
+                "httpVerb": "[HttpGet | HttpPost | HttpPut | HttpDelete]",
+                "authorize": "Permissions.[Action]",
+                "parameters": [
+                    "[FromQuery | FromBody | Path] [Type] [name]"
+                ],
+                "dispatches": "[CommandOrQuery]",
+                "returns": "[Ok | Created | NoContent](result)"
+            }
+        ]
+    },
+    "commandContracts": [
+        {
+            "name": "[Verb][Noun]Command",
+            "file": "Commands/[Verb][Noun]Command.cs",
+            "namespace": "ClassifiedAds.Modules.[Module].Commands",
+            "codeTemplate": {
+                "command": {
+                    "implements": "ICommand",
+                    "properties": [
+                        "public [Type] [Name] { get; set; }"
+                    ]
+                },
+                "handler": {
+                    "implements": "ICommandHandler<[CommandName]>",
+                    "dependencies": [
+                        "ICrudService<[Entity]> _service",
+                        "IRepository<[Entity], Guid> _repository"
+                    ],
+                    "validationRules": [
+                        "[Condition] → ValidationException('[Thông báo lỗi tiếng Việt]')"
+                    ],
+                    "flowSteps": [
+                        "1. Validate input.",
+                        "2. [Business logic step].",
+                        "3. SaveChangesAsync."
+                    ]
+                }
+            }
+        }
+    ],
+    "queryContracts": [
+        {
+            "name": "Get[Noun]Query",
+            "file": "Queries/Get[Noun]Query.cs",
+            "namespace": "ClassifiedAds.Modules.[Module].Queries",
+            "codeTemplate": {
+                "query": {
+                    "implements": "IQuery<[ResultType]>",
+                    "properties": [
+                        "public [Type] [Name] { get; set; }"
+                    ]
+                },
+                "handler": {
+                    "implements": "IQueryHandler<Get[Noun]Query, [ResultType]>",
+                    "dependencies": [
+                        "IRepository<[Entity], Guid> _repository"
+                    ],
+                    "flowSteps": [
+                        "1. Build queryable from repository.",
+                        "2. Apply filters.",
+                        "3. Map to model and return."
+                    ]
+                }
+            }
+        }
+    ],
+    "eventHandlerContracts": [
+        {
+            "name": "[Entity]CreatedEventHandler",
+            "file": "EventHandlers/[Entity]CreatedEventHandler.cs",
+            "handles": "EntityCreatedEvent<[Entity]>",
+            "dependencies": [
+                "IRepository<AuditLogEntry, Guid> _auditLogRepository",
+                "IRepository<OutboxMessage, Guid> _outboxMessageRepository"
+            ],
+            "codeTemplate": "COPY PATTERN từ [ReferenceModule]/EventHandlers/[Reference]EventHandler.cs",
+            "logMessage": {
+                "action": "[ENTITY]_CREATED",
+                "logTemplate": "{ \"entityId\": \"{Id}\", \"name\": \"{Name}\" }"
+            }
+        }
+    ],
+    "outboxContracts": {
+        "eventTypeConstants": {
+            "file": "Constants/EventTypeConstants.cs",
+            "values": {
+                "[Entity]Created": "[ENTITY]_CREATED",
+                "[Entity]Updated": "[ENTITY]_UPDATED",
+                "[Entity]Deleted": "[ENTITY]_DELETED"
+            }
+        },
+        "publishers": [
+            {
+                "name": "[Entity]OutboxMessagePublisher",
+                "file": "OutBoxEventPublishers/[Entity]OutBoxMessagePublisher.cs",
+                "implements": "IOutboxMessagePublisher",
+                "canHandleEventTypes": [
+                    "[ENTITY]_CREATED",
+                    "[ENTITY]_UPDATED",
+                    "[ENTITY]_DELETED"
+                ]
+            }
+        ]
+    },
+    "serviceRegistration": {
+        "file": "ServiceCollectionExtensions.cs",
+        "additions": [
+            "Register rate limiter policy.",
+            "AddMessageHandlers(Assembly) — scan Commands, Queries, EventHandlers.",
+            "AddAuthorizationPolicies(Assembly) — scan Permissions.",
+            "AddHostedServices — register background workers.",
+            "AddOutboxMessagePublishers(Assembly) — scan IOutboxMessagePublisher."
+        ]
+    },
+    "logCatalog": [
+        {
+            "eventCode": "[MODULE]_[ENTITY]_[ACTION]",
+            "uiMessageVi": "[Thông báo tiếng Việt cho UI]",
+            "systemMessageEn": "[English structured log message]",
+            "level": "Information"
+        }
+    ],
+    "samples": {
+        "createRequest": {
+            "method": "POST",
+            "url": "/api/[entities]",
+            "body": {}
+        },
+        "createResponse": {
+            "status": 201,
+            "body": {}
+        }
+    }
+}

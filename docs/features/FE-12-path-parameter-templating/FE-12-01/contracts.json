@@ -1,0 +1,636 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-01-contracts",
+  "requirementId": "FE-12-01",
+  "title": "Path Parameter Auto-Detection & Validation — Contracts & Implementation Guide",
+  "serviceContract": {
+    "interface": {
+      "name": "IPathParameterTemplateService",
+      "file": "Services/IPathParameterTemplateService.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Services",
+      "codeTemplate": {
+        "code": [
+          "using ClassifiedAds.Modules.ApiDocumentation.Models;",
+          "using System.Collections.Generic;",
+          "",
+          "namespace ClassifiedAds.Modules.ApiDocumentation.Services;",
+          "",
+          "/// <summary>",
+          "/// Service for path parameter template parsing, validation, and URL resolution.",
+          "/// </summary>",
+          "public interface IPathParameterTemplateService",
+          "{",
+          "    /// <summary>",
+          "    /// Extract all {placeholder} parameters from an endpoint path.",
+          "    /// </summary>",
+          "    /// <param name=\"path\">Endpoint path template, e.g. /api/users/{userId}</param>",
+          "    /// <returns>Ordered list of extracted path parameter info</returns>",
+          "    List<PathParameterInfo> ExtractPathParameters(string path);",
+          "",
+          "    /// <summary>",
+          "    /// Validate consistency between path placeholders and parameter definitions.",
+          "    /// </summary>",
+          "    /// <param name=\"path\">Endpoint path template</param>",
+          "    /// <param name=\"parameters\">User-provided parameter definitions (all types: Path, Query, Header, etc.)</param>",
+          "    /// <returns>Validation result with errors, auto-created params, and warnings</returns>",
+          "    PathTemplateValidationResult ValidatePathParameterConsistency(string path, List<ManualParameterDefinition> parameters);",
+          "",
+          "    /// <summary>",
+          "    /// Validate and auto-create missing path parameters. Throws ValidationException on errors.",
+          "    /// </summary>",
+          "    /// <param name=\"path\">Endpoint path template</param>",
+          "    /// <param name=\"parameters\">User-provided parameter definitions</param>",
+          "    /// <returns>Merged parameter list (user-defined + auto-created)</returns>",
+          "    List<ManualParameterDefinition> EnsurePathParameterConsistency(string path, List<ManualParameterDefinition> parameters);",
+          "",
+          "    /// <summary>",
+          "    /// Resolve a path template by substituting placeholders with sample values.",
+          "    /// </summary>",
+          "    /// <param name=\"path\">Path template with {placeholders}</param>",
+          "    /// <param name=\"parameterValues\">Dictionary of parameter name → sample value</param>",
+          "    /// <returns>Resolution result with resolved URL and unresolved params</returns>",
+          "    ResolvedUrlResult ResolveUrl(string path, Dictionary<string, string> parameterValues);",
+          "",
+          "    /// <summary>",
+          "    /// Generate mutation variants for a path parameter (for negative/boundary testing).",
+          "    /// </summary>",
+          "    /// <param name=\"parameterName\">Name of the path parameter</param>",
+          "    /// <param name=\"dataType\">Data type: string, integer, number, boolean, uuid</param>",
+          "    /// <param name=\"format\">Optional format: int32, int64, uuid, email, etc.</param>",
+          "    /// <param name=\"defaultValue\">Current sample value</param>",
+          "    /// <returns>List of mutation variants for test generation</returns>",
+          "    List<PathParameterMutation> GenerateMutations(string parameterName, string dataType, string format, string defaultValue);",
+          "}"
+        ]
+      }
+    },
+    "implementation": {
+      "name": "PathParameterTemplateService",
+      "file": "Services/PathParameterTemplateService.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Services",
+      "dependencies": [],
+      "attributes": [],
+      "codeTemplate": {
+        "class": "PathParameterTemplateService : IPathParameterTemplateService",
+        "constants": [
+          {
+            "name": "PathParamRegex",
+            "type": "Regex",
+            "value": "new Regex(@\"\\{(\\w+)\\}\", RegexOptions.Compiled)",
+            "description": "Compiled regex for extracting {placeholder} from path. Pattern \\w+ = alphanumeric + underscore."
+          }
+        ],
+        "methods": {
+          "ExtractPathParameters": {
+            "flowSteps": [
+              "1. if (string.IsNullOrWhiteSpace(path)) return new List<PathParameterInfo>();",
+              "2. var matches = PathParamRegex.Matches(path);",
+              "3. var result = new List<PathParameterInfo>(matches.Count);",
+              "4. var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);",
+              "5. for (int i = 0; i < matches.Count; i++) {",
+              "     var name = matches[i].Groups[1].Value;",
+              "     if (!seenNames.Add(name)) {",
+              "       throw new ValidationException($\"Tên path parameter trùng lặp: '{name}'. Mỗi placeholder phải có tên duy nhất.\");",
+              "     }",
+              "     result.Add(new PathParameterInfo { Name = name, Position = i });",
+              "   }",
+              "6. return result;"
+            ]
+          },
+          "ValidatePathParameterConsistency": {
+            "flowSteps": [
+              "1. var extracted = ExtractPathParameters(path);",
+              "2. var pathParams = (parameters ?? new()).Where(p => string.Equals(p.Location, \"Path\", StringComparison.OrdinalIgnoreCase)).ToList();",
+              "3. var extractedNames = new HashSet<string>(extracted.Select(e => e.Name), StringComparer.OrdinalIgnoreCase);",
+              "4. var definedNames = new HashSet<string>(pathParams.Select(p => p.Name?.Trim()), StringComparer.OrdinalIgnoreCase);",
+              "5. var errors = new List<string>();",
+              "6. var autoCreated = new List<ManualParameterDefinition>();",
+              "7. var warnings = new List<string>();",
+              "",
+              "8. // Check extra: defined but not extracted",
+              "   foreach (var p in pathParams) {",
+              "     var name = p.Name?.Trim();",
+              "     if (!string.IsNullOrEmpty(name) && !extractedNames.Contains(name)) {",
+              "       var validNames = extractedNames.Count > 0",
+              "         ? string.Join(\", \", extractedNames)",
+              "         : \"Không có placeholder nào trong path\";",
+              "       errors.Add($\"Path parameter '{name}' không tồn tại trong path '{path}'. Các placeholder hợp lệ: {validNames}.\");",
+              "     }",
+              "   }",
+              "",
+              "9. // Auto-create missing: extracted but not defined",
+              "   foreach (var e in extracted) {",
+              "     if (!definedNames.Contains(e.Name)) {",
+              "       autoCreated.Add(new ManualParameterDefinition {",
+              "         Name = e.Name,",
+              "         Location = \"Path\",",
+              "         DataType = \"string\",",
+              "         IsRequired = true",
+              "       });",
+              "     }",
+              "   }",
+              "",
+              "10. // Enforce IsRequired = true for path params",
+              "    foreach (var p in pathParams) {",
+              "      if (!p.IsRequired) {",
+              "        p.IsRequired = true;",
+              "        warnings.Add($\"Path parameter '{p.Name}' đã được set IsRequired=true (path params luôn bắt buộc).\");",
+              "      }",
+              "    }",
+              "",
+              "11. return new PathTemplateValidationResult {",
+              "      IsValid = errors.Count == 0,",
+              "      Errors = errors,",
+              "      AutoCreatedParams = autoCreated,",
+              "      Warnings = warnings",
+              "    };"
+            ]
+          },
+          "EnsurePathParameterConsistency": {
+            "flowSteps": [
+              "1. var result = ValidatePathParameterConsistency(path, parameters);",
+              "2. if (!result.IsValid) throw new ValidationException(string.Join(\" \", result.Errors));",
+              "3. var merged = new List<ManualParameterDefinition>(parameters ?? new());",
+              "4. merged.AddRange(result.AutoCreatedParams);",
+              "5. return merged;"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "modelContracts": [
+    {
+      "name": "PathParameterInfo",
+      "file": "Models/PathParameterInfo.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "codeTemplate": [
+        "namespace ClassifiedAds.Modules.ApiDocumentation.Models;",
+        "",
+        "/// <summary>",
+        "/// Information about a path parameter extracted from URL template.",
+        "/// </summary>",
+        "public class PathParameterInfo",
+        "{",
+        "    /// <summary>",
+        "    /// Parameter name from {placeholder}.",
+        "    /// </summary>",
+        "    public string Name { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// 0-based position in path (order of appearance).",
+        "    /// </summary>",
+        "    public int Position { get; set; }",
+        "}"
+      ]
+    },
+    {
+      "name": "PathTemplateValidationResult",
+      "file": "Models/PathTemplateValidationResult.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "codeTemplate": [
+        "using System.Collections.Generic;",
+        "",
+        "namespace ClassifiedAds.Modules.ApiDocumentation.Models;",
+        "",
+        "/// <summary>",
+        "/// Result of path parameter consistency validation.",
+        "/// </summary>",
+        "public class PathTemplateValidationResult",
+        "{",
+        "    /// <summary>",
+        "    /// True if no blocking errors.",
+        "    /// </summary>",
+        "    public bool IsValid { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Validation errors preventing save.",
+        "    /// </summary>",
+        "    public List<string> Errors { get; set; } = new();",
+        "",
+        "    /// <summary>",
+        "    /// Path parameters auto-generated from placeholders not defined by user.",
+        "    /// </summary>",
+        "    public List<ManualParameterDefinition> AutoCreatedParams { get; set; } = new();",
+        "",
+        "    /// <summary>",
+        "    /// Non-blocking warnings (e.g., IsRequired forced to true).",
+        "    /// </summary>",
+        "    public List<string> Warnings { get; set; } = new();",
+        "}"
+      ]
+    },
+    {
+      "name": "ResolvedUrlResult",
+      "file": "Models/ResolvedUrlResult.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "codeTemplate": [
+        "using System;",
+        "using System.Collections.Generic;",
+        "",
+        "namespace ClassifiedAds.Modules.ApiDocumentation.Models;",
+        "",
+        "/// <summary>",
+        "/// Result of resolving a path template with parameter values.",
+        "/// </summary>",
+        "public class ResolvedUrlResult",
+        "{",
+        "    public Guid EndpointId { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Original path template, e.g. /api/users/{userId}.",
+        "    /// </summary>",
+        "    public string TemplateUrl { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Resolved URL with placeholder values substituted. Null if not fully resolved.",
+        "    /// </summary>",
+        "    public string ResolvedUrl { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Whether all path parameters have values.",
+        "    /// </summary>",
+        "    public bool IsFullyResolved { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Parameters that were successfully resolved.",
+        "    /// </summary>",
+        "    public List<ResolvedParameter> Parameters { get; set; } = new();",
+        "",
+        "    /// <summary>",
+        "    /// Parameters that could not be resolved (missing values).",
+        "    /// </summary>",
+        "    public List<UnresolvedParameter> UnresolvedParameters { get; set; } = new();",
+        "}",
+        "",
+        "public class ResolvedParameter",
+        "{",
+        "    public string Name { get; set; }",
+        "    public string Value { get; set; }",
+        "    public string DataType { get; set; }",
+        "    public string Source { get; set; }  // 'defaultValue' or 'examples'",
+        "}",
+        "",
+        "public class UnresolvedParameter",
+        "{",
+        "    public string Name { get; set; }",
+        "    public string DataType { get; set; }",
+        "    public string Reason { get; set; }  // vi-VN message",
+        "}"
+      ]
+    },
+    {
+      "name": "PathParameterMutation",
+      "file": "Models/PathParameterMutation.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Models",
+      "codeTemplate": [
+        "namespace ClassifiedAds.Modules.ApiDocumentation.Models;",
+        "",
+        "/// <summary>",
+        "/// A mutation variant of a path parameter for negative/boundary testing.",
+        "/// </summary>",
+        "public class PathParameterMutation",
+        "{",
+        "    /// <summary>",
+        "    /// Mutation type: missing, wrongType, boundary_zero, boundary_negative,",
+        "    /// boundary_max, nonExistent, invalidFormat, empty, specialChars.",
+        "    /// </summary>",
+        "    public string MutationType { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Display label for test case name.",
+        "    /// </summary>",
+        "    public string Label { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Mutated value to use in URL.",
+        "    /// </summary>",
+        "    public string Value { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Expected HTTP status code for this mutation (400, 404, 422).",
+        "    /// </summary>",
+        "    public int ExpectedStatusCode { get; set; }",
+        "",
+        "    /// <summary>",
+        "    /// Description of why this mutation is a valid negative test.",
+        "    /// </summary>",
+        "    public string Description { get; set; }",
+        "}"
+      ]
+    }
+  ],
+  "commandContracts": [
+    {
+      "name": "AddUpdateEndpointCommand (Enhancement)",
+      "file": "Commands/AddUpdateEndpointCommand.cs",
+      "description": "Thêm IPathParameterTemplateService dependency và path param validation/auto-creation logic",
+      "codeTemplate": {
+        "handler": {
+          "additionalDependencies": [
+            "private readonly IPathParameterTemplateService _pathParamService;"
+          ],
+          "constructorAddition": "IPathParameterTemplateService pathParamService → _pathParamService = pathParamService;",
+          "insertionLogic": {
+            "insertAfter": "Path validation (Length > 500 check)",
+            "insertBefore": "Load project (var project = await _projectRepository...)",
+            "code": [
+              "// FE-12: Path parameter auto-detection and consistency validation",
+              "command.Model.Parameters = _pathParamService.EnsurePathParameterConsistency(",
+              "    command.Model.Path,",
+              "    command.Model.Parameters ?? new List<ManualParameterDefinition>()",
+              ");"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "CreateManualSpecificationCommand (Enhancement)",
+      "file": "Commands/CreateManualSpecificationCommand.cs",
+      "description": "Thêm IPathParameterTemplateService và validate path params cho mỗi endpoint",
+      "codeTemplate": {
+        "handler": {
+          "additionalDependencies": [
+            "private readonly IPathParameterTemplateService _pathParamService;"
+          ],
+          "constructorAddition": "IPathParameterTemplateService pathParamService → _pathParamService = pathParamService;",
+          "insertionLogic": {
+            "insertAfter": "ep.Path.Length > 500 validation inside endpoint loop",
+            "insertBefore": "closing brace of endpoint validation loop",
+            "code": [
+              "// FE-12: Path parameter auto-detection for each endpoint",
+              "try",
+              "{",
+              "    ep.Parameters = _pathParamService.EnsurePathParameterConsistency(",
+              "        ep.Path,",
+              "        ep.Parameters ?? new List<ManualParameterDefinition>()",
+              "    );",
+              "}",
+              "catch (ValidationException ex)",
+              "{",
+              "    throw new ValidationException($\"Endpoint #{i + 1}: {ex.Message}\");",
+              "}"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "ImportCurlCommand (Refactor)",
+      "file": "Commands/ImportCurlCommand.cs",
+      "description": "Refactor inline regex thành shared service call",
+      "codeTemplate": {
+        "handler": {
+          "additionalDependencies": [
+            "private readonly IPathParameterTemplateService _pathParamService;"
+          ],
+          "constructorAddition": "IPathParameterTemplateService pathParamService → _pathParamService = pathParamService;",
+          "removeImport": "using System.Text.RegularExpressions; (no longer needed directly)",
+          "replaceBlock": {
+            "from": [
+              "// Path parameters: extract {param} segments",
+              "var pathParamMatches = Regex.Matches(parseResult.Path ?? \"\", @\"\\{(\\w+)\\}\");",
+              "foreach (Match match in pathParamMatches)",
+              "{",
+              "    await _parameterRepository.AddAsync(new EndpointParameter",
+              "    {",
+              "        EndpointId = endpoint.Id,",
+              "        Name = match.Groups[1].Value,",
+              "        Location = ParameterLocation.Path,",
+              "        DataType = \"string\",",
+              "        IsRequired = true,",
+              "    }, ct);",
+              "}"
+            ],
+            "to": [
+              "// FE-12: Path parameters using shared service",
+              "var pathParams = _pathParamService.ExtractPathParameters(parseResult.Path);",
+              "foreach (var pathParam in pathParams)",
+              "{",
+              "    await _parameterRepository.AddAsync(new EndpointParameter",
+              "    {",
+              "        EndpointId = endpoint.Id,",
+              "        Name = pathParam.Name,",
+              "        Location = ParameterLocation.Path,",
+              "        DataType = \"string\",",
+              "        IsRequired = true,",
+              "    }, ct);",
+              "}"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "queryEnhancements": [
+    {
+      "name": "GetEndpointQuery (Enhancement)",
+      "file": "Queries/GetEndpointQuery.cs",
+      "description": "Thêm resolved URL vào EndpointDetailModel",
+      "changes": [
+        {
+          "type": "inject-dependency",
+          "detail": "IPathParameterTemplateService _pathParamService"
+        },
+        {
+          "type": "add-logic-after-mapping",
+          "description": "Sau khi map EndpointDetailModel, compute resolved URL",
+          "code": [
+            "// FE-12: Compute resolved URL from path params",
+            "var pathParamValues = parameters",
+            "    .Where(p => p.Location == ParameterLocation.Path && !string.IsNullOrEmpty(p.DefaultValue))",
+            "    .ToDictionary(p => p.Name, p => p.DefaultValue, StringComparer.OrdinalIgnoreCase);",
+            "",
+            "if (pathParamValues.Count > 0)",
+            "{",
+            "    var resolveResult = _pathParamService.ResolveUrl(endpoint.Path, pathParamValues);",
+            "    model.ResolvedUrl = resolveResult.ResolvedUrl;",
+            "}",
+            "else",
+            "{",
+            "    var extracted = _pathParamService.ExtractPathParameters(endpoint.Path);",
+            "    model.ResolvedUrl = extracted.Count == 0 ? endpoint.Path : null;",
+            "}"
+          ]
+        }
+      ]
+    }
+  ],
+  "modelEnhancements": [
+    {
+      "name": "EndpointDetailModel",
+      "file": "Models/EndpointModel.cs",
+      "change": "Add ResolvedUrl property",
+      "addProperty": {
+        "name": "ResolvedUrl",
+        "type": "string",
+        "nullable": true,
+        "description": "Resolved URL with path parameter values substituted. Null if path params lack DefaultValue."
+      }
+    }
+  ],
+  "controllerEnhancements": [
+    {
+      "controller": "EndpointsController",
+      "file": "Controllers/EndpointsController.cs",
+      "addAction": {
+        "method": "GetResolvedUrl",
+        "httpVerb": "HttpGet(\"{endpointId}/resolved-url\")",
+        "authorize": "Permissions.GetEndpoints",
+        "description": "Preview resolved URL cho endpoint với current path parameter values",
+        "codeTemplate": [
+          "[Authorize(Permissions.GetEndpoints)]",
+          "[HttpGet(\"{endpointId}/resolved-url\")]",
+          "[ProducesResponseType(StatusCodes.Status200OK)]",
+          "[ProducesResponseType(StatusCodes.Status404NotFound)]",
+          "public async Task<ActionResult<ResolvedUrlResult>> GetResolvedUrl(",
+          "    Guid projectId, Guid specId, Guid endpointId)",
+          "{",
+          "    var result = await _dispatcher.DispatchAsync(new GetResolvedUrlQuery",
+          "    {",
+          "        ProjectId = projectId,",
+          "        SpecId = specId,",
+          "        EndpointId = endpointId,",
+          "        OwnerId = _currentUser.UserId,",
+          "    });",
+          "",
+          "    return Ok(result);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "newQueryContracts": [
+    {
+      "name": "GetResolvedUrlQuery",
+      "file": "Queries/GetResolvedUrlQuery.cs",
+      "namespace": "ClassifiedAds.Modules.ApiDocumentation.Queries",
+      "codeTemplate": {
+        "query": {
+          "implements": "IQuery<ResolvedUrlResult>",
+          "properties": [
+            "public Guid ProjectId { get; set; }",
+            "public Guid SpecId { get; set; }",
+            "public Guid EndpointId { get; set; }",
+            "public Guid OwnerId { get; set; }"
+          ]
+        },
+        "handler": {
+          "implements": "IQueryHandler<GetResolvedUrlQuery, ResolvedUrlResult>",
+          "dependencies": [
+            "IRepository<Project, Guid> _projectRepository",
+            "IRepository<ApiSpecification, Guid> _specRepository",
+            "IRepository<ApiEndpoint, Guid> _endpointRepository",
+            "IRepository<EndpointParameter, Guid> _parameterRepository",
+            "IPathParameterTemplateService _pathParamService"
+          ],
+          "flowSteps": [
+            "1. Verify project exists and ownership (same pattern as GetEndpointQuery).",
+            "2. Verify spec belongs to project.",
+            "3. Load endpoint by Id.",
+            "4. Load path parameters (Location == Path).",
+            "5. Build parameterValues dictionary from DefaultValue/Examples.",
+            "6. Call _pathParamService.ResolveUrl(endpoint.Path, parameterValues).",
+            "7. Enrich result with parameter details and unresolved info.",
+            "8. Return ResolvedUrlResult."
+          ]
+        }
+      }
+    }
+  ],
+  "serviceRegistration": {
+    "file": "ServiceCollectionExtensions.cs",
+    "additions": [
+      {
+        "code": "services.AddScoped<IPathParameterTemplateService, PathParameterTemplateService>();",
+        "insertAfter": "// Services registration section or after existing service registrations"
+      }
+    ]
+  },
+  "validationRules": {
+    "pathParameterNaming": {
+      "pattern": "^\\w+$",
+      "description": "Path parameter names must be alphanumeric + underscore only",
+      "errorMessage": "Tên path parameter '{name}' không hợp lệ. Chỉ chấp nhận chữ cái, số và dấu gạch dưới."
+    },
+    "pathParameterUniqueness": {
+      "description": "Each placeholder in a path must have a unique name",
+      "errorMessage": "Tên path parameter trùng lặp: '{name}'. Mỗi placeholder phải có tên duy nhất."
+    },
+    "pathParameterRequired": {
+      "description": "Path parameters are always required — enforce IsRequired=true",
+      "warningMessage": "Path parameter '{name}' đã được set IsRequired=true (path params luôn bắt buộc)."
+    },
+    "extraPathParameter": {
+      "description": "Parameter with Location=Path must exist as {placeholder} in path",
+      "errorMessage": "Path parameter '{name}' không tồn tại trong path '{path}'. Các placeholder hợp lệ: {validNames}."
+    }
+  },
+  "transactionDetails": {
+    "noNewTransactions": true,
+    "description": "FE-12-01 does not introduce new transactions. It enhances existing command handlers that already have proper transaction boundaries (ExecuteInTransactionAsync). The path param validation runs BEFORE the transaction, and auto-created params are included in the existing CreateChildren() flow."
+  },
+  "logCatalog": [
+    { "eventCode": "APIDOC_PATH_PARAMS_EXTRACTED", "uiMessageVi": "Đã phát hiện {count} path parameter trong URL.", "systemMessageEn": "Extracted {count} path parameters from path '{path}'. Params=[{names}].", "level": "Information" },
+    { "eventCode": "APIDOC_PATH_PARAMS_AUTO_CREATED", "uiMessageVi": "Đã tự động tạo {count} path parameter: {names}.", "systemMessageEn": "Auto-created {count} path parameters: [{names}] for path '{path}'.", "level": "Information" },
+    { "eventCode": "APIDOC_PATH_PARAM_VALIDATION_OK", "uiMessageVi": "Path parameters hợp lệ.", "systemMessageEn": "Path parameter consistency validation passed. Path={path}, ParamCount={count}.", "level": "Debug" },
+    { "eventCode": "APIDOC_PATH_PARAM_VALIDATION_FAILED", "uiMessageVi": "Path parameter không hợp lệ.", "systemMessageEn": "Path parameter consistency validation failed. Path={path}, Errors=[{errors}].", "level": "Warning" }
+  ],
+  "samples": {
+    "extractPathParameters": {
+      "input": "/api/products/{productId}/reviews/{reviewId}",
+      "output": [
+        { "name": "productId", "position": 0 },
+        { "name": "reviewId", "position": 1 }
+      ]
+    },
+    "validateConsistencySuccess": {
+      "input": {
+        "path": "/api/users/{userId}",
+        "parameters": [
+          { "name": "userId", "location": "Path", "dataType": "integer", "defaultValue": "42", "isRequired": true }
+        ]
+      },
+      "output": {
+        "isValid": true,
+        "errors": [],
+        "autoCreatedParams": [],
+        "warnings": []
+      }
+    },
+    "validateConsistencyAutoCreate": {
+      "input": {
+        "path": "/api/users/{userId}/orders/{orderId}",
+        "parameters": [
+          { "name": "userId", "location": "Path", "dataType": "integer", "isRequired": true }
+        ]
+      },
+      "output": {
+        "isValid": true,
+        "errors": [],
+        "autoCreatedParams": [
+          { "name": "orderId", "location": "Path", "dataType": "string", "isRequired": true }
+        ],
+        "warnings": []
+      }
+    },
+    "validateConsistencyError": {
+      "input": {
+        "path": "/api/users/{userId}",
+        "parameters": [
+          { "name": "wrongName", "location": "Path", "dataType": "string", "isRequired": true }
+        ]
+      },
+      "output": {
+        "isValid": false,
+        "errors": [
+          "Path parameter 'wrongName' không tồn tại trong path '/api/users/{userId}'. Các placeholder hợp lệ: userId."
+        ],
+        "autoCreatedParams": [],
+        "warnings": []
+      }
+    }
+  }
+}

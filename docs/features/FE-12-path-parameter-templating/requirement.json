@@ -1,0 +1,702 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-requirement",
+  "requirement": {
+    "id": "FE-12",
+    "title": "Path-Parameter Templating Support",
+    "goal": "Hỗ trợ path-parameter templating trong các endpoint được nhập thủ công (Manual Entry), cho phép hệ thống tự động phát hiện placeholder {paramName} trong URL, yêu cầu user cung cấp giá trị mẫu, validate tính nhất quán giữa path và parameters, và resolve URL thực tế để phục vụ test generation và test execution.",
+    "priority": "P1",
+    "status": "planned",
+    "rationale": [
+      "Manual Entry (FE-11) đã cho phép user nhập endpoint nhưng chưa có logic validate/parse {placeholder} trong path.",
+      "Entity EndpointParameter đã có sẵn ParameterLocation.Path — cần logic để tự động extract và validate.",
+      "ImportCurlCommand (FE-13) đã có regex extract {param} — cần tái sử dụng và mở rộng pattern này cho Manual Entry.",
+      "TestGeneration module có TestCaseRequest.PathParams (jsonb) và .Url — cần service resolve URL để chuyển template sang URL thực.",
+      "Không cần tạo entity mới — chỉ cần thêm service logic, validation, và API enhancements trên các entity/command đã có."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-12-01",
+      "title": "Path Parameter Auto-Detection & Validation — Tự động phát hiện {placeholder} và validate nhất quán với parameters",
+      "file": "FE-12-01/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-12-02",
+      "title": "Path Parameter Resolution & URL Building — Resolve template URL thành URL thực tế với giá trị mẫu",
+      "file": "FE-12-02/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    },
+    {
+      "id": "FE-12-03",
+      "title": "Path Parameter Mutation for Test Generation — Tạo test case biến đổi path param cho negative/boundary testing",
+      "file": "FE-12-03/requirement.json",
+      "priority": "P1",
+      "implementationOrder": 3
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "Tự động extract {paramName} từ endpoint path (regex \\{(\\w+)\\}) khi user nhập Manual Entry hoặc cURL import.",
+      "Validate tính nhất quán: mỗi {placeholder} trong path phải có tương ứng EndpointParameter với Location=Path.",
+      "Tự động tạo EndpointParameter (Location=Path, IsRequired=true) cho các placeholder chưa có trong danh sách parameters.",
+      "Validate ngược: nếu user khai báo parameter Location=Path nhưng path không chứa {paramName} → cảnh báo/lỗi.",
+      "Cung cấp service PathParameterTemplateService để parse, validate, và resolve URL.",
+      "Bind placeholder → sample value qua EndpointParameter.DefaultValue hoặc Examples.",
+      "Resolve template URL: /api/users/{userId}/orders/{orderId} + {userId: '123', orderId: '456'} → /api/users/123/orders/456.",
+      "Expose API endpoint mới GET .../endpoints/{endpointId}/resolved-url để preview URL đã resolve.",
+      "Mutation logic: tạo biến thể path param cho negative test (missing, wrong type, non-existent ID, boundary values).",
+      "Tích hợp với TestGeneration: cung cấp resolved URL và path param mutations cho test case generation."
+    ],
+    "outOfScope": [
+      "Thay đổi schema database — không cần tạo entity/table mới.",
+      "Tự động infer kiểu dữ liệu path param từ API response (cần user chỉ định DataType).",
+      "Query parameter templating (khác scope — query params đã được xử lý bình thường).",
+      "Nested path parameters hoặc regex-based path matching (VD: /api/users/{id:\\d+}).",
+      "Tích hợp trực tiếp với TestExecution (FE-07/FE-08 sẽ consume resolved URL từ TestGeneration)."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "fully-implemented",
+        "hasEntities": true,
+        "hasControllers": true,
+        "hasCommands": true,
+        "hasQueries": true,
+        "existingArtifacts": [
+          "EndpointParameter entity (Location=Path already supported)",
+          "AddUpdateEndpointCommand (accepts ManualParameterDefinition)",
+          "CreateManualSpecificationCommand (accepts ManualEndpointDefinition with Parameters)",
+          "ImportCurlCommand (has regex extraction for {param})",
+          "GetEndpointQuery (returns ParameterModel with Location field)",
+          "EndpointsController (CRUD operations)"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "entities-only",
+        "usage": "TestCaseRequest.PathParams (jsonb) và .Url sẽ consume resolved URL từ FE-12 service",
+        "existingArtifacts": [
+          "TestCaseRequest entity (PathParams as jsonb, Url as path template)",
+          "TestCase entity (references TestCaseRequest)"
+        ]
+      }
+    ],
+    "infrastructure": {
+      "database": "PostgreSQL (schema: apidoc) — KHÔNG cần migration mới",
+      "messageBroker": "Không cần cho FE-12",
+      "cache": "Không cần cho FE-12"
+    }
+  },
+  "existingEntities": {
+    "schema": "apidoc",
+    "reusedEntities": [
+      {
+        "name": "ApiEndpoint",
+        "relevantProperties": [
+          {
+            "name": "Path",
+            "type": "string",
+            "maxLength": 500,
+            "description": "Endpoint path template, e.g. /api/users/{userId}"
+          }
+        ]
+      },
+      {
+        "name": "EndpointParameter",
+        "relevantProperties": [
+          {
+            "name": "Name",
+            "type": "string",
+            "description": "Parameter name — phải match {placeholder} trong path"
+          },
+          {
+            "name": "Location",
+            "type": "ParameterLocation",
+            "description": "Path=0 cho path parameters"
+          },
+          {
+            "name": "DataType",
+            "type": "string",
+            "description": "string, integer, uuid, etc. — dùng cho validation và mutation"
+          },
+          {
+            "name": "Format",
+            "type": "string",
+            "description": "uuid, int32, int64, etc. — chi tiết hơn DataType"
+          },
+          {
+            "name": "IsRequired",
+            "type": "bool",
+            "description": "Path params luôn required=true"
+          },
+          {
+            "name": "DefaultValue",
+            "type": "string",
+            "description": "Sample value để resolve URL template"
+          },
+          {
+            "name": "Examples",
+            "type": "string (JSON)",
+            "description": "Nhiều giá trị mẫu cho boundary/mutation testing"
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "ParameterLocation",
+        "values": [
+          "Path = 0",
+          "Query = 1",
+          "Header = 2",
+          "Body = 3",
+          "Cookie = 4"
+        ]
+      }
+    ]
+  },
+  "architecturePatterns": {
+    "referenceModule": "ClassifiedAds.Modules.ApiDocumentation",
+    "patterns": [
+      {
+        "pattern": "Service Layer",
+        "description": "Tạo PathParameterTemplateService trong Services/ — stateless, injectable qua DI.",
+        "location": "ClassifiedAds.Modules.ApiDocumentation/Services/PathParameterTemplateService.cs"
+      },
+      {
+        "pattern": "Command Enhancement",
+        "description": "Enhance AddUpdateEndpointCommand và CreateManualSpecificationCommand — thêm auto-extract và validation logic.",
+        "approach": "Inject IPathParameterTemplateService vào existing command handlers."
+      },
+      {
+        "pattern": "Validation in CommandHandler",
+        "description": "Giữ nguyên pattern manual validation + throw ValidationException (vi-VN messages).",
+        "exceptionTypes": [
+          "ValidationException",
+          "NotFoundException"
+        ]
+      },
+      {
+        "pattern": "Query Enhancement",
+        "description": "Thêm resolved URL vào EndpointDetailModel response.",
+        "approach": "Thêm ResolvedUrl property vào EndpointDetailModel, compute trong GetEndpointQueryHandler."
+      }
+    ]
+  },
+  "namingConventions": {
+    "service": "PathParameterTemplateService (implements IPathParameterTemplateService)",
+    "models": "PathParameterInfo, PathTemplateValidationResult, ResolvedUrlResult, PathParameterMutation",
+    "constants": "Không cần event type mới — FE-12 không tạo entity mới, chỉ enhance existing flow"
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "templateParsingP95Ms": 5,
+      "urlResolutionP95Ms": 2,
+      "mutationGenerationP95Ms": 10
+    },
+    "validation": {
+      "maxPathParamsPerEndpoint": 10,
+      "maxPathLength": 500,
+      "supportedParamPattern": "\\{(\\w+)\\}"
+    }
+  },
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "endpointId",
+        "path",
+        "action"
+      ]
+    }
+  },
+  "implementationOrder": [
+    "1. Services/IPathParameterTemplateService.cs + PathParameterTemplateService.cs — core logic.",
+    "2. Models/ — PathParameterInfo, PathTemplateValidationResult, ResolvedUrlResult, PathParameterMutation.",
+    "3. Enhance AddUpdateEndpointCommand handler — inject service, auto-extract, validate consistency.",
+    "4. Enhance CreateManualSpecificationCommand handler — same as above for bulk endpoint creation.",
+    "5. Enhance ImportCurlCommand handler — refactor existing regex logic to use shared service.",
+    "6. Enhance GetEndpointQuery handler — add resolved URL computation.",
+    "7. Add new endpoint GET .../endpoints/{endpointId}/resolved-url in EndpointsController.",
+    "8. Update ServiceCollectionExtensions.cs — register IPathParameterTemplateService.",
+    "9. Unit Tests cho PathParameterTemplateService.",
+    "10. Integration Tests cho enhanced commands và new endpoint."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: Khi user POST endpoint với path '/api/users/{userId}/orders/{orderId}' và không gửi kèm parameters, hệ thống tự động tạo 2 EndpointParameter (userId, orderId) với Location=Path, IsRequired=true, DataType='string'.",
+    "AC-02: Khi user POST endpoint với path '/api/users/{userId}' và gửi kèm parameter {Name:'userId', Location:'Path', DataType:'integer', DefaultValue:'123'}, hệ thống sử dụng thông tin user cung cấp thay vì auto-detect defaults.",
+    "AC-03: Khi user POST endpoint với path '/api/users/{userId}' nhưng gửi parameter {Name:'wrongName', Location:'Path'}, hệ thống trả lỗi 400 với message 'Path parameter {wrongName} không tồn tại trong path. Các placeholder trong path: userId.'",
+    "AC-04: Khi user POST endpoint với path '/api/users/{userId}' và gửi thêm parameter {Name:'extraParam', Location:'Path'} nhưng path không chứa {extraParam}, hệ thống trả lỗi 400.",
+    "AC-05: GET endpoint detail response bao gồm trường 'resolvedUrl' nếu tất cả path params có DefaultValue. VD: path='/api/users/{userId}', userId.DefaultValue='123' → resolvedUrl='/api/users/123'.",
+    "AC-06: GET endpoint detail response trả resolvedUrl=null nếu có path param thiếu DefaultValue.",
+    "AC-07: GET .../endpoints/{id}/resolved-url trả về object {templateUrl, resolvedUrl, params[{name, value, dataType}], unresolvedParams[]}.",
+    "AC-08: cURL import vẫn hoạt động bình thường — regex extract {param} được refactor sang shared service.",
+    "AC-09: CreateManualSpecification với nhiều endpoints — mỗi endpoint đều được validate path params consistency.",
+    "AC-10: Service cung cấp mutation variants cho path param: missing value, wrong type (string thay integer), non-existent ID (99999), boundary values (0, -1, MAX_INT).",
+    "AC-11: Path param names chỉ chấp nhận \\w+ pattern (alphanumeric + underscore). Tên chứa ký tự đặc biệt → ValidationException.",
+    "AC-12: Endpoint path không chứa {placeholder} nào → không tạo path parameter, không lỗi (valid use case cho static paths)."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Auto-detect path parameters from template",
+      "given": "Path = '/api/products/{productId}/reviews/{reviewId}'",
+      "when": "PathParameterTemplateService.ExtractPathParameters(path) is called",
+      "then": "Returns [{name:'productId', position:0}, {name:'reviewId', position:1}]"
+    },
+    {
+      "id": "TS-02",
+      "name": "Validate consistency — all placeholders have matching params",
+      "given": "Path = '/api/users/{userId}', Parameters = [{name:'userId', location:'Path'}]",
+      "when": "ValidateConsistency(path, parameters) is called",
+      "then": "Returns {isValid:true, errors:[], autoCreatedParams:[]}"
+    },
+    {
+      "id": "TS-03",
+      "name": "Validate consistency — missing param definition",
+      "given": "Path = '/api/users/{userId}/orders/{orderId}', Parameters = [{name:'userId', location:'Path'}]",
+      "when": "ValidateConsistency(path, parameters) is called",
+      "then": "Returns {isValid:true, autoCreatedParams:[{name:'orderId', location:'Path', dataType:'string', isRequired:true}]}"
+    },
+    {
+      "id": "TS-04",
+      "name": "Validate consistency — extra param not in path",
+      "given": "Path = '/api/users/{userId}', Parameters = [{name:'userId', location:'Path'}, {name:'extraParam', location:'Path'}]",
+      "when": "ValidateConsistency(path, parameters) is called",
+      "then": "Returns {isValid:false, errors:['Path parameter extraParam không tồn tại trong path.']}"
+    },
+    {
+      "id": "TS-05",
+      "name": "Resolve URL with all values provided",
+      "given": "Path = '/api/users/{userId}/orders/{orderId}', values = {userId:'123', orderId:'456'}",
+      "when": "ResolveUrl(path, values) is called",
+      "then": "Returns '/api/users/123/orders/456'"
+    },
+    {
+      "id": "TS-06",
+      "name": "Resolve URL with missing values",
+      "given": "Path = '/api/users/{userId}/orders/{orderId}', values = {userId:'123'}",
+      "when": "ResolveUrl(path, values) is called",
+      "then": "Returns {resolvedUrl:null, unresolvedParams:['orderId']}"
+    },
+    {
+      "id": "TS-07",
+      "name": "No path parameters in static path",
+      "given": "Path = '/api/health'",
+      "when": "ExtractPathParameters(path) is called",
+      "then": "Returns empty list []"
+    },
+    {
+      "id": "TS-08",
+      "name": "Generate mutations for integer path param",
+      "given": "Parameter = {name:'userId', dataType:'integer', defaultValue:'42'}",
+      "when": "GenerateMutations(parameter) is called",
+      "then": "Returns mutations: [{type:'missing', value:''}, {type:'wrongType', value:'abc'}, {type:'boundary_zero', value:'0'}, {type:'boundary_negative', value:'-1'}, {type:'boundary_max', value:'2147483647'}, {type:'nonExistent', value:'999999999'}]"
+    },
+    {
+      "id": "TS-09",
+      "name": "Generate mutations for uuid path param",
+      "given": "Parameter = {name:'id', dataType:'string', format:'uuid', defaultValue:'550e8400-e29b-41d4-a716-446655440000'}",
+      "when": "GenerateMutations(parameter) is called",
+      "then": "Returns mutations: [{type:'missing', value:''}, {type:'invalidFormat', value:'not-a-uuid'}, {type:'wrongType', value:'12345'}, {type:'nonExistent', value:'00000000-0000-0000-0000-000000000000'}]"
+    },
+    {
+      "id": "TS-10",
+      "name": "AddUpdateEndpoint auto-creates path params",
+      "given": "POST endpoint with path='/api/items/{itemId}' and empty parameters list",
+      "when": "AddUpdateEndpointCommand is dispatched",
+      "then": "Endpoint is created with 1 EndpointParameter: {name:'itemId', location:Path, dataType:'string', isRequired:true}"
+    }
+  ],
+  "logCatalog": [
+    {
+      "eventCode": "APIDOC_PATH_PARAMS_EXTRACTED",
+      "uiMessageVi": "Đã phát hiện {count} path parameter trong URL.",
+      "systemMessageEn": "Extracted {count} path parameters from endpoint path. EndpointId={endpointId}, Path={path}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PATH_PARAMS_AUTO_CREATED",
+      "uiMessageVi": "Đã tự động tạo {count} path parameter: {names}.",
+      "systemMessageEn": "Auto-created {count} path parameters: {names}. EndpointId={endpointId}.",
+      "level": "Information"
+    },
+    {
+      "eventCode": "APIDOC_PATH_PARAM_VALIDATION_FAILED",
+      "uiMessageVi": "Path parameter không hợp lệ.",
+      "systemMessageEn": "Path parameter validation failed. EndpointId={endpointId}, Errors={errors}.",
+      "level": "Warning"
+    },
+    {
+      "eventCode": "APIDOC_URL_RESOLVED",
+      "uiMessageVi": "Đã resolve URL thành công.",
+      "systemMessageEn": "URL resolved successfully. Template={template}, Resolved={resolved}.",
+      "level": "Debug"
+    },
+    {
+      "eventCode": "APIDOC_URL_RESOLUTION_INCOMPLETE",
+      "uiMessageVi": "Không thể resolve URL — thiếu giá trị cho {params}.",
+      "systemMessageEn": "URL resolution incomplete. UnresolvedParams={params}.",
+      "level": "Warning"
+    }
+  ],
+  "samples": {
+    "createEndpointWithPathParams": {
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "description": "Tạo endpoint có path parameters với sample values",
+      "body": {
+        "httpMethod": "GET",
+        "path": "/api/products/{productId}/reviews/{reviewId}",
+        "operationId": "getProductReview",
+        "summary": "Get a specific review for a product",
+        "description": "Retrieves a single review by reviewId for the specified product",
+        "tags": [
+          "products",
+          "reviews"
+        ],
+        "isDeprecated": false,
+        "parameters": [
+          {
+            "name": "productId",
+            "location": "Path",
+            "dataType": "integer",
+            "format": "int64",
+            "isRequired": true,
+            "defaultValue": "42",
+            "schema": null,
+            "examples": "[\"42\", \"1\", \"999\"]"
+          },
+          {
+            "name": "reviewId",
+            "location": "Path",
+            "dataType": "string",
+            "format": "uuid",
+            "isRequired": true,
+            "defaultValue": "550e8400-e29b-41d4-a716-446655440000",
+            "schema": null,
+            "examples": "[\"550e8400-e29b-41d4-a716-446655440000\"]"
+          }
+        ],
+        "responses": [
+          {
+            "statusCode": 200,
+            "description": "Review found",
+            "schema": "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"format\":\"uuid\"},\"productId\":{\"type\":\"integer\"},\"rating\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5},\"comment\":{\"type\":\"string\"}}}",
+            "examples": "{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"productId\":42,\"rating\":5,\"comment\":\"Great product!\"}",
+            "headers": null
+          },
+          {
+            "statusCode": 404,
+            "description": "Product or Review not found",
+            "schema": "{\"type\":\"object\",\"properties\":{\"error\":{\"type\":\"string\"}}}",
+            "examples": "{\"error\":\"Review not found\"}",
+            "headers": null
+          }
+        ]
+      }
+    },
+    "createEndpointWithPathParamsResponse": {
+      "status": 201,
+      "body": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "apiSpecId": "11111111-2222-3333-4444-555555555555",
+        "httpMethod": "GET",
+        "path": "/api/products/{productId}/reviews/{reviewId}",
+        "operationId": "getProductReview",
+        "summary": "Get a specific review for a product",
+        "description": "Retrieves a single review by reviewId for the specified product",
+        "tags": "[\"products\",\"reviews\"]",
+        "isDeprecated": false,
+        "createdDateTime": "2026-02-16T10:00:00+07:00",
+        "updatedDateTime": null,
+        "resolvedUrl": "/api/products/42/reviews/550e8400-e29b-41d4-a716-446655440000",
+        "parameters": [
+          {
+            "id": "aaaa1111-bbbb-cccc-dddd-eeee11112222",
+            "name": "productId",
+            "location": "Path",
+            "dataType": "integer",
+            "format": "int64",
+            "isRequired": true,
+            "defaultValue": "42",
+            "schema": null,
+            "examples": "[\"42\", \"1\", \"999\"]"
+          },
+          {
+            "id": "aaaa3333-bbbb-cccc-dddd-eeee33334444",
+            "name": "reviewId",
+            "location": "Path",
+            "dataType": "string",
+            "format": "uuid",
+            "isRequired": true,
+            "defaultValue": "550e8400-e29b-41d4-a716-446655440000",
+            "schema": null,
+            "examples": "[\"550e8400-e29b-41d4-a716-446655440000\"]"
+          }
+        ],
+        "responses": [
+          {
+            "id": "rrrr1111-bbbb-cccc-dddd-eeee11112222",
+            "statusCode": 200,
+            "description": "Review found",
+            "schema": "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"format\":\"uuid\"},\"productId\":{\"type\":\"integer\"},\"rating\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5},\"comment\":{\"type\":\"string\"}}}",
+            "examples": "{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"productId\":42,\"rating\":5,\"comment\":\"Great product!\"}",
+            "headers": null
+          },
+          {
+            "id": "rrrr2222-bbbb-cccc-dddd-eeee22223333",
+            "statusCode": 404,
+            "description": "Product or Review not found",
+            "schema": "{\"type\":\"object\",\"properties\":{\"error\":{\"type\":\"string\"}}}",
+            "examples": "{\"error\":\"Review not found\"}",
+            "headers": null
+          }
+        ],
+        "securityRequirements": []
+      }
+    },
+    "createEndpointAutoDetect": {
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "description": "Tạo endpoint mà không gửi parameters — hệ thống tự detect",
+      "body": {
+        "httpMethod": "DELETE",
+        "path": "/api/users/{userId}",
+        "summary": "Delete a user by ID",
+        "parameters": [],
+        "responses": [
+          {
+            "statusCode": 204,
+            "description": "User deleted successfully"
+          },
+          {
+            "statusCode": 404,
+            "description": "User not found"
+          }
+        ]
+      }
+    },
+    "createEndpointAutoDetectResponse": {
+      "status": 201,
+      "description": "Hệ thống tự động tạo path parameter userId",
+      "body": {
+        "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "httpMethod": "DELETE",
+        "path": "/api/users/{userId}",
+        "summary": "Delete a user by ID",
+        "parameters": [
+          {
+            "id": "auto-1111-2222-3333-444455556666",
+            "name": "userId",
+            "location": "Path",
+            "dataType": "string",
+            "format": null,
+            "isRequired": true,
+            "defaultValue": null,
+            "schema": null,
+            "examples": null
+          }
+        ],
+        "responses": [
+          {
+            "statusCode": 204,
+            "description": "User deleted successfully"
+          },
+          {
+            "statusCode": 404,
+            "description": "User not found"
+          }
+        ],
+        "resolvedUrl": null
+      }
+    },
+    "resolvedUrlEndpoint": {
+      "method": "GET",
+      "url": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "description": "Preview resolved URL cho endpoint",
+      "response": {
+        "status": 200,
+        "body": {
+          "endpointId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "templateUrl": "/api/products/{productId}/reviews/{reviewId}",
+          "resolvedUrl": "/api/products/42/reviews/550e8400-e29b-41d4-a716-446655440000",
+          "isFullyResolved": true,
+          "parameters": [
+            {
+              "name": "productId",
+              "value": "42",
+              "dataType": "integer",
+              "source": "defaultValue"
+            },
+            {
+              "name": "reviewId",
+              "value": "550e8400-e29b-41d4-a716-446655440000",
+              "dataType": "string",
+              "source": "defaultValue"
+            }
+          ],
+          "unresolvedParameters": []
+        }
+      }
+    },
+    "resolvedUrlPartial": {
+      "method": "GET",
+      "url": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "description": "Khi chưa có đủ sample values",
+      "response": {
+        "status": 200,
+        "body": {
+          "endpointId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+          "templateUrl": "/api/users/{userId}",
+          "resolvedUrl": null,
+          "isFullyResolved": false,
+          "parameters": [],
+          "unresolvedParameters": [
+            {
+              "name": "userId",
+              "dataType": "string",
+              "reason": "Chưa có giá trị mẫu (DefaultValue hoặc Examples)."
+            }
+          ]
+        }
+      }
+    },
+    "validationErrorMismatch": {
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "description": "Lỗi khi parameter name không match placeholder trong path",
+      "body": {
+        "httpMethod": "GET",
+        "path": "/api/users/{userId}",
+        "parameters": [
+          {
+            "name": "wrongName",
+            "location": "Path",
+            "dataType": "string",
+            "isRequired": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "ValidationException",
+          "message": "Path parameter 'wrongName' không tồn tại trong path '/api/users/{userId}'. Các placeholder hợp lệ: userId."
+        }
+      }
+    },
+    "manualSpecWithPathParams": {
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/manual",
+      "description": "Tạo manual spec với nhiều endpoints có path params",
+      "body": {
+        "name": "User Management API v2",
+        "version": "2.0.0",
+        "autoActivate": true,
+        "endpoints": [
+          {
+            "httpMethod": "GET",
+            "path": "/api/v2/users/{userId}",
+            "operationId": "getUserById",
+            "summary": "Get user by ID",
+            "parameters": [
+              {
+                "name": "userId",
+                "location": "Path",
+                "dataType": "integer",
+                "format": "int64",
+                "isRequired": true,
+                "defaultValue": "1"
+              }
+            ],
+            "responses": [
+              {
+                "statusCode": 200,
+                "description": "User found"
+              },
+              {
+                "statusCode": 404,
+                "description": "User not found"
+              }
+            ]
+          },
+          {
+            "httpMethod": "PUT",
+            "path": "/api/v2/users/{userId}/roles/{roleId}",
+            "operationId": "assignRole",
+            "summary": "Assign role to user",
+            "parameters": [
+              {
+                "name": "userId",
+                "location": "Path",
+                "dataType": "integer",
+                "isRequired": true,
+                "defaultValue": "1"
+              },
+              {
+                "name": "roleId",
+                "location": "Path",
+                "dataType": "string",
+                "format": "uuid",
+                "isRequired": true,
+                "defaultValue": "a1b2c3d4-0000-0000-0000-000000000001"
+              }
+            ],
+            "responses": [
+              {
+                "statusCode": 200,
+                "description": "Role assigned"
+              },
+              {
+                "statusCode": 404,
+                "description": "User or role not found"
+              }
+            ]
+          },
+          {
+            "httpMethod": "GET",
+            "path": "/api/v2/health",
+            "operationId": "healthCheck",
+            "summary": "Health check (no path params)",
+            "parameters": [],
+            "responses": [
+              {
+                "statusCode": 200,
+                "description": "OK"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "curlImportWithPathParams": {
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/curl-import",
+      "description": "cURL import tự động detect path params",
+      "body": {
+        "name": "Order API from cURL",
+        "version": "1.0",
+        "curlCommand": "curl -X GET 'https://api.example.com/api/orders/{orderId}/items/{itemId}' -H 'Authorization: Bearer token123'",
+        "autoActivate": false
+      },
+      "response": {
+        "status": 201,
+        "description": "Spec created with 2 auto-detected path params (orderId, itemId)"
+      }
+    }
+  }
+}

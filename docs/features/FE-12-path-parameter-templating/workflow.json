@@ -1,0 +1,402 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-12-workflow",
+  "workflow": {
+    "id": "wf-path-parameter-templating-v1",
+    "requirementId": "FE-12",
+    "name": "Path Parameter Templating Support Flow",
+    "mode": "request-response (synchronous)",
+    "description": "Luồng xử lý đồng bộ cho path parameter extraction, validation, URL resolution, và mutation generation. Không cần outbox pattern — pure business logic service + query layer."
+  },
+  "architectureOverview": {
+    "summary": "FE-12 là feature thuần business logic, không tạo/sửa entity mới. Tạo IPathParameterTemplateService handle toàn bộ logic. Enhance existing commands (AddUpdateEndpoint, ImportCurl, CreateManualSpec) để gọi service. Thêm 2 query endpoints mới cho URL resolution và mutation generation.",
+    "noDirectMessageBrokerNeeded": true,
+    "noRedisNeeded": true,
+    "outboxRequired": false,
+    "transactionRequired": false,
+    "noNewMigration": true,
+    "keyPrinciple": "Refactor inline regex từ ImportCurlCommand vào shared service. Enhance existing commands, KHÔNG tạo commands mới."
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Path Parameter Auto-Detection on Endpoint Create/Update",
+      "type": "synchronous (enhancement to existing AddUpdateEndpointCommand)",
+      "trigger": "POST/PUT /api/projects/{pid}/specifications/{sid}/endpoints",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{pid}/specifications/{sid}/endpoints { path: '/api/users/{userId}/posts/{postId}', httpMethod: 'GET', parameters: [...] }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "EndpointsController",
+          "action": "Bind model, resolve ICurrentUser.UserId, dispatch AddUpdateEndpointCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateEndpointCommandHandler",
+          "action": "Validate input (existing logic unchanged). Verify project ownership, spec belongs to project.",
+          "output": "Validation passed"
+        },
+        {
+          "step": 4,
+          "actor": "AddUpdateEndpointCommandHandler",
+          "action": "=== NEW: Call _pathParamService.EnsurePathParameterConsistency(path, parameters) ===\n→ Extract {userId}, {postId} from path\n→ Check user-provided params match placeholders\n→ Auto-create missing path params (Location=Path, IsRequired=true, DataType=string)\n→ Throw ValidationException if extra path params defined but not in path",
+          "output": "Merged parameter list (user-defined + auto-created)",
+          "enhancement": "INSERT this step BEFORE CreateChildren() for create, or BEFORE DeleteChildren()+CreateChildren() for update."
+        },
+        {
+          "step": 5,
+          "actor": "AddUpdateEndpointCommandHandler",
+          "action": "Continue with existing logic: Create endpoint entity, CreateChildren() for parameters (now including auto-created ones), save.",
+          "output": "Endpoint + parameters saved to DB"
+        },
+        {
+          "step": 6,
+          "actor": "EndpointsController",
+          "action": "Dispatch GetEndpointQuery. Return Created(201) / Ok(200).",
+          "output": "HTTP 201/200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Path Parameter Auto-Detection on cURL Import",
+      "type": "synchronous (enhancement to existing ImportCurlCommand)",
+      "trigger": "POST /api/projects/{pid}/specifications/{sid}/endpoints/import-curl",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST .../endpoints/import-curl { curlCommand: 'curl https://api.example.com/users/{userId}' }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ImportCurlCommandHandler",
+          "action": "Parse cURL via CurlParser (existing logic).",
+          "output": "CurlParseResult"
+        },
+        {
+          "step": 3,
+          "actor": "ImportCurlCommandHandler",
+          "action": "=== REFACTOR: Replace inline Regex.Matches(path, @\"\\{(\\w+)\\}\") with _pathParamService.ExtractPathParameters(path) ===\n→ Remove 3 lines of inline regex code\n→ Call shared service instead",
+          "output": "List<PathParameterInfo>",
+          "refactorNote": "Before: var matches = Regex.Matches(parseResult.Path ?? \"\", @\"\\{(\\w+)\\}\"); → manual loop to create params.\nAfter: var extractedParams = _pathParamService.ExtractPathParameters(parseResult.Path); → use result to create params."
+        },
+        {
+          "step": 4,
+          "actor": "ImportCurlCommandHandler",
+          "action": "Continue creating EndpointParameter entities from extractedParams (same entity creation logic, now powered by shared service).",
+          "output": "EndpointParameter entities created"
+        },
+        {
+          "step": 5,
+          "actor": "ImportCurlCommandHandler",
+          "action": "Save spec + endpoint + parameters in transaction (existing logic unchanged).",
+          "output": "Entities saved to DB"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Path Parameter Auto-Detection on Manual Spec Creation",
+      "type": "synchronous (enhancement to existing CreateManualSpecificationCommand)",
+      "trigger": "POST /api/projects/{pid}/specifications/manual",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST .../specifications/manual { name, endpoints: [{ path: '/api/items/{itemId}', parameters: [...] }] }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "CreateManualSpecificationCommandHandler",
+          "action": "Validate input, verify project ownership (existing logic).",
+          "output": "Validation passed"
+        },
+        {
+          "step": 3,
+          "actor": "CreateManualSpecificationCommandHandler",
+          "action": "=== NEW: For each endpoint in request, call _pathParamService.EnsurePathParameterConsistency(endpoint.Path, endpoint.Parameters) ===\n→ Auto-detect {placeholders}, validate against user params, auto-create missing ones.",
+          "output": "Merged parameters for each endpoint",
+          "enhancement": "INSERT inside the foreach(endpoint) loop, BEFORE creating EndpointParameter entities."
+        },
+        {
+          "step": 4,
+          "actor": "CreateManualSpecificationCommandHandler",
+          "action": "Continue with existing logic: create spec, endpoints, parameters in transaction.",
+          "output": "Spec + endpoints + parameters saved"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Resolve URL with Parameter Values",
+      "type": "synchronous (new query)",
+      "trigger": "GET /api/projects/{pid}/specifications/{sid}/endpoints/{eid}/resolved-url",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET .../endpoints/{eid}/resolved-url?userId=42&postId=abc-xyz",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "EndpointsController",
+          "action": "Bind query params to Dictionary<string,string>, dispatch GetResolvedUrlQuery.",
+          "output": "Query dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GetResolvedUrlQueryHandler",
+          "action": "Verify ownership chain: project → spec → endpoint (standard pattern).",
+          "output": "Access verified"
+        },
+        {
+          "step": 4,
+          "actor": "GetResolvedUrlQueryHandler",
+          "action": "If no parameterValues provided → load EndpointParameters (Location=Path) from DB, use DefaultValue/Examples as fallback values.",
+          "output": "Parameter values resolved from DB or request"
+        },
+        {
+          "step": 5,
+          "actor": "GetResolvedUrlQueryHandler",
+          "action": "Call _pathParamService.ResolveUrl(endpoint.Path, parameterValues).\n→ Replace {userId} with '42', {postId} with 'abc-xyz'\n→ URI-encode values\n→ Track unresolvedParameters",
+          "output": "ResolvedUrlResult"
+        },
+        {
+          "step": 6,
+          "actor": "EndpointsController",
+          "action": "Return Ok(200) with ResolvedUrlResult.",
+          "output": "HTTP 200 { originalTemplate, resolvedUrl, resolvedParameters, unresolvedParameters, isFullyResolved }"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Generate Path Parameter Mutations",
+      "type": "synchronous (new query)",
+      "trigger": "GET /api/projects/{pid}/specifications/{sid}/endpoints/{eid}/path-param-mutations",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET .../endpoints/{eid}/path-param-mutations",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "EndpointsController",
+          "action": "Dispatch GetPathParamMutationsQuery.",
+          "output": "Query dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GetPathParamMutationsQueryHandler",
+          "action": "Verify ownership chain: project → spec → endpoint (standard pattern).",
+          "output": "Access verified"
+        },
+        {
+          "step": 4,
+          "actor": "GetPathParamMutationsQueryHandler",
+          "action": "Load EndpointParameters with Location=Path from DB. If none → return empty result (totalMutations=0).",
+          "output": "Path parameter list"
+        },
+        {
+          "step": 5,
+          "actor": "GetPathParamMutationsQueryHandler",
+          "action": "Build defaultValues dictionary from path param DB records.\nFor each path param:\n  → Call _pathParamService.GenerateMutations(name, dataType, format, defaultValue)\n  → For each mutation: call _pathParamService.ResolveUrl(path, {mutated param + default others})\n  → Build PathParameterMutationWithUrl with resolvedUrl",
+          "output": "List<ParameterMutationGroup> with mutations + resolved URLs"
+        },
+        {
+          "step": 6,
+          "actor": "EndpointsController",
+          "action": "Return Ok(200) with PathParamMutationsResult.",
+          "output": "HTTP 200 { endpointId, templatePath, totalMutations, parameterMutations: [{ parameterName, mutations: [...] }] }"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "implicitTransactions": [
+      "Existing AddUpdateEndpointCommand transaction unchanged — EnsurePathParameterConsistency modifies in-memory param list BEFORE entity creation.",
+      "Existing ImportCurlCommand transaction unchanged — ExtractPathParameters replaces inline regex but same entity creation flow.",
+      "Existing CreateManualSpecificationCommand transaction unchanged."
+    ],
+    "explicitTransactions": [],
+    "noNewTransactions": "FE-12 does not introduce any new transaction boundaries. All enhancements operate within existing transaction scopes."
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "language": "vi-VN",
+      "examples": [
+        "Tên path parameter trùng lặp: 'userId'. Mỗi placeholder phải có tên duy nhất.",
+        "Path parameter 'categoryId' không tồn tại trong path '/api/users/{userId}'. Các placeholder hợp lệ: userId.",
+        "Path parameter 'userId' đã được set IsRequired=true (path params luôn bắt buộc)."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Project '{id}' không tồn tại.",
+        "Specification '{id}' không tồn tại.",
+        "Endpoint '{id}' không tồn tại."
+      ]
+    },
+    "noServerErrors": "FE-12 service methods are pure logic — no I/O, no external calls. Server errors should not occur from FE-12 code."
+  },
+  "folderStructure": {
+    "target": "ClassifiedAds.Modules.ApiDocumentation/",
+    "newFiles": [
+      "Services/IPathParameterTemplateService.cs",
+      "Services/PathParameterTemplateService.cs",
+      "Models/PathParameterInfo.cs",
+      "Models/PathTemplateValidationResult.cs",
+      "Models/ResolvedUrlResult.cs",
+      "Models/PathParameterMutation.cs",
+      "Models/PathParamMutationsResult.cs",
+      "Queries/GetResolvedUrlQuery.cs",
+      "Queries/GetPathParamMutationsQuery.cs"
+    ],
+    "modifiedFiles": [
+      "Commands/AddUpdateEndpointCommand.cs — inject IPathParameterTemplateService, call EnsurePathParameterConsistency before CreateChildren()",
+      "Commands/ImportCurlCommand.cs — inject IPathParameterTemplateService, replace inline regex with ExtractPathParameters()",
+      "Commands/CreateManualSpecificationCommand.cs — inject IPathParameterTemplateService, call EnsurePathParameterConsistency in endpoint loop",
+      "Controllers/EndpointsController.cs — add 2 new action methods: GetResolvedUrl, GetPathParamMutations",
+      "ServiceCollectionExtensions.cs — register IPathParameterTemplateService as Scoped"
+    ],
+    "totalNewFiles": 9,
+    "totalModifiedFiles": 5,
+    "noNewMigrations": true,
+    "noNewEntities": true
+  },
+  "dependencyGraph": {
+    "description": "FE-12-01 → FE-12-02 → FE-12-03 (sequential dependency)",
+    "phases": [
+      {
+        "phase": "FE-12-01",
+        "provides": ["IPathParameterTemplateService interface", "PathParameterTemplateService class", "ExtractPathParameters()", "ValidatePathParameterConsistency()", "EnsurePathParameterConsistency()", "Model classes"],
+        "consumes": [],
+        "blocks": ["FE-12-02", "FE-12-03"]
+      },
+      {
+        "phase": "FE-12-02",
+        "provides": ["ResolveUrl()", "GetResolvedUrlQuery", "EndpointsController.GetResolvedUrl action"],
+        "consumes": ["ExtractPathParameters() from FE-12-01"],
+        "blocks": ["FE-12-03"]
+      },
+      {
+        "phase": "FE-12-03",
+        "provides": ["GenerateMutations()", "GetPathParamMutationsQuery", "EndpointsController.GetPathParamMutations action"],
+        "consumes": ["ExtractPathParameters() from FE-12-01", "ResolveUrl() from FE-12-02"],
+        "blocks": []
+      }
+    ]
+  },
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Service Foundation (FE-12-01)",
+      "tasks": [
+        "Tạo Models/PathParameterInfo.cs",
+        "Tạo Models/PathTemplateValidationResult.cs",
+        "Tạo Services/IPathParameterTemplateService.cs (interface with 4 methods + GenerateMutations placeholder)",
+        "Tạo Services/PathParameterTemplateService.cs — implement ExtractPathParameters, ValidatePathParameterConsistency, EnsurePathParameterConsistency",
+        "Register IPathParameterTemplateService trong ServiceCollectionExtensions.cs",
+        "Enhance Commands/AddUpdateEndpointCommand.cs — inject service, call EnsurePathParameterConsistency before CreateChildren()",
+        "Enhance Commands/CreateManualSpecificationCommand.cs — inject service, call EnsurePathParameterConsistency in endpoint loop",
+        "Refactor Commands/ImportCurlCommand.cs — inject service, replace inline regex with ExtractPathParameters()",
+        "Verify build thành công",
+        "Test: POST .../endpoints với path '/api/users/{userId}' và không có params → auto-create userId param"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "URL Resolution (FE-12-02)",
+      "tasks": [
+        "Tạo Models/ResolvedUrlResult.cs",
+        "Implement ResolveUrl method trong PathParameterTemplateService.cs",
+        "Tạo Queries/GetResolvedUrlQuery.cs (query + handler)",
+        "Thêm GetResolvedUrl action vào EndpointsController.cs",
+        "Verify build thành công",
+        "Test: GET .../endpoints/{eid}/resolved-url?userId=42 → resolved URL"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Mutation Generation (FE-12-03)",
+      "tasks": [
+        "Tạo Models/PathParameterMutation.cs",
+        "Tạo Models/PathParamMutationsResult.cs (includes ParameterMutationGroup, PathParameterMutationWithUrl)",
+        "Implement GenerateMutations method + helper methods (AddIntegerMutations, AddNumberMutations, AddBooleanMutations, AddStringMutations, GenerateNonExistentValue) trong PathParameterTemplateService.cs",
+        "Tạo Queries/GetPathParamMutationsQuery.cs (query + handler)",
+        "Thêm GetPathParamMutations action vào EndpointsController.cs",
+        "Verify build thành công",
+        "Test: GET .../endpoints/{eid}/path-param-mutations → mutations grouped by param"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Integration Testing & Validation",
+      "tasks": [
+        "Test end-to-end flow 1: Create endpoint → auto-detect params → resolve URL → get mutations",
+        "Test end-to-end flow 2: Import cURL → auto-detect params → verify shared service used",
+        "Test edge case: Endpoint without path params → empty mutations result",
+        "Test edge case: Duplicate placeholder names → ValidationException",
+        "Test edge case: Extra params defined but not in path → ValidationException",
+        "Verify no regression on existing AddUpdateEndpoint, ImportCurl, CreateManualSpec",
+        "Verify build + format: dotnet build, dotnet format"
+      ]
+    }
+  ],
+  "crossModuleConsumers": {
+    "testGeneration": {
+      "module": "ClassifiedAds.Modules.TestGeneration",
+      "entity": "TestCaseRequest",
+      "fields": ["Url (string - resolved URL)", "PathParams (jsonb - param values)"],
+      "consumptionNote": "FE-05/FE-06 sẽ gọi GET .../path-param-mutations API hoặc reference IPathParameterTemplateService trực tiếp (nếu same module boundary) để lấy mutation list khi generating test cases.",
+      "futureIntegration": true
+    }
+  },
+  "diagrams": {
+    "sequenceDiagram": {
+      "title": "FE-12 Complete Flow — Create Endpoint with Auto-Detection + Resolve + Mutations",
+      "actors": ["Client", "EndpointsController", "AddUpdateEndpointCmdHandler", "PathParamTemplateService", "DB", "GetResolvedUrlHandler", "GetPathParamMutationsHandler"],
+      "sequence": [
+        "Client → EndpointsController: POST /endpoints { path: '/api/users/{userId}', params: [] }",
+        "EndpointsController → AddUpdateEndpointCmdHandler: Dispatch command",
+        "AddUpdateEndpointCmdHandler → PathParamTemplateService: EnsurePathParameterConsistency('/api/users/{userId}', [])",
+        "PathParamTemplateService → PathParamTemplateService: ExtractPathParameters → [{name:'userId', position:0}]",
+        "PathParamTemplateService → PathParamTemplateService: ValidatePathParameterConsistency → autoCreate userId",
+        "PathParamTemplateService → AddUpdateEndpointCmdHandler: merged params [{name:'userId', location:'Path', isRequired:true}]",
+        "AddUpdateEndpointCmdHandler → DB: Save endpoint + auto-created userId param",
+        "DB → EndpointsController: 201 Created",
+        "",
+        "Client → EndpointsController: GET /endpoints/{eid}/resolved-url?userId=42",
+        "EndpointsController → GetResolvedUrlHandler: Dispatch query",
+        "GetResolvedUrlHandler → PathParamTemplateService: ResolveUrl('/api/users/{userId}', {userId:'42'})",
+        "PathParamTemplateService → GetResolvedUrlHandler: { resolvedUrl:'/api/users/42', isFullyResolved:true }",
+        "GetResolvedUrlHandler → EndpointsController: 200 OK",
+        "",
+        "Client → EndpointsController: GET /endpoints/{eid}/path-param-mutations",
+        "EndpointsController → GetPathParamMutationsHandler: Dispatch query",
+        "GetPathParamMutationsHandler → DB: Load path params",
+        "GetPathParamMutationsHandler → PathParamTemplateService: GenerateMutations('userId', 'string', null, null)",
+        "PathParamTemplateService → GetPathParamMutationsHandler: [empty, specialChars, sqlInjection, veryLong, unicode, whitespace, nonExistent]",
+        "GetPathParamMutationsHandler → PathParamTemplateService: ResolveUrl for each mutation value",
+        "GetPathParamMutationsHandler → EndpointsController: 200 OK { totalMutations:7, parameterMutations:[...] }"
+      ]
+    }
+  }
+}

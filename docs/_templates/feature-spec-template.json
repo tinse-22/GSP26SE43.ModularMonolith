@@ -1,0 +1,91 @@
+{
+    "$schema": "feature-specification",
+    "version": "1.0.0",
+    "title": "[Module Name] — [Feature Name]",
+    "description": "[Mô tả tổng quát feature bằng tiếng Việt, bao gồm context kiến trúc]",
+    "part": "[1/N] - [Tên phần, VD: Architecture & Entities]",
+    "techStack": {
+        "framework": ".NET 10 (ASP.NET Core Web API)",
+        "database": "PostgreSQL (via Entity Framework Core + Npgsql)",
+        "authentication": "ASP.NET Core Identity + JWT Bearer",
+        "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, Schema isolation per module)"
+    },
+    "architecture": {
+        "description": "[Mô tả feature mở rộng hoặc thêm mới module nào]",
+        "moduleStructure": {
+            "description": "[Mô tả vị trí code trong project]",
+            "addedFiles": [
+                {
+                    "path": "[RelativePath/FileName.cs]",
+                    "description": "[Mô tả file]"
+                }
+            ],
+            "modifiedFiles": [
+                {
+                    "path": "[RelativePath/FileName.cs]",
+                    "description": "[Mô tả thay đổi]"
+                }
+            ]
+        },
+        "layers": [
+            {
+                "name": "[Layer name]",
+                "description": "[Mô tả layer]",
+                "folder": "[Folder path]/"
+            }
+        ],
+        "flows": [
+            {
+                "name": "[Tên flow]",
+                "steps": [
+                    "1. [Step 1]",
+                    "2. [Step 2]"
+                ]
+            }
+        ]
+    },
+    "entities": {
+        "baseClass": {
+            "name": "Entity<TKey>",
+            "description": "Base class kế thừa IHasKey<TKey> và ITrackable."
+        },
+        "existingEntities": {
+            "[EntityName]": {
+                "file": "[Module]/Entities/[EntityName].cs",
+                "description": "[Mô tả entity đã có]",
+                "keyProperties": {
+                    "[PropName]": "[Type] - [Mô tả]"
+                }
+            }
+        },
+        "newEntities": {
+            "[NewEntityName]": {
+                "file": "[Module]/Entities/[NewEntityName].cs",
+                "description": "[Mô tả entity mới]",
+                "properties": {
+                    "[PropName]": "[Type] - [Mô tả]"
+                }
+            }
+        }
+    },
+    "repositoryPattern": {
+        "description": "IRepository<T, Guid> generic pattern. Không cần custom repository interface.",
+        "registration": "services.AddScoped<IRepository<[Entity], Guid>, Repository<[Entity], Guid>>();"
+    },
+    "cqrsPattern": {
+        "description": "CQRS pattern với Dispatcher. Command/Query class và Handler class trong CÙNG FILE.",
+        "command": {
+            "interface": "ICommand",
+            "handler": "ICommandHandler<TCommand>",
+            "errorHandling": "Throw ValidationException hoặc NotFoundException"
+        },
+        "query": {
+            "interface": "IQuery<TResult>",
+            "handler": "IQueryHandler<TQuery, TResult>"
+        }
+    },
+    "keyDesignDecisions": [
+        "[Quyết định thiết kế quan trọng 1]",
+        "[Quyết định thiết kế quan trọng 2]"
+    ]
+}

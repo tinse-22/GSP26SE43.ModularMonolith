@@ -1,0 +1,130 @@
+{
+    "$schema": "ai-agent-requirement-spec",
+    "version": "1.0.0",
+    "documentId": "fe-XX-requirement",
+    "requirement": {
+        "id": "FE-XX",
+        "title": "[Tên requirement ngắn gọn]",
+        "goal": "[Mô tả mục tiêu chính của requirement bằng tiếng Việt]",
+        "priority": "P0",
+        "status": "planned",
+        "rationale": [
+            "[Lý do 1 tại sao cần implement requirement này]",
+            "[Lý do 2 — context về module/entity đã có sẵn]",
+            "[Lý do 3 — dependency hoặc pattern cần tuân theo]"
+        ]
+    },
+    "subRequirements": [
+        {
+            "id": "FE-XX-01",
+            "title": "[Tên sub-requirement]",
+            "file": "FE-XX-01/requirement.json",
+            "priority": "P0",
+            "implementationOrder": 1
+        }
+    ],
+    "scope": {
+        "inScope": [
+            "[Mô tả chức năng nằm trong scope]"
+        ],
+        "outOfScope": [
+            "[Mô tả chức năng KHÔNG nằm trong scope, kèm reference FE-xx nếu có]"
+        ]
+    },
+    "dependencies": {
+        "modules": [
+            {
+                "name": "[Tên module, VD: ClassifiedAds.Modules.XYZ]",
+                "status": "[skeleton-only | partially-implemented | fully-implemented]",
+                "hasEntities": true,
+                "hasControllers": false,
+                "hasCommands": false,
+                "hasQueries": false
+            }
+        ],
+        "infrastructure": {
+            "database": "PostgreSQL (schema: [tên schema])",
+            "messageBroker": "[Mô tả nhu cầu hoặc 'Không cần']",
+            "cache": "[Mô tả nhu cầu hoặc 'Không cần']"
+        }
+    },
+    "existingEntities": {
+        "schema": "[tên schema]",
+        "entities": [
+            "[Entity1]",
+            "[Entity2]"
+        ],
+        "enums": [
+            "[EnumName (Value1, Value2)]"
+        ]
+    },
+    "architecturePatterns": {
+        "referenceModule": "ClassifiedAds.Modules.Subscription",
+        "patterns": [
+            {
+                "pattern": "CQRS",
+                "description": "Command và Query tách biệt. Command + Handler cùng file.",
+                "interfaces": [
+                    "ICommand",
+                    "ICommandHandler<TCommand>",
+                    "IQuery<TResult>",
+                    "IQueryHandler<TQuery, TResult>"
+                ],
+                "dispatcher": "Dispatcher class resolve handler qua DI."
+            },
+            {
+                "pattern": "Outbox",
+                "description": "Domain event handler tạo OutboxMessage.",
+                "flow": "CommandHandler → CrudService → SaveChanges → DomainEvent → EventHandler → OutboxMessage + AuditLog"
+            },
+            {
+                "pattern": "Authorization",
+                "description": "Permission constants + [Authorize(Permissions.X)] trên action."
+            }
+        ]
+    },
+    "namingConventions": {
+        "command": "{Verb}{Noun}Command",
+        "commandHandler": "{CommandName}Handler",
+        "query": "Get{Noun}Query",
+        "queryHandler": "{QueryName}Handler",
+        "domainEventHandler": "{Entity}{Action}EventHandler",
+        "permission": "Permission:{Action}",
+        "controller": "{Entity}Controller",
+        "model": "{Entity}Model"
+    },
+    "nonFunctionalTargets": {
+        "pagination": {
+            "defaultPageSize": 20,
+            "maxPageSize": 100
+        },
+        "performance": {
+            "listP95Ms": 200,
+            "writeP95Ms": 500
+        }
+    },
+    "loggingPolicy": {
+        "ui": {
+            "language": "vi-VN",
+            "style": "human-readable"
+        },
+        "system": {
+            "language": "en-US",
+            "style": "structured",
+            "requiredFields": [
+                "traceId",
+                "userId",
+                "action"
+            ]
+        }
+    },
+    "implementationOrder": [
+        "1. [Bước đầu tiên — thường là Authorization/Permissions.cs]",
+        "2. [Bước tiếp theo]",
+        "3. [...]"
+    ],
+    "acceptanceCriteria": [
+        "AC-01: [Mô tả acceptance criterion bằng tiếng Việt]",
+        "AC-02: [...]"
+    ]
+}
