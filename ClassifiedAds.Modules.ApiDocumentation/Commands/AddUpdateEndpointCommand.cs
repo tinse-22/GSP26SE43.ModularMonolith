@@ -66,6 +66,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
     private readonly IRepository<EndpointParameter, Guid> _parameterRepository;
     private readonly IRepository<EndpointResponse, Guid> _responseRepository;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
+    private readonly Services.IPathParameterTemplateService _pathParamService;
 
     public AddUpdateEndpointCommandHandler(
         Dispatcher dispatcher,
@@ -74,7 +75,8 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
         IRepository<ApiEndpoint, Guid> endpointRepository,
         IRepository<EndpointParameter, Guid> parameterRepository,
         IRepository<EndpointResponse, Guid> responseRepository,
-        ISubscriptionLimitGatewayService subscriptionLimitService)
+        ISubscriptionLimitGatewayService subscriptionLimitService,
+        Services.IPathParameterTemplateService pathParamService)
     {
         _dispatcher = dispatcher;
         _projectRepository = projectRepository;
@@ -83,6 +85,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
         _parameterRepository = parameterRepository;
         _responseRepository = responseRepository;
         _subscriptionLimitService = subscriptionLimitService;
+        _pathParamService = pathParamService;
     }
 
     public async Task HandleAsync(AddUpdateEndpointCommand command, CancellationToken cancellationToken = default)
@@ -130,6 +133,10 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
         {
             throw new NotFoundException($"Không tìm thấy specification với mã '{command.SpecId}'.");
         }
+
+        // Ensure path parameter consistency (validate + auto-create missing)
+        command.Model.Parameters = _pathParamService.EnsurePathParameterConsistency(
+            command.Model.Path, command.Model.Parameters ?? new());
 
         bool isCreate = command.EndpointId == null || command.EndpointId == Guid.Empty;
 

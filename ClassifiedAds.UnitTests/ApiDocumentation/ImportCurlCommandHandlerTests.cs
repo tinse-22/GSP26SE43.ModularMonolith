@@ -7,6 +7,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Commands;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using ClassifiedAds.Modules.ApiDocumentation.Models;
+using ClassifiedAds.Modules.ApiDocumentation.Services;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -25,6 +26,7 @@ public class ImportCurlCommandHandlerTests
     private readonly Mock<IRepository<EndpointResponse, Guid>> _responseRepoMock;
     private readonly Mock<ICrudService<ApiSpecification>> _specServiceMock;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionLimitMock;
+    private readonly Mock<IPathParameterTemplateService> _pathParamServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly ImportCurlCommandHandler _handler;
 
@@ -40,7 +42,11 @@ public class ImportCurlCommandHandlerTests
         _responseRepoMock = new Mock<IRepository<EndpointResponse, Guid>>();
         _specServiceMock = new Mock<ICrudService<ApiSpecification>>();
         _subscriptionLimitMock = new Mock<ISubscriptionLimitGatewayService>();
+        _pathParamServiceMock = new Mock<IPathParameterTemplateService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
+
+        _pathParamServiceMock.Setup(x => x.ExtractPathParameters(It.IsAny<string>()))
+            .Returns(new List<PathParameterInfo>());
 
         _specRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
 
@@ -61,7 +67,8 @@ public class ImportCurlCommandHandlerTests
             _parameterRepoMock.Object,
             _responseRepoMock.Object,
             _specServiceMock.Object,
-            _subscriptionLimitMock.Object);
+            _subscriptionLimitMock.Object,
+            _pathParamServiceMock.Object);
     }
 
     private void SetupValidProject()

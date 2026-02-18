@@ -11,7 +11,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -53,6 +52,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
     private readonly IRepository<EndpointResponse, Guid> _responseRepository;
     private readonly ICrudService<ApiSpecification> _specService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
+    private readonly Services.IPathParameterTemplateService _pathParamService;
 
     public ImportCurlCommandHandler(
         IRepository<Project, Guid> projectRepository,
@@ -61,7 +61,8 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
         IRepository<EndpointParameter, Guid> parameterRepository,
         IRepository<EndpointResponse, Guid> responseRepository,
         ICrudService<ApiSpecification> specService,
-        ISubscriptionLimitGatewayService subscriptionLimitService)
+        ISubscriptionLimitGatewayService subscriptionLimitService,
+        Services.IPathParameterTemplateService pathParamService)
     {
         _projectRepository = projectRepository;
         _specRepository = specRepository;
@@ -70,6 +71,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
         _responseRepository = responseRepository;
         _specService = specService;
         _subscriptionLimitService = subscriptionLimitService;
+        _pathParamService = pathParamService;
     }
 
     public async Task HandleAsync(ImportCurlCommand command, CancellationToken cancellationToken = default)
@@ -159,14 +161,14 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
 
             // Create parameters from parsed result
 
-            // Path parameters: extract {param} segments
-            var pathParamMatches = Regex.Matches(parseResult.Path ?? "", @"\{(\w+)\}");
-            foreach (Match match in pathParamMatches)
+            // Path parameters: extract {param} segments using shared service
+            var pathParams = _pathParamService.ExtractPathParameters(parseResult.Path ?? string.Empty);
+            foreach (var pathParam in pathParams)
             {
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
                     EndpointId = endpoint.Id,
-                    Name = match.Groups[1].Value,
+                    Name = pathParam.Name,
                     Location = ParameterLocation.Path,
                     DataType = EndpointParameterDataType.String.ToStorageValue(),
                     IsRequired = true,

@@ -48,6 +48,10 @@ public static class ApiDocumentationServiceCollectionExtensions
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
+        // Register services
+        services.AddScoped<ClassifiedAds.Modules.ApiDocumentation.Services.IPathParameterTemplateService,
+            ClassifiedAds.Modules.ApiDocumentation.Services.PathParameterTemplateService>();
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 

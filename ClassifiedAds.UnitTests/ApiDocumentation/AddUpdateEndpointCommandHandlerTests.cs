@@ -7,6 +7,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Commands;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using ClassifiedAds.Modules.ApiDocumentation.Models;
+using ClassifiedAds.Modules.ApiDocumentation.Services;
 using ClassifiedAds.UnitTests.Helpers;
 using System;
 using System.Collections.Generic;
@@ -26,6 +27,7 @@ public class AddUpdateEndpointCommandHandlerTests
     private readonly Mock<IRepository<EndpointParameter, Guid>> _parameterRepoMock;
     private readonly Mock<IRepository<EndpointResponse, Guid>> _responseRepoMock;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionLimitMock;
+    private readonly Mock<IPathParameterTemplateService> _pathParamServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly AddUpdateEndpointCommandHandler _handler;
 
@@ -42,7 +44,12 @@ public class AddUpdateEndpointCommandHandlerTests
         _parameterRepoMock = new Mock<IRepository<EndpointParameter, Guid>>();
         _responseRepoMock = new Mock<IRepository<EndpointResponse, Guid>>();
         _subscriptionLimitMock = new Mock<ISubscriptionLimitGatewayService>();
+        _pathParamServiceMock = new Mock<IPathParameterTemplateService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
+
+        _pathParamServiceMock.Setup(x => x.EnsurePathParameterConsistency(
+                It.IsAny<string>(), It.IsAny<List<ManualParameterDefinition>>()))
+            .Returns<string, List<ManualParameterDefinition>>((_, p) => p ?? new List<ManualParameterDefinition>());
 
         _endpointRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
 
@@ -69,7 +76,8 @@ public class AddUpdateEndpointCommandHandlerTests
             _endpointRepoMock.Object,
             _parameterRepoMock.Object,
             _responseRepoMock.Object,
-            _subscriptionLimitMock.Object);
+            _subscriptionLimitMock.Object,
+            _pathParamServiceMock.Object);
     }
 
     private void SetupValidProjectAndSpec()

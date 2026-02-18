@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.ApiDocumentation.Controllers;
@@ -159,5 +160,46 @@ public class EndpointsController : ControllerBase
         });
 
         return NoContent();
+    }
+
+    [Authorize(Permissions.GetEndpoints)]
+    [HttpGet("{endpointId}/resolved-url")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ResolvedUrlResult>> GetResolvedUrl(
+        Guid projectId, Guid specId, Guid endpointId)
+    {
+        // Read query string as simple key=value pairs: ?userId=42&orderId=abc
+        var paramValues = Request.Query
+            .ToDictionary(q => q.Key, q => q.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+
+        var result = await _dispatcher.DispatchAsync(new GetResolvedUrlQuery
+        {
+            ProjectId = projectId,
+            SpecId = specId,
+            EndpointId = endpointId,
+            OwnerId = _currentUser.UserId,
+            ParameterValues = paramValues,
+        });
+
+        return Ok(result);
+    }
+
+    [Authorize(Permissions.GetEndpoints)]
+    [HttpGet("{endpointId}/path-param-mutations")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PathParamMutationsResult>> GetPathParamMutations(
+        Guid projectId, Guid specId, Guid endpointId)
+    {
+        var result = await _dispatcher.DispatchAsync(new GetPathParamMutationsQuery
+        {
+            ProjectId = projectId,
+            SpecId = specId,
+            EndpointId = endpointId,
+            OwnerId = _currentUser.UserId,
+        });
+
+        return Ok(result);
     }
 }
