@@ -2,6 +2,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.ConfigurationOptions;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Persistence;
+using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -38,7 +39,10 @@ public static class TestExecutionServiceCollectionExtensions
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
+        services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>();
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
+        services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
         return services;
     }

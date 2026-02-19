@@ -20,6 +20,11 @@ public class TestSuite : Entity<Guid>, IAggregateRoot
     public Guid? ApiSpecId { get; set; }
 
     /// <summary>
+    /// Snapshot of selected endpoint IDs for this test suite scope (stored as jsonb).
+    /// </summary>
+    public List<Guid> SelectedEndpointIds { get; set; } = new();
+
+    /// <summary>
     /// Test suite name.
     /// </summary>
     public string Name { get; set; }

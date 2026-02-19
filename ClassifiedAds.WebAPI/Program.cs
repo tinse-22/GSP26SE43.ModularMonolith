@@ -154,7 +154,8 @@ services.AddControllers(configure =>
 .AddStorageModule()
 .AddSubscriptionModule()
 .AddApiDocumentationModule()
-.AddTestGenerationModule();
+.AddTestGenerationModule()
+.AddTestExecutionModule();
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // SignalR (Real-time Notifications)
@@ -265,6 +266,12 @@ services.AddAuditLogModule(opt =>
 {
     configuration.GetSection("Modules:TestGeneration").Bind(opt);
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
+    opt.ConnectionStrings.Default = sharedConnectionString;
+})
+.AddTestExecutionModule(opt =>
+{
+    configuration.GetSection("Modules:TestExecution").Bind(opt);
+    opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestExecution.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
 .AddApplicationServices();

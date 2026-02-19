@@ -72,6 +72,7 @@ Template để AI Agent tạo docs đúng format. **Bắt buộc** đọc trư�
 - [requirement.json](features/FE-04-test-configuration/requirement.json) — Requirement tong
 - [workflow.json](features/FE-04-test-configuration/workflow.json) — Workflow flows
 - [implementation-map.json](features/FE-04-test-configuration/implementation-map.json) — File map file-level cho AI Agent implement dung codebase
+- [OPERATIONS.md](features/FE-04-test-configuration/OPERATIONS.md) — Runbook van hanh FE-04 (scope, environment, conflict handling, checklist)
 - **FE-04-01**: [requirement](features/FE-04-test-configuration/FE-04-01/requirement.json) · [contracts](features/FE-04-test-configuration/FE-04-01/contracts.json)
 - **FE-04-02**: [requirement](features/FE-04-test-configuration/FE-04-02/requirement.json) · [contracts](features/FE-04-test-configuration/FE-04-02/contracts.json)
 

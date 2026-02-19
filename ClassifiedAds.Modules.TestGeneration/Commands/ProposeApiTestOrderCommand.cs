@@ -81,10 +81,17 @@ public class ProposeApiTestOrderCommandHandler : ICommandHandler<ProposeApiTestO
         EnsureOwnership(suite, command.CurrentUserId);
         EnsureSuiteSpecification(suite, command.SpecificationId);
 
+        // FE-04-01 fallback: use persisted suite scope when request has no endpoint selection
+        var effectiveEndpointIds = command.SelectedEndpointIds;
+        if (effectiveEndpointIds == null || effectiveEndpointIds.Count == 0)
+        {
+            effectiveEndpointIds = suite.SelectedEndpointIds;
+        }
+
         var order = await _apiTestOrderService.BuildProposalOrderAsync(
             command.TestSuiteId,
             command.SpecificationId,
-            command.SelectedEndpointIds,
+            effectiveEndpointIds,
             cancellationToken);
 
         var existingProposals = await _proposalRepository.ToListAsync(
