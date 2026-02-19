@@ -1,7 +1,8 @@
-﻿using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.CrossCuttingConcerns.Logging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Diagnostics;
@@ -17,7 +18,8 @@ public class GlobalExceptionHandlerMiddleware
     private readonly ILogger<GlobalExceptionHandlerMiddleware> _logger;
     private readonly GlobalExceptionHandlerMiddlewareOptions _options;
 
-    public GlobalExceptionHandlerMiddleware(RequestDelegate next,
+    public GlobalExceptionHandlerMiddleware(
+        RequestDelegate next,
         ILogger<GlobalExceptionHandlerMiddleware> logger,
         GlobalExceptionHandlerMiddlewareOptions options)
     {
@@ -57,6 +59,24 @@ public class GlobalExceptionHandlerMiddleware
                     problemDetails.Title = "Bad Request";
                     problemDetails.Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1";
                     break;
+                case ConflictException conflictException:
+                    problemDetails.Status = (int)HttpStatusCode.Conflict;
+                    problemDetails.Title = "Conflict";
+                    problemDetails.Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8";
+                    if (!string.IsNullOrWhiteSpace(conflictException.ReasonCode))
+                    {
+                        problemDetails.Extensions.Add("reasonCode", conflictException.ReasonCode);
+                    }
+
+                    break;
+                case DbUpdateConcurrencyException:
+                    problemDetails.Detail = "Du lieu da thay doi boi thao tac khac. Vui long tai lai va thu lai.";
+                    problemDetails.Extensions["message"] = problemDetails.Detail;
+                    problemDetails.Extensions["reasonCode"] = "CONCURRENCY_CONFLICT";
+                    problemDetails.Status = (int)HttpStatusCode.Conflict;
+                    problemDetails.Title = "Conflict";
+                    problemDetails.Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8";
+                    break;
                 default:
                     _logger.LogError(ex, "[{Ticks}-{ThreadId}]", DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
                     problemDetails.Status = (int)HttpStatusCode.InternalServerError;
@@ -74,9 +94,14 @@ public class GlobalExceptionHandlerMiddleware
 
     private string GetErrorMessage(Exception ex)
     {
-        if (ex is ValidationException)
+        if (ex is ValidationException || ex is ConflictException)
         {
             return ex.Message;
+        }
+
+        if (ex is DbUpdateConcurrencyException)
+        {
+            return "Du lieu da thay doi boi thao tac khac. Vui long tai lai va thu lai.";
         }
 
         return _options.DetailLevel switch

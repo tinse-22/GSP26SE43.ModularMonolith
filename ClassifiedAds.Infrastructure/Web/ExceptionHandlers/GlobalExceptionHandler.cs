@@ -1,8 +1,9 @@
-﻿using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.CrossCuttingConcerns.Logging;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -64,6 +65,55 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             problemDetails.Extensions.Add("message", exception.Message);
             problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+
+            response.ContentType = "application/problem+json";
+            response.StatusCode = problemDetails.Status.Value;
+
+            var result = JsonSerializer.Serialize(problemDetails);
+            await response.WriteAsync(result, cancellationToken: cancellationToken);
+
+            return true;
+        }
+        else if (exception is ConflictException conflictException)
+        {
+            var problemDetails = new ProblemDetails
+            {
+                Detail = exception.Message,
+                Instance = null,
+                Status = (int)HttpStatusCode.Conflict,
+                Title = "Conflict",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8"
+            };
+
+            problemDetails.Extensions.Add("message", exception.Message);
+            problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+            if (!string.IsNullOrWhiteSpace(conflictException.ReasonCode))
+            {
+                problemDetails.Extensions.Add("reasonCode", conflictException.ReasonCode);
+            }
+
+            response.ContentType = "application/problem+json";
+            response.StatusCode = problemDetails.Status.Value;
+
+            var result = JsonSerializer.Serialize(problemDetails);
+            await response.WriteAsync(result, cancellationToken: cancellationToken);
+
+            return true;
+        }
+        else if (exception is DbUpdateConcurrencyException)
+        {
+            var problemDetails = new ProblemDetails
+            {
+                Detail = "Du lieu da thay doi boi thao tac khac. Vui long tai lai va thu lai.",
+                Instance = null,
+                Status = (int)HttpStatusCode.Conflict,
+                Title = "Conflict",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8"
+            };
+
+            problemDetails.Extensions.Add("message", problemDetails.Detail);
+            problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+            problemDetails.Extensions.Add("reasonCode", "CONCURRENCY_CONFLICT");
 
             response.ContentType = "application/problem+json";
             response.StatusCode = problemDetails.Status.Value;
