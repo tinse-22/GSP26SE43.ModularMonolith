@@ -37,6 +37,10 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
 
         builder.HasIndex(x => x.ProjectId);
         builder.HasIndex(x => x.ApiSpecId);
+
+        builder.Property(x => x.SelectedEndpointIds)
+            .HasColumnType("jsonb");
+
         builder.HasIndex(x => x.CreatedById);
         builder.HasIndex(x => x.Status);
         builder.HasIndex(x => x.ApprovalStatus);

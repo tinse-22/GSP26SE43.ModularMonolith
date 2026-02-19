@@ -49,7 +49,8 @@ public static class TestGenerationServiceCollectionExtensions
 
         services
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
-            .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>();
+            .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
+            .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
