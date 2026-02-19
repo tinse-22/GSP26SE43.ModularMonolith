@@ -1,0 +1,1384 @@
+===== PAGE 1 =====
+A Multi-Agent Approach for REST API Testing
+with Semantic Graphs and LLM-Driven Inputs
+∗ 1 ∗ 2 † 3 ∗ 4
+Myeongsoo Kim , Tyler Stennett , Saurabh Sinha , Alessandro Orso
+∗
+Georgia Institute of Technology, Atlanta, GA, 30332, USA.
+†
+IBM T.J. Watson Research Center, Yorktown Heights, NY, 10598, USA.
+1 2 3 4
+{ mkim754, tstennett3 } @gatech.edu, sinhas@us.ibm.com, orso@cc.gatech.edu
+Abstract —As modern web services increasingly rely on REST parameter combinations, and assign values to those param-
+APIs, their thorough testing has become crucial. Furthermore,
+eters. Feedback from response status codes is then used to
+the advent of REST API documentation languages, such as the
+adjust the exploration policy at each step, either encouraging or
+OpenAPI Specification, has led to the emergence of many black-
+penalizing specific choices. Although significant research has
+box REST API testing tools. However, these tools often focus
+been dedicated to optimizing each individual step—operation
+on individual test elements in isolation (e.g., APIs, parameters,
+values), resulting in lower coverage and less effectiveness in fault selection, dependency identification, parameter selection, and
+detection. To address these limitations, we present AutoRestTest,
+value generation—these tools treat each step in isolation,
+the first black-box tool to adopt a dependency-embedded multi-
+rather than as part of a coordinated testing strategy. This
+agent approach for REST API testing that integrates multi-
+isolated approach can result in suboptimal testing with a
+agent reinforcement learning (MARL) with a semantic property
+high number of invalid requests. For instance, one endpoint
+dependency graph (SPDG) and Large Language Models (LLMs).
+Our approach treats REST API testing as a separable problem, might benefit from extensive exploration of different parameter
+where four agents—API, dependency, parameter, and value
+combinations, whereas another endpoint might require focused
+agents—collaborate to optimize API exploration. LLMs handle
+exploration of previously successful parameter combinations
+domain-specific value generation, the SPDG model simplifies the
+with diverse input values.
+search space for dependencies using a similarity score between
+Consequently, existing tools often achieve low coverage,
+API operations, and MARL dynamically optimizes the agents’
+behavior. Our evaluation of AutoRestTest on 12 real-world REST especially on large REST services, as shown in recent studies
+services shows that it outperforms the four leading black-box
+(e.g., Language Tool, Genome Nexus, and Market in the
+REST API testing tools, including those assisted by RESTGPT
+ARAT-RL evaluation [13], and Spotify and OhSome in the
+(which generates realistic test inputs using LLMs), in terms of
+NLP2REST evaluation [23]).
+code coverage, operation coverage, and fault detection. Notably,
+To overcome these limitations, we propose AutoRestTest,
+AutoRestTest is the only tool able to trigger an internal server
+error in the Spotify service. Our ablation study illustrates a new approach that integrates a semantic property depen-
+that each component of AutoRestTest—the SPDG, the LLM,
+dency graph (SPDG) and multi-agent reinforcement learning
+and the agent-learning mechanism—contributes to its overall
+(MARL) with Large Language Models (LLMs) to enhance
+effectiveness.
+REST API testing. Instead of traversing all operations to
+Index Terms —Multi-Agent Reinforcement Learning for Test-
+find dependencies by matching input/output properties, Au-
+ing, Automated REST API Testing
+toRestTest uses an embedded graph that prioritizes the prop-
+erties by calculating the cosine similarity between input and
+I. I NTRODUCTION
+output names.
+Specifically, AutoRestTest employs four specialized agents
+Modern web services increasingly depend on REST (Rep-
+to optimize the testing process. The dependency agent man-
+resentational State Transfer) APIs for efficient communication
+arXiv:2411.07098v2 [cs.SE] 22 Jan 2025
+ages and utilizes the dependencies between operations iden-
+and data exchange [1]. These APIs enable seamless interac-
+tified in the SPDG, guiding the selection of dependent op-
+tions between various software systems using standard web
+erations for API requests. The operation agent selects the
+protocols [2]. REST APIs function through common internet
+next API operation to test, prioritizing operations likely to
+methods and a design that allows the server and client to
+yield valuable test results based on previous results, such as
+operate independently [3]. The prevalence of REST APIs is
+successfully processed dependent operations. The parameter
+evident from platforms such as APIs Guru [4] and Rapid
+agent chooses parameter combinations for the selected opera-
+API [5], which host extensive collections of API specifications.
+tion to explore different configurations. Finally, the value agent
+In recent years, various automated testing tools for REST
+manages the generation of parameter values using three data
+APIs have been developed (e.g., [6]–[22]). These tools follow
+sources: values from dependent operations, LLM-generated
+a sequential process: select an operation to test, identify
+values that satisfy specific constraints using few-shot prompt-
+operations that depend on the selected operation, determine
+ing [24], and type-based random values. The value agent learns
+1 which data source is most effective for each parameter type
+Also with AWS AI Labs, Santa Clara, CA, USA; this work was performed
+before the author joined AWS AI Labs. and context.
+
+===== PAGE 2 =====
+The AutoRestTest agents collaborate to optimize the testing
+1 / r e g i s t e r :
+2 p o s t :
+process using the multi-agent value decomposition Q-learning
+3 t a g s :
+4 − c u s t o m e r − r e s t − c o n t r o l l e r
+approach [25], [26]. When selecting actions, each agent is
+5 summary : c r e a t e C u s t o m e r
+6 o p e r a t i o n I d : c r e a t e C u s t o m e r U s i n g P O S T
+employed independently using the epsilon-greedy strategy for
+7 r e q u e s t B o d y :
+8 d e s c r i p t i o n : u s e r
+exploitation-exploration balancing. However, during policy up-
+9 c o n t e n t :
+10 a p p l i c a t i o n / j s o n :
+dates using the Q-learning equation, AutoRestTest uses value
+11 schema :
+12 t y p e : o b j e c t
+decomposition to consider the joint actions across all agents.
+13 p r o p e r t i e s :
+14 l i n k s :
+Through centralized policy updates, each agent converges
+15 t y p e : a r r a y
+16 i t e m s :
+toward selecting the optimal action while accounting for the
+17 $ r e f : ’ # / c o m p o n e n t s / schemas / Link ’
+18 e m a i l :
+actions of the other agents.
+19 t y p e : s t r i n g
+20 maxLength : 50
+We evaluated AutoRestTest on 12 real-world RESTful ser-
+21 p a t t e r n : ”ˆ[ \\ w−]+( \\ .[ \\ w− ] + ) *@([ \\ w−]+ \\ .) +[ a −zA−Z]+ $ ”
+22 name :
+vices used in previous studies [13], [23], including well-known
+23 t y p e : s t r i n g
+24 maxLength : 50
+services such as Spotify, and compared its performance with
+25 p a t t e r n : ”ˆ[ \\ pL ’ −]+ $ ”
+26 p a s s w o r d :
+that of four state-of-the-art REST testing tools, recognized
+27 t y p e : s t r i n g
+28 maxLength : 50
+as top-performing tools in recent studies [13], [15], [27],
+29 minLength : 6
+30 p a t t e r n : ” ˆ [ a −zA−Z0 −9]+ $ ”
+[28]: RESTler [7], EvoMaster [29], MoRest [15], and ARAT-
+31 r e s p o n s e s :
+32 ” 2 0 1 ” :
+RL [13]. To ensure a fair comparison, we used enhanced API
+33 d e s c r i p t i o n : C r e a t e d
+34 c o n t e n t :
+specifications generated by RESTGPT [30], which augments
+35 ’ * / * ’ :
+36 schema :
+REST API documents with realistic input values generated
+37 $ r e f : ’ # / c o m p o n e n t s / schemas / UserDTORes ’
+38 ” 4 0 1 ” :
+using LLMs. To measure effectiveness, we used code coverage
+39 d e s c r i p t i o n : U n a u t h o r i z e d
+40 ” 4 0 3 ” :
+for the open-source services, operation coverage for the online
+41 d e s c r i p t i o n : F o r b i d d e n
+42 ” 4 0 4 ” :
+services, and fault detection ability—measured as internal
+43 d e s c r i p t i o n : Not Found
+server errors triggered—for all the services. These are the most
+commonly used metrics in this field [27], [31].
+Fig. 1. A part of Market API’s OpenAPI Specification.
+AutoRestTest demonstrated superior performance across all
+based graph model, employs multi-agent reinforcement
+coverage metrics compared to existing tools. It achieved 58.3%
+learning to consider optimization among the testing steps,
+method coverage, 32.1% branch coverage, and 58.3% line
+and leverages LLMs to generate realistic test inputs.
+coverage, significantly outperforming ARAT-RL, EvoMaster,
+• Empirical results showing that AutoRestTest outperforms
+RESTler, and MoRest by margins of 12–27%. For closed-
+state-of-the-art REST API testing tools—even when pro-
+source services, AutoRestTest processed 25 API operations,
+vided with enhanced API specifications—by covering
+compared to 9–11 operations processed by the other tools.
+more operations, achieving higher code coverage, and
+These results show that AutoRestTest can perform more com-
+triggering more failures.
+prehensive API testing than the other tools.
+• An artifact including the AutoRestTest tool, the bench-
+In terms of fault detection, AutoRestTest identified 42
+mark services used in the evaluation, and detailed empir-
+operations with internal server errors, outperforming ARAT-
+ical results, which serves as a comprehensive resource
+RL (33), EvoMaster (20), MoRest (20), and RESTler (14).
+for supporting further research and replication of our
+Notably, AutoRestTest was the only tool that detected an
+results [34].
+internal server error for Spotify [32]. We reported the errors
+detected on FDIC, OhSome, and Spotify, as these are actively
+II. B ACKGROUND AND M OTIVATING E XAMPLE
+maintained projects. The OhSome error has been confirmed
+and fixed [33]; we are still waiting for feedback from the
+A. REST APIs
+developers for the other bug reports.
+We also performed an ablation study, which revealed the
+REST APIs are a type of web APIs that conform to RESTful
+importance of AutoRestTest’s key components. Removing
+architectural principles [1]. These APIs enable data exchange
+temporal-difference Q-learning caused the largest performance
+between client and server through established protocols like
+drop, with method, line, and branch coverage falling to 45.6%
+HTTP [35]. The foundation of REST lies in several key con-
+(-12.7), 18.2% (-13.9), and 45.8% (-12.5), respectively. SPDG
+cepts: statelessness, cacheability, and a uniform interface [3].
+removal reduced coverage to 46.7% (-11.6), 18.7% (-13.4),
+In RESTful services, clients interact with web resources
+and 47.6% (-10.7), while LLM removal led to 47.4% (-
+by making HTTP requests. These resources represent various
+10.9), 19.3% (-12.8), and 45.8% (-12.5). Overall, removing
+types of data that a client might wish to create, read, update, or
+any component decreased coverage by 10.7–13.9%, demon-
+delete. The API endpoint, defined by a specific resource path
+strating the significance of each component in contributing to
+(e.g., /users), represents the resource that clients interact with.
+AutoRestTest’s effectiveness.
+Different HTTP methods (e.g., POST , GET , PUT , DELETE )
+The main contributions of this work are:
+determine what actions can be performed on that resource,
+• A novel REST API testing technique that reduces the such as creating, reading, updating, or deleting data. Each
+operation dependency search space using a similarity- unique combination of an endpoint’s resource path and an
+
+===== PAGE 3 =====
+HTTP method constitutes an operation (e.g., GET /users or Multi-agent reinforcement learning (MARL) is an advanced
+POST /users). extension of reinforcement learning that involves multiple
+When a web service processes a request, it responds with agents interacting in a shared environment to achieve individ-
+headers, a body (if applicable), and an HTTP status code ual or collective goals [25]. MARL addresses the complexities
+of agent interactions, including cooperation, competition, and
+indicating the result. Successful operations typically return 2xx
+communication [44]. Techniques such as cooperative learning,
+codes, while 4xx codes denote client-side errors, and a 500
+competitive learning, and communication and coordination
+status code indicates an internal server error.
+methods enable agents to develop optimal strategies. Applica-
+B. OpenAPI Specification
+tions of MARL span various domains, including autonomous
+The OpenAPI Specification (OAS) [36], which evolved driving and robotic coordination, where agents must work
+from Swagger [37] in version 2 to the OAS in version 3, is a together or compete to optimize their performance [45]–[47].
+crucial standard for RESTful API design and documentation. MARL is expected to be used in areas requiring complex
+As an industry-standard format, OAS defines the structure, multi-agent decision making [48].
+functionality, and anticipated behaviors of APIs in a standard-
+E. Motivating Example
+ized and human-accessible way.
+Figure 1 presents a portion of the Market API’s OAS. This
+Figure 1 depicts the /register endpoint in the Market
+example highlights the structured approach of OAS in defining
+API’s OpenAPI specification. This endpoint is vital for creat-
+API operations. For instance, it specifies a POST request on the
+ing user credentials needed in other components of the API.
+/register endpoint for creating a new customer. The request
+Existing REST API testing tools struggle to generate valid
+body is expected to be in application/json format and must
+requests for this operation due to the strict parameter require-
+include properties such as links , email , name , and password ,
+ments: email , name , and password are required parameters,
+each with specific validation constraints. The responses section
+each with specific constraints on valid values, while links is
+defines possible outcomes, including a 201 Created status
+an optional parameter. Moreover, these tools fail to prioritize
+for a successful request, along with 401 Unauthorized , 403
+information gained from a successful operation invocation in
+Forbidden , and 404 Not Found status codes for various error
+subsequent requests.
+conditions.
+AutoRestTest addresses these issues through a multi-agent
+approach. The parameter agent employs reinforcement learn-
+C. Large Language Models
+ing to identify valid parameter combinations, learning that
+Large Language Models (LLMs), like the Generative Pre-
+( email , name , password ) is a required parameter set while
+trained Transformer (GPT) series, are at the forefront of ad-
+avoiding invalid combinations that would trigger 400 errors.
+vancements in natural language processing (NLP) [38]. LLMs,
+For these parameters, the value agent first determines the
+trained on extensive text collections, can understand, interpret,
+appropriate data source for each parameter—choosing between
+and generate human-like text [39]. The GPT series, including
+LLMs, dependency values from previous operations, or ran-
+GPT-3, exemplifies these advanced LLMs, demonstrating a
+dom values—because different parameters require different
+remarkable ability to produce human-like text for various
+generation strategies to create valid values. For the /register
+applications, from education to customer service [24], [40],
+endpoint, it selects LLM generation as the parameters require
+[41]. Their versatility in handling diverse language-related
+specific formats (e.g., email format, password rules) that basic
+tasks, from writing coherent text and translating languages to
+defaults cannot match, and dependency values are not available
+test case generation [42], highlights their advanced capabilities
+for this initial operation. It then generates context-aware values
+in human-like understanding [39].
+that comply with the specification’s validation patterns. After
+a successful registration, the dependency agent utilizes the
+D. Multi-Agent Reinforcement Learning
+SPDG to identify operations that depend on user credentials
+Reinforcement learning (RL) is a branch of machine learn-
+(e.g., /customer/cart , /customer/orders ) and propagates the
+ing where an agent learns to make decisions by interacting
+registered user’s information to these dependent operations.
+with its environment [43]. In this process, the agent selects
+The operation agent then prioritizes testing these dependent
+actions in various situations (states), observes the outcomes
+operations, while the parameter and value agents reuse the
+(rewards), and learns to choose the best actions to maximize
+strategies that were successful for the /register endpoint.
+the cumulative reward over time. RL involves a trial-and-
+Through value decomposition, MARL enables efficient policy
+error approach, where the agent discovers optimal actions
+updates by appropriately distributing rewards to each agent
+by experimenting with different options and adjusting its
+based on their contribution.
+strategy based on the observed rewards. Additionally, the agent
+must balance between exploring new actions to gain more
+III. O UR A PPROACH
+knowledge and exploiting known actions that provide the
+A. Overall Workflow
+best reward based on its current understanding. This balance
+between exploration and exploitation is often controlled by Figure 2 illustrates the architecture of AutoRestTest, high-
+parameters, such as ϵ in the ϵ -greedy strategy [43]. lighting its core components: the SPDG, the REST agents, and
+
+===== PAGE 4 =====
+Fig. 2. Overview of our approach.
+the request generator. The overall workflow consists mainly of SPDG dependencies, and store any 500 responses for the
+two phases: initialization and testing execution. final testing report. This cycle continues until the testing time
+budget is exhausted. The SPDG refinement process involves
+1) Initialization Phase: The process begins with parsing
+increasing or decreasing edge weights, driven by rewards
+the OpenAPI specification to extract endpoint information,
+and penalties for dependencies, based on server responses—
+parameters, and request/response schemas. Using the parsed
+successful dependencies (validated by 2xx response codes)
+specification, the dependency agent constructs the SPDG as a
+increase edge weights, whereas failed dependencies reduce
+directed graph in which nodes represent API operations and
+edge weights, with heavily penalized edges being effectively
+edges represent potential dependencies between operations.
+removed from consideration. This continuous refinement helps
+Each weighted edge e = ( a, b ) indicates that operation b
+ensure the accuracy of the dependency graph over time.
+provides values that can be used by operation a (i.e., a depends
+on b ), with the edge weight (a value between 0 and 1) repre-
+B. Q-Learning and Agent Policy
+senting the semantic similarity between the operations’ inputs
+and outputs (see Section III-C). These initial dependencies are
+Both the SPDG and REST agent modules use the Q-
+later validated and refined through the testing process based
+learning algorithm [49] with value decomposition within their
+on actual server responses.
+respective agents. During initialization, each agent creates a
+The REST agents (operation, parameter, value, and depen-
+Q-table data structure that maps available actions to their
+dency agents) are then initialized with their respective Q-
+expected cumulative rewards. When request generation begins,
+tables. Each agent serves a specific purpose in the testing
+AutoRestTest addresses the two primary components of Q-
+process: the operation agent selects API operations to test,
+learning—action selection and policy optimization—to facili-
+the parameter agent determines parameter combinations, the
+tate effective communication between agents.
+value agent generates appropriate parameter values for each
+1) Action Selection: During action selection, agents inde-
+parameter, and the dependency agent manages operation de-
+pendently choose between exploiting their best-known option
+pendencies from the SPDG.
+or exploring new options randomly. To balance these choices,
+2) Testing Execution Phase: The testing execution follows
+all agents follow an epsilon-greedy strategy: with probability
+an iterative process. In each iteration, the operation agent first
+ϵ , the agent selects a random action (exploration), and with
+selects the next API operation based on its learned Q-values
+probability 1 − ϵ , it selects the action with the highest Q-value
+and exploration strategy. Next, the parameter agent determines
+(exploitation), likely yielding the best results.
+which parameters to include, considering both required and
+AutoRestTest utilizes epsilon-decay to guarantee all actions
+optional parameters from the specification. The value agent
+are adequately explored in its initial stages. Starting with an
+then generates parameter values using dependencies identified
+epsilon value of 1.0, this value decreases linearly to 0.1 over
+by the dependency agent, LLM-generated values, or default
+the duration of the tool’s operation. This strategy, commonly
+assignments for basic parameter types. Using the SPDG, the
+used in practice, has been shown to improve performance by
+dependency agent identifies any dependencies between the
+balancing exploration and exploitation [50].
+selected parameters and those used in previous operations.
+2) Policy Optimization: After receiving a response from the
+Finally, the request generator constructs the API request, with
+server, agents update their Q-table values using the temporal-
+the mutator component modifying 20% of requests to test error
+difference update rule of the Q-learning algorithm, derived
+handling and trigger potential 500 response codes, similar to
+from the Bellman equation [43]. This update aims to maximize
+prior work [13].
+the expected cumulative reward for each action taken. The Q-
+Once the request is sent to the Service Under Test (SUT)
+learning update rule is given by:
+and a response is received, the response is used to update the
+Q-tables of all agents through reinforcement learning, refine Q ( s, a ) ← Q ( s, a ) + αδ (1)
+
+===== PAGE 5 =====
+Fig. 3. Illustration of SPDG construction and refinement.
+where δ represents the temporal-difference error, calculated as: C. Semantic Property Dependency Graph
+′ ′
+The construction of the SPDG begins with parsing the
+δ = r + γ max Q ( s , a ) − Q ( s, a ) (2)
+′
+a
+OpenAPI specification to extract information about API end-
+where α is the learning rate, γ is the discount factor, r is the
+points, parameters, and request/response schemas. As shown
+′
+received reward, s is the current state, s is the next state, a
+in Figure 3, the SPDG is initialized as a directed graph
+′ ′
+is the current action, and a is an action in state s .
+where nodes represent API operations and edges represent
+Given the complexity of the multi-agent environment, Au-
+potential dependencies between operations based on semantic
+toRestTest leverages value decomposition to optimize the joint
+similarities.
+cumulative reward, which has shown improvements for policy
+The initialization process involves two main steps. First,
+acquisition over independent learning. This approach assumes
+for each operation in the API specification, we create a
+that the joint Q-value can be decomposed additively as follows
+node containing the operation’s ID, parameters, and response
+[26]:
+schemas. Then, we identify potential dependencies between
+n
+X
+operations by computing semantic similarities between their
+Q ( s, a ) = Q ( s, a ) (3)
+i i
+parameter names (inputs) and response field names (outputs)
+i
+using cosine similarity with pre-trained word embeddings
+where Q and a represent the Q-value and action for agent i
+i i
+(e.g., GloVe [53]). When comparing two operations, if their
+in shared state s .
+1
+similarity score exceeds 0.7, we create an edge between them
+The temporal-difference error, which measures the differ-
+with the similarity score as its weight. To ensure all operations
+ence between current Q-values and the optimal target Q-
+have some potential dependencies to explore, if an operation
+values, can be redefined using value decomposition to reflect
+has no edges with scores above the threshold, we connect it
+the displacement from the optimal joint Q-value:
+2
+to the five most similar operations.
+n n
+X X
+Phase 1 of Figure 3 provides an example of the initial SPDG
+′ ′
+δ = r + γ max Q ( s , a ) − Q ( s, a ) (4)
+i i i
+i
+generated by our technique. For example, the edge between
+′
+a
+i i
+GET /users/id and GET /orders/user_id has a weight of
+Using this redefined temporal-difference error, each agent
+0.9 due to the high similarity between the names of the inputs
+updates its Q-table to converge towards the optimal joint
+and outputs of these two operations.
+Q-value, as depicted in the following temporal-difference
+1) Dependency Agent: The dependency agent manages and
+equation:
+uses the dependencies between operations captured in the
+SPDG. It uses a Q-table to represent the validity of these
+n
+h
+X dependencies, operating similarly to a weighted graph, where
+′ ′
+Q ( s, a ) ← Q ( s, a ) + α r + γ max Q ( s , a )
+i i i i i
+i
+edges are assigned values that reflect confidence in each
+′
+a
+i =1
+dependency. Specifically, the Q-table encodes edges from the
+(5)
+n
+i
+X
+SPDG, categorizing dependencies by parameter type (query or
+− Q ( s, a )
+i i
+body) and target (parameters, body, or response). Higher Q-
+i =1
+values on an edge indicate greater confidence in the reliability
+This value decomposition approach enables each agent to
+of that operation dependency, causing the agent to prioritize
+select actions independently while maintaining centralized pol-
+these relationships on future requests.
+icy updates, simplifying the implementation while enhancing
+For each parameter and body property in a selected oper-
+coordination across agents [26].
+ation, the dependency agent refers to its Q-table to identify
+For reward delegation, the dependency, value, and parameter
+a dependent parameter, body, or response, as well as the
+agents are optimized to reward actions that generate 2xx
+associated operation ID. For example, as illustrated in Phase
+status codes, whereas the operation agent rewards the selection
+3 of Figure 3, when testing GET /orders/user_id , the agent
+of operations that generate 4xx and 5xx status codes. This
+might use the value for user_id from a successful GET
+balance in behavior is intended to maximize coverage by
+/users/id response, reflected by the strengthened edge weight
+encouraging repeated attempts at creating successful requests
+of 0.95. The dependency agent consults AutoRestTest’s tables
+for operations that frequently yield 4xx and 5xx status codes.
+storing successful parameters, request body properties, and
+For the hyperparameters α and γ , like ARAT-RL [13] and
+1
+other related work [51], [52], we use values 0.1 and 0.9,
+We selected this value based on previous studies [23], [54].
+2
+respectively. Top-five is a common threshold in top-k similarity matching [55]–[57].
+
+===== PAGE 6 =====
+decomposed responses to ensure that the selected dependency fail, the Q-table value might increase (e.g., to 1), prompting the
+has available values. AutoRestTest recursively deconstructs agent to prioritize further testing on this endpoint. Conversely,
+response objects, allowing the dependency agent to access a successful test case would decrease the Q-value, directing
+nested properties within response collections. Required param- the agent to explore other (challenging) endpoints.
+eters without available dependencies are fulfilled using value
+2) Parameter Agent: The parameter agent is responsible for
+mappings provided by the value agent.
+selecting parameters for the chosen API operation. It ensures
+Although the SPDG significantly reduces the search space
+that parameters used across requests are both valid and varied,
+for operation dependencies, the reliance on semantic similar-
+covering a range of testing scenarios while addressing inter-
+ity may overlook potential candidates. To address this, the
+parameter dependencies. For each operation, the parameter
+dependency agent permits random dependency queries during
+agent initializes a state containing the operation ID, available
+exploration. As shown in Phase 2 of Figure 3, if a random
+parameters, and required parameters, and defines its action
+dependency successfully generates a valid input, AutoRestTest
+space as possible parameter combinations. The Q-values as-
+identifies the contributing factor and adds this new edge to the
+sociated with each state-action pair are initialized to 0.
+SPDG. For instance, during testing, the agent might discover
+Consider again the Market API’s customer registration
+that POST /carts returns a cart_id that can be used as input
+endpoint shown in Figure 1. The parameter agent initializes
+for GET /orders/user_id , leading to a new edge with weight
+with the following state: s = { createCustomerUsingPOST ,
+0.75. Similarly, when the specification contains undocumented
+[ email , name , password , links ], [ email , name , password ] } ,
+response values (e.g., if POST /register returns additional
+where the first list contains all available parameters from the
+user-related fields not specified in the OpenAPI document), the
+request body schema, whereas the second list contains only the
+dependency agent evaluates these new properties for potential
+required parameters according to the endpoint’s specification.
+dependencies with other operations, as demonstrated by the
+The agent initializes a Q-table for this operation, mapping
+edge between POST /register and POST /carts with weight
+various parameter combinations to Q-values.
+0.85 in Phase 2.
+This setup ensures that different parameter combinations
+(limited to 10 by default, to account for space restrictions) are
+D. REST Agents
+sufficiently represented in the agent’s action space. The agent
+1) Operation Agent: This agent is tasked with selecting the
+updates its Q-values using the value decomposition temporal-
+next API operation to test. It employs reinforcement learning
+difference equation (Equation 5 in Section III-B) and the
+to prioritize operations that are likely to yield meaningful
+following reward structure: -1 for server errors (5xx), -2 for
+test results based on prior experiences. This agent uses a
+client errors (4xx), and +2 for successful responses (2xx).
+simplified state model that only tracks whether an operation
+Importantly, unused parameter combinations receive a neu-
+is available for selection. The agent’s action space encom-
+tral update (effectively 0) in the Q-learning process, main-
+passes all possible operations in the API specification. Each
+taining their initial Q-values. These unused combinations are
+operation’s Q-value is initialized to 0 and is updated based on
+prioritized over combinations with negative rewards and depri-
+response codes from the server. The Q-table for the operation
+oritized relative to those with positive rewards. For example,
+agent stores cumulative rewards representing the proportion
+for the registration endpoint, if the parameter combination
+of unsuccessful requests for each operation in the provided
+( email , name , password ) consistently yields positive rewards,
+service, as discussed in greater detail in the next paragraph.
+the unused combination ( email , name , password , links ) re-
+The operation agent acts as the forerunner of the test-
+tains its initial Q-value and may be selected during exploration
+ing process, selecting an operation that dictates the state
+to test scenarios with optional parameters. Suppose that the
+of the remaining agents. While the remaining agents coor-
+Q-values for these parameter combinations evolved to 0.8 and
+dinate to generate valid test cases for a given operation,
+0.3, respectively. This would suggest that the inclusion of the
+the operation agent is tasked with identifying unsuccessful
+links parameter is problematic and result in a lower Q-value
+operations for retesting. Consequently, while the remaining
+for the configuration with all parameters.
+agents update their Q-value using the value decomposition
+Through this reward scheme, AutoRestTest effectively iden-
+temporal-difference equation (Equation 5 in Section III-B),
+tifies valid parameter sets and addresses challenges related to
+the operation agent updates its Q-values independently using
+undocumented inter-parameter dependency requirements, par-
+a structured reward system: +2 for server errors (5xx), +1 for
+ticularly in complex scenarios such as user registration, where
+client errors (4xx, excluding 401 and 405), -1 for successful
+certain parameters must be present and correctly formatted.
+responses (2xx), -3 for authentication failures (401), and -10
+for invalid methods (405). This reward structure encourages 3) Value Agent: This agent is responsible for generating
+the agent to prioritize exploring problematic endpoints while and assigning values to parameters selected by the parameter
+severely penalizing systematically invalid requests and mildly agent. For each parameter of an operation, it maintains a state
+penalizing endpoints with consistently successful requests. containing the operation ID, parameter name, parameter type,
+As an example, consider the customer registration endpoint and OpenAPI schema constraints, with its actions correspond-
+in the Market API (Figure 1). The Q-value for the endpoint ing to possible data sources for parameter value assignment.
+is initially 0. After initial attempts at processing the operation The Q-values for each state-action pair are initialized to 0.
+
+===== PAGE 7 =====
+Consider the Market API’s customer registration endpoint types, values, and headers (e.g., using an invalid content type
+in Figure 1. The value agent initializes the following states for in the header). The mutator follows these conventions and
+email , name , and password parameters: mutates 20% of the generated requests, a strategy used by
+• s = { createCustomerUsingPOST , email , string , { pattern: the most recent tool [13].
+ˆ[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]+$ }}
+The request generator interacts with the REST agents to
+• s = { createCustomerUsingPOST , name , string , { pattern:
+construct API requests, relying on them for detailed informa-
+ˆ[\pL ’-]+\$ , maxLength: 50 }}
+tion about the operation to test, the parameters to use, and
+• { createCustomerUsingPOST , password , string , { pattern:
+appropriate values for those parameters. Specifically:
+ˆ[a-zA-Z0-9]+$ , minLength: 6, maxLength: 50 }}
+• The operation agent selects the API operation to test.
+To generate a diverse set of inputs, the value agent can select
+• The parameter agent identifies and optimizes the parameters
+inputs from the following data sources:
+for the chosen operation.
+• Operation Dependency Values: When selected, the value
+• The value agent generates realistic and effective values for
+agent collaborates with the dependency agent to map de-
+the parameters.
+pendent values to the selected parameter. For example, the
+Using this information, the request generator constructs a
+registration endpoint might reuse email addresses from prior
+complete API request. The request generator then dispatches
+successful registrations to test duplicate user scenarios.
+the request to the SUT, which processes the request and returns
+• LLM Values : For this data source, the value agent creates (or
+a response. The response handler analyzes this response to
+parses if already created) values using few-shot prompting
+3
+detect any errors or unexpected behaviors. Insights from these
+with LLMs [24]. For instance, the LLM might generate
+analyses are fed back to both the REST agents and the
+“john.doe@example.com” as the input value for the email
+dependency agent, allowing them to refine their strategies for
+parameter based on the specified pattern.
+future requests.
+• Random Values : When this option is selected, the value
+agent generates random values based on the type of the The interactions between the dependency module, the REST
+agents, the request generator, and the SUT establish a robust
+selected parameter. For example, it may create a random
+feedback loop that enhances the overall effectiveness of the
+sequence of 1-50 characters for strings, a random number
+testing process. This collaborative approach ensures that the
+between -1024 and 1024 for integers, and a random true/-
+generated requests are not only comprehensive but also tai-
+false value for boolean types.
+lored to uncover potential issues within REST APIs.
+Once a request is completed with values from the chosen
+data source, the agent updates its Q-values based on the
+IV. E VALUATION
+temporal-difference equation (Equation 5 in Section III-B), us-
+In this section, we present the results of empirical studies
+ing the same reward strategy as the parameter agent (§III-D2)
+conducted to assess AutoRestTest. Our evaluation aims to
+to refine its value generation.
+address the following research questions:
+For the registration endpoint, for instance, the Q-values
+across parameters show an average of 0.5 for LLM values,
+1) RQ1 : How does AutoRestTest compare with state-of-the-
+0.2 for random values, and -0.7 for operation dependency
+art REST API testing tools in terms of code coverage and
+values. In analyzing these Q-values, we observe that because
+operation coverage achieved?
+the registration endpoint is required for account creation, it
+2) RQ2 : In terms of error detection, how does AutoRestTest
+is less likely to derive values from operation dependencies,
+perform in triggering 500 (Internal Server Error) re-
+which results in a lower Q-value for the dependency source.
+sponses compared to state-of-the-art REST API testing
+Although random values are effective for simpler parameters,
+tools?
+such as name , the LLM-generated values perform better for
+3) RQ3 : How do the main components of AutoRestTest
+pattern-constrained fields, such as email and password .
+(MARL, SPDG, and LLM-based input generation) con-
+tribute to its overall performance?
+E. Request Generator
+The request generator constructs and dispatches API re-
+A. Experiment Setup
+quests to the SUT. It works closely with the REST agents
+We conducted our experiments on two cloud VMs, each
+to ensure that the generated requests are both effective and
+equipped with a 48-core Intel(R) Xeon(R) Platinum 8260
+comprehensive. Upon receiving responses from the SUT, the
+processor with 128 GB RAM. To ensure consistent test con-
+response handler processes these results and provides feedback
+ditions, we restarted the services and restored their databases
+to the REST agents, allowing refinement of future requests.
+in each testing session to eliminate potential state dependency
+The mutator’s purpose is to generate invalid requests to
+effects across sessions. We used the default configuration and
+uncover unexpected behaviors (e.g., 500 responses). This is a
+database settings for each service. We allocated dedicated re-
+crucial part of REST API testing frameworks, as state-of-the-
+sources to each service and testing tool, running them sequen-
+art tools employ similar strategies such as mutating parameter
+tially to prevent interference. Throughout the experiments, we
+3 closely monitored CPU and memory usage to ensure optimal
+In this work, we used GPT-3.5 Turbo with a temperature setting of 0.8
+because of its known performance in REST API contexts [30]. performance without encountering resource constraints.
+
+===== PAGE 8 =====
+TABLE I TABLE II
+REST SERVICES USED IN THE EVALUATION . N UMBER OF OPERATIONS EXERCISED .
+REST Service Lines of Code #Operations AutoRestTest ARAT-RL EvoMaster MoRest RESTler
+FDIC 6 6 6 6 6
+Features Service 1688 18
+OhSome 12 0 0 0 0
+Language Tool 113170 2
+Spotify 7 5 4 4 3
+Rest Countries 1619 22
+Genome Nexus 22143 23
+Total 25 11 10 10 9
+Person Controller 601 12
+User Management 2805 22
+other tools. Figure 4 illustrates the line, branch, and method
+Market 7945 13
+Project Tracking System 3784 67
+coverage achieved by each testing tool on the nine open-source
+YouTube-Mock 2422 1
+services in our benchmark; additionally, it shows the average
+FDIC – 6
+Spotify – 12
+coverage across these APIs.
+Ohsome API – 122
+As shown in Figure 4, AutoRestTest outperformed the other
+tools in terms of method coverage, achieving 58.3% cover-
+For our evaluation, we relied on the same set of REST
+age on average, compared to ARAT-RL (42.1%), EvoMaster
+API testing tools and services used by ARAT-RL [13]. Ac-
+(43.1%), MoRest (31.5%), and RESTler (34.7%). This repre-
+cordingly, we compared AutoRestTest with ARAT-RL [13],
+sents a significant coverage gain ranging from 15.2 to 26.8
+EvoMaster [29], MoRest [15], and RESTler [7]. Specifically,
+percentage points. Similarly, AutoRestTest achieved higher
+we used the latest released version or the latest commit when
+line coverage, 58.3% on average, compared to the other tools,
+a release was unavailable: RESTler v9.2.4, EvoMaster v3.0.0,
+which achieved 44%, 44.1%, 33.4%, and 34.6%, respectively.
+ARAT-RL v0.1, MoRest (obtained directly from the authors).
+Finally, in terms of branch coverage, AutoRestTest again
+The ARAT-RL benchmark dataset has 10 RESTful services.
+outperformed the other tools, achieving 32.1% coverage on
+In addition to these services, we included the services from
+average compared to the other tools, which achieved 19.8%,
+the RESTGPT study [30]. Out of the total 16 services,
+20.5%, 12.7%, and 11.4%, respectively.
+we excluded SCS and NCS because they were written by
+In our evaluation, we also measured the number of pro-
+EvoMaster’s authors, and we aimed to avoid potential bias.
+cessed operations for online services for which source code
+We also excluded OCVN due to authentication issues. Lastly,
+is unavailable: OhSome and Spotify. Table II presents these
+we excluded OMDB, which is a toy online service with only
+results, which highlight AutoRestTest’s ability to handle a
+one API operation that all testing tools can process in a
+larger number of operations. Specifically, AutoRestTest ex-
+second. Ultimately, we used 12 services: Features Service,
+ercised 25 operations in total, compared to ARAT-RL, Evo-
+Language Tool, REST Countries, Genome Nexus, Person
+Master, MoRest, and RESTler, which processed 11, 10, 10,
+Controller, User Management Microservice, Market Service,
+and 9 operations, respectively. These results on achieved code
+Project Tracking System, OhSome, YouTube-Mock, and Spo-
+coverage and successfully exercised operations demonstrate
+tify. Table I lists the open-source services along with the lines
+AutoRestTest’s effectiveness on a range of different REST
+of code and the number of API operations in each service.
+APIs and how it improves on the state of the art.
+For a fair comparison, because our tool utilizes LLM calls,
+In most cases, there were notable performance gains in
+we used the enhanced specification generated by RESTGPT,
+Genome Nexus, Person Controller, User Management, Market,
+which adds realistic testing inputs to the specification using
+YouTube, OhSome, and Spotify. Conversely, for Features
+LLMs. Moreover, we used GPT-3.5-Turbo, as RESTGPT
+Service, REST Countries, and Project Tracking System, Au-
+utilized this model. Based on a recent survey that describes
+toRestTest’s results did not show much difference compared to
+settings and metrics for REST API testing [31], we used
+the second-best performing tool in our set. These four services
+a one-hour time budget with ten repetitions to compute the
+have a notable characteristic in common: the number of input
+results. To measure effectiveness and error-finding ability, we
+parameters in their APIs is mostly 1 to 2, and the services are
+used code coverage (open-source services only), number of
+therefore easier to test. This result shows that AutoRestTest
+successfully processed operations in the specification, and
+can effectively explore REST APIs, especially for services
+number of 500 status codes, which are the most popular
+with a large search space.
+metrics in the literature. To collect code coverage, we used
+Jacoco [58]. For the number of processed operations, we used
+the script from the NLP2REST repository [59]. For the number
+AutoRestTest achieves considerable gains in code cov-
+of 500 status codes, we used the script available in the ARAT-
+erage, with method coverage increasing between 15.2
+RL repository [60]. This script collects 500 status codes by
+to 26.8 percentage points, line coverage between 14.2
+tracking the HTTP responses, and removes the duplicated 500
+and 24.8 percentage points, and branch coverage be-
+codes using the server response message for each operation.
+tween 11.6 and 20.7 percentage points compared to
+the other tools considered. The improvement in perfor-
+B. RQ1: Effectiveness
+mance is particularly noticeable on large and complex
+The effectiveness of AutoRestTest is evaluated based on
+services with many input parameters.
+its ability to comprehensively cover more code compared to
+
+===== PAGE 9 =====
+Fig. 4. Comparison of code coverage metrics across tools and services: line, branch, and method coverage.
+TABLE III has recent GitHub commits. We reported the detected issues,
+S ERVICE FAILURES TRIGGERED (500 RESPONSE CODES ).
+and the OhSome errors were accepted, whereas we are still
+waiting for Spotify’s response [32], [33]. This improvement in
+REST APIs AutoRestTest ARAT-RL EvoMaster MoRest RESTler
+fault detection is somehow expected, as AutoRestTest achieves
+Features Service 1 1 1 1 1
+Language Tool 1 1 1 0 0
+the highest coverage among the other tools, which is strongly
+REST Countries 1 1 1 1 1
+correlated with fault-finding ability in REST API testing [27].
+Genome Nexus 1 1 0 1 0
+Person Contoller 8 8 8 8 3
+To illustrate the utility of AutoRestTest’s specific compo-
+User Management 1 1 1 1 1
+Market 1 1 1 1 1
+nents in fault detection on a specific example, consider the fol-
+Project Tracking System 1 1 1 1 1
+lowing sequence of operations in the Ohsome service, which
+YouTube 1 1 1 1 1
+FDIC 6 6 6 6 6
+shows the capabilities of the SPDG. AutoRestTest begins
+OhSome 20 12 0 0 0
+Spotify 1 0 0 0 0
+by successfully querying the POST /elements/area/ratio
+Total 42 33 20 20 14
+endpoint from the Ohsome service with its filter2 param-
+eter assigned to node:relation . Subsequently, AutoRestTest
+C. RQ2: Fault Detection Capability
+targets the GET /users/count/groupBy/key endpoint, where
+We evaluated the fault detection capability of AutoRestTest
+the dependency agent applies the SPDG’s semantically-created
+by counting how many 500 Internal Server Errors it identi-
+dependency edges to identify a potential connection between
+fied. Table III shows the number of such errors detected by
+the filter parameter of the new operation and the filter2
+AutoRestTest, ARAT-RL, EvoMaster, MoRest, and RESTler.
+parameter of the previous operation. When the dependency
+As the data in the table show, AutoRestTest detected a total
+agent reuses the node:relation value from the previously
+of 42 500 Internal Server Errors across the evaluated REST
+successful filter2 parameter in the new request, the SPDG
+APIs, far outperforming the other tools on this metric. ARAT-
+uncovers an unexpected 500 Internal Server Error. Typically,
+RL detected 33 errors, EvoMaster and MoRest detected 20
+an invalid filter value would trigger a client error, but this
+errors each, and RESTler detected 14 errors.
+server-side error indicates that the SPDG identified a deeper,
+Specifically, AutoRestTest identified significantly more er-
+unanticipated fault in the server’s value handling. The other
+rors in the OhSome service (20 errors) compared to ARAT- tools overlook the correlation between the two parameters due
+RL (12 errors), with none detected by EvoMaster, MoRest, to either the minor naming differences or improper dependency
+or RESTler. Additionally, AutoRestTest was the only tool to modeling, and fail to expose this error.
+detect an error in the Spotify service. It is important to note For another example, AutoRestTest shows the effective-
+that both OhSome and Spotify are active services; Spotify, ness of its LLM value generation in the interactions with
+for example, has 615 million users, and the OhSome service the Spotify API. The GET /playlists/playlist_id/tracks
+
+===== PAGE 10 =====
+TABLE IV and guiding test generation by reducing the search space, thus
+C ODE COVERAGE ACHIEVED BY DIFFERENT TOOL VARIANTS .
+helping identify the dependent API operations.
+Removing the LLM alone also leads to a substantial de-
+Method Line Branch
+crease in performance, with method, line, and branch coverage
+AutoRestTest 58.3% 32.1% 58.3%
+dropping to 47.4%, 19.3%, and 45.8%. The primary reason
+1. Without LLM 47.4% (-10.9%) 19.3% (-12.8%) 45.8% (-12.5%)
+2. Without Learning 45.6% (-12.7%) 18.2% (-13.9%) 45.8% (-12.5%)
+for this difference is the LLM’s ability to generate diverse
+3. Without SPDG 46.7% (-11.6%) 18.7% (-13.4%) 47.6% (-10.7%)
+and appropriate test inputs. These inputs are essential for
+exercising the API, as they help uncover various parameter and
+operation in Spotify’s API requires specific knowledge re-
+operation dependencies. Furthermore, operation and parameter
+garding Spotify’s playlist_id formation. Spotify generates
+dependencies cannot be accurately identified without resolving
+Spotify IDs for playlists that are typically 22 characters
+parameter constraints when they exist.
+long with constraints on the permitted letters and patterns.
+Notably, without the SPDG, AutoRestTest exercised only 5
+Where many tools fail to create valid IDs, AutoRestTest’s
+operations for Spotify, whereas with the SPDG, it consistently
+value agent leverages its LLM to generate valid Spotify
+covered 7 operations.
+IDs for playlists. AutoRestTest is thus able to successfully
+query the GET /playlists/playlist_id/tracks operation,
+The ablation study shows that each component of
+with rippling effects across the service. For instance, after
+AutoRestTest (LLM, MARL, and SPDG) contributes
+retrieving the International Standard Recording Code (ISRC)
+considerably to the effectiveness of the approach, and
+from the playlist’s tracks, AutoRestTest’s mutator randomly
+removing any component drops the coverage signif-
+selects an ISRC to use as the user_id in the subsequent
+icantly. The decrease in method, line, and branch
+GET /users/user_id/playlists operation. This sequence
+coverage ranges, in percentage points, between 10.9
+reveals a hidden dependency conflict that results in a 500
+and 12.7, 12.8 and 13.9, and 10.7 and 12.5, indicating
+Internal Server Error. Other tools fail to exercise the GET
+that each component plays an important role.
+/playlists/playlist_id/tracks operation entirely and are
+hence unable to locate this error.
+E. Threats to Validity
+Like for any empirical study, there are potential threats
+AutoRestTest outperforms the other tools in terms of
+to the validity of our results. Regarding construct validity,
+fault detection capability. It identifies a total of 42
+the use of ChatGPT-3.5-Turbo as our LLM component [39]
+instances of 500 Internal Server Errors, whereas ARAT-
+introduces potential data leakage, as it may have been trained
+RL, EvoMaster, MoRest, and RESTler detected 33, 20,
+on API-related content, potentially affecting our results. While
+20, and 14 errors, respectively.
+our ablation study demonstrates the LLM’s importance, this
+limitation should be considered when interpreting our findings.
+D. RQ3: Ablation Study
+Additionally, technical choices like the 20% mutation rate [13]
+To understand the contribution of each component in Au-
+and ChatGPT’s default parameters [30] may affect result
+toRestTest, we conducted an ablation study in which we
+comparability.
+removed specific elements of the approach: the LLM-based
+REST APIs’ inherently flaky behavior (e.g., due to network
+input generation, the agent learning step in MARL, and the
+issues) introduces possible threats of internal validity. To mit-
+SPDG. Because our tool heavily depends on agents, it was
+igate this issue, we performed multiple test runs and averaged
+not feasible to create a reasonable tool without MARL entirely.
+the results. We also carefully inspected our code and results
+Therefore, instead of removing all the agents, we only removed
+to mitigate the risk of implementation errors.
+the temporal-difference Q-learning from the agents. Table IV
+The uneven quality of OpenAPI specifications [61] can also
+presents the impact of these removals on method, line, and
+affect the validity of our results. While this is an inherent and
+branch coverage.
+somehow unavoidable issue, we have left to future work the
+Removing the temporal-difference Q-learning leads to the
+investigation of the impact of specification completeness and
+most significant decrease in overall metrics, dropping the
+accuracy on AutoRestTest’s performance.
+coverage rates to 45.6%, 18.2%, and 45.9% for method,
+Finally, our selection of REST APIs benchmarks can af-
+line, and branch coverage. The learning step’s contribution
+fect external validity. While we used a diverse set of real-
+is crucial in optimizing the testing process through strategic
+world APIs, AutoRestTest may perform differently on different
+exploration and exploitation of testing paths. Without the
+benchmarks. The availability of our dataset and code will allow
+multi-agent learning step, the tool repeated the same requests
+other researchers to validate and extend our evaluation.
+and failed to properly update its agents with feedback.
+V. R ELATED W ORK
+The removal of the SPDG has the next most significant
+A. Automated REST API Testing
+impact in terms of method and line coverage, dropping the
+performance significantly to 46.7%, 18.7%, and 47.6% for Automated testing for REST APIs has employed various
+method, line, and branch coverage. This result indicates that strategies. EvoMaster [29] uses both white-box and black-
+the SPDG plays a critical role in identifying dependencies box techniques and applies evolutionary algorithms to refine
+
+===== PAGE 11 =====
+test cases, focusing on detecting server errors. RESTler [7] B. LLM-based REST API Testing and Analysis
+generates stateful tests by inferring producer-consumer de-
+Recent advancements in LLMs have resulted in improved
+pendencies, aiming to uncover server failures. Tools such as
+REST API testing and analysis approaches. NESTFUL [65]
+RestTestGen [6] exploit data dependencies and utilize oracles
+provides a benchmark for evaluating LLMs on nested API
+to validate status codes and response schemas. MoRest [15]
+calls, revealing challenges in handling complex API interac-
+adopts model-based testing to simulate user interactions and
+tions. RESTSpecIT [66] demonstrates automated specification
+generate test cases, while RestCT [12] employs combinatorial
+inference and black-box testing with minimal user input,
+testing techniques to explore parameter value combinations
+while RestGPT [67] introduces coarse-to-fine online planning
+systematically. ARAT-RL [13] introduces reinforcement learn-
+for improved task decomposition and API selection. While
+ing to adapt and refine API testing strategies based on real-
+these approaches primarily focus on REST API analysis,
+time feedback. Techniques such as QuickREST [8], Schemath-
+AutoRestTest focuses on testing. RESTSpecIT includes some
+esis [11], and RESTest [9] use property-based testing and var-
+testing capabilities, but it is limited to basic parameter muta-
+ious oracles to ensure compliance with OpenAPI or GraphQL
+tion and lacks advanced testing features such as operation/pa-
+specifications. Tools such as Dredd [62], fuzz-lightyear [63],
+rameter dependency identification.
+and Tcases [14] provide diverse testing capabilities, from
+C. Reinforcement Learning-Based Test Case Generation
+validating responses against expected results to detecting vul-
+nerabilities and validating Swagger-based specifications.
+Recent studies have explored reinforcement learning for
+software testing, particularly for web and mobile applications.
+The closest approach to AutoRestTest that incorporates rein-
+For instance, Zheng and colleagues proposed a curiosity-driven
+forcement learning is ARAT-RL. However, ARAT-RL does not
+reinforcement learning approach for web client testing [68],
+employ a comprehensive model to represent operation depen-
+and Pan and colleagues applied a similar technique for An-
+dencies, which reduces its effectiveness. Given the difficulties
+droid application testing [69]. Other work includes QBE, a
+in embedding potential dependencies into the action space of
+Q-learning-based exploration method for Android apps [70],
+an agent, ARAT-RL considers weighted probabilities using
+and AutoBlackTest, an automatic black-box testing approach
+parameter frequency to guide potential dependencies. This can
+for interactive applications [71]. Reinforcement learning has
+result in the inefficient prioritization of unrelated operations in
+also been used specifically for Android GUI testing [72]–
+subsequent requests. Unlike ARAT-RL, AutoRestTest uses the
+[74]. While these approaches use single-agent-based tech-
+SPDG to narrow the dependency search.
+niques, AutoRestTest decomposes the test-generation problem
+MoRest, with its RESTful Property Graph (RPG), is the
+into multiple components (operation, parameter, value, de-
+closest approach to AutoRestTest in terms of using a graph
+pendency) and uses a multi-agent reinforcement algorithm to
+model. However, MoRest is incapable of progressively adapt-
+reward the different components’ contributions in each rein-
+ing its requests according to server feedback, rendering its
+forcement learning step. Additionally, AutoRestTest introduces
+dependency sequences less effective.
+the SPDG to reduce the search space of operation dependency.
+Concurrently to this work, two additional REST API test-
+VI. CONCLUSION AND FUTURE WORK
+ing techniques were proposed: DeepREST [17] and Lla-
+maRestTest [22]. DeepREST uses deep reinforcement learning
+In this paper, we introduced AutoRestTest, a new technique
+to discover implicit API constraints, employing a single agent
+that leverages multi-agent reinforcement learning, the seman-
+that learns operation orderings through a reward mechanism.
+tic property dependency graph, and large language models
+However, deep learning’s black-box nature makes it difficult
+to enhance REST API testing. By optimizing specialized
+to track how and why specific testing decisions are made. In
+agents for dependencies, operations, parameters, and values,
+contrast, AutoRestTest’s reward mechanism is more effective
+AutoRestTest addresses the limitations of existing techniques
+because uses multiple specialized agents and is able to track
+and tools. Our evaluation on 12 state-of-the-art REST services
+how each agent’s decisions contribute to the overall testing
+shows that AutoRestTest can significantly outperform leading
+strategy. Additionally, while DeepREST learns dependencies
+REST API testing tools in terms of code coverage, operation
+purely through trial and error, AutoRestTest reduces the search
+coverage, and fault detection. Furthermore, our ablation study
+space upfront using the SPDG. LlamaRestTest fine-tunes small
+confirms the individual contributions of the MARL, LLMs,
+language models specifically for REST API testing tasks, using
+and SPDG components to the tool’s effectiveness. In future
+Llama models [64] to identify inter-parameter dependencies
+work, we will explore the dynamic adaptation of testing
+and generate valid inputs. LlamaRestTest mainly focuses on
+strategies, optimize performance and scalability (e.g., through
+LLM-driven testing, whereas our approach uses LLMs only
+fine-tuning LLMs), and develop more sophisticated fault-
+to generate parameter values while relying on the SPDG for
+classification approaches.
+efficient dependency identification and multi-agent reinforce-
+A CKNOWLEDGMENTS
+ment learning for dynamic optimization across all testing steps.
+We could not compare with either of these approaches in our This work was partially supported by NSF, under grant CCF-
+evaluation because they had not yet been published when we 0725202 and DOE, under contract DE-FOA-0002460, and gifts from
+performed this work. Facebook, Google, IBM Research, and Microsoft Research.
+
+===== PAGE 12 =====
+R EFERENCES ASE ’24. New York, NY, USA: Association for Computing
+Machinery, 2024, p. 1383–1394. [Online]. Available: https://doi.org/10.
+[1] R. T. Fielding, “Architectural styles and the design of network-based
+1145/3691620.3695511
+software architectures,” Ph.D. dissertation, University of California,
+[18] A. Arcuri, M. Zhang, S. Seran, J. P. Galeotti, A. Golmohammadi, O. Du-
+Irvine, 2000.
+man, A. Aldasoro, and H. Ghianni, “Tool report: Evomaster—black
+[2] C. Pautasso, O. Zimmermann, and F. Leymann, “Restful web services
+and white box search-based fuzzing for rest, graphql and rpc apis,”
+vs. ”big” web services: Making the right architectural decision,”
+Automated Software Engineering , vol. 32, no. 1, pp. 1–11, 2025.
+in Proceedings of the 17th International Conference on World
+[19] T. Le, T. Tran, D. Cao, V. Le, T. N. Nguyen, and V. Nguyen, “Kat:
+Wide Web , ser. WWW ’08. New York, NY, USA: Association
+Dependency-aware automated api testing with large language models,”
+for Computing Machinery, 2008, p. 805–814. [Online]. Available:
+in 2024 IEEE Conference on Software Testing, Verification and Valida-
+https://doi.org/10.1145/1367497.1367606
+tion (ICST) . IEEE, 2024, pp. 82–92.
+[3] L. Richardson, M. Amundsen, and S. Ruby, RESTful Web APIs: Services
+[20] J. Chen, Y. Chen, Z. Pan, Y. Chen, Y. Li, Y. Li, M. Zhang, and Y. Shen,
+for a Changing World . O’Reilly Media, Inc., 2013.
+“Dyner: Optimized test case generation for representational state transfer
+[4] APIs.guru, “Apis-guru,” 2023. [Online]. Available: https://apis.guru/
+(rest) ful application programming interface (api) fuzzers guided by
+[5] R Software Inc., “Rapidapi,” 2023. [Online]. Available: https:
+dynamic error responses,” Electronics , vol. 13, no. 17, p. 3476, 2024.
+//rapidapi.com/terms/
+[21] T. Stennett, M. Kim, S. Sinha, and A. Orso, “Autoresttest: A tool
+[6] D. Corradini, A. Zampieri, M. Pasqua, E. Viglianisi, M. Dallago,
+for automated rest api testing using llms and marl,” 2025. [Online].
+and M. Ceccato, “Automated black-box testing of nominal and error
+Available: https://arxiv.org/abs/2501.08600
+scenarios in restful apis,” Software Testing, Verification and Reliability ,
+[22] M. Kim, S. Sinha, and A. Orso, “Llamaresttest: Effective rest
+vol. 32, 01 2022. [Online]. Available: https://doi.org/10.1002/stvr.1808
+api testing with small language models,” 2025. [Online]. Available:
+[7] V. Atlidakis, P. Godefroid, and M. Polishchuk, “Restler: Stateful rest
+https://arxiv.org/abs/2501.08598
+api fuzzing,” in Proceedings of the 41st International Conference on
+[23] M. Kim, D. Corradini, S. Sinha, A. Orso, M. Pasqua, R. Tzoref-Brill,
+Software Engineering , ser. ICSE ’19. Piscataway, NJ, USA: IEEE
+and M. Ceccato, “Enhancing rest api testing with nlp techniques,” in
+Press, 2019, p. 748–758. [Online]. Available: https://doi.org/10.1109/
+Proceedings of the 32nd ACM SIGSOFT International Symposium on
+ICSE.2019.00083
+Software Testing and Analysis , ser. ISSTA 2023. New York, NY, USA:
+ˇ
+[8] S. Karlsson, A. Cauˇ sevi´ c, and D. Sundmark, “Quickrest: Property-
+Association for Computing Machinery, 2023, p. 1232–1243. [Online].
+based test generation of openapi-described restful apis,” in 2020 IEEE
+Available: https://doi.org/10.1145/3597926.3598131
+13th International Conference on Software Testing, Validation and
+[24] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,
+Verification (ICST) . Los Alamitos, CA, USA: IEEE Computer Society,
+A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al. , “Language mod-
+2020, pp. 131–141.
+els are few-shot learners,” Advances in neural information processing
+[9] A. Martin-Lopez, S. Segura, and A. Ruiz-Cort´ es, “Restest: Automated
+systems , vol. 33, pp. 1877–1901, 2020.
+black-box testing of restful web apis,” in Proceedings of the 30th
+[25] K. Zhang, Z. Yang, and T. Bas ¸ar, “Multi-agent reinforcement learning:
+ACM SIGSOFT International Symposium on Software Testing and
+A selective overview of theories and algorithms,” Handbook of rein-
+Analysis , ser. ISSTA 2021. New York, NY, USA: Association
+forcement learning and control , pp. 321–384, 2021.
+for Computing Machinery, 2021, p. 682–685. [Online]. Available:
+[26] P. Sunehag, G. Lever, A. Gruslys, W. M. Czarnecki, V. Zambaldi,
+https://doi.org/10.1145/3460319.3469082
+M. Jaderberg, M. Lanctot, N. Sonnerat, J. Z. Leibo, K. Tuyls, and
+ˇ
+[10] S. Karlsson, A. Cauˇ sevi´ c, and D. Sundmark, “Automatic property-
+T. Graepel, “Value-decomposition networks for cooperative multi-agent
+based testing of graphql apis,” in 2021 IEEE/ACM International
+learning,” arXiv preprint arXiv:1706.05296 , 2017.
+Conference on Automation of Software Test (AST) . Los Alamitos, CA,
+[27] M. Kim, Q. Xin, S. Sinha, and A. Orso, “Automated test generation
+USA: IEEE Computer Society, 2021, pp. 1–10. [Online]. Available:
+for rest apis: No time to rest yet,” in Proceedings of the 31st
+https://doi.org/10.1109/AST52587.2021.00009
+ACM SIGSOFT International Symposium on Software Testing and
+[11] Z. Hatfield-Dodds and D. Dygalo, “Deriving semantics-aware fuzzers
+Analysis , ser. ISSTA 2022. New York, NY, USA: Association
+from web api schemas,” in Proceedings of the ACM/IEEE 44th
+for Computing Machinery, 2022, p. 289–301. [Online]. Available:
+International Conference on Software Engineering: Companion
+https://doi.org/10.1145/3533767.3534401
+Proceedings , ser. ICSE ’22. New York, NY, USA: Association
+[28] M. Zhang and A. Arcuri, “Open problems in fuzzing restful apis: A
+for Computing Machinery, 2022, p. 345–346. [Online]. Available:
+comparison of tools,” ACM Trans. Softw. Eng. Methodol. , may 2023.
+https://doi.org/10.1145/3510454.3528637
+[Online]. Available: https://doi.org/10.1145/3597205
+[12] H. Wu, L. Xu, X. Niu, and C. Nie, “Combinatorial testing of restful
+[29] A. Arcuri, “Restful api automated test case generation with evomaster,”
+apis,” in Proceedings of the 44th International Conference on Software
+ACM Transactions on Software Engineering and Methodology (TOSEM) ,
+Engineering , ser. ICSE ’22. New York, NY, USA: Association
+vol. 28, no. 1, jan 2019. [Online]. Available: https://doi.org/10.1145/
+for Computing Machinery, 2022, p. 426–437. [Online]. Available:
+3293455
+https://doi.org/10.1145/3510003.3510151
+[30] M. Kim, T. Stennett, D. Shah, S. Sinha, and A. Orso, “Leveraging
+[13] M. Kim, S. Sinha, and A. Orso, “Adaptive rest api testing
+large language models to improve rest api testing,” in Proceedings
+with reinforcement learning,” in 2023 38th IEEE/ACM International
+of the 2024 ACM/IEEE 44th International Conference on Software
+Conference on Automated Software Engineering (ASE) . Los Alamitos,
+Engineering: New Ideas and Emerging Results , ser. ICSE-NIER’24.
+CA, USA: IEEE Computer Society, sep 2023, pp. 446–458. [Online].
+New York, NY, USA: Association for Computing Machinery, 2024, p.
+Available: https://doi.ieeecomputersociety.org/10.1109/ASE56229.2023.
+37–41. [Online]. Available: https://doi.org/10.1145/3639476.3639769
+00218
+[31] A. Golmohammadi, M. Zhang, and A. Arcuri, “Testing restful apis:
+[14] “Tcases,” 2023. [Online]. Available: https://github.com/Cornutum/
+A survey,” ACM Trans. Softw. Eng. Methodol. , aug 2023. [Online].
+tcases/tree/master/tcases-openapi
+Available: https://doi.org/10.1145/3617175
+[15] Y. Liu, Y. Li, G. Deng, Y. Liu, R. Wan, R. Wu, D. Ji, S. Xu,
+[32] “Error report for spotify,” 2024. [Online]. Avail-
+and M. Bao, “Morest: Model-based restful api testing with execution
+able: https://community.spotify.com/t5/Spotify-for-Developers/
+feedback,” in Proceedings of the 44th International Conference on
+500-or-502-Error-on-GET-users-user-id-playlists-Operation/m-p/
+Software Engineering , ser. ICSE ’22. New York, NY, USA: Association
+6110695#M14091
+for Computing Machinery, 2022, p. 1406–1417. [Online]. Available:
+[33] Anonymous, “Error report for ohsome,” 2024. [Online]. Available:
+https://doi.org/10.1145/3510003.3510133
+https://github.com/GIScience/ohsome-api/issues/327
+[16] D. Corradini, M. Pasqua, and M. Ceccato, “Automated black-box testing
+[34] SE@GT, “Experiment infrastructure, data, and results for autoresttest,”
+of mass assignment vulnerabilities in restful apis,” in 2023 IEEE/ACM
+https://github.com/selab-gatech/AutoRestTest/, 2024.
+45th International Conference on Software Engineering (ICSE) . IEEE,
+[35] T. Berners-Lee, R. Fielding, and H. Frystyk, “Hypertext transfer
+2023, pp. 2553–2564.
+protocol–http/1.0,” MIT/LCS, Tech. Rep., 1996. [Online]. Available:
+[17] D. Corradini, Z. Montolli, M. Pasqua, and M. Ceccato, “Deeprest:
+https://www.ietf.org/rfc/rfc1945.txt
+Automated test case generation for rest apis exploiting deep
+[36] OpenAPI, “Openapi standard,” https://www.openapis.org, 2023.
+reinforcement learning,” in Proceedings of the 39th IEEE/ACM
+[37] S. Software, “Swagger,” https://swagger.io/specification/v2/, 2023.
+International Conference on Automated Software Engineering , ser.
+
+===== PAGE 13 =====
+[38] M. U. Hadi, R. Qureshi, A. Shah, M. Irfan, A. Zafar, M. B. Shaikh, [59] M. Kim and D. Corradini, “Experiment infrastructure, data, and results
+N. Akhtar, J. Wu, S. Mirjalili et al. , “Large language models: a for nlp2rest,” https://github.com/codingsoo/nlp2rest, 2024.
+comprehensive survey of its applications, challenges, limitations, and [60] M. Kim”, “Experiment infrastructure and data for arat-rl,” 2024.
+future prospects,” 2023. [Online]. Available: https://github.com/codingsoo/ARAT-RL
+[39] OpenAI, “Gpt-4 technical report,” 2023. [61] R. Huang, M. Motwani, I. Martinez, and A. Orso, “Generating rest api
+[40] D. Baidoo-Anu and L. O. Ansah, “Education in the era of generative specifications through static analysis,” in Proceedings of the IEEE/ACM
+artificial intelligence (ai): Understanding the potential benefits of chatgpt 46th International Conference on Software Engineering , ser. ICSE ’24.
+in promoting teaching and learning,” Journal of AI , vol. 7, no. 1, pp. New York, NY, USA: Association for Computing Machinery, 2024.
+52–62, 2023. [Online]. Available: https://doi.org/10.1145/3597503.3639137
+[62] Apiary, “Dredd,” 2023. [Online]. Available: https://github.com/apiaryio/
+[41] P. A. C. Debby R. E. Cotton and J. R. Shipway, “Chatting and cheating:
+dredd
+Ensuring academic integrity in the era of chatgpt,” Innovations in
+[63] Yelp, “Fuzz-lightyear,” 2023. [Online]. Available: https://github.com/
+Education and Teaching International , vol. 61, no. 2, pp. 228–239, 2024.
+Yelp/fuzz-lightyear
+[Online]. Available: https://doi.org/10.1080/14703297.2023.2190148
+[64] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman,
+[42] R. Pan, M. Kim, R. Krishna, R. Pavuluri, and S. Sinha, “Multi-language
+A. Mathur, A. Schelten, A. Yang, A. Fan et al. , “The llama 3 herd of
+unit test generation using llms,” arXiv preprint arXiv:2409.03093 , 2024.
+models,” arXiv preprint arXiv:2407.21783 , 2024.
+[43] R. S. Sutton and A. G. Barto, Reinforcement Learning: An Introduction .
+[65] K. Basu, I. Abdelaziz, K. Bradford, M. Crouse, K. Kate, S. Kumaravel,
+Cambridge, MA, USA: A Bradford Book, 2018.
+S. Goyal, A. Munawar, Y. Rizk, X. Wang et al. , “Nestful: A benchmark
+[44] P. Hernandez-Leal, B. Kartal, and M. E. Taylor, “A survey and critique of
+for evaluating llms on nested sequences of api calls,” arXiv preprint
+multiagent deep reinforcement learning,” Autonomous Agents and Multi-
+arXiv:2409.03797 , 2024.
+Agent Systems , vol. 33, no. 6, pp. 750–797, 2019.
+[66] A. Decrop, G. Perrouin, M. Papadakis, X. Devroey, and P.-Y. Schobbens,
+[45] S. Shalev-Shwartz, S. Shammah, and A. Shashua, “Safe, multi-
+“You can rest now: Automated specification inference and black-box
+agent, reinforcement learning for autonomous driving,” arXiv preprint
+testing of restful apis with large language models,” arXiv preprint
+arXiv:1610.03295 , 2016.
+arXiv:2402.05102 , 2024.
+[46] L. Busoniu, R. Babuska, and B. De Schutter, “A comprehensive survey
+[67] Y. Song, W. Xiong, D. Zhu, W. Wu, H. Qian, M. Song, H. Huang,
+of multiagent reinforcement learning,” IEEE Transactions on Systems,
+C. Li, K. Wang, R. Yao et al. , “Restgpt: Connecting large language
+Man, and Cybernetics, Part C (Applications and Reviews) , vol. 38, no. 2,
+models with real-world restful apis,” arXiv preprint arXiv:2306.06624 ,
+pp. 156–172, 2008.
+2023.
+[47] D. Silver, A. Huang, C. J. Maddison, A. Guez, L. Sifre, G. Van
+[68] Y. Zheng, Y. Liu, X. Xie, Y. Liu, L. Ma, J. Hao, and Y. Liu,
+Den Driessche, J. Schrittwieser, I. Antonoglou, V. Panneershelvam,
+“Automatic web testing using curiosity-driven reinforcement learning,”
+M. Lanctot et al. , “Mastering the game of go with deep neural networks
+in Proceedings of the 43rd International Conference on Software
+and tree search,” nature , vol. 529, no. 7587, pp. 484–489, 2016.
+Engineering , ser. ICSE ’21. IEEE Press, 2021, p. 423–435. [Online].
+[48] Y. Yang and J. Wang, “An overview of multi-agent reinforce-
+Available: https://doi.org/10.1109/ICSE43902.2021.00048
+ment learning from game theoretical perspective,” arXiv preprint
+[69] M. Pan, A. Huang, G. Wang, T. Zhang, and X. Li, “Reinforcement
+arXiv:2011.00583 , 2020.
+learning based curiosity-driven testing of android applications,” in
+[49] C. J. C. H. Watkins and P. Dayan, “Q-learning,” Machine Learning ,
+Proceedings of the 29th ACM SIGSOFT International Symposium on
+vol. 8, no. 3, pp. 279–292, 1992. [Online]. Available: https:
+Software Testing and Analysis , ser. ISSTA 2020. New York, NY, USA:
+//doi.org/10.1007/BF00992698
+Association for Computing Machinery, 2020, p. 153–164. [Online].
+[50] V. Kumar and M. Webster, “Importance sampling based exploration in
+Available: https://doi.org/10.1145/3395363.3397354
+q learning,” arXiv preprint arXiv:2107.00602 , 2021.
+[70] Y. Koroglu, A. Sen, O. Muslu, Y. Mete, C. Ulker, T. Tanriverdi,
+[51] gibberblot, “gibberblot’s blog post,” https://gibberblot.github.io/rl-notes/
+and Y. Donmez, “QBE: QLearning-Based Exploration of Android
+single-agent/temporal-difference-learning.html, 2024.
+Applications,” in 2018 IEEE 11th International Conference on Software
+[52] M. Kim, S. Pande, and A. Orso, “Improving program debloating
+Testing, Verification and Validation . Los Alamitos, CA, USA:
+with 1-du chain minimality,” in Proceedings of the 2024 IEEE/ACM
+IEEE Computer Society, 2018, pp. 105–115. [Online]. Available:
+46th International Conference on Software Engineering: Companion
+https://doi.org/10.1109/ICST.2018.00020
+Proceedings , ser. ICSE-Companion ’24. New York, NY, USA:
+[71] L. Mariani, M. Pezze, O. Riganelli, and M. Santoro, “Autoblacktest:
+Association for Computing Machinery, 2024, p. 384–385. [Online].
+Automatic black-box testing of interactive applications,” in 2012 IEEE
+Available: https://doi.org/10.1145/3639478.3643518
+Fifth International Conference on Software Testing, Verification and
+[53] J. Pennington, R. Socher, and C. D. Manning, “Glove: Global vectors
+Validation . Los Alamitos, CA, USA: IEEE Computer Society, 2012,
+for word representation,” in Proceedings of the 2014 conference on
+pp. 81–90. [Online]. Available: https://doi.org/10.1109/ICST.2012.88
+empirical methods in natural language processing (EMNLP) , 2014, pp.
+[72] D. Adamo, M. K. Khan, S. Koppula, and R. Bryce, “Reinforcement
+1532–1543.
+learning for android gui testing,” in Proceedings of the 9th ACM
+[54] N. Rekabsaz, M. Lupu, and A. Hanbury, “Exploration of a threshold
+SIGSOFT International Workshop on Automating TEST Case Design,
+for similarity based on uncertainty in word embedding,” in European
+Selection, and Evaluation , ser. A-TEST 2018. New York, NY,
+Conference on Information Retrieval . Springer, 2017, pp. 396–409.
+USA: Association for Computing Machinery, 2018, p. 2–8. [Online].
+[55] K. Komiya, Y. Abe, H. Morita, and Y. Kotani, “Question answering
+Available: https://doi.org/10.1145/3278186.3278187
+system using q & a site corpus query expansion and answer candidate
+[73] T. A. T. Vuong and S. Takada, “A reinforcement learning based
+evaluation,” SpringerPlus , vol. 2, pp. 1–11, 2013.
+approach to automated testing of android applications,” in Proceedings
+[56] J. Yao, C. Yuan, X. Li, Y. Wang, and Y. Su, “Beyond top-k: knowledge
+of the 9th ACM SIGSOFT International Workshop on Automating
+reasoning for multi-answer temporal questions based on revalidation
+TEST Case Design, Selection, and Evaluation , ser. A-TEST 2018.
+framework,” PeerJ Computer Science , vol. 9, p. e1725, 2023.
+New York, NY, USA: Association for Computing Machinery, 2018, p.
+[57] M. Li, X. Shen, Y. Sun, W. Zhang, J. Nan, D. Gao et al. , “Using semantic
+31–37. [Online]. Available: https://doi.org/10.1145/3278186.3278191
+text similarity calculation for question matching in a rheumatoid arthritis
+[74] Y. K¨ oro˘ glu and A. Sen, “Functional test generation from ui test
+question-answering system,” Quantitative Imaging in Medicine and
+scenarios using reinforcement learning for android applications,”
+Surgery , vol. 13, no. 4, p. 2183, 2023.
+Software Testing, Verification and Reliability , vol. 31, 10 2020.
+[58] E. Team, “Jacoco,” https://www.eclemma.org/jacoco/, 2023.
+[Online]. Available: https://doi.org/10.1002/stvr.1752

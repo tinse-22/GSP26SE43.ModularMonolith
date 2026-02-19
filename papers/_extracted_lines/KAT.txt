@@ -1,0 +1,1226 @@
+===== PAGE 1 =====
+KAT: Dependency-aware Automated API Testing
+with Large Language Models
+Tri Le Thien Tran Duy Cao Vy Le
+Katalon Inc. Katalon Inc. Katalon Inc. Katalon Inc.
+Ho Chi Minh City, Vietnam University of Science University of Science Ho Chi Minh City, Vietnam
+tri.qle@katalon.com Vietnam National University Vietnam National University vy.le@katalon.com
+Ho Chi Minh City, Vietnam Ho Chi Minh City, Vietnam
+thien.tran@katalon.com duy.cao@katalon.com
+*
+Tien N. Nguyen Vu Nguyen
+Computer Science Department Katalon Inc.
+University of Texas at Dallas University of Science
+Dallas, Texas, USA Vietnam National University
+tien.n.nguyen@utdallas.edu Ho Chi Minh City, Vietnam
+nvu@fit.hcmus.edu.vn
+Abstract —API testing has increasing demands for software uses the OpenAPI Specification (OAS) as a basis to generate
+companies. Prior API testing tools were aware of certain types of
+test cases and data. White-box testing focuses on analyzing
+dependencies that needed to be concise between operations and
+source code to drive test cases and data [3].
+parameters. However, their approaches, which are mostly done
+While current approaches have made significant progress in
+manually or using heuristic-based algorithms, have limitations
+testing RESTful APIs, they still face challenges in addressing
+due to the complexity of these dependencies. In this paper, we
+present KAT (Katalon API Testing), a novel AI-driven approach intricate dependencies among API endpoints and their param-
+that leverages the large language model GPT in conjunction
+eters . These dependencies fall into three categories. Firstly,
+with advanced prompting techniques to autonomously generate
+there are dependencies among API endpoints (operations).
+test cases to validate RESTful APIs. Our comprehensive strategy
+For instance, to test an endpoint for charging a credit card
+encompasses various processes to construct an operation depen-
+in an online flight booking system, one must first invoke the
+dency graph from an OpenAPI specification and to generate test
+scripts, constraint validation scripts, test cases, and test data. Our operation for selecting the flight. Secondly, there are depen-
+evaluation of KAT using 12 real-world RESTful services shows
+dencies among the parameters of an operation. For example,
+that it can improve test coverage, detect more undocumented
+in a flight booking system, the operation requires parameters
+status codes, and reduce false positives in these services in
+like arrivalDate and departureDate . And in that context, the
+comparison with a state-of-the-art automated test generation tool.
+constraint is that departureDate must precede arrivalDate .
+These results indicate the effectiveness of using the large language
+model for generating test scripts and data for API testing. Thirdly, there are dependencies between an operation and
+Index Terms —REST API, Black-box testing, API testing, Large
+its parameters. For instance, in a flight booking system, the
+language models for testing
+parameters arrivalDate and departureDate of a reservation
+operation must be set in the future.
+I. I NTRODUCTION
+Unfortunately, the foregoing API testing frameworks have
+limitations in handling such dependencies. In the case of inter-
+RESTful APIs (or REST APIs - REpresentational State
+arXiv:2407.10227v1 [cs.SE] 14 Jul 2024
+operation dependencies, RestTestGen [1] employs a heuristic
+Transfer) is a software architectural style to guide the devel-
+approach centered on name matching to identify relationships
+opment of web APIs. RESTful APIs communicate through
+among operations. This hinges on a shared field between the
+HTTP requests to perform standard database functions such
+output of one operation and the input of another. However,
+as creating, reading, updating, and deleting records (CRUD).
+discrepancies in field names could lead the heuristic algorithm
+RESTful API has become one of the most used software
+to incorrectly establish dependencies. For instance, exclusive
+architectural styles due to its high flexibility and scalability,
+reliance on field names might fail to accurately identify
+as well as being relatively secure and easy to implement.
+the GET /flights endpoint as a dependent operation of the
+Automated test cases and data generation for API testing
+POST /booking endpoint, since the algorithm might not find
+have been an active research topic that has attracted many
+matching pairs of field names.
+studies in recent years [1], [2], [3], [4], [5], [6]. These studies
+In terms of inter-parameter dependencies, previous methods
+can be divided into black-box and white-box test generation
+have indeed considered them in test case generation. Yet,
+approaches. Black-box testing, which is the most common,
+it is crucial to note certain limitations in these approaches.
+* Corresponding: Vu Nguyen (nvu@fit.hcmus.edu.vn) For instance, RESTest [2] addresses this by mandating the
+1
+
+===== PAGE 2 =====
+manual inclusion of dependencies among parameters in the II. M OTIVATING E XAMPLE
+testing OAS file under the x-dependencies field. This manual
+A. Observations
+intervention demands a significant amount of time from testers.
+In this section, we use an example to elucidate the issue and
+Thus, any improvements in simplifying this process would
+inspire our approach. Fig. 1 shows a representative OAS file
+signify progress in this field.
+delineating the RESTful APIs for an online flight booking sys-
+tem. Within this OAS file, two endpoints are documented: GET
+Regarding dependencies between operations and parame-
+/flights and POST /booking . The former endpoint serves
+ters, cutting-edge approaches employ heuristic-based methods
+the purpose of retrieving a list of available flights within a
+(RestTestGen [1]) or rule-based methods (bBOXRT [7]) to
+specified date range, while the latter facilitates passengers in
+generate both valid and invalid test data. However, they might
+reserving a new flight. For each endpoint (operation), the file
+not fully comprehend these constraints articulated in natural
+contains a descriptive summary (e.g., lines 7 and 20), the list of
+language or might necessitate manual intervention.
+parameters (lines 21–24) and the request body object (line 25)
+Through harnessing the excellent capabilities of GPT [8]
+with their names and textual descriptions in the schema (e.g.,
+in interpreting the natural language content embedded within
+lines 25–41). Moreover, there exist supplementary endpoints
+Swagger files for RESTful APIs, our proposed approach,
+supporting pertinent operations (omitted here for brevity).
+KAT (KATalon API Testing), leverages a powerful tool for
+From this example, we make the following observations:
+comprehending intricate dependencies. This utilization of GPT
+Observation 1 ( Dependencies among Operations): The
+empowers us to systematically extract and discern the depen-
+usage of operations involves the dependencies among them.
+dencies that exist among the various API endpoints, indicating
+A test case of an endpoint might only be able to be
+relationships that define the functionality of the APIs. More-
+successfully tested if the prerequisite test cases of other
+over, GPT possesses the capability to analyze the connections
+endpoints have already been properly executed beforehand.
+among the parameters associated with each operation. This
+This is because responses to these prerequisite endpoints may
+enables us to perceive the underlying details of the API,
+affect the request for a current endpoint under test.
+ultimately leading to more thorough testing. In contrast, state-
+In the provided OAS (refer to Fig. 1), it is crucial to supply
+of-the-art methods, which mainly rely on heuristic approaches,
+a proper parameter for accurate testing of the POST /booking
+fall short in capturing those dependencies.
+endpoint. This parameter should consist of a single field named
+flightId , representing an existing flight in the database.
+Our methodology employs a generative language model and
+advanced prompting techniques at key stages of the testing To meet this condition, it is necessary to first successfully
+process. This includes (1) identifying relationships among execute the GET /flights endpoint. This action will result in
+schemas and operations, which are used to construct an opera- a response containing a list of available flights. From this list,
+tion dependency graph (ODG), and (2) detecting dependencies a specific flight element can be chosen, and its corresponding
+among input parameters as well as inter-dependencies between flightId value extracted. This value is then integrated into
+operations and their respective parameters for both valid and the test case for the POST /booking operation.
+invalid test data generation. To streamline this process, our
+Observation 2 ( Dependencies among Parameters): The
+approach seamlessly integrates the ODG into the test script
+usage of an operation in a library involves the dependencies
+generation. The resulting test scripts are then combined with
+among its parameters.
+the generated test data to create a comprehensive suite of test
+Dependencies also exist among the parameters of an oper-
+cases, which are subsequently executed on the target APIs.
+ation. Inter-parameter dependency refers to a constraint that
+exists between two or more input parameters of an API
+We have conducted an experiment to evaluate our approach,
+endpoint. This constraint may pertain to the required values of
+KAT, using a dataset comprising 12 RESTful API services.
+these parameters, which must satisfy a predefined condition.
+The results demonstrate a significant improvement of 15.7% in
+Alternatively, it could involve the presence of an optional
+the coverage of status codes documented in OAS files over the
+parameter, rendering the absence of another parameter prob-
+state-of-the-art RestTestGen [9]. Additionally, KAT effectively
+lematic. For instance, consider the endpoint POST /booking .
+identifies the status codes that are not explicitly specified in
+Here, a tangible inter-parameter constraint is evident between
+the OAS files while reducing the number of false-positive test
+departureDate (line 30) and arrivalDate (line 34), an asso-
+cases generated.
+ciation discernible to users. Naturally, it is expected that the
+In this paper, we make the following key contributions: departure date of a flight precedes its arrival date. Thus, when
+handling the result, the requesting parameters should account
+1) KAT, an GPT-based approach to generate tests for
+for this constraint to ensure a valid response.
+RESTful API testing that considers the inter-dependencies
+Observation 3 ( Dependencies between An Operation and
+among operations, inter-parameter dependencies, and the de-
+Its Parameters): The usage of an operation involves the
+pendencies between operations and parameters .
+dependencies between that operation and its parameters.
+2) An extensive evaluation showing our approach outper- Certain endpoints may encompass fields with values that
+forming the state-of-the-art RESTful API testing approaches. must adhere to constraints, requiring those values to make
+2
+
+===== PAGE 3 =====
+B. The state-of-the-art Approaches
+1 openapi: 3.0.0
+2 info:
+Despite that the dependencies exist among the endpoints
+3 title: Flight Booking API
+4 paths:
+and parameters as observed, the state-of-the-art API testing
+5 /flights:
+6 get:
+approaches do not sufficiently address and capture them.
+7 summary: Get Flights
+Regarding the inter-operation dependencies, RestTestGen
+8 responses:
+9 ’200’:
+employs a heuristic approach based on name matching . This
+10 description: A list of available flights.
+11 content:
+determination hinges on the presence of a shared field between
+12 application/json:
+13 schema:
+the output of one operation (i.e., endpoint) and the input
+14 type: array
+of another. For instance, in the OAS file in Fig. 1, the
+15 items:
+16 $ref: ’#/components/schemas/Flight’
+GET /flights endpoint yields a set of Flight objects, each
+17
+18 /booking:
+featuring an id field. Conversely, the POST /booking endpoint
+19 post:
+anticipates a flightId field as part of its input. This disparity
+20 summary: Book a new Flight
+21 parameters:
+in field nomenclature implies that the heuristic algorithm
+22 - name: flightId
+23 schema:
+might encounter difficulty in establishing dependencies or
+24 type: integer
+25 requestBody:
+might potentially mis-attribute them to other endpoints sharing
+26 content:
+similar field names. Relying solely on field names, it may not
+27 application/json:
+28 schema:
+correctly identify the GET /flights endpoint as a dependent
+29 properties:
+30 departureDate:
+operation of the POST /booking endpoint.
+31 type: string
+When it comes to inter-parameter dependencies, previous
+32 format: date
+33 description: format in YYYY-MM-DD.
+approaches have indeed taken them into account during the
+Should be after today.
+34 arrivalDate:
+test case generation. However, it is important to acknowledge
+35 type: string
+36 format: date certain limitations in these methods. For example, RESTest [2]
+37 description: format in YYYY-MM-DD.
+addresses this issue by requiring manual inclusion of depen-
+Should be after ‘departureDate‘.
+38 passengerName:
+dencies among parameters in the testing OAS file, utilizing
+39 type: string
+40 passengerAge:
+the x-dependencies field. This manual intervention demands
+41 type: integer
+a considerable amount of time from testers. Regarding the
+42 responses:
+43 ’200’:
+dependencies between the operations and parameters, the state-
+44 description: The booking is successful.
+45 content:
+of-the-art approaches use heuristic-based (RestTestGen) or
+46 application/json:
+47 schema: rule-based (bBOXRT) methods to generate valid and invalid
+48 $ref: ’#/components/schemas/Booking’
+test data for testing, but they may not fully address these
+49
+50 components:
+constraints described in natural language or require manual
+51 schemas:
+52 Flight:
+intervention to specify the dependencies.
+53 type: object
+54 properties:
+C. Capability of GPT and Motivation
+55 id:
+56 type: integer
+The Large Language Models (LLMs) have been achiev-
+57 origin:
+58 type: string
+ing remarkable successes in understanding texts and source
+59 destination:
+60 type: string
+code [8]. In this work, to capture such dependencies, we
+61 Booking:
+62 type: object propose to explore that capability of the LLMs. To motivate
+63 properties:
+this point, we made a few prompts to GPT-3.5 [8] to explore its
+64 flight:
+65 $ref: ’#/components/schemas/Flight’
+capability in understanding the intricate dependencies among
+66 departureDate:
+67 type: string
+the API endpoints (or operations) and their parameters. In
+68 format: date
+particular, we use the version of gpt-3.5-turbo-1106 via
+69 arrivalDate:
+70 type: string
+the provided API from OpenAI to request. We first loaded
+71 format: date
+72 passengerName:
+the Swagger file in Fig. 1 and constructed prompts. The
+73 type: string
+74 passengerAge: following conversations with GPT show how it can address
+75 type: integer
+the dependency problem:
+Fig. 1. An Example of OpenAPI/Swagger Specification (OAS) file
+Prompt : “Are there any dependencies between the POST /booking
+operation and GET /flights operation?”
+GPT’s response : “Yes, there is a dependency between the POST
+sense in a real-world context. For instance, within the OAS
+/booking operation and the GET /flights operation. Before making a
+booking, the user needs to retrieve the available flights by calling the
+file in Fig. 1, the value of passengerAge specified in the
+GET /flights operation. This is necessary to obtain flightId, which is
+POST /booking endpoint (line 40) must exceed zero, although
+required in the request body of the POST /booking operation. Thus, the
+this constraint is not explicitly expounded within the OAS
+GET /flights operation is a prerequisite operation that is called before
+the POST /booking operation can be tested successfully.”
+file. Furthermore, the value assigned to departureDate must
+refer to a future date. Unlike the passengerAge parameter, this
+constraint is articulated in natural-language description. GPT is also able to detect inter-parameter dependencies:
+3
+
+===== PAGE 4 =====
+Prompt : “Are there any inter-parameter dependencies mentioned in the
+POST /booking operation spec?”
+GPT’s response : “Yes, there are inter-parameter dependencies men-
+tioned in the POST /booking operation spec. The arrivalDate parameter
+is dependent on the departureDate parameter. The description states
+that the arrivalDate should be after the departureDate. Therefore, the
+departureDate needs to be provided before the arrivalDate in order to
+ensure that the request is valid.”
+Fig. 3. ODG Construction
+Finally, GPT is capable of understanding the constraints
+among the parameters of the operations:
+which does not require any preceding requests to prepare
+Prompt : “Are there any constraints of the value of parameters appeared
+the data needed for its successful execution.
+in the specification, which are not defined in the specification but worth
+• Generate test scripts : this step aims to generate test
+noting in a real-world context?”
+scripts using the obtained operation sequences.
+GPT’s response : “In the provided specification, there are no specific
+constraints for the parameter values. However, in a real-world context,
+• Generate test data : details of this step, which generates
+the following constraints are worth noting:
+the data for a test operation, are given in Section III-C.
+1. departureDate: Must be a future date (YYYY-MM-DD) and cannot be
+in the past.
+B. Operation Dependency Graph Construction (Fig. 3)
+2. arrivalDate: Must be after the departureDate (YYYY-MM-DD) and
+cannot be the same as or before the departureDate.
+1) Important Concepts:
+3. passengerAge: Subject to minimum and maximum age requirements,
+age categories for fare differentiation, or legal age restrictions for
+Definition 1 ( Operation Dependency Graph): An ODG is
+specific flights or destinations.
+represented as a directed graph G = ( N, V ) , wherein each
+These constraints ensure the validity of flight and passenger details,
+node N signifies a discrete operation within the RESTful API.
+aligning with the considerations for flight bookings.”
+The presence of an edge v ∈ V , articulated as v = n →
+1
+n , signifies the existence of a dependency between the nodes
+2
+In brief, GPT is capable of identifying the relationships
+n and n . This dependency is predicated on the condition
+1 2
+between operations and their parameters on a token level.
+that one or more fields in the output of source node n must
+1
+Thus, we leverage GPT in producing the test cases that cover
+coincide with in the input of target node n , thereby mandating
+2
+those dependencies among the APIs and/or their parameters.
+that the execution of operation n precedes that of n .
+1 2
+III. D EPENDENCY - AWARE A UTOMATED API T ESTING
+The concept of ODG was previously explored in the work
+A. Approach Overview
+of RestTestGen. Refer to the exemplar OAS file in Fig. 1,
+and observe a dependency between the two endpoints, GET
+/flights and POST /booking , as explained in Observation 1
+(Fig. 1). Part of the ODG of this OAS file is shown in Fig. 4.
+Fig. 2. KAT: Dependency-aware Automated API Testing
+Fig. 4. Dependence between GET/flights and POST/booking in ODG
+This section presents an overview of our approach, KAT
+2) ODG Construction Algorithm: Our algorithm differs
+(Fig. 2) that leverages LLMs, GPT in particular, to construct
+from the heuristic-based ODG construction algorithm in
+ODGs and generate test scripts and data for API testing.
+KAT receives the OAS file as input. This file serves as the RestTestGen [1] in its utilization of GPT. Algorithm 1 presents
+basis for extracting the detailed information about its service our pseudocode, which involves the use of GPT for inferring
+to construct ODG and generate test scripts and data. KAT the dependencies between operations and schemas, as well
+as the dependencies among schemas. These process steps are
+consists of the following steps:
+employed to construct additional operation dependency edges
+• Construct ODG : this step aims to construct an ODG
+that heuristic-based algorithms cannot detect.
+representing dependencies between operations defined in
+the specification. See more details in Section III-B. Heuristic-based collection of edges: Primarily, the function
+• Generate operation sequences : using the ODG obtained gatherODheuristic (line 2) is employed to iterate through
+from the previous step, our approach generates sequences all operations, attempting to match input-output pairs. Upon
+of operation executions or requests in which one request detecting a pair with a perfect character match, we add the
+prepares the data (parameters and request body) needed resulting edge between the corresponding nodes in the graph.
+for succeeding requests. Dependent on specific ODG, it In the case of the OAS file depicted in Fig. 1, the relation-
+is possible that an operation is standalone or independent, ship between two operations is considered. Although the pair
+4
+
+===== PAGE 5 =====
+Algorithm 1: ODG Construction
+1 OS = {
+2 "post-/booking": {
+1 Function generateOperationDependencies( Swagger )
+3 "Flight": {
+Input : A Swagger Specification file
+4 "flightId": "id"
+Output: List of Operation Dependencies OD
+5 }
+6 "Booking": {
+2 OD ← gatherODheuristic (Swagger)
+7 "flightId": "flight"
+3 OS ← GPTgenOperationSchemaDep (Swagger)
+8 }
+4 SS ← GPTgenSchemaSchemaDep (Swagger)
+9 }
+5 O ← getAllOperationsFrom (Swagger)
+10 }
+6 foreach O in O do
+i
+7 P ← getParameters ( O )
+Fig. 5. Example of an Operation-Schema dependency dictionary. The oper-
+i
+8 PSDep ← getDep ( OS , O )
+ation POST /booking has two Operation-Schema dependencies with the
+i
+9 if PSDep ̸ = ∅ then
+schemas “Flight” and “Booking”. This is indicated by the pairs of parameter
+10 NewOD ← gatherOperationDep ( PSDep , P )
+flightId (line 22) with field id (line 55) and flight (line 64) in Fig 1.
+11 OD .extend( NewOD )
+12 end
+1 PROMPT="""Given the operation and its parameters,
+13 if P ̸ = ∅ then
+identify all prerequisite
+14 ChildS ← getDep ( SS , O )
+i
+2 schemas for retrieving information related to the
+15 NewOD ← gatherOperationDep ( ChildS , P )
+operation’s parameters.
+16 OD .extend( NewOD ) 3
+4 Below is the operation and its parameters:
+17 end
+5 post-/booking:
+18 end
+6 flightId: integer
+19 return OD
+7 departureDate: string
+8 arrivalDate: string
+20 Function gatherOperationDep ( C , P )
+9 ...
+Input : A collection to find new OD elements C
+10
+A set of parameters to check dependency P
+11 Below is the list of all schemas and their properties:
+Output: A set of new elements to be extended NewOD
+12 schemas:
+13 Flight:
+21 foreach C in C do
+j
+14 ...
+22 PO ← findPrecedingOperations ( C )
+j
+15 Booking:
+23 if PO ̸ = ∅ ∨ PO ∈ P then
+16 ...
+24 extendDependencies ( NewOD , PO ) 17
+18 Please format the prerequisite schemas in the following
+25 end
+structure:
+26 P .remove( PO )
+19 <parameter of the operation> -> <equivalent operation of
+27 end
+the relevant schema>
+20 ..."""
+28 return NewOD
+Fig. 6. The prompt for prerequisites in the POST /booking operation
+yields a GPT response with the “Flight” and “Booking” schemas, creating
+Operation-Schema dependencies.
+flightId (line 22, input of POST /booking ) and id (existed
+in the schema “Flight”, the output of GET /flights , on line
+16) do not exhibit a perfect match, a significant dependency
+belongs to the schema, while the second property belongs to
+persists due to the presence of id within the “Flight” schema,
+the operation o . As an example, consider the OS dictionary
+i
+semantically aligning with flightId . To resolve this, we use
+created for the OAS file shown in Fig. 1, which is illustrated in
+GPT to analyze such pairs in a two-step process, involving
+Fig. 5. Fig. 6 shows the prompt we used to infer all prerequisite
+the establishment of Operation-Schema dependencies (line 3)
+schemas of the operation POST /booking .
+and Schema-Schema dependencies (line 4), thereby acting as
+Fig. 5 shows the operation POST /booking along with two
+a bridge to identify the dependencies between operations.
+schemas, “Flight” and “Booking,” identified as its prerequisite
+schemas by GPT. When detecting the “Flight” schema, it
+Operation-Schema Dependency:
+allows to infer that GET /flights is the predecessor since the
+Definition 2 ( Operation-Schema Dependency): The origin
+“Flight” schema is specified as the reply for GET /flights .
+of two operations depends on each other when the response of
+However, in some cases, GPT only identifies the “Booking”
+one operation is required as input for the successful execution
+schema, and cannot identify a clear predecessor operation
+of the other. Within an OAS, each operation’s response is de-
+since there is no operation specifying “Booking” as its re-
+fined under a schema, and subsequent operations must identify
+sponse. To address this, we use a Schema-Schema dependency.
+relevant schemas to determine their predecessor operations.
+An operation-schema dependency encompasses all schemas Schema-Schema Dependency:
+that share keys between their fields and the input parameters
+Definition 3 ( Schema-Schema Dependency): We define S
+n
+of the operation, which GPT can effectively identify.
+is a set of n schemas described in the OAS specification.
+Schema-schema dependencies model the relationship between
+Operation-Schema dependencies capture this relationship by
+schemas by initializing the dictionary SS (line 4). This dictio-
+constructing the dictionary OS (line 3). In this dictionary, each
+nary contains n distinct key-value pairs where key is a schema
+key corresponds to an operation’s name o ∈ O , in which O
+i n n
+s ∈ S , and value is a list of schemas, where:
+is a set of operation’s name described in the OAS specification. i n
+This key is associated with a collection of data, providing in- • Each schema in the list contains at least one field that
+sights into essential prerequisite schemas and the connections refers to a field specified in the key , or
+between the current operation o and these schemas through • The schema itself is referred by the key (e.g. the element
+i
+their parameters. For each parameter pair, the first property “Flight” in the value is referred by the key “Booking”).
+5
+
+===== PAGE 6 =====
+1 PROMPT="""Given the schema and its properties in the
+OpenAPI specification of an API application, your
+task is to identify the prerequisite schemas that
+need to be created before establishing the mentioned
+schema.
+2
+3 Below is the schema and its properties
+4 Booking:
+5 flight:
+6 $ref: ’#/components/schemas/Flight’
+7 departureDate: ...
+8 arrivalDate: ...
+9 ...
+10
+11 Below is the list of all schemas and their properties:
+12 schemas:
+13 Flight:
+14 ...
+15 Booking:
+16 ...
+Fig. 8. The process of test data generation for a single operation
+17
+18 Return in separated lines. No explanation needed."""
+1 GET_DATASET_PROMPT=f"""Given the information about the
+Fig. 7. The prompt for “Booking” prerequisites elicits a GPT response with
+operation, generate a
+the “Flight” schema, establishing a Schema-Schema dependency.
+2 dataset containing 10 data items to be used to test the
+operation.
+3 {additional_instruction}
+4
+5 Operation information: {endpoint_information}
+Consider the conversation displayed in Fig. 7 with GPT. Our
+6 Referenced schema: {ref_schema}
+approach tries to obtain potential relationships of the schema
+7
+8 Your dataset represents each data item in the JSONL
+“Booking” using the Swagger displayed in Fig. 1.
+format, line by line."""
+After iterating through all schemas, the SS for the OAS file
+Fig. 9. Sample prompt template for test data generation
+given in Fig. 1 will have the value as shown below.
+1 SS = {
+2 "Flight": [],
+3 "Booking": [
+data that closely mimic real-world data. Additionally, GPT
+4 "Flight"
+is used to identify inter-dependencies among the operation’s
+5 ]
+6 }
+parameters. These dependencies serve as context for dynami-
+cally update the data generation, and are used for formulating
+The process to detect prerequisites and construct edges
+Python validation scripts. When creating test data files for
+of the graph: Upon the completion of constructing these two
+failure cases, we consider various scenarios, such as omitting
+hierarchical sets generated by the GPT model, we initiate a
+values in required fields, providing incorrect data types for
+process to establish dependencies between operations.
+certain fields, or violating inter-parameter constraints.
+The process has a for loop (lines 6–18), iterating through
+These Python validation scripts ensure consistency with the
+extracted operations from the OAS file (line 5). The objective
+data file. However, if no inter-parameter dependencies are
+is to identify the relevant schema for each parameter obtained
+identified in the current operation, the Python script generation
+from the current operation (line 7). Using the Operation-
+process does not take place, and no additional update in data
+Schema dependency stored in OS (line 8), OD is updated
+generation. Following another cycle of data generation, each
+(line 11). Any unaccounted parameters at the current schema
+item in the valid/invalid data files undergoes an additional
+level prompt an attempt to retrieve the next schema level using
+evaluation phase before being compiled into usable test data
+SS (line 14), followed by a second attempt to update the final
+files. These files are then integrated with a test script to form
+result (line 16). These steps establish the adequacy of OD to
+a test case for the operation. JSON format is chosen for
+generate the sequential order of operations for test generation.
+communication between a data item and its script.
+Specifically, the function gatherOperationDep (line 20)
+All prompts follow the format shown in Fig. 9. The section
+takes two inputs. It contains a single loop (line 21), iterating
+labeled additional_instruction is employed to guide the
+through all elements in the collection. Each element is ex-
+model in generating valid or invalid datasets and to specify
+amined by findPrecedingOperations (line 22). This function
+failed scenarios for more comprehensive coverage of failures.
+returns a list of preceding operations ( PO ), representing POST
+An illustration for the generated data, which represents the
+or GET operations, indicating the need for creating a new
+value of the request body for POST /booking is displayed in
+data item before executing it on any test cases or ensuring the
+Fig. 1. The valid and invalid data is as shown in Fig. 10.
+existence of that data in the database. After this, P checks the
+edges to determine if PO is usable for the current operation.
+D. Generating Test Scripts and Test Cases
+C. Test Data Generation
+We adhere to the approach of examining response status
+This section describes our approach to leverage GPT to gen- codes within the 2xx and 4xx ranges. For an operation, a
+erate both valid and invalid test data, as well as Python scripts corresponding test script is generated by the GPT model, based
+to validate the accurate correspondence between parameters. on the number of sequences extrapolated from the ODG. The
+We use GPT to generate high-quality valid and invalid test leading operation in each order retrieves the data element from
+6
+
+===== PAGE 7 =====
+1 [ 1 // Import statements
+2 import ...
+2 {
+3
+3 "data": {
+4 // ChatGPT generated test data goes here
+4 "departureDate": "2022-12-01",
+5 def path_variables_1 = [:]
+5 "arrivalDate": "2022-12-02",
+6 def query_parameters_1 = [:]
+6 "passengerName": "John Doe",
+7 def body_1 = ""
+7 "passengerAge": 30
+8
+8 } ,
+9 def response_1 = makeRequest(
+9 "expected_code": 200
+10 <path to test GET /flight>, path_variables_1,
+10 } ,
+11 query_parameters_1, body_1
+11 {
+12 )
+12 "data": {
+13
+13 "departureDate": "2022-11-15",
+14 // ChatGPT generated test data goes here
+14 "arrivalDate": "2022-11-16",
+15 def path_variables = [:]
+15 "passengerName": "Jane Smith",
+16 def query_parameters = [
+16 "passengerAge": 25
+17 ’flightId’: response_1[0].id
+17 } ,
+18 ]
+18 "expected_code": 200
+19 def body = <get from the relevant data file>
+19 } ,
+20
+20 ...
+21 def response = makeRequest(
+21 ]
+22 <path to test POST /booking>, path_variables,
+23 query_parameters, body
+24 )
+1 [
+25 def latest_response = response
+2 {
+26
+3 "data": {
+27 // END
+4 "departureDate": "2022-03-10",
+28 def expected_status_code = <value>
+5 "arrivalDate": "2022-03-09",
+29 assertStatusCode(latest_response, expected_status_code)
+6 "passengerName": "Michael Johnson",
+7 "passengerAge": 35
+Fig. 11. The Groovy-generated test script exemplifies the POST /booking
+8 } ,
+9 "expected_code": 400
+operation following the GET /flight → POST /booking sequence.
+10 } ,
+11 {
+12 "data": {
+13 "departureDate": null,
+RQ1. [Test coverage] : How well does our approach gener-
+14 "arrivalDate": "",
+15 "passengerName": "John Doe",
+ate valid test cases for coverage improvement?
+16 "passengerAge": "25"
+17 } ,
+RQ2. [Test generation efficiency] : How efficient is our
+18 "expected_code": 400
+approach in generating valid test cases?
+19 } ,
+20 ...
+RQ3. [Failure detection] : What is the capability of our
+21 ]
+approach in detecting failures and mismatches between the
+Fig. 10. These items illustrate valid and invalid request body data for the
+working API and its specification?
+POST /booking endpoint.
+We chose to compare our approach against the state-of-the-
+art RestTestGen (RTG for short).
+For RQ1, our analysis involves using RTG and our approach
+its relevant data file, and its output is assimilated as the input
+(KAT) to generate test cases and run them on the target APIs
+of the successive operation in the sequential procession. Each
+to measure the test coverage of successful (2xx) and operation
+operation is furnished with a tailored test script that exclusively
+failure responses (4xx).
+draws a data element from the test data file, housing only a
+For RQ2, we evaluate the efficiency of the approaches by
+singular execution of that operation in and of itself.
+measuring the efficiency score which is the number of test
+Fig. 11 displays a generated Groovy programming language
+cases triggering 2xx and 4xx responses over the total number
+test script for consecutively executing two requests to test the
+of test cases generated. A higher efficiency score indicates a
+operation POST /booking , as described in Fig. 1. It illustrates
+more efficient approach, which also means fewer test cases
+how the operation dependencies impact the order of execution
+needed to generate for covering status codes.
+of different operations in a single script. Custom keywords
+For RQ3, we measure the number of 500 errors found, the
+like makeRequest and assertStatusCode have been created
+number of status codes not documented in the OAS, and the
+to facilitate clean Groovy code, making it easier for the GPT
+number of mismatches in status codes defined in the OAS and
+model to generate an executable test script.
+those returned while making requests to target services.
+After establishing a collection for evaluating 2xx status
+codes, we used these scripts as templates to create scripts
+B. Dataset
+for assessing 4xx status codes. These existing scripts can
+be adjusted by modifying the path of relevant test data files
+The dataset used in our experimentation consists of 12
+and rearranging the order within the operation sequence. For
+RESTful API services. We decided to use these services
+example, if a pre-existing DELETE operation aligns with the
+for several reasons (1) they are publicly accessible to allow
+current element in the sequence, it can be inserted to simulate
+replication, including Canada Holidays and the Bills API
+a scenario of receiving a 404 status code.
+collected from the website APIs.guru [10], (2) most of them
+are previously investigated in prior studies, including PetStore
+IV. E MPIRICAL E VALUATION
+in [1], [4], [11], [12], Genome Nexus in [13], [14], [15],
+A. Research Questions
+BingMap-Route in [16], [9], GitLab in [17], [16], [6], [18],
+For evaluation, we seek to answer the following questions: [19] (3) ProShop [20], an in-house development, is a private
+7
+
+===== PAGE 8 =====
+TABLE I TABLE II
+S TATISTICS OF REST SERVICE DATASET D OCUMENTED STATUS CODE COVERAGE (RQ1)
+2xx 4xx Dep Int
+Overall 2xx 4xx
+REST service OP Par
+SC SC Ops Ops
+REST service coverage (%) coverage (%) coverage (%)
+ProShop 16 16 30 46 11 0
+RTG KAT RTG KAT RTG KAT
+PetStore 19 15 20 61 10 0
+ProShop 67.4 87 62.5 100 70 80
+Canada Holidays 6 6 2 9 2 0
+Petstore 54 74.3 66.7 100 50 55
+Bills API 21 21 31 57 13 0
+Canada Holidays 100 100 100 100 100 100
+Genome Nexus 23 23 0 44 10 0
+Bills API 71.2 82.7 66.7 81 74.2 83.9
+BingMap-Route 14 14 0 162 1 10
+Genome Nexus 78.3 100 78.3 100 - -
+GitLab-Branch 9 9 0 88 7 1
+BingMap-Route 28.6 78.6 28.6 78.6 - -
+GitLab-Commit 15 15 0 135 13 2
+GitLab-Branch 55.6 77.8 55.6 77.8 - -
+GitLab-Groups 17 17 0 152 15 0
+GitLab-Commit 20 20 20 20 - -
+GitLab-Issues 27 27 0 239 22 9
+GitLab-Groups 52.9 58.8 52.9 58.8 - -
+GitLab-Project 31 31 0 295 29 4
+GitLab-Issues 40.7 63 40.7 63 - -
+GitLab-Repository 10 10 0 101 8 2
+GitLab-Project 67.7 74.2 67.7 74.2 - -
+Average 17.3 17 6.9 115.8 11.8 2.3
+GitLab-Repository 40 40 40 40 - -
+Average 59.2 74.9 56.4 74.5 67.5 75.9
+Standard deviation 21.4 22.3 21.2 24.5 17.8 16.1
+service with an OAS file that lies beyond the scope of GPT’s
+knowledge, ensuring fair comparison (4) they represent a di-
+overall coverage, a 18.1% improvement in 2xx coverage, and
+verse set of services from different domains with various status
+a 8.4% increase in 4xx coverage, on average, over RTG.
+codes, operation dependencies, and parameter constraints.
+We observed that for the BingMap Route service, which has
+Table I provides a summary of the services used in our ex-
+the highest number of operations containing inter-parameter
+periments. OP is the number of operations defined in the OAS
+dependency constraints, KAT exhibits a high improvement
+file for the service. 2xx SC and 4xx SC denote the counts of 2xx
+of up to 50% in both overall coverage and 2xx coverage.
+status codes and 4xx codes for all operations, respectively. Par
+Unlike RTG, which assigned values without considering inter-
+is the total number of parameters, including those within the
+parameter dependency constraints, KAT, powered by GPT, ef-
+request bodies of operations. DepOps describes the number of
+fectively identifies and accommodates these constraints, gener-
+operations with dependencies, and IntOps specifies the number
+ating valid test data that align with the detected constraints. In
+of operations with at least one inter-parameter constraint.
+GitLab subsystems, particularly GitLab Issues, which features
+the highest number of operations containing inter-parameter
+V. P ERFORMANCE ON T EST COVERAGE (RQ1)
+dependency constraints, KAT has shown significant improve-
+A. Experimental Methodology
+ments in both overall coverage and 2xx coverage, achieving
+In the experiment, we applied both RTG (version 23.09)
+up to a 22.3% increase. In the services characterized by a
+and our approach to all 12 services in the collected dataset
+high level of operation dependency, it attains a 100% 2xx
+(Table I). For each service, we analyzed the results of test
+coverage for ProShop, outperforming RTG, which achieves
+case execution, with a specific focus on the final response
+62.5% coverage. This result validates our design intuition on
+status code of each generated test case.
+capturing better dependencies, leading to better coverage.
+To address RQ1, we formulated as follows:
+Several cases correctly identify sequences to test an op-
+2xx Coverage : It evaluates test coverage for successful
+eration, but the responses of subsequent operations often
+responses by calculating the ratio of total 2xx response codes
+prove inadequate to support requests for the next operation,
+documented and triggered by at least one test case to the
+especially when responses are empty or there are mismatches
+number of documented status codes within the 2xx range.
+between the operation’s implementation and its specification.
+4xx Coverage : This assesses test coverage of failure re-
+This issue is prominent in certain operations within GitLab’s
+sponses by calculating the ratio of total 4xx response codes
+services (GitLab Commit, GitLab Repository) or the Bills API,
+documented and triggered by at least one test case to the
+leading to incomplete testing sequences.
+number of documented status codes within the 4xx range.
+VI. T EST GENERATION EFFICIENCY (RQ2)
+Overall Coverage : This measures the ratio of total actual
+response codes to the total documented status codes.
+A. Experimental Methodology
+Average : We determine the average coverage for each
+To answer RQ2, we devised a measure to assess the effi-
+measure by calculating the ratio of the total actual response
+ciency of test case generation:
+codes across all services to the total number of status codes
+documented in the OAS files.
+No. TCs actually covering SC in R
+Efficiency score =
+R
+B. Experimental Results No. TCs generated to cover SC in R
+Table II displays the coverage result. Our observations show with R : 2xx or 4xx range.
+an enhancement in the average coverage metrics over the state- No. TCs actually covering SC in R : the number of test
+of-the-art RTG. Specifically, we noted a 15.7% increase in cases that genuinely cover status codes (SC in Table I) in the
+8
+
+===== PAGE 9 =====
+TABLE III
+T EST C ASE G ENERATION E FFICIENCY (RQ2)
+No. test cases No. test cases No. test cases No. test cases
+generated to cover generated to cover actually covering actually covering 2xx score (%) 4xx score (%)
+REST service
+2xx SC 4xx SC 2xx SC 4xx SC
+RTG KAT RTG KAT RTG KAT RTG KAT RTG KAT RTG KAT
+ProShop 711 19 569 190 10 16 21 24 1.4 84.2 3.7 12.6
+Petstore 707 24 956 276 10 15 10 11 1.4 62.5 1 4
+Canada Holidays 6 6 2 2 6 6 2 2 100 100 100 100
+Bills API 1731 132 232 376 14 17 23 26 0.8 12.9 9.9 6.9
+Genome Nexus 600 36 - - 18 23 - - 3 63.9 - -
+BingMap-Route 1413 35 - - 4 11 - - 0.3 31.4 - -
+GitLab-Branch 704 105 - - 5 7 - - 0.7 6.7 - -
+GitLab-Commit 4256 267 - - 3 3 - - 0.1 1.1 - -
+GitLab-Groups 3731 650 - - 9 10 - - 0.2 1.5 - -
+GitLab-Issues 5674 654 - - 11 17 - - 0.2 2.6 - -
+GitLab-Project 2008 372 - - 21 23 - - 1 6.2 - -
+GitLab-Repository 969 315 - - 4 4 - - 0.4 1.3 - -
+Average 1875.8 217.9 439.8 211 9.6 12.7 14 15.8 0.5 5.8 3.2 7.5
+R range. In an operation, we consider its multiple test cases TABLE IV
+F AILURE D ETECTION (RQ3)
+returning the same status code value as one.
+No. TCs generated to cover SC in R : the number of test
+Undocumented
+500 errors Mismatches
+cases generated to encompass status codes (SC in Table I) in
+status codes
+REST service
+RTG KAT RTG KAT RTG KAT
+the R range. This variable calculates the minimum number of
+ProShop 7 6 0 0 21 14
+test cases required to cover SC in the R range, updating the
+Petstore 9 8 11 13 15 13
+count if new status codes in the same range are covered.
+Canada Holidays 0 0 2 2 7 5
+Bills API 0 1 0 0 26 26
+The higher coverage with the lower number of generated
+Genome Nexus 0 0 15 14 14 16
+test cases implies a higher efficiency score.
+BingMap-Route 4 5 31 32 6 6
+Average : we determine average coverage by dividing the
+GitLab-Branch 0 0 15 19 4 5
+total number of test cases that actually cover status codes
+GitLab-Commit 1 0 19 21 3 0
+GitLab-Groups 1 1 26 28 5 3
+within the R range, across all services, by the total number
+GitLab-Issues 1 1 37 48 8 3
+of test cases generated to cover status codes within that range.
+GitLab-Project 0 1 50 53 8 0
+GitLab-Repository 0 0 15 15 2 3
+B. Experimental Results
+Total 23 23 221 245 119 94
+Table III illustrates that the test suite generated by KAT
+comprises fewer instances where the expected coverage is not
+achieved compared to RTG. Notably, with the ProShop service,
+Undocumented status codes detection : the number of
+KAT successfully covers 84.2% of the 19 test cases designed
+response status codes that are absent from the OAS files.
+for 2xx status codes, while RTG achieves successful coverage
+Mismatches detection : we rely on trustworthy OAS files.
+for 1.4% out of the 711 test cases it generates. Moreover,
+Some previous tools neglected inter-parameter dependencies,
+KAT shows coverage for 4xx status codes in 12.6% of the 190
+leading to false-positive test cases for 2xx status codes. These
+generated test cases, in contrast to RTG’s 3.7% success rate out
+false-positives occur when the tools listed them as failure cases
+of the 569 test cases it generates. In general, KAT generates
+to test 2xx status codes. Instead, KAT leverages these cases
+significantly fewer test cases for each coverage type compared
+to improve the accuracy of testing 4xx status codes, resulting
+to RTG, yet it improves coverage for each service, except for
+in more reliable coverage for 4xx status codes while allowing
+Canada Holidays, where a basically valid value assigned to
+precise calculation of 2xx status code coverage.
+the required parameter can result in a successful response.
+B. Experimental Results
+Overall, KAT enhances the efficiency in generating test
+Table IV shows an equal number of errors detected by both
+cases, achieving a 5.3% improvement for 2xx status codes and
+RTG and KAT. The variation in error count between each
+a 4.3% improvement for 4xx status codes. These results affirm
+service does not surpass one error.
+that KAT enhances the efficiency of test case generation, with
+In the realm of undocumented status code detection, KAT
+the generated test cases considering operation dependencies
+surpasses RTG, detecting 24 more status codes than RTG.
+and aligning request data with parameter constraints.
+Subsequent investigation underscores the prowess of our ap-
+VII. F AILURE DETECTION (RQ3)
+proach in identifying previously undocumented status codes,
+A. Experimental Methodology
+a proficiency that is significantly enhanced when operational
+Errors detection : the number of errors, which is the count dependencies are accurately detected. Consequently, our ap-
+of requests that result in server error status codes (5xx). proach excels at detecting undocumented status codes, encom-
+9
+
+===== PAGE 10 =====
+passing 304, 400, 422 and more. These findings underscore the RESTful-service Property Graph (RPG) to provide de-
+the distinct advantage of our approach in the detection of tailed modeling of producer-consumer dependencies, including
+previously undocumented status codes. schema property equivalence relations. RPG can describe
+Table IV reveals a notable difference in the average number
+RESTful service behaviors and dynamically update itself with
+of mismatches detected between RTG and our approach, KAT. execution feedback [4]. Atlidakis et al. proposed RESTler to
+RTG detects totally 119 mismatches, whereas KAT identifies infer dependencies among request types declared in Swagger
+94 mismatches. The disparity in mismatch detection can be using a test-generation grammar [6]. Tree-based approaches,
+attributed to several factors. RTG sometimes fails to consider like linkage model trees [36] and API trees [19], were also
+inter-parameter dependency constraints or overlooks fixed pa- considered. In contrast, we focus on constructing the ODG,
+rameter values, resulting in the generation of false-positive test leveraging natural language descriptions in specifications to
+cases designed to cover 2xx status codes. Additionally, RTG guide LLMs for support and revision.
+may incorrectly detect crucial input parameters when subjected
+Inter-parameter dependency. Martin-Lopez et al. pro-
+to mutation strategies, leading to the creation of false-positive
+posed Inter-parameter Dependency Language (IDL), a domain-
+test cases targeting 4xx status codes.
+specific language for analyzing dependencies among input
+Regarding RQ3, RTG and KAT show similar capabilities
+parameters [37]. RESTest added inter-parameter dependencies
+in detecting errors. KAT adeptly detects status codes absent
+to OpenAPI specifications using the IDL [37], implementing
+from the OAS file by considering both operational and inter-
+Constraint-Based Testing mode [2]. Wu et al. applied NLP
+parameter dependencies. There is also a notable reduction in
+for extracting inter-parameter constraints using pattern-based
+false-positive test cases from KAT.
+methods [16]. These approaches formalize inter-parameter de-
+pendencies, often requiring manual addition of IDL language
+VIII. T HREATS TO V ALIDITY
+or pre-defined NLP patterns, which is time-consuming and
+There are concerns that may affect the validity of our results.
+potentially error-prone. In contrast, Kim et al. used Reinforce-
+Internal validity. One threat is the hallucination issue of
+ment Learning to explore dependencies [14], Mirabella et al.
+GPT that results in inconsistent outputs when generating ODG,
+trained a deep-learning model [38], while we leverage LLMs
+validation scripts, test cases, and test data. We alleviated this
+to extract inter-parameter dependencies from OAS files.
+threat by using detailed and narrow instructions in prompts
+Natural language processing in API testing. Kim et al.
+and by setting GPT’s temperature parameter to zero to control
+introduced NLPtoREST, using NLP techniques to add supple-
+the model’s randomness. In addition, generated test cases were
+mentary OpenAPI rules from the human-readable specifica-
+run against the working service as a method to validate and
+tion [15]. Wanwarang et al. applied NLP to extract concepts
+reduce the variation in GPT’s outputs.
+associated with labels, used to query knowledge bases for input
+Another threat is concerned with the lack of certainty in test
+values [39]. ARTE explored various API elements, generating
+oracles. By using the real-world services as black-box, we do
+realistic test inputs by querying knowledge bases [5]. Liu
+not know whether the specification or the service implementa-
+et al. introduced RESTInfer, a two-phase approach inferring
+tion is accurate. It is possible that the specification is not up-
+parameter constraints from RESTful API descriptions [40].
+to-date, or the service has errors. Due to this uncertainty, we
+reported mismatches in status code between the specification X. C ONCLUSION
+and implementation rather than actual errors found.
+KAT is an AI-driven method for automated black-box test-
+External validity. Although we evaluated the approaches
+ing of RESTful APIs. It uses a large language model and ad-
+using real-world applications, they may not represent the gen-
+vanced prompting techniques to identify dependencies among
+eral population of API services. We mitigated this by choosing
+operations, input parameters, and between operations and their
+a diverse set of services, in terms of the application domain,
+parameters. KAT incorporates ODG construction in test script
+number of operations and parameters, operation dependencies,
+creation, detects inter-parameter dependencies, and considers
+business rules, and details of operation and parameter descrip-
+parameter constraints to generate test data on target APIs.
+tions. They are publicly accessible, and many of them were
+We evaluated KAT using 12 real-world RESTfull API
+evaluated in previous studies. Thus, the use of these services
+services. The results show that it can automatically generate
+allows replication and cross-examination in future studies.
+test cases and data to improve status code coverage, detect
+more undocumented status codes, and reduces more false
+IX. R ELATED WORK
+positives in these services compared to RTG. It improves an
+Considering various surveys [13], [21], [22], [23], [24], [25],
+overall status code coverage by 15.7% over RTG, increasing
+[26], previous approaches to RESTful APIs testing can be
+the coverage from 59.2% status codes by RTG to 74.9%.
+classified into two primary directions: black-box testing [1],
+A CKNOWLEDGMENTS
+[2], [4], [6], [7], [16], [27] and white-box testing [28], [29],
+[30], [31], [32], [33], [34], [35].
+Vu Nguyen is partially supported by Vietnam’s NAFOSTED
+Resource dependencies. Viglianisi et al. introduced the grant NCUD.02-2019.72. Tien N. Nguyen is supported in
+use of ODG for modeling data dependencies among opera- part by the US NSF grant CNS-2120386 and the NSA grant
+tions using OpenAPI specifications [1]. Liu et al. presented NCAE-C-002-2021.
+10
+
+===== PAGE 11 =====
+R EFERENCES [21] A. Golmohammadi, M. Zhang, and A. Arcuri, “Testing RESTful APIs: A
+Survey,” ACM Transactions on Software Engineering and Methodology ,
+[1] E. Viglianisi, M. Dallago, and M. Ceccato, “RestTestGen: automated
+2022.
+black-box testing of restful APIs,” in 2020 IEEE 13th International
+[22] A. Ehsan, M. A. M. Abuhaliqa, C. Catal, and D. Mishra, “RESTful API
+Conference on Software Testing, Validation and Verification (ICST) .
+testing methodologies: Rationale, challenges, and solution directions,”
+IEEE, 2020, pp. 142–152.
+Applied Sciences , vol. 12, no. 9, p. 4369, 2022.
+[2] A. Martin-Lopez, S. Segura, and A. Ruiz-Cort´ es, “RESTest: Automated
+[23] A. Martin-Lopez, S. Segura, and A. Ruiz-Cort´ es, “Online testing of
+Black-Box Testing of RESTful Web APIs,” in Proceedings of the
+RESTful APIs: Promises and challenges,” in Proceedings of the 30th
+30th ACM SIGSOFT International Symposium on Software Testing and
+ACM Joint European Software Engineering Conference and Symposium
+Analysis , ser. ISSTA ’21. Association for Computing Machinery, 2021.
+on the Foundations of Software Engineering , 2022, pp. 408–420.
+[3] A. Arcuri, “Restful api automated test case generation with evomaster,”
+[24] A. Sharma, M. Revathi et al. , “Automated API testing,” in 2018
+ACM Transactions on Software Engineering and Methodology (TOSEM) ,
+3rd International Conference on Inventive Computation Technologies
+vol. 28, no. 1, pp. 1–37, 2019.
+(ICICT) . IEEE, 2018, pp. 788–791.
+[4] Y. Liu, Y. Li, G. Deng, Y. Liu, R. Wan, R. Wu, D. Ji, S. Xu,
+[25] B. Marculescu, M. Zhang, and A. Arcuri, “On the faults found in rest
+and M. Bao, “Morest: model-based restful api testing with execution
+APIs by automated test generation,” ACM Transactions on Software
+feedback,” in Proceedings of the 44th International Conference on
+Engineering and Methodology (TOSEM) , vol. 31, no. 3, pp. 1–43, 2022.
+Software Engineering , 2022, pp. 1406–1417.
+[26] A. Martin-Lopez, A. Arcuri, S. Segura, and A. Ruiz-Cort´ es, “Black-
+[5] J. C. Alonso, A. Martin-Lopez, S. Segura, J. M. Garcia, and A. Ruiz-
+box and white-box test case generation for RESTful APIs: Enemies
+Cortes, “ARTE: Automated Generation of Realistic Test Inputs for Web
+or allies?” in 2021 IEEE 32nd International Symposium on Software
+APIs,” IEEE Transactions on Software Engineering , vol. 49, no. 1, pp.
+Reliability Engineering (ISSRE) . IEEE, 2021, pp. 231–241.
+348–363, 2022.
+[27] D. Corradini, A. Zampieri, M. Pasqua, E. Viglianisi, M. Dallago, and
+[6] V. Atlidakis, P. Godefroid, and M. Polishchuk, “Restler: Stateful rest API
+M. Ceccato, “Automated black-box testing of nominal and error sce-
+fuzzing,” in 2019 IEEE/ACM 41st International Conference on Software
+narios in RESTful APIs,” Software Testing, Verification and Reliability ,
+Engineering (ICSE) . IEEE, 2019, pp. 748–758.
+vol. 32, no. 5, p. e1808, 2022.
+[7] N. Laranjeiro, J. Agnelo, and J. Bernardino, “A black box tool for
+[28] O. Sahin and B. Akay, “A discrete dynamic artificial bee colony with
+robustness testing of rest services,” IEEE Access , vol. 9, pp. 24 738–
+hyper-scout for RESTful web service API test suite generation,” Applied
+24 754, 2021.
+Soft Computing , vol. 104, p. 107246, 2021.
+[8] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,
+[29] A. Arcuri, “Automated black-and white-box testing of restful APIs with
+A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al. , “Language mod-
+evomaster,” IEEE Software , vol. 38, no. 3, pp. 72–78, 2020.
+els are few-shot learners,” Advances in neural information processing
+[30] A. Arcuri and J. P. Galeotti, “Enhancing search-based testing with
+systems , vol. 33, pp. 1877–1901, 2020.
+testability transformations for existing APIs,” ACM Transactions on
+[9] D. Corradini, A. Zampieri, M. Pasqua, and M. Ceccato, “RestTestGen:
+Software Engineering and Methodology (TOSEM) , vol. 31, no. 1, pp.
+An Extensible Framework for Automated Black-box Testing of RESTful
+1–34, 2021.
+APIs,” in 2022 IEEE International Conference on Software Maintenance
+[31] ——, “Handling sql databases in automated system test generation,”
+and Evolution (ICSME) . IEEE, 2022, pp. 504–508.
+ACM Transactions on Software Engineering and Methodology (TOSEM) ,
+[10] “Apis.guru,” 2024. [Online]. Available: https://apis.guru/
+vol. 29, no. 4, pp. 1–31, 2020.
+[11] D. Corradini, A. Zampieri, M. Pasqua, and M. Ceccato, “Restats: A
+[32] M. Zhang and A. Arcuri, “Adaptive hypermutation for search-based
+test coverage tool for RESTful APIs,” in 2021 IEEE International
+system test generation: A study on rest APIs with EvoMaster,” ACM
+Conference on Software Maintenance and Evolution (ICSME) . IEEE,
+Transactions on Software Engineering and Methodology (TOSEM) ,
+2021, pp. 594–598.
+vol. 31, no. 1, pp. 1–52, 2021.
+[12] T. Vassiliou-Gioles, “A simple, lightweight framework for testing restful
+[33] ——, “Enhancing resource-based test case generation for RESTful APIs
+services with ttcn-3,” in 2020 IEEE 20th International Conference on
+with SQL handling,” in International Symposium on Search Based
+Software Quality, Reliability and Security Companion (QRS-C) . IEEE,
+Software Engineering . Springer, 2021, pp. 103–117.
+2020, pp. 498–505.
+[34] M. Zhang, B. Marculescu, and A. Arcuri, “Resource-based test case
+[13] M. Kim, Q. Xin, S. Sinha, and A. Orso, “Automated test generation for
+generation for RESTful web services,” in Proceedings of the genetic
+rest apis: No time to rest yet,” in Proceedings of the 31st ACM SIGSOFT
+and evolutionary computation conference , 2019, pp. 1426–1434.
+International Symposium on Software Testing and Analysis , 2022, pp.
+[35] ——, “Resource and dependency based test case generation for restful
+289–301.
+web services,” Empirical Software Engineering , vol. 26, no. 4, p. 76,
+[14] M. Kim, S. Sinha, and A. Orso, “Adaptive REST API Testing with
+2021.
+Reinforcement Learning,” arXiv preprint arXiv:2309.04583 , 2023.
+[36] D. Stallenberg, M. Olsthoorn, and A. Panichella, “Improving test case
+[15] M. Kim, D. Corradini, S. Sinha, A. Orso, M. Pasqua, R. Tzoref-Brill,
+generation for rest APIs through hierarchical clustering,” in 2021 36th
+and M. Ceccato, “Enhancing REST API Testing with NLP Techniques,”
+IEEE/ACM International Conference on Automated Software Engineer-
+in Proceedings of the 32nd ACM SIGSOFT International Symposium on
+ing (ASE) . IEEE, 2021, pp. 117–128.
+Software Testing and Analysis , 2023, pp. 1232–1243.
+[37] A. Martin-Lopez, “Automated analysis of inter-parameter dependencies
+[16] H. Wu, L. Xu, X. Niu, and C. Nie, “Combinatorial testing of restful
+in web APIs,” in Proceedings of the ACM/IEEE 42nd International
+APIs,” in Proceedings of the 44th International Conference on Software
+Conference on Software Engineering: Companion Proceedings , 2020,
+Engineering , 2022, pp. 426–437.
+pp. 140–142.
+[17] K. Yamamoto, “Efficient penetration of API sequences to test stateful
+[38] A. G. Mirabella, A. Martin-Lopez, S. Segura, L. Valencia-Cabrera, and
+RESTful services,” in 2021 IEEE International Conference on Web
+A. Ruiz-Cort´ es, “Deep learning-based prediction of test input validity
+Services (ICWS) . IEEE, 2021, pp. 734–740.
+for restful APIs,” in 2021 IEEE/ACM Third International Workshop on
+ˇ
+[18] S. Karlsson, A. Cauˇ sevi´ c, and D. Sundmark, “QuickREST: Property-
+Deep Learning for Testing and Testing for Deep Learning (DeepTest) .
+based test generation of OpenAPI-described RESTful APIs,” in 2020
+IEEE, 2021, pp. 9–16.
+IEEE 13th International Conference on Software Testing, Validation and
+[39] T. Wanwarang, N. P. Borges Jr, L. Bettscheider, and A. Zeller, “Testing
+Verification (ICST) . IEEE, 2020, pp. 131–141.
+apps with real-world inputs,” in Proceedings of the IEEE/ACM 1st
+[19] J. Lin, T. Li, Y. Chen, G. Wei, J. Lin, S. Zhang, and H. Xu, “foREST:
+International Conference on Automation of Software Test , 2020, pp. 1–
+A Tree-based Approach for Fuzzing RESTful APIs,” arXiv preprint
+10.
+arXiv:2203.02906 , 2022.
+[40] Y. Liu, “RESTInfer: automated inferring parameter constraints from
+[20] “Proshop API,” 2024. [Online]. Available: https://anonymous.4open.
+natural language RESTful API descriptions,” in Proceedings of the 30th
+science/r/proshop-api-B648
+ACM Joint European Software Engineering Conference and Symposium
+on the Foundations of Software Engineering , 2022, pp. 1816–1818.
+11

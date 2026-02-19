@@ -31,6 +31,12 @@
         <ProjectReference Include="..\ClassifiedAds.WebAPI\ClassifiedAds.WebAPI.csproj" />
         <ProjectReference
             Include="..\ClassifiedAds.Modules.Subscription\ClassifiedAds.Modules.Subscription.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.TestGeneration\ClassifiedAds.Modules.TestGeneration.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.TestExecution\ClassifiedAds.Modules.TestExecution.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Contracts\ClassifiedAds.Contracts.csproj" />
     </ItemGroup>
 
     <ItemGroup>

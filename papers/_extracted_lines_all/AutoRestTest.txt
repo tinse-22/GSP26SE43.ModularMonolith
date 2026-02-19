@@ -1,0 +1,398 @@
+===== PAGE 1 =====
+AutoRestTest: A Tool for Automated REST API
+Testing Using LLMs and MARL
+∗ 1 ∗ 2 † 3 ∗ 4
+Tyler Stennett , Myeongsoo Kim , Saurabh Sinha , Alessandro Orso
+∗
+Georgia Institute of Technology, Atlanta, Georgia, USA
+1 2 4
+Email: { tyler.stennett , mkim754 } @gatech.edu, orso@cc.gatech.edu
+†
+IBM Research, Yorktown Heights, New York, USA
+3
+Email: sinhas@us.ibm.com
+Abstract —As REST APIs have become widespread in modern inforcement learning has also been applied in this domain,
+web services, comprehensive testing of these APIs is increasingly
+with ARAT-RL [5] and DeepREST [6] optimizing parameter
+crucial. Because of the vast search space of operations, param-
+selection and search space exploration. More recently, large
+eters, and parameter values, along with their dependencies and
+language models have been leveraged to further enhance
+constraints, current testing tools often achieve low code coverage,
+testing: LlamaRestTest [7] focuses on value generation and
+resulting in suboptimal fault detection. To address this limitation,
+we present AutoRestTest, a novel tool that integrates the Se- inter-parameter dependencies using language models, while
+mantic Property Dependency Graph (SPDG) with Multi-Agent
+NLP2REST [8] and RESTGPT [9] enhance the OAS by
+Reinforcement Learning (MARL) and large language models
+extracting actionable rules from natural language descriptions.
+(LLMs) for effective REST API testing. AutoRestTest determines
+While existing research has addressed individual challenges
+operation-dependent parameters using the SPDG and employs
+of REST API testing, such as parameter generation, inter-
+five specialized agents (operation, parameter, value, dependency,
+and header) to identify dependencies of operations and gener- parameter dependencies, and operation dependencies, no com-
+ate operation sequences, parameter combinations, and values.
+prehensive technique has yet tackled these challenges to-
+Through an intuitive command-line interface, users can easily
+gether effectively. To address this limitation, in this paper
+configure and monitor tests with successful operation count,
+we introduce AutoRestTest, a tool that combines graph-based
+unique server errors detected, and time elapsed. Upon comple-
+dependency modeling, Large Language Models (LLMs), and
+tion, AutoRestTest generates a detailed report highlighting errors
+detected and operations exercised. In this paper, we introduce our Multi-Agent Reinforcement Learning (MARL) to perform
+tool and present preliminary findings, with a demonstration video
+REST API testing holistically. Key features of AutoRestTest
+available at https://www.youtube.com/watch?v=VVus2W8rap8.
+include:
+Index Terms —Multi Agent Reinforcement Learning for Test-
+• The Semantic Property Dependency Graph (SPDG)
+ing, Automated REST API Testing
+enables the use of a dependency agent to reduce the
+search space and explore API dependencies efficiently.
+I. I NTRODUCTION
+• REST Agents effectively identify headers, operations,
+REpresentational State Transfer (REST) APIs serve as the
+parameter combinations, and their corresponding values.
+backbone of modern web services, with nearly 90% of devel-
+• An LLM model creates realistic inputs for both value
+opers engaging with APIs and approximately 86% of these
+and header generation.
+APIs employing the REST architecture. By emphasizing a
+• A friendly User Interface provides a command line
+lightweight design and scalability, REST APIs seamlessly
+interface (CLI) alongside detailed reports that highlight
+connect software systems through standard web protocols,
+the results of the tool, including detected internal server
+such as the HyperText Transfer Protocol (HTTP). This ap-
+errors.
+arXiv:2501.08600v2 [cs.SE] 4 Mar 2025
+proach supports a client-server architecture that effectively
+II. A UTO R EST T EST
+separates responsibilities while enhancing the efficiency and
+maintainability of web services [1].
+Figure 1 illustrates the AutoRestTest architecture, which
+The critical role of REST APIs in web service interactions
+consists of three primary modules: the SPDG, the REST
+has sparked significant interest in automated techniques for
+agents, and the request generator. The process begins by
+testing these APIs, particularly following the introduction of
+parsing the OAS to extract endpoints as well as their re-
+the Open API Specification (OAS) [2], and many researchers
+quest/response schemas. Using this information, the depen-
+and practitioners have proposed a variety of techniques in this dency agent constructs the SPDG, representing API operations
+space. as nodes and semantic similarities between operation inputs
+For instance, RESTler employs search algorithms (BFS, and outputs as edges. Once the graph is constructed, the
+DFS, and Random Walk), while EvoMaster [3] utilizes evo- operation, dependency, value, parameter, and header agents
+lutionary algorithms. For another example, MoRest [4] man- are initialized with zeroed policy tables using information
+ages operation dependencies through a dynamically updated from the SPDG. These tables are subsequently optimized
+RESTful Property Graph (RPG) derived from the OAS. Re- using Q-learning [10] to identify optimal input combinations
+
+===== PAGE 2 =====
+Fig. 1. Overview of AutoRestTest.
+for generating realistic requests for each endpoint. In this 1) Q-Table Initialization: A Q-table is a data structure
+section, we provide a brief overview of each component; a that maps action options to expected cumulative rewards. For
+detailed discussion of our approach is available in our research example, the parameter agent’s Q-table lists all combinations
+paper [11]. of an operation’s parameters and request body properties as
+potential actions, with each value initialized to zero until
+A. Semantic Property Dependency Graph
+updated through learning.
+The SPDG is constructed by parsing the input OAS and
+2) Action Selection: Agents select actions using an epsilon-
+assigning each API operation as a vertex. AutoRestTest then
+greedy strategy [10] that balances exploration and exploitation.
+iterates through each pair of vertices, using a lightweight
+The exploration probability ( f ( ϵ ) = 1 − ϵ ) with epsilon-decay
+GloVe word-embedding model [12] to measure semantic sim-
+allows sufficient exploration in the early stages.
+ilarity between the parameters, request body, and responses
+3) Reward Delegation: After an action, AutoRestTest’s
+of the two operations corresponding to the vertices. An edge
+Response Handler updates the Q-table using the Bellman
+is added between vertices if the similarity value between any
+equation [10]. The update process involves retrieving the
+two items exceeds a predefined threshold (0.7 in our current
+current Q-value, calculating the new Q-value, and updating
+implementation). For operations with no dependencies above
+the Q-table. Rewards are assigned as follows:
+this threshold, the top three highest similarity matches are
+1. The operation agent is rewarded for finding client (4xx)
+added to the graph.
+and server (5xx) errors.
+The dependency agent manages the SPDG during request
+2. The other agents (value, parameter, dependency, and
+generation. To do so, it communicates with the value agent to
+header) are rewarded for successes (2xx).
+use stored parameters, request bodies, and responses from suc-
+D. Request Generator
+cessful requests in future queries, validating the dependencies
+The Request Generator constructs and dispatches requests
+identified in the SPDG.
+using data from the previous modules. It operates in a defined
+B. REST Agents
+sequence of steps consisting of communication, modification,
+and response handling. During communication, it interacts
+The REST agents consist of four specialized components,
+with the REST agents to determine the selected operation and
+each addressing a distinct aspect of the request generation
+the assigned parameter and header values. The modification
+process. First, the Operation Agent selects the operation for
+step employs a custom mutator to randomly modify requests,
+the request. Next, the Parameter Agent determines which pa-
+potentially exposing additional server errors. This mutator
+rameters should be included. Then, the Value Agent identifies
+probabilistically selects from options such as parameter type
+the data source and assigns values to the selected parameters,
+alterations, name mutations, media type changes, random de-
+drawing from the LLM, the dependency agent, or the default
+pendency selections, and token changes to generate new values
+settings. Lastly, the Header Agent leverages account-related
+of random length. Finally, the response handling step processes
+operations from the specification to supply basic token au-
+1
+responses from completed requests to determine the reward for
+thentication headers.
+the exploring agent, thereby refining the AutoRestTest model.
+C. Q-Learning
+III. T OOL U SAGE
+Both the SPDG and REST agent modules use Q-learning
+To use AutoRestTest, the user must first launch the Service
+to determine the optimal actions for the operation, parameter,
+Under Test (SUT), exposing a URL for interaction. Next, they
+value, dependency, and header agents. This process involves
+should configure AutoRestTest according to the SUT’s require-
+Q-table initialization, action selection, and reward delegation.
+ments. Users can then use AutoRestTest’s CLI to run the tool,
+1
+The header agent is a recent addition not described in our research paper. with output data being made accessible after completion.
+
+===== PAGE 3 =====
+A. Configuration
+1 {
+2 ” T i t l e ” : ” R e p o r t f o r ’ Api D o c u m e n t a t i o n ’ ( m a r k e t 2 ) ” ,
+3 ” D u r a t i o n ” : ” 300 s e c o n d s ” ,
+AutoRestTest offers various configuration options to tailor
+4 ” T o t a l R e q u e s t s S e n t ” : 3 9 9 1 ,
+5 ” S t a t u s Code D i s t r i b u t i o n ” : {
+each module to the specific requirements of the SUT. A
+6 ” 500 ” : 1 4 9 ,
+centralized configurations.py file in the root directory of the
+7 ” 401 ” : 3 5 0 9 ,
+8 ” 200 ” : 9 9 ,
+tool streamlines the process of adjusting these settings.
+9 ” 406 ” : 2 1 5 ,
+10 ” 404 ” : 19
+1) Specification Selection: To select the input specification
+11 } ,
+corresponding to the SUT, users must note the document
+12 ” Number o f T o t a l O p e r a t i o n s ” : 1 3 ,
+13 ” Number o f S u c c e s s f u l l y P r o c e s s e d O p e r a t i o n s ” : 3 ,
+location relative to the root directory in the configuration file.
+14 ” P e r c e n t a g e o f S u c c e s s f u l l y P r o c e s s e d O p e r a t i o n s ” : ”
+AutoRestTest’s custom parser accepts only OAS 3.0 format-
+23.08% ” ,
+15 ” Number o f Unique S e r v e r E r r o r s ” : 1 0 4 ,
+ted inputs. However, users can easily transfer their outdated
+16 ” O p e r a t i o n s w i t h S e r v e r E r r o r s ” : {
+Swagger 2.0 files using the public Swagger Converter. It is
+17 ” addItemUsingPUT ” : 3 1 ,
+18 ” c r e a t e C u s t o m e r U s i n g P O S T ” : 4 5 ,
+essential to ensure that the URL supplied in the specification
+19 ” u p d a t e C o n t a c t s U s i n g P U T ” : 2 1 ,
+matches the exposed URL of the SUT.
+20 ” g e t P r o d u c t U s i n g G E T ” : 2 1 ,
+21 ” getOrderUsingGET ” : 1 2 ,
+2) Large Language Model Engine and Parameters: To
+22 ” s e t D e l i v e r y U s i n g P U T ” : 6 ,
+23 ” payByCardUsingPOST ” : 13
+accommodate varying budgets and larger services with deeply
+24 }
+nested objects that require extensive context windows, Au-
+25 }
+toRestTest allows users to select the Large Language Model
+Listing 1. AutoRestTest Report Output for the Market Tool
+(LLM) engine and configure parameters for its value agent
+from OpenAI’s fleet. Specifically, AutoRestTest supports all
+B. Command Line Interface
+recent models with built-in price tracking for GPT-4o, GPT-
+Users can operate and interact with AutoRestTest through its
+4o mini, o1, and o1-mini (for cost transparency).
+CLI once the program has been configured. To begin, users
+The LLM temperature parameter, adjustable in Au-
+should either install the requirements listed in the require-
+toRestTest, influences output diversity and determinism. The
+ments.txt file or enable the Conda environment within the
+default setting of 0 . 7 balances accuracy and creativity, with
+auto-rest-test.yaml file.
+higher values ( > 1 ) producing more diverse outputs and lower
+The CLI regularly updates users on AutoRestTest’s
+values ( ≈ 0 ) and yielding more deterministic results.
+progress. Major milestones include the creation of the SPDG,
+the instantiation of the Q-learning policy tables, and the
+3) Caching: To avoid redundant use of the LLM,
+commencement of the request generation process. Given the
+AutoRestTest incorporates optional local caching through
+complexity of each step, the CLI provides intermediary mes-
+Python’s shelve object persistence library. While caching is
+sages between these milestones. If unexpected errors occur,
+enabled, the SPDG and LLM-generated Q-tables are stored
+such as issues with caching, AutoRestTest notifies the user
+in a database file. Subsequent executions attempt to use these
+through the CLI before handling the issue and continuing.
+cached values, significantly reducing testing costs. However,
+During the request generation and Q-learning phases, the
+users should disable caching when making changes to the
+CLI outputs information about operation coverage and time
+graph or Q-table to allow regeneration of the database files.
+elapsed. This includes the number of unique server errors
+4) Q-Learning Parameters: AutoRestTest employs the
+identified and successful operations processed, the distribution
+value decomposition approach to Q-learning [13], which inte-
+of status codes, and the percentage of time elapsed. This con-
+grates a learning rate and a discount factor to ensure Q-table
+tinuous output allows users to quickly assess AutoRestTest’s
+convergence. By default, AutoRestTest uses values 0 . 1 and 0 . 9
+efficiency and patterns in error identification over time.
+for the learning rate and discount factor, respectively [5]. Users
+C. Report Generation
+can adjust these parameters to influence the convergence speed
+and agent behavior. Basically, a higher learning rate would
+Upon completion, AutoRestTest compiles comprehensive
+result in more drastic updates of the Q-table values, potentially
+data from exercising the SUT into a sequence of files for user
+increasing convergence speed but lowering accuracy; a lower
+access and evaluation. These files are available in the data/
+discount rate would diminish the importance of later requests,
+folder of the specified root directory:
+heavily emphasizing the initial queries.
+• report.json summarizes AutoRestTest’s findings, including
+5) Request Generator Modifications: Two configurable pa- status code distributions, total successful operations, and
+rameters govern the request generation process: the time unique server errors. Listing 1 shows an example report.
+duration and the mutation rate. Given the complexity of the • server errors.json stores details of every request that
+agent design and the large Q-tables, AutoRestTest benefits resulted in server errors (5xx) for reproducibility.
+from an extended execution period to ensure adequate request • operation status codes.json contains the distribution of
+diversity and convergence. In addition, increasing the mutation status codes for each operation.
+rate broadens the range of generated requests, while potentially • successful parameters.json lists parameter assignments
+slowing Q-value convergence. that returned successful (2xx) responses by operation.
+
+===== PAGE 4 =====
+TABLE I dependency modeling and intelligent request generation. Ad-
+N UMBER OF OPERATIONS EXERCISED .
+ditionally, we conducted a preliminary study that shows the
+AutoRestTest ARAT-RL EvoMaster MoRest RESTler
+effectiveness of our tool in practice. We provided a practical
+FDIC 6 6 6 6 6
+demonstration of the tool’s usage and made the artifact avail-
+OMDb 1 1 1 1 1
+able for further evaluation and replication [16].
+OhSome 12 0 0 0 0
+Spotify 7 5 4 4 3
+A CKNOWLEDGMENTS
+Total 26 12 11 11 10
+This work was partially supported by NSF, under grant CCF-
+• successful bodies.json provides request body properties 0725202 and DOE, under contract DE-FOA-0002460, and gifts from
+that returned successful (2xx) responses by operation. Facebook, Google, IBM Research, and Microsoft Research.
+• successful primitives.json contains request bodies with
+R EFERENCES
+no associated properties that returned successful (2xx)
+[1] L. Richardson, M. Amundsen, and S. Ruby, RESTful Web APIs: Services
+responses by operation.
+for a Changing World . O’Reilly Media, Inc., 2013.
+• q tables.json presents the converged Q-table values for
+[2] M. Kim, Q. Xin, S. Sinha, and A. Orso, “Automated test generation for
+each agent across all operations.
+rest apis: No time to rest yet,” in Proceedings of the 31st ACM SIGSOFT
+International Symposium on Software Testing and Analysis , ser. ISSTA
+By evaluating these files, users can identify both strengths
+2022. New York, NY, USA: Association for Computing Machinery,
+and weaknesses in a given API. The parameter agent’s Q-
+2022, p. 289–301.
+[3] A. Arcuri, “Restful api automated test case generation with evomaster,”
+table indicates successful parameter combinations and inter-
+ACM Transactions on Software Engineering and Methodology (TOSEM) ,
+parameter dependencies. The dependency agent exposes rela-
+vol. 28, no. 1, jan 2019.
+tionships between parameters across operations. The operation
+[4] Y. Liu, Y. Li, G. Deng, Y. Liu, R. Wan, R. Wu, D. Ji, S. Xu,
+and M. Bao, “Morest: Model-based restful api testing with execution
+status code distribution visualizes which operations are com-
+feedback,” in Proceedings of the 44th International Conference on
+prehensive and easy to process. Finally, analyzing server errors
+Software Engineering , ser. ICSE ’22. New York, NY, USA: Association
+can help users improve the reliability of their service.
+for Computing Machinery, 2022, p. 1406–1417.
+[5] M. Kim, S. Sinha, and A. Orso, “Adaptive rest api testing with rein-
+forcement learning,” in 2023 38th IEEE/ACM International Conference
+IV. P RELIMINARY R ESULTS
+on Automated Software Engineering (ASE) . Los Alamitos, CA, USA:
+We evaluated the performance of AutoRestTest alongside
+IEEE Computer Society, sep 2023, pp. 446–458.
+[6] D. Corradini, Z. Montolli, M. Pasqua, and M. Ceccato, “Deeprest:
+the four state-of-the-art REST API testing tools used in
+Automated test case generation for rest apis exploiting deep
+the ARAT-RL study: RESTler [14] (v9.2.4), EvoMaster [3]
+reinforcement learning,” 2024. [Online]. Available: https://arxiv.org/abs/
+(v3.0.0), ARAT-RL [5] (v0.1), and MoRest [4] (obtained
+2408.08594
+[7] M. Kim, S. Sinha, and A. Orso, “Llamaresttest: Effective rest
+directly from the authors). All tools were tested against four
+api testing with small language models,” 2025. [Online]. Available:
+real-world RESTful services included in a recent study [8],
+https://arxiv.org/abs/2501.08598
+namely FDIC, OMDb, OhSome, and Spotify. To quantify
+[8] M. Kim, D. Corradini, S. Sinha, A. Orso, M. Pasqua, R. Tzoref-Brill,
+and M. Ceccato, “Enhancing rest api testing with nlp techniques,” in
+effectiveness, we measured the number of successfully pro-
+Proceedings of the 32nd ACM SIGSOFT International Symposium on
+cessed operations (2xx status codes) within a one-hour testing
+Software Testing and Analysis , ser. ISSTA 2023. New York, NY, USA:
+window, a preferred metric for comparing REST API testing
+Association for Computing Machinery, 2023, p. 1232–1243.
+[9] M. Kim, T. Stennett, D. Shah, S. Sinha, and A. Orso, “Leveraging
+tools [15]. As shown in Table I, our approach covered 26
+large language models to improve rest api testing,” in Proceedings
+unique operations across these services, outperforming ARAT-
+of the 2024 ACM/IEEE 44th International Conference on Software
+RL (12), EvoMaster (11), MoRest (11), and RESTler (10).
+Engineering: New Ideas and Emerging Results , ser. ICSE-NIER’24.
+New York, NY, USA: Association for Computing Machinery, 2024, p.
+Notably, AutoRestTest was the only tool able to generate
+37–41. [Online]. Available: https://doi.org/10.1145/3639476.3639769
+2xx responses for the OhSome service, one of the most
+[10] R. S. Sutton and A. G. Barto, Reinforcement Learning: An Introduction .
+challenging RESTful services considered; while other tools
+Cambridge, MA, USA: A Bradford Book, 2018.
+[11] M. Kim, T. Stennett, S. Sinha, and A. Orso, “A multi-agent approach
+were only able to trigger 4xx status codes, AutoRestTest suc-
+for rest api testing with semantic graphs and llm-driven inputs,” arXiv
+cessfully processed 12 operations in the service. Our tool was
+preprint arXiv:2411.07098 , 2024.
+also the strongest performer on the Spotify service. Moreover,
+[12] J. Pennington, R. Socher, and C. D. Manning, “Glove: Global vectors
+for word representation,” in Proceedings of the 2014 conference on
+in an evaluation of internal server errors, AutoRestTest was the
+empirical methods in natural language processing (EMNLP) , 2014, pp.
+only tool to detect a 5xx status code on the Spotify service. We
+1532–1543.
+have reported the error and are awaiting a response from the
+[13] P. Sunehag, G. Lever, A. Gruslys, W. M. Czarnecki, V. Zambaldi,
+M. Jaderberg, M. Lanctot, N. Sonnerat, J. Z. Leibo, K. Tuyls, and
+developers. These results provide initial, yet clear evidence
+T. Graepel, “Value-decomposition networks for cooperative multi-agent
+that AutoRestTest is effective in testing real-world RESTful
+learning,” arXiv preprint arXiv:1706.05296 , 2017.
+APIs, including for complex services.
+[14] V. Atlidakis, P. Godefroid, and M. Polishchuk, “Restler: Stateful rest
+api fuzzing,” in Proceedings of the 41st International Conference on
+Software Engineering , ser. ICSE ’19. Piscataway, NJ, USA: IEEE
+V. C ONCLUSION
+Press, 2019, p. 748–758.
+We introduced AutoRestTest, a new tool that combines a
+[15] A. Golmohammadi, M. Zhang, and A. Arcuri, “Testing restful apis: A
+survey,” ACM Trans. Softw. Eng. Methodol. , aug 2023.
+SPDG, LLMs, and MARL to effectively test REST APIs.
+[16] SE@GT, “Experiment infrastructure, data, and results for autoresttest,”
+We described our approach, demonstrating how AutoRestTest
+https://github.com/selab-gatech/AutoRestTest, 2024.
+addresses key challenges in API testing through advanced
