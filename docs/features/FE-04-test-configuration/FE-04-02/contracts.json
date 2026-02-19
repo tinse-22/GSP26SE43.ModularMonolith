@@ -1,0 +1,261 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-02-contracts",
+  "requirementId": "FE-04-02",
+  "title": "FE-04-02 Contracts - Execution Environment Configuration",
+  "apiContracts": [
+    {
+      "name": "CreateExecutionEnvironment",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/execution-environments",
+      "permission": "Permission:AddExecutionEnvironment",
+      "requestBody": "CreateExecutionEnvironmentRequest",
+      "responseBody": "ExecutionEnvironmentModel",
+      "successStatus": 201
+    },
+    {
+      "name": "UpdateExecutionEnvironment",
+      "method": "PUT",
+      "route": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "permission": "Permission:UpdateExecutionEnvironment",
+      "requestBody": "UpdateExecutionEnvironmentRequest",
+      "responseBody": "ExecutionEnvironmentModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetExecutionEnvironment",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "permission": "Permission:GetExecutionEnvironments",
+      "responseBody": "ExecutionEnvironmentModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetExecutionEnvironments",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/execution-environments",
+      "permission": "Permission:GetExecutionEnvironments",
+      "responseBody": "ExecutionEnvironmentModel[]",
+      "successStatus": 200
+    },
+    {
+      "name": "DeleteExecutionEnvironment",
+      "method": "DELETE",
+      "route": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "permission": "Permission:DeleteExecutionEnvironment",
+      "requestBody": "DeleteExecutionEnvironmentRequest",
+      "responseBody": "none",
+      "successStatus": 204
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "CreateExecutionEnvironmentRequest",
+      "fields": {
+        "name": "string (required, max 100)",
+        "baseUrl": "string (required, absolute http/https, max 500)",
+        "variables": "Dictionary<string,string>? (as json)",
+        "headers": "Dictionary<string,string>? (as json)",
+        "authConfig": "ExecutionAuthConfigModel?",
+        "isDefault": "bool"
+      }
+    },
+    {
+      "name": "UpdateExecutionEnvironmentRequest",
+      "fields": {
+        "rowVersion": "string (base64, required)",
+        "name": "string (required, max 100)",
+        "baseUrl": "string (required, absolute http/https, max 500)",
+        "variables": "Dictionary<string,string>?",
+        "headers": "Dictionary<string,string>?",
+        "authConfig": "ExecutionAuthConfigModel?",
+        "isDefault": "bool"
+      }
+    },
+    {
+      "name": "DeleteExecutionEnvironmentRequest",
+      "fields": {
+        "rowVersion": "string (base64, required)"
+      }
+    },
+    {
+      "name": "ExecutionAuthConfigModel",
+      "fields": {
+        "authType": "None|BearerToken|Basic|ApiKey|OAuth2ClientCredentials",
+        "headerName": "string?",
+        "token": "string?",
+        "username": "string?",
+        "password": "string?",
+        "apiKeyName": "string?",
+        "apiKeyValue": "string?",
+        "apiKeyLocation": "Header|Query",
+        "tokenUrl": "string?",
+        "clientId": "string?",
+        "clientSecret": "string?",
+        "scopes": "string[]?"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "ExecutionEnvironmentModel",
+      "fields": {
+        "id": "Guid",
+        "projectId": "Guid",
+        "name": "string",
+        "baseUrl": "string",
+        "variables": "Dictionary<string,string>",
+        "headers": "Dictionary<string,string>",
+        "authConfig": "ExecutionAuthConfigMaskedModel",
+        "isDefault": "bool",
+        "createdDateTime": "datetime",
+        "updatedDateTime": "datetime?",
+        "rowVersion": "string (base64)"
+      }
+    },
+    {
+      "name": "ExecutionAuthConfigMaskedModel",
+      "fields": {
+        "authType": "string",
+        "headerName": "string?",
+        "token": "string? (masked)",
+        "username": "string?",
+        "password": "string? (masked)",
+        "apiKeyName": "string?",
+        "apiKeyValue": "string? (masked)",
+        "apiKeyLocation": "string?",
+        "tokenUrl": "string?",
+        "clientId": "string?",
+        "clientSecret": "string? (masked)",
+        "scopes": "string[]?"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "AddUpdateExecutionEnvironmentCommand",
+        "handler": "AddUpdateExecutionEnvironmentCommandHandler",
+        "writes": [
+          "ExecutionEnvironment(Name, BaseUrl, Variables, Headers, AuthConfig, IsDefault)"
+        ],
+        "transactionRule": "If IsDefault=true then unset old defaults in same project inside one ExecuteInTransactionAsync block."
+      },
+      {
+        "name": "DeleteExecutionEnvironmentCommand",
+        "handler": "DeleteExecutionEnvironmentCommandHandler",
+        "writes": [
+          "Delete ExecutionEnvironment by projectId + environmentId + rowVersion"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetExecutionEnvironmentQuery",
+        "handler": "GetExecutionEnvironmentQueryHandler",
+        "reads": [
+          "ExecutionEnvironment by projectId + environmentId"
+        ]
+      },
+      {
+        "name": "GetExecutionEnvironmentsQuery",
+        "handler": "GetExecutionEnvironmentsQueryHandler",
+        "reads": [
+          "ExecutionEnvironment list by projectId order by IsDefault desc, Name asc"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "IExecutionAuthConfigService",
+        "methods": [
+          "ValidateAuthConfig(ExecutionAuthConfigModel)",
+          "SerializeAuthConfig(ExecutionAuthConfigModel)",
+          "DeserializeAuthConfig(string)",
+          "MaskAuthConfig(ExecutionAuthConfigModel)"
+        ]
+      }
+    ]
+  },
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "Name required, max 100"
+    },
+    {
+      "id": "VAL-02",
+      "rule": "BaseUrl required, absolute http/https, max 500"
+    },
+    {
+      "id": "VAL-03",
+      "rule": "Headers/Variables key must not be empty"
+    },
+    {
+      "id": "VAL-04",
+      "rule": "AuthConfig must be valid for selected authType"
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Update/Delete must match rowVersion"
+    },
+    {
+      "id": "VAL-06",
+      "rule": "Environment must belong to route projectId"
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_EXECUTION_ENVIRONMENT",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "EXECUTION_ENVIRONMENT_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "CONCURRENCY_CONFLICT",
+      "exceptionType": "DbUpdateConcurrencyException"
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "DEFAULT_ENVIRONMENT_CONFLICT",
+      "exceptionType": "ConflictException"
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "testexecution",
+    "tables": [
+      "ExecutionEnvironments"
+    ],
+    "notes": [
+      "Variables/Headers/AuthConfig are jsonb columns.",
+      "Default switch must be transactional.",
+      "If raw SQL is used, always schema-qualify table name testexecution.\"ExecutionEnvironments\"."
+    ]
+  },
+  "securityAndAuthorization": {
+    "permissionsToAdd": [
+      "Permission:GetExecutionEnvironments",
+      "Permission:AddExecutionEnvironment",
+      "Permission:UpdateExecutionEnvironment",
+      "Permission:DeleteExecutionEnvironment"
+    ],
+    "requirements": [
+      "All endpoints require [Authorize] and permission policies.",
+      "Never return raw secret values in authConfig.",
+      "Never log raw secret values."
+    ]
+  },
+  "serviceRegistration": {
+    "file": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+    "requiredChanges": [
+      "services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly())",
+      "services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>()",
+      "Keep AddMessageHandlers(Assembly.GetExecutingAssembly())"
+    ]
+  }
+}

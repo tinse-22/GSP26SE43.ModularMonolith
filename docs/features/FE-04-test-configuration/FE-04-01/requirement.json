@@ -1,0 +1,184 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-01-requirement",
+  "requirement": {
+    "id": "FE-04-01",
+    "parentId": "FE-04",
+    "title": "Test Suite Scope Configuration",
+    "goal": "Them layer API/CQRS de user cau hinh test suite scope theo project va specification, luu selected endpoint snapshot de FE-05A/FE-05B su dung deterministic.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "TestSuite entity da co trong TestGeneration nhung chua co endpoint CRUD cho FE-04.",
+      "FE-05A da ton tai va can endpoint scope dau vao de propose order dung pham vi.",
+      "Can luu selected endpoint snapshot de fallback khi request propose khong truyen selectedEndpointIds."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Create/Update/Get/List/Archive test suites theo project context.",
+      "Them va luu SelectedEndpointIds tren TestSuite (jsonb).",
+      "Validate selectedEndpointIds la subset cua specification da chon qua IApiEndpointMetadataService.",
+      "Owner-only write operations (update/archive).",
+      "Cap nhat FE-05A ProposeApiTestOrderCommand fallback selected endpoints tu TestSuite.SelectedEndpointIds."
+    ],
+    "outOfScope": [
+      "API order review/reorder/approve logic (FE-05A da co).",
+      "Generate test case (FE-05B, FE-06).",
+      "UI implementation."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "partially-implemented",
+        "schema": "testgen",
+        "reusedEntities": [
+          "TestSuite",
+          "TestOrderProposal"
+        ],
+        "existingFiles": [
+          "Controllers/TestOrderController.cs",
+          "Commands/ProposeApiTestOrderCommand.cs",
+          "DbConfigurations/TestSuiteConfiguration.cs",
+          "Authorization/Permissions.cs"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.ApiDocumentation",
+        "status": "implemented",
+        "requiredContracts": [
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "requiredContracts": [
+          "ICurrentUser"
+        ]
+      }
+    ],
+    "featureDependencies": [
+      "FE-02",
+      "FE-03",
+      "FE-05A"
+    ]
+  },
+  "schemaAndMigrationPlan": {
+    "targetSchema": "testgen",
+    "migrationProject": "ClassifiedAds.Migrator",
+    "context": "TestGenerationDbContext",
+    "expectedMigrationName": "AddTestSuiteSelectedEndpointIds",
+    "changes": [
+      "Add column testgen.\"TestSuites\".\"SelectedEndpointIds\" jsonb null",
+      "Update TestSuite entity + TestSuiteConfiguration to map jsonb",
+      "Do not create new table"
+    ],
+    "preflightRequired": [
+      "SELECT current_database();",
+      "SELECT current_schema();",
+      "SELECT \"MigrationId\" FROM public.\"__EFMigrationsHistory\" ORDER BY \"MigrationId\" DESC LIMIT 5;"
+    ]
+  },
+  "architecturePatterns": {
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Them command/query handler va controller, giu pattern hien tai cua module."
+      },
+      {
+        "pattern": "Contract-Only Cross Module",
+        "description": "Chi goi IApiEndpointMetadataService, cam query truc tiep ApiDocumentation entities."
+      },
+      {
+        "pattern": "Optimistic Concurrency",
+        "description": "PUT/DELETE support rowVersion base64."
+      }
+    ]
+  },
+  "implementationMap": {
+    "newFiles": [
+      "ClassifiedAds.Modules.TestGeneration/Controllers/TestSuitesController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/AddUpdateTestSuiteScopeCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ArchiveTestSuiteScopeCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetTestSuiteScopeQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetTestSuiteScopesQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/TestSuiteScopeModel.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/CreateTestSuiteScopeRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/UpdateTestSuiteScopeRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/ITestSuiteScopeService.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/TestSuiteScopeService.cs"
+    ],
+    "modifiedFiles": [
+      "ClassifiedAds.Modules.TestGeneration/Entities/TestSuite.cs",
+      "ClassifiedAds.Modules.TestGeneration/DbConfigurations/TestSuiteConfiguration.cs",
+      "ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs",
+      "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ProposeApiTestOrderCommand.cs"
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "listP95Ms": 200,
+      "writeP95Ms": 500
+    },
+    "reliability": {
+      "scopeDeterminism": true,
+      "concurrencySafe": true
+    },
+    "security": {
+      "authorizeAllEndpoints": true,
+      "ownerCheckOnWrite": true
+    }
+  },
+  "implementationOrder": [
+    "1. Add permission constants for scope APIs in TestGeneration.Authorization.Permissions.",
+    "2. Add SelectedEndpointIds property to TestSuite + jsonb mapping + migration in ClassifiedAds.Migrator.",
+    "3. Add scope serializer/normalizer service and register in ServiceCollectionExtensions.",
+    "4. Add commands/queries/models/requests + TestSuitesController under /api/projects/{projectId}/test-suites.",
+    "5. Update ProposeApiTestOrderCommandHandler: fallback to persisted suite SelectedEndpointIds when command.SelectedEndpointIds is empty.",
+    "6. Add tests (handler, controller, integration)."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: POST scope creates TestSuite with Status=Draft, ApprovalStatus=NotApplicable and persisted SelectedEndpointIds.",
+    "AC-02: SelectedEndpointIds invalid/out-of-spec returns 400 ValidationException.",
+    "AC-03: GET single/list returns selectedEndpointIds and selectedEndpointCount from persisted snapshot.",
+    "AC-04: PUT with stale rowVersion returns 409 conflict.",
+    "AC-05: DELETE performs soft-archive (Status=Archived) not hard delete.",
+    "AC-06: FE-05A propose falls back to suite SelectedEndpointIds when request list is empty.",
+    "AC-07: All FE-04-01 endpoints require [Authorize] and permission policy."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Create suite scope success",
+      "given": "Specification and selected endpoints are valid",
+      "when": "POST /api/projects/{projectId}/test-suites",
+      "then": "Suite saved with SelectedEndpointIds snapshot"
+    },
+    {
+      "id": "TS-02",
+      "name": "Invalid endpoint selection",
+      "given": "selectedEndpointIds contain endpoint not in specification",
+      "when": "POST/PUT scope",
+      "then": "400 ValidationException"
+    },
+    {
+      "id": "TS-03",
+      "name": "Concurrency conflict",
+      "given": "Suite rowversion already changed by another request",
+      "when": "PUT with stale rowVersion",
+      "then": "409 conflict"
+    },
+    {
+      "id": "TS-04",
+      "name": "Fallback scope in FE-05A",
+      "given": "Suite has SelectedEndpointIds and propose request has empty SelectedEndpointIds",
+      "when": "POST /api/test-suites/{suiteId}/order-proposals",
+      "then": "BuildProposalOrderAsync uses suite persisted scope"
+    }
+  ]
+}
