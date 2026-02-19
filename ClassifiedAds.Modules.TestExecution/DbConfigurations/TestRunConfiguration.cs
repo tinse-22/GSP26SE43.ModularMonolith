@@ -11,6 +11,11 @@ public class TestRunConfiguration : IEntityTypeConfiguration<TestRun>
         builder.ToTable("TestRuns");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
 
+        builder.Property(x => x.Status)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+
         builder.Property(x => x.RedisKey).HasMaxLength(200);
 
         builder.HasIndex(x => x.TestSuiteId);
