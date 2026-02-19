@@ -218,6 +218,57 @@ public class ProposeApiTestOrderCommandHandlerTests
         await act.Should().ThrowAsync<ValidationException>();
     }
 
+    [Fact]
+    public async Task HandleAsync_Should_FallbackToPersistedSuiteScope_WhenRequestEndpointsEmpty()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var suiteId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        var persistedEndpointIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        var suite = CreateSuite(suiteId, specId, userId);
+        suite.SelectedEndpointIds = persistedEndpointIds;
+
+        SetupSuiteFound(suite);
+        SetupNoExistingProposals();
+        SetupSerializeOrder();
+
+        _orderServiceMock.Setup(x => x.BuildProposalOrderAsync(
+                suiteId,
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids =>
+                    ids != null
+                    && ids.Count == persistedEndpointIds.Count
+                    && persistedEndpointIds.All(ids.Contains)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = persistedEndpointIds[0], HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 1 },
+                new() { EndpointId = persistedEndpointIds[1], HttpMethod = "GET", Path = "/api/users/me", OrderIndex = 2 },
+            });
+
+        var command = new ProposeApiTestOrderCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = userId,
+            SpecificationId = specId,
+            SelectedEndpointIds = Array.Empty<Guid>(),
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        _orderServiceMock.Verify(x => x.BuildProposalOrderAsync(
+            suiteId,
+            specId,
+            It.Is<IReadOnlyCollection<Guid>>(ids =>
+                ids != null
+                && ids.Count == persistedEndpointIds.Count
+                && persistedEndpointIds.All(ids.Contains)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     #region Helpers
 
     private static TestSuite CreateSuite(Guid suiteId, Guid specId, Guid ownerId)
