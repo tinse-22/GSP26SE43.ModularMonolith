@@ -1,6 +1,6 @@
 # Feature (FE) Completion Tracker
 
-> **Last Updated:** 2026-02-18  
+> **Last Updated:** 2026-02-19  
 > **Purpose:** Theo dõi trạng thái hoàn thành của từng Feature (FE) trong PROJECT_REQUIREMENTS.md  
 > **Maintained by:** AI Agents & Developers  
 
@@ -10,9 +10,9 @@
 
 | Status | Count |
 |--------|-------|
-| ✅ Completed | 4 |
+| ✅ Completed | 5 |
 | 🔨 In Progress | 1 |
-| 📋 Skeleton Only | 6 |
+| 📋 Skeleton Only | 5 |
 | ❌ Not Started | 6 |
 | **Total** | **17** |
 
@@ -65,7 +65,7 @@ This sequence defines the delivery order so users can verify API test order befo
 
 | FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
 |-------|---------|--------|--------|--------|----------------|-------|
-| **FE-04** | Test scope & execution configuration | TestGeneration / TestExecution | 📋 Skeleton Only | — | — | Entities defined (TestSuite, ExecutionEnvironment) but no Controllers/Commands/Queries yet |
+| **FE-04** | Test scope & execution configuration | TestGeneration / TestExecution | ✅ Completed | `feature/FE-04-test-scope-configuration` | 2026-02-19 | Implemented FE-04-01 + FE-04-02 APIs/CQRS, endpoint-scope validation, FE-05A scope fallback, rowversion conflict handling, default environment transactional switch, auth secret masking. Ops doc: `docs/features/FE-04-test-configuration/OPERATIONS.md` |
 
 ### 5.4 Test Generation
 
@@ -128,8 +128,8 @@ This sequence defines the delivery order so users can verify API test order befo
 | **AuditLog** | (Supporting) | ✅ Full | Audit logging |
 | **Notification** | (Supporting) | ✅ Full | Email, notifications |
 | **Configuration** | (Supporting) | ✅ Full | App settings |
-| **TestGeneration** | FE-04, FE-05, FE-06 | 📋 Skeleton | Entities + DbContext only |
-| **TestExecution** | FE-07, FE-08 | 📋 Skeleton | Entities + DbContext only |
+| **TestGeneration** | FE-04, FE-05, FE-06 | 🔨 Partial | FE-04 scope APIs complete; FE-05/FE-06 remain skeleton |
+| **TestExecution** | FE-04, FE-07, FE-08 | 🔨 Partial | FE-04 execution-environment APIs complete; FE-07/FE-08 remain skeleton |
 | **TestReporting** | FE-10 | 📋 Skeleton | Entities + DbContext only |
 | **LlmAssistant** | FE-06(partial), FE-09, FE-15-17 | 📋 Skeleton | Entities + DbContext only |
 
@@ -161,6 +161,7 @@ When an AI Agent or developer completes a Feature (FE):
 
 | Date | FE ID(s) | Action | By |
 |------|----------|--------|----|
+| 2026-02-19 | FE-04 | FE-04 completed; added operations runbook + tracker/module summary refresh | AI Agent |
 | 2026-02-13 | — | Initial tracker creation based on codebase analysis | AI Agent |
 | 2026-02-07 | FE-01 | Identity module completed (v2 production ready) | AI Agent |
 | 2026-02-13 | FE-02, FE-03, FE-11, FE-13 | ApiDocumentation module completed | AI Agent |
