@@ -1,0 +1,179 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-02-requirement",
+  "requirement": {
+    "id": "FE-04-02",
+    "parentId": "FE-04",
+    "title": "Execution Environment Configuration",
+    "goal": "Them API/CQRS de quan ly execution environments (baseUrl, headers, authConfig, variables, isDefault) theo project de FE-07 co runtime profile xac dinh.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "ExecutionEnvironment entity da co trong schema testexecution nhung chua co controller/command/query.",
+      "ServiceCollectionExtensions cua TestExecution hien chua AddAuthorizationPolicies, can bo sung cho permission-based auth.",
+      "Can transaction rule de dam bao 1 project chi co 1 default environment.",
+      "Can mask auth secrets trong read response de secure-by-default."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Create/Update/Get/List/Delete execution environments theo project.",
+      "Validate Name/BaseUrl/AuthConfig/Headers/Variables payload.",
+      "Enforce single default environment per project using transaction.",
+      "Mask sensitive fields in authConfig for all read responses.",
+      "Expose query contract de FE-07 lay environment theo id hoac project default."
+    ],
+    "outOfScope": [
+      "Actual test execution runtime (FE-07).",
+      "Rule-based validator (FE-08).",
+      "External secret vault integration."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.TestExecution",
+        "status": "entity-only",
+        "schema": "testexecution",
+        "reusedEntities": [
+          "ExecutionEnvironment"
+        ],
+        "existingFiles": [
+          "Entities/ExecutionEnvironment.cs",
+          "DbConfigurations/ExecutionEnvironmentConfiguration.cs",
+          "ServiceCollectionExtensions.cs"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "requiredContracts": [
+          "ICurrentUser"
+        ]
+      }
+    ],
+    "featureDependencies": [
+      "FE-02",
+      "FE-03"
+    ]
+  },
+  "architecturePatterns": {
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Them controller + command/query handlers theo pattern hien tai."
+      },
+      {
+        "pattern": "Transaction Boundary",
+        "description": "Set default environment su dung UnitOfWork.ExecuteInTransactionAsync."
+      },
+      {
+        "pattern": "Optimistic Concurrency",
+        "description": "PUT/DELETE support rowVersion base64."
+      },
+      {
+        "pattern": "Permission Policies",
+        "description": "Them TestExecution.Authorization.Permissions va dang ky AddAuthorizationPolicies."
+      }
+    ]
+  },
+  "authConfigContract": {
+    "storageField": "ExecutionEnvironment.AuthConfig (jsonb)",
+    "supportedAuthTypes": [
+      "None",
+      "BearerToken",
+      "Basic",
+      "ApiKey",
+      "OAuth2ClientCredentials"
+    ],
+    "maskingRule": "Response model phai mask token/password/apiKeyValue/clientSecret."
+  },
+  "implementationMap": {
+    "newFiles": [
+      "ClassifiedAds.Modules.TestExecution/Authorization/Permissions.cs",
+      "ClassifiedAds.Modules.TestExecution/Controllers/ExecutionEnvironmentsController.cs",
+      "ClassifiedAds.Modules.TestExecution/Commands/AddUpdateExecutionEnvironmentCommand.cs",
+      "ClassifiedAds.Modules.TestExecution/Commands/DeleteExecutionEnvironmentCommand.cs",
+      "ClassifiedAds.Modules.TestExecution/Queries/GetExecutionEnvironmentQuery.cs",
+      "ClassifiedAds.Modules.TestExecution/Queries/GetExecutionEnvironmentsQuery.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/ExecutionEnvironmentModel.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/Requests/CreateExecutionEnvironmentRequest.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/Requests/UpdateExecutionEnvironmentRequest.cs",
+      "ClassifiedAds.Modules.TestExecution/Services/IExecutionAuthConfigService.cs",
+      "ClassifiedAds.Modules.TestExecution/Services/ExecutionAuthConfigService.cs"
+    ],
+    "modifiedFiles": [
+      "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs"
+    ]
+  },
+  "serviceRegistrationRequirements": {
+    "file": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+    "requiredChanges": [
+      "services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly())",
+      "Register IExecutionAuthConfigService",
+      "Keep existing AddMessageHandlers(Assembly.GetExecutingAssembly())"
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "listP95Ms": 200,
+      "writeP95Ms": 500
+    },
+    "reliability": {
+      "singleDefaultPerProject": true,
+      "concurrencySafe": true
+    },
+    "security": {
+      "authorizeAllEndpoints": true,
+      "maskSecretsInResponses": true
+    }
+  },
+  "implementationOrder": [
+    "1. Add TestExecution.Authorization.Permissions constants for CRUD endpoints.",
+    "2. Add request/response models and auth config validation service.",
+    "3. Implement commands/queries and ExecutionEnvironmentsController routes.",
+    "4. Implement transaction for IsDefault=true switching and rowVersion conflict handling.",
+    "5. Update ServiceCollectionExtensions with AddAuthorizationPolicies + service registration.",
+    "6. Add unit/controller/integration tests."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: User can create environment with valid Name/BaseUrl/Headers/AuthConfig/Variables.",
+    "AC-02: Invalid baseUrl or invalid authConfig returns 400 ValidationException.",
+    "AC-03: Setting IsDefault=true will unset old defaults in same project within one transaction.",
+    "AC-04: GET responses mask all sensitive auth fields.",
+    "AC-05: PUT/DELETE with stale rowVersion returns 409 conflict.",
+    "AC-06: All endpoints require [Authorize] and permission policy.",
+    "AC-07: FE-07 can load profile by id or by project default."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Create default environment",
+      "given": "Project has no default environment",
+      "when": "POST execution environment with isDefault=true",
+      "then": "New environment becomes default"
+    },
+    {
+      "id": "TS-02",
+      "name": "Switch default environment",
+      "given": "Project already has default env A",
+      "when": "POST/PUT env B with isDefault=true",
+      "then": "Env A is unset and env B is set in one transaction"
+    },
+    {
+      "id": "TS-03",
+      "name": "Mask auth secrets",
+      "given": "Environment has token/clientSecret/password",
+      "when": "GET environment/list",
+      "then": "Response returns masked values only"
+    },
+    {
+      "id": "TS-04",
+      "name": "Concurrency conflict",
+      "given": "Entity rowversion changed by another request",
+      "when": "PUT/DELETE with stale rowVersion",
+      "then": "409 conflict"
+    }
+  ]
+}

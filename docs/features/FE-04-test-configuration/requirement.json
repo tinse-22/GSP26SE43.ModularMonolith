@@ -1,0 +1,205 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-requirement",
+  "requirement": {
+    "id": "FE-04",
+    "title": "Test Scope And Execution Configuration",
+    "goal": "Cho phep user cau hinh pham vi test (project/specification/selected endpoints) va execution environment (baseUrl, auth, headers, variables) truoc khi FE-05 tao test va FE-07 thuc thi test.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "Codebase da co entity TestSuite (schema testgen) va ExecutionEnvironment (schema testexecution) nhung chua co controller/CQRS cho FE-04.",
+      "FE-05A da ton tai trong code (TestOrderController va command/query lien quan), nen FE-04 phai cap scope dau vao de FE-05A propose order dung pham vi.",
+      "Can giu boundary module: TestGeneration khong query truc tiep table ApiDocumentation, bat buoc dung IApiEndpointMetadataService.",
+      "ExecutionEnvironment la input bat buoc cho FE-07 de resolve baseUrl, auth, headers, variables theo project."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-04-01",
+      "title": "Test suite scope configuration (project/specification/selected endpoints)",
+      "file": "FE-04-01/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-04-02",
+      "title": "Execution environment configuration (baseUrl/auth/headers/variables)",
+      "file": "FE-04-02/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "FE-04-01: them API CRUD test suite scope theo route /api/projects/{projectId}/test-suites trong ClassifiedAds.Modules.TestGeneration.",
+      "FE-04-01: luu selected endpoint snapshot vao TestSuite de FE-05A fallback scope khi request khong gui selectedEndpointIds.",
+      "FE-04-01: validate selectedEndpointIds qua IApiEndpointMetadataService.GetEndpointMetadataAsync.",
+      "FE-04-02: them API CRUD execution environment theo route /api/projects/{projectId}/execution-environments trong ClassifiedAds.Modules.TestExecution.",
+      "FE-04-02: enforce duy nhat 1 default environment/project bang transaction.",
+      "FE-04-02: auth config va headers duoc validate truoc khi save, secret phai mask khi response."
+    ],
+    "outOfScope": [
+      "Tao test case (FE-05B, FE-06).",
+      "Runtime test execution engine (FE-07) va validation engine (FE-08).",
+      "LLM failure explanation/reporting (FE-09, FE-10).",
+      "UI implementation chi tiet."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      "FE-02",
+      "FE-03",
+      "FE-05A"
+    ],
+    "requiredModules": [
+      "ClassifiedAds.Modules.TestGeneration",
+      "ClassifiedAds.Modules.TestExecution",
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Contracts"
+    ],
+    "database": {
+      "schemas": [
+        "testgen",
+        "testexecution"
+      ],
+      "expectedSchemaChanges": [
+        "testgen.TestSuites: add SelectedEndpointIds (jsonb)",
+        "testexecution.ExecutionEnvironments: no mandatory schema change"
+      ]
+    }
+  },
+  "codebaseAlignment": {
+    "alreadyImplemented": [
+      "ClassifiedAds.Modules.TestGeneration/Controllers/TestOrderController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ProposeApiTestOrderCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/ApiTestOrderService.cs",
+      "ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs (order proposal permissions only)"
+    ],
+    "missingForFe04": [
+      "TestSuite scope controller/commands/queries/models",
+      "ExecutionEnvironment controller/commands/queries/models",
+      "TestExecution authorization permissions + AddAuthorizationPolicies registration"
+    ],
+    "entitiesToReuse": {
+      "testgen": [
+        "TestSuite",
+        "TestOrderProposal"
+      ],
+      "testexecution": [
+        "ExecutionEnvironment"
+      ]
+    }
+  },
+  "architecturePatterns": {
+    "referenceModules": [
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Modules.TestGeneration",
+      "ClassifiedAds.Modules.TestExecution"
+    ],
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Command/Query + Handler cung file. Controller chi bind request va dispatch."
+      },
+      {
+        "pattern": "Repository + UnitOfWork",
+        "description": "Dung IRepository<TEntity, Guid> va UnitOfWork.SaveChangesAsync/ExecuteInTransactionAsync."
+      },
+      {
+        "pattern": "Permission-Based Authorization",
+        "description": "Them permission constants va [Authorize(Permissions.X)] cho tung endpoint."
+      },
+      {
+        "pattern": "Cross-Module Contract Boundary",
+        "description": "TestGeneration consume endpoint metadata qua IApiEndpointMetadataService; cam query ApiDocumentation DbContext truc tiep."
+      },
+      {
+        "pattern": "Optimistic Concurrency",
+        "description": "Update/Delete support RowVersion (base64) de tranh lost update."
+      }
+    ]
+  },
+  "databaseGuardRails": {
+    "mandatoryPreflight": [
+      "Xac dinh runtime mode duy nhat: AppHost hoac standalone.",
+      "Xac dinh target DB tu ConnectionStrings__Default.",
+      "Run: SELECT current_database();",
+      "Run: SELECT current_schema();",
+      "Run: SELECT \"MigrationId\" FROM public.\"__EFMigrationsHistory\" ORDER BY \"MigrationId\" DESC LIMIT 5;"
+    ],
+    "migrationRules": [
+      "Chi tao migration tai ClassifiedAds.Migrator.",
+      "Query table phai schema-qualified (testgen.*, testexecution.*).",
+      "Khong run migration neu target DB chua duoc xac dinh chac chan."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "suiteListP95Ms": 200,
+      "suiteWriteP95Ms": 500,
+      "environmentListP95Ms": 200,
+      "environmentWriteP95Ms": 500
+    },
+    "reliability": {
+      "singleDefaultEnvironmentPerProject": true,
+      "scopeDeterminism": true,
+      "concurrencySafeUpdates": true
+    },
+    "security": {
+      "allEndpointsRequireAuthorize": true,
+      "permissionPolicyPerAction": true,
+      "maskSensitiveAuthConfigInResponses": true
+    }
+  },
+  "implementationOrder": [
+    "1. FE-04-01: add SelectedEndpointIds vao TestSuite + DB configuration + migration tai ClassifiedAds.Migrator.",
+    "2. FE-04-01: add TestSuitesController, commands, queries, models, permissions trong TestGeneration.",
+    "3. FE-04-01: cap nhat ProposeApiTestOrderCommandHandler fallback selectedEndpointIds tu TestSuite.SelectedEndpointIds.",
+    "4. FE-04-02: add ExecutionEnvironmentsController, commands, queries, models, permissions trong TestExecution.",
+    "5. FE-04-02: cap nhat TestExecution/ServiceCollectionExtensions.cs them AddAuthorizationPolicies(Assembly.GetExecutingAssembly()).",
+    "6. FE-04-02: implement transaction rule cho default environment va mask secret response.",
+    "7. Them test: validation, ownership, concurrency, default uniqueness, FE-05A fallback scope."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: POST/PUT test suite scope luu duoc ProjectId + ApiSpecId + SelectedEndpointIds hop le.",
+    "AC-02: SelectedEndpointIds phai thuoc ApiSpecId da chon; sai tra 400 ValidationException.",
+    "AC-03: ProposeApiTestOrderCommand su dung scope da luu khi SelectedEndpointIds request rong.",
+    "AC-04: CRUD execution environments hoat dong theo project context.",
+    "AC-05: Moi project co toi da 1 environment IsDefault=true tai moi thoi diem.",
+    "AC-06: Response execution environment luon mask secret fields trong AuthConfig.",
+    "AC-07: Tat ca endpoint FE-04 deu bat buoc [Authorize] + permission policy.",
+    "AC-08: Update/Delete co RowVersion stale tra 409 conflict."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Create suite scope success",
+      "given": "Project/specification hop le va endpoint list thuoc spec",
+      "when": "POST /api/projects/{projectId}/test-suites",
+      "then": "Suite duoc tao va luu selectedEndpointIds"
+    },
+    {
+      "id": "TS-02",
+      "name": "Invalid endpoint scope",
+      "given": "selectedEndpointIds co endpoint ngoai spec",
+      "when": "POST/PUT test suite",
+      "then": "Tra ValidationException (400)"
+    },
+    {
+      "id": "TS-03",
+      "name": "Set new default environment",
+      "given": "Project da co 1 default environment",
+      "when": "POST/PUT execution environment moi voi IsDefault=true",
+      "then": "Environment cu bi unset default trong cung transaction"
+    },
+    {
+      "id": "TS-04",
+      "name": "FE-05A fallback to persisted scope",
+      "given": "Suite da luu selectedEndpointIds va request propose khong gui selectedEndpointIds",
+      "when": "POST /api/test-suites/{suiteId}/order-proposals",
+      "then": "BuildProposalOrderAsync duoc goi voi scope tu suite snapshot"
+    }
+  ]
+}

@@ -1,0 +1,225 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-01-contracts",
+  "requirementId": "FE-04-01",
+  "title": "FE-04-01 Contracts - Test Suite Scope Configuration",
+  "apiContracts": [
+    {
+      "name": "CreateTestSuiteScope",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/test-suites",
+      "permission": "Permission:AddTestSuite",
+      "requestBody": "CreateTestSuiteScopeRequest",
+      "responseBody": "TestSuiteScopeModel",
+      "successStatus": 201
+    },
+    {
+      "name": "UpdateTestSuiteScope",
+      "method": "PUT",
+      "route": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "permission": "Permission:UpdateTestSuite",
+      "requestBody": "UpdateTestSuiteScopeRequest",
+      "responseBody": "TestSuiteScopeModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetTestSuiteScope",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "permission": "Permission:GetTestSuites",
+      "responseBody": "TestSuiteScopeModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetTestSuiteScopes",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/test-suites",
+      "permission": "Permission:GetTestSuites",
+      "responseBody": "PagedResult<TestSuiteScopeModel>",
+      "successStatus": 200
+    },
+    {
+      "name": "ArchiveTestSuiteScope",
+      "method": "DELETE",
+      "route": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "permission": "Permission:DeleteTestSuite",
+      "responseBody": "none",
+      "successStatus": 204
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "CreateTestSuiteScopeRequest",
+      "fields": {
+        "name": "string (required, max 200)",
+        "description": "string? (max 4000)",
+        "apiSpecId": "Guid (required)",
+        "generationType": "GenerationType (Auto|Manual|LLMAssisted)",
+        "selectedEndpointIds": "Guid[] (required, unique after normalize)"
+      }
+    },
+    {
+      "name": "UpdateTestSuiteScopeRequest",
+      "fields": {
+        "rowVersion": "string (base64, required)",
+        "name": "string (required, max 200)",
+        "description": "string? (max 4000)",
+        "apiSpecId": "Guid (required)",
+        "generationType": "GenerationType",
+        "selectedEndpointIds": "Guid[] (required)"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "TestSuiteScopeModel",
+      "fields": {
+        "id": "Guid",
+        "projectId": "Guid",
+        "apiSpecId": "Guid?",
+        "name": "string",
+        "description": "string?",
+        "generationType": "GenerationType",
+        "status": "TestSuiteStatus",
+        "approvalStatus": "ApprovalStatus",
+        "selectedEndpointIds": "Guid[]",
+        "selectedEndpointCount": "int",
+        "createdById": "Guid",
+        "createdDateTime": "datetime",
+        "updatedDateTime": "datetime?",
+        "rowVersion": "string (base64)"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "AddUpdateTestSuiteScopeCommand",
+        "handler": "AddUpdateTestSuiteScopeCommandHandler",
+        "writes": [
+          "TestSuite(Name, Description, ApiSpecId, GenerationType, SelectedEndpointIds, LastModifiedById)"
+        ],
+        "crossModuleReads": [
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync(apiSpecId, selectedEndpointIds)"
+        ]
+      },
+      {
+        "name": "ArchiveTestSuiteScopeCommand",
+        "handler": "ArchiveTestSuiteScopeCommandHandler",
+        "writes": [
+          "TestSuite(Status=Archived, LastModifiedById)"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetTestSuiteScopeQuery",
+        "handler": "GetTestSuiteScopeQueryHandler",
+        "reads": [
+          "TestSuite by projectId + suiteId"
+        ]
+      },
+      {
+        "name": "GetTestSuiteScopesQuery",
+        "handler": "GetTestSuiteScopesQueryHandler",
+        "reads": [
+          "TestSuite list by projectId with paging/filter"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "ITestSuiteScopeService",
+        "methods": [
+          "NormalizeEndpointIds(IReadOnlyCollection<Guid>)",
+          "SerializeEndpointIds(IReadOnlyCollection<Guid>)",
+          "DeserializeEndpointIds(string)"
+        ],
+        "notes": "Service dung chung cho command/query va FE-05A fallback de tranh duplicate logic."
+      }
+    ]
+  },
+  "integrationContracts": [
+    {
+      "consumer": "ClassifiedAds.Modules.TestGeneration/Commands/ProposeApiTestOrderCommandHandler",
+      "change": "If command.SelectedEndpointIds is null/empty => fallback to suite.SelectedEndpointIds",
+      "reason": "Dam bao FE-05A de xuat order theo scope da xac nhan o FE-04."
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "apiSpecId required and not Guid.Empty"
+    },
+    {
+      "id": "VAL-02",
+      "rule": "selectedEndpointIds required and at least 1 valid Guid"
+    },
+    {
+      "id": "VAL-03",
+      "rule": "selectedEndpointIds after normalize must not contain duplicates"
+    },
+    {
+      "id": "VAL-04",
+      "rule": "selectedEndpointIds must be subset of endpoints in apiSpecId"
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Update/Delete must match rowVersion"
+    },
+    {
+      "id": "VAL-06",
+      "rule": "Only suite owner can update/archive"
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_SCOPE_SELECTION",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "TEST_SUITE_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "SPECIFICATION_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "CONCURRENCY_CONFLICT",
+      "exceptionType": "DbUpdateConcurrencyException"
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "testgen",
+    "tables": [
+      "TestSuites"
+    ],
+    "columnContracts": [
+      "TestSuites.SelectedEndpointIds -> jsonb",
+      "TestSuites.RowVersion -> concurrency token"
+    ],
+    "notes": [
+      "Migration tao trong ClassifiedAds.Migrator.",
+      "SQL raw (neu co) phai dung schema-qualified testgen.\"TestSuites\"."
+    ]
+  },
+  "securityAndAuthorization": {
+    "permissionsToAdd": [
+      "Permission:GetTestSuites",
+      "Permission:AddTestSuite",
+      "Permission:UpdateTestSuite",
+      "Permission:DeleteTestSuite"
+    ],
+    "requirements": [
+      "All APIs require [Authorize].",
+      "Each endpoint requires corresponding permission policy.",
+      "Owner validation required for write operations."
+    ]
+  }
+}

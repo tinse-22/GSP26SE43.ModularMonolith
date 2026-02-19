@@ -68,6 +68,13 @@ Template để AI Agent tạo docs đúng format. **Bắt buộc** đọc trư�
 #### FE-03: Parser Flow
 - [parser-flow-design.json](features/FE-03-parser-flow/parser-flow-design.json)
 
+#### FE-04: Test Configuration
+- [requirement.json](features/FE-04-test-configuration/requirement.json) — Requirement tong
+- [workflow.json](features/FE-04-test-configuration/workflow.json) — Workflow flows
+- [implementation-map.json](features/FE-04-test-configuration/implementation-map.json) — File map file-level cho AI Agent implement dung codebase
+- **FE-04-01**: [requirement](features/FE-04-test-configuration/FE-04-01/requirement.json) · [contracts](features/FE-04-test-configuration/FE-04-01/contracts.json)
+- **FE-04-02**: [requirement](features/FE-04-test-configuration/FE-04-02/requirement.json) · [contracts](features/FE-04-test-configuration/FE-04-02/contracts.json)
+
 #### FE-09: Acceptance Criteria
 - **FE-09-01**: [requirement](features/FE-09-acceptance-criteria/FE-09-01/requirement.json) · [contracts](features/FE-09-acceptance-criteria/FE-09-01/contracts.json) · [workflow](features/FE-09-acceptance-criteria/FE-09-01/workflow.json)
 

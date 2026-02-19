@@ -1,0 +1,203 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-04 - Implementation Map For Current Codebase",
+  "description": "File nay map truc tiep FE-04 vao file C# hien co trong codebase de AI Agent implement dung kien truc Modular Monolith CQRS.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation)"
+  },
+  "currentCodebaseSnapshot": {
+    "testGeneration": {
+      "exists": [
+        "Controllers/TestOrderController.cs",
+        "Commands/ProposeApiTestOrderCommand.cs",
+        "Queries/GetLatestApiTestOrderProposalQuery.cs",
+        "Services/ApiTestOrderService.cs",
+        "Authorization/Permissions.cs",
+        "Entities/TestSuite.cs"
+      ],
+      "missingForFe04": [
+        "TestSuitesController",
+        "Scope commands/queries/models/requests",
+        "SelectedEndpointIds on TestSuite"
+      ]
+    },
+    "testExecution": {
+      "exists": [
+        "Entities/ExecutionEnvironment.cs",
+        "DbConfigurations/ExecutionEnvironmentConfiguration.cs",
+        "ServiceCollectionExtensions.cs"
+      ],
+      "missingForFe04": [
+        "ExecutionEnvironmentsController",
+        "Environment commands/queries/models/requests",
+        "Authorization permissions and policy registration",
+        "Auth config validation/masking service"
+      ]
+    }
+  },
+  "moduleStructure": {
+    "description": "Chi sua 2 module TestGeneration va TestExecution, plus migration trong ClassifiedAds.Migrator.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Controllers/TestSuitesController.cs",
+        "description": "CRUD APIs for test suite scope."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/AddUpdateTestSuiteScopeCommand.cs",
+        "description": "Create/update suite scope."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/ArchiveTestSuiteScopeCommand.cs",
+        "description": "Soft archive suite."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetTestSuiteScopeQuery.cs",
+        "description": "Get one suite scope."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetTestSuiteScopesQuery.cs",
+        "description": "Get list of suite scopes."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/TestSuiteScopeModel.cs",
+        "description": "Scope response model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ITestSuiteScopeService.cs",
+        "description": "Normalize/serialize/deserialize selected endpoints."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/TestSuiteScopeService.cs",
+        "description": "Implementation for scope serialization."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Authorization/Permissions.cs",
+        "description": "Permission constants for execution environment APIs."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Controllers/ExecutionEnvironmentsController.cs",
+        "description": "CRUD APIs for execution environments."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Commands/AddUpdateExecutionEnvironmentCommand.cs",
+        "description": "Create/update execution environment."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Commands/DeleteExecutionEnvironmentCommand.cs",
+        "description": "Delete environment with rowVersion."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Queries/GetExecutionEnvironmentQuery.cs",
+        "description": "Get single environment."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Queries/GetExecutionEnvironmentsQuery.cs",
+        "description": "Get list environments."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IExecutionAuthConfigService.cs",
+        "description": "Validate/serialize/mask auth config."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/ExecutionAuthConfigService.cs",
+        "description": "Auth config service implementation."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Entities/TestSuite.cs",
+        "description": "Add SelectedEndpointIds property."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/DbConfigurations/TestSuiteConfiguration.cs",
+        "description": "Map SelectedEndpointIds to jsonb."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs",
+        "description": "Add scope CRUD permissions."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "description": "Register scope service and keep existing handlers/policies."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/ProposeApiTestOrderCommand.cs",
+        "description": "Fallback to TestSuite.SelectedEndpointIds when command.SelectedEndpointIds empty."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+        "description": "Add authorization policy scanning + register auth config service."
+      }
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "requiredSchemaChanges": [
+      "testgen.TestSuites add SelectedEndpointIds jsonb"
+    ],
+    "noSchemaChangesExpected": [
+      "testexecution.ExecutionEnvironments (existing columns are enough)"
+    ],
+    "mandatoryPreflight": [
+      "Use ConnectionStrings__Default as target DB.",
+      "Use exactly one runtime mode while validating DB state.",
+      "Run SELECT current_database();",
+      "Run SELECT current_schema();",
+      "Run SELECT \"MigrationId\" FROM public.\"__EFMigrationsHistory\" ORDER BY \"MigrationId\" DESC LIMIT 5;"
+    ],
+    "postChangeVerification": [
+      "Run migrator against intended DB only.",
+      "Verify migration exists in public.\"__EFMigrationsHistory\".",
+      "Verify data in schema-qualified tables testgen.\"TestSuites\" and testexecution.\"ExecutionEnvironments\"."
+    ]
+  },
+  "flows": [
+    {
+      "name": "FE-04-01 Scope Flow",
+      "steps": [
+        "1. User creates/updates suite scope under /api/projects/{projectId}/test-suites.",
+        "2. Handler validates selected endpoints via IApiEndpointMetadataService.",
+        "3. Handler persists SelectedEndpointIds snapshot on TestSuite.",
+        "4. FE-05A propose falls back to persisted scope if request list is empty."
+      ]
+    },
+    {
+      "name": "FE-04-02 Environment Flow",
+      "steps": [
+        "1. User creates/updates execution environment under /api/projects/{projectId}/execution-environments.",
+        "2. Handler validates baseUrl/authConfig/headers/variables.",
+        "3. If IsDefault=true then unset old defaults and set new default in one transaction.",
+        "4. Query model returns masked auth config values."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Do not query ApiDocumentation DbContext from TestGeneration.",
+    "Do not expose raw secrets from AuthConfig.",
+    "Do not bypass rowVersion on update/delete APIs.",
+    "Do not run migrations when target DB cannot be identified with certainty."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "Scope command validation and endpoint subset checks.",
+      "Execution environment authConfig validation and masking.",
+      "RowVersion conflict paths for update/delete."
+    ],
+    "integrationTests": [
+      "Single default environment per project under concurrent requests.",
+      "FE-05A fallback to persisted SelectedEndpointIds.",
+      "Permissions + ownership checks on FE-04 APIs."
+    ]
+  },
+  "implementationSequence": [
+    "1. FE-04-01 data model and migration",
+    "2. FE-04-01 controller/commands/queries and FE-05A fallback",
+    "3. FE-04-02 controller/commands/queries",
+    "4. FE-04-02 auth service + permissions + policy registration",
+    "5. tests + migration verification report"
+  ]
+}

@@ -1,0 +1,275 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-04-workflow",
+  "workflow": {
+    "id": "wf-fe04-test-config-v1",
+    "requirementId": "FE-04",
+    "name": "FE-04 Scope And Execution Environment Configuration",
+    "mode": "request-response + transaction",
+    "description": "Workflow FE-04 gom 2 luong: FE-04-01 (scope trong TestGeneration) va FE-04-02 (execution environment trong TestExecution), sau do handoff cho FE-05A va FE-07."
+  },
+  "architectureOverview": {
+    "summary": "FE-04 la synchronous CQRS APIs. Transaction explicit can cho default environment switch. RowVersion duoc dung cho update/delete de chong lost update.",
+    "noDirectMessageBrokerNeeded": true,
+    "outboxRequired": false,
+    "transactionRequired": "Can cho operation set IsDefault=true de unset defaults khac trong cung project.",
+    "moduleBoundaries": [
+      "TestGeneration khong truy cap truc tiep ApiDocumentation DbContext; bat buoc dung IApiEndpointMetadataService.",
+      "TestExecution chi doc/ghi schema testexecution va khong truy cap truc tiep TestGeneration DbContext."
+    ],
+    "schemas": [
+      "testgen",
+      "testexecution"
+    ]
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "feature": "FE-04-01",
+      "description": "Create/update test suite scope va persist selected endpoint snapshot."
+    },
+    {
+      "phase": 2,
+      "feature": "FE-04-02",
+      "description": "Create/update execution environments voi auth/header/variables profiles."
+    },
+    {
+      "phase": 3,
+      "feature": "FE-04 handoff",
+      "description": "Handoff cho FE-05A consume scope fallback va FE-07 consume execution profile."
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Create Test Suite Scope",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{projectId}/test-suites { name, description, apiSpecId, selectedEndpointIds, generationType }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "TestSuitesController",
+          "action": "Bind request + ICurrentUser, dispatch AddUpdateTestSuiteScopeCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateTestSuiteScopeCommandHandler",
+          "action": "Validate selectedEndpointIds bang IApiEndpointMetadataService.GetEndpointMetadataAsync(specId, selectedEndpointIds).",
+          "output": "Validated endpoint scope"
+        },
+        {
+          "step": 4,
+          "actor": "AddUpdateTestSuiteScopeCommandHandler",
+          "action": "Create TestSuite(Status=Draft, ApprovalStatus=NotApplicable, CreatedById=currentUser) va persist SelectedEndpointIds jsonb.",
+          "output": "TestSuite persisted"
+        },
+        {
+          "step": 5,
+          "actor": "TestSuitesController",
+          "action": "Return 201 TestSuiteScopeModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Update Test Suite Scope",
+      "type": "synchronous + optimistic concurrency",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/projects/{projectId}/test-suites/{suiteId} { rowVersion, apiSpecId, selectedEndpointIds, name?, description? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "AddUpdateTestSuiteScopeCommandHandler",
+          "action": "Load suite, verify owner, set rowVersion token, validate endpoint scope via contract service.",
+          "output": "Suite + scope validated"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateTestSuiteScopeCommandHandler",
+          "action": "Update suite metadata + SelectedEndpointIds, save; map stale rowVersion thanh 409.",
+          "output": "Suite updated"
+        },
+        {
+          "step": 4,
+          "actor": "TestSuitesController",
+          "action": "Return 200 TestSuiteScopeModel with refreshed rowVersion.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Create Or Update Execution Environment",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST/PUT /api/projects/{projectId}/execution-environments ...",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ExecutionEnvironmentsController",
+          "action": "Bind request + ICurrentUser, dispatch AddUpdateExecutionEnvironmentCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateExecutionEnvironmentCommandHandler",
+          "action": "Validate name/baseUrl/authConfig/headers/variables and ownership.",
+          "output": "Input validated"
+        },
+        {
+          "step": 4,
+          "actor": "AddUpdateExecutionEnvironmentCommandHandler",
+          "action": "If IsDefault=true -> ExecuteInTransactionAsync: unset old defaults in project, then upsert target environment as default.",
+          "output": "Default switch applied atomically",
+          "transactionBoundary": {
+            "includes": [
+              "Unset all existing default environments in project",
+              "Insert/update target environment",
+              "SaveChangesAsync once"
+            ]
+          }
+        },
+        {
+          "step": 5,
+          "actor": "ExecutionEnvironmentsController",
+          "action": "Return 201/200 with masked ExecutionEnvironmentModel.",
+          "output": "HTTP Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Consume FE-04 Config In FE-05A And FE-07",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "FE-05A ProposeApiTestOrderCommandHandler",
+          "action": "Load TestSuite scope snapshot. If request.SelectedEndpointIds empty -> fallback to TestSuite.SelectedEndpointIds.",
+          "output": "Scoped endpoints passed to ordering service"
+        },
+        {
+          "step": 2,
+          "actor": "FE-07 RunTestsCommandHandler",
+          "action": "Load ExecutionEnvironment by id (or project default) de resolve baseUrl/auth/headers truoc khi dispatch HTTP requests.",
+          "output": "Runtime execution profile"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "implicitTransactions": [
+      "Create/update scope va non-default environment writes co the dung SaveChangesAsync."
+    ],
+    "explicitTransactions": [
+      {
+        "operation": "Set default execution environment",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "ExecutionEnvironment (unset old defaults)",
+          "ExecutionEnvironment (set current default)"
+        ]
+      }
+    ]
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "selectedEndpointIds chua endpoint ngoai specification.",
+        "BaseUrl khong phai absolute http/https URL.",
+        "AuthConfig khong hop le voi AuthType."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Test suite khong ton tai.",
+        "Execution environment khong ton tai.",
+        "Specification khong ton tai."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "CONCURRENCY_CONFLICT: RowVersion khong hop le.",
+        "DEFAULT_ENVIRONMENT_CONFLICT: khong the dam bao default unique."
+      ]
+    }
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "Scope Integrity Gate",
+      "rule": "selectedEndpointIds phai la subset cua endpoints trong ApiSpecification duoc chon."
+    },
+    {
+      "id": "QG-02",
+      "name": "Default Environment Gate",
+      "rule": "Moi project khong duoc co hon 1 environment IsDefault=true."
+    },
+    {
+      "id": "QG-03",
+      "name": "Authorization Gate",
+      "rule": "Tat ca FE-04 endpoints phai gan policy permission va ownership checks."
+    }
+  ],
+  "dbPreflightChecklist": [
+    "Xac dinh target DB tu ConnectionStrings__Default truoc migration/seeding.",
+    "Run SELECT current_database();",
+    "Run SELECT current_schema();",
+    "Run SELECT \"MigrationId\" FROM public.\"__EFMigrationsHistory\" ORDER BY \"MigrationId\" DESC LIMIT 5;"
+  ],
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "FE-04-01 Scope Layer",
+      "tasks": [
+        "Add TestSuite scope models/requests + TestSuitesController + commands/queries.",
+        "Add TestSuite.SelectedEndpointIds jsonb field + TestSuiteConfiguration + migrator migration.",
+        "Validate endpoint scope using IApiEndpointMetadataService.",
+        "Add permissions for suite scope APIs in TestGeneration.Authorization.Permissions.",
+        "Update ProposeApiTestOrderCommandHandler fallback to persisted suite scope."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "FE-04-02 Environment Layer",
+      "tasks": [
+        "Add ExecutionEnvironment models/requests + controller + commands/queries.",
+        "Implement default switching transaction + concurrency handling.",
+        "Add TestExecution authorization permissions and AddAuthorizationPolicies registration.",
+        "Mask sensitive auth fields in query responses."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Verification",
+      "tasks": [
+        "Unit tests for command validation and conflict paths.",
+        "Controller tests for route + dispatch + status codes.",
+        "Integration tests for default environment uniqueness.",
+        "Integration/unit test for FE-05A scope fallback from TestSuite.SelectedEndpointIds."
+      ]
+    }
+  ]
+}
