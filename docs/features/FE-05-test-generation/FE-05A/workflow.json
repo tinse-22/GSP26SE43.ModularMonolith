@@ -1,0 +1,388 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05a-workflow",
+  "workflow": {
+    "id": "wf-fe05a-api-order-gate-v2",
+    "requirementId": "FE-05A",
+    "parentRequirementId": "FE-05",
+    "name": "API Test Order Proposal + Review/Approve Gate",
+    "mode": "request-response + transaction + human-in-the-loop",
+    "description": "Flow FE-05A duoc thiet ke theo CQRS trong TestGeneration module, reuse TestOrderProposal/TestSuite de implement mandatory gate truoc FE-05B."
+  },
+  "architectureOverview": {
+    "summary": "Khong tao entity moi. Reuse TestOrderProposal jsonb fields (ProposedOrder/UserModifiedOrder/AppliedOrder) va TestSuite approval fields. FE-05B bat buoc goi gate service de check approved/applied order.",
+    "noDirectMessageBrokerNeeded": true,
+    "noRedisNeeded": true,
+    "outboxRequired": false,
+    "transactionRequired": "Approve/reject phai transaction de cap nhat dong bo proposal + suite.",
+    "schema": "testgen",
+    "keyPrinciples": [
+      "No generation before approval gate pass.",
+      "No cross-module direct repository access.",
+      "Optimistic concurrency by RowVersion."
+    ]
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-04",
+      "FE-12"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestGeneration",
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Contracts.Identity"
+    ],
+    "crossModuleConsumption": {
+      "source": "ApiDocumentation",
+      "pattern": "Consume endpoint metadata via API/contract only",
+      "forbidden": "Do not read ApiDocumentation DbContext/tables directly from TestGeneration handlers."
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Create Proposal",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/order-proposals { specificationId, selectedEndpointIds? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "TestOrderController",
+          "action": "Bind request, resolve current user, dispatch ProposeApiTestOrderCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "ProposeApiTestOrderCommandHandler",
+          "action": "Validate suite ownership + scope. Fetch endpoint metadata from ApiDocumentation boundary.",
+          "output": "Candidate endpoint set"
+        },
+        {
+          "step": 4,
+          "actor": "IApiTestOrderService",
+          "action": "Build deterministic proposal order (auth-first, dependency-first, stable tie-break).",
+          "output": "ApiOrderItem[]"
+        },
+        {
+          "step": 5,
+          "actor": "ProposeApiTestOrderCommandHandler",
+          "action": "Mark old active proposal as Superseded (if any). Save new TestOrderProposal(Status=Pending, ProposedOrder=jsonb). Set TestSuite.ApprovalStatus=PendingReview.",
+          "output": "Proposal persisted"
+        },
+        {
+          "step": 6,
+          "actor": "TestOrderController",
+          "action": "Return 201 ApiTestOrderProposalModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "User Reorder",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder { rowVersion, orderedEndpointIds, reviewNotes? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ReorderApiTestOrderCommandHandler",
+          "action": "Load proposal, validate Status=Pending, verify RowVersion for concurrency.",
+          "output": "Proposal loaded"
+        },
+        {
+          "step": 3,
+          "actor": "IApiTestOrderService",
+          "action": "Validate reordered endpoint set (count, duplicates, out-of-scope).",
+          "output": "Validated reordered set"
+        },
+        {
+          "step": 4,
+          "actor": "ReorderApiTestOrderCommandHandler",
+          "action": "Persist UserModifiedOrder(jsonb) + ReviewNotes. Keep Status=Pending until approve.",
+          "output": "Reordered proposal persisted"
+        },
+        {
+          "step": 5,
+          "actor": "TestOrderController",
+          "action": "Return 200 ApiTestOrderProposalModel with new RowVersion.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Approve and Apply Order Snapshot",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/order-proposals/{proposalId}/approve { rowVersion, reviewNotes? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ApproveApiTestOrderCommandHandler",
+          "action": "Load proposal + suite, verify ownership/permission, validate Status=Pending and RowVersion.",
+          "output": "Entities loaded"
+        },
+        {
+          "step": 3,
+          "actor": "ApproveApiTestOrderCommandHandler",
+          "action": "Choose finalOrder = UserModifiedOrder ?? ProposedOrder. Determine targetStatus: Approved or ModifiedAndApproved.",
+          "output": "Final order snapshot"
+        },
+        {
+          "step": 4,
+          "actor": "ApproveApiTestOrderCommandHandler",
+          "action": "Execute transaction: update proposal (Status, ReviewedById, ReviewedAt, AppliedOrder, AppliedAt, ReviewNotes) + update suite (ApprovalStatus, ApprovedById, ApprovedAt).",
+          "output": "Proposal approved and snapshot applied",
+          "transactionBoundary": {
+            "includes": [
+              "Update TestOrderProposal review fields",
+              "Write AppliedOrder jsonb snapshot",
+              "Update TestSuite approval state",
+              "SaveChanges once"
+            ]
+          }
+        },
+        {
+          "step": 5,
+          "actor": "TestOrderController",
+          "action": "Return 200 ApiTestOrderProposalModel.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Reject Proposal",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/order-proposals/{proposalId}/reject { rowVersion, reviewNotes }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "RejectApiTestOrderCommandHandler",
+          "action": "Validate reviewNotes not empty, RowVersion valid, proposal status Pending.",
+          "output": "Validation passed"
+        },
+        {
+          "step": 3,
+          "actor": "RejectApiTestOrderCommandHandler",
+          "action": "Execute transaction: set proposal Status=Rejected + review fields, set suite ApprovalStatus=Rejected.",
+          "output": "Rejection persisted"
+        },
+        {
+          "step": 4,
+          "actor": "TestOrderController",
+          "action": "Return 200 with rejected proposal.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Gate Check Before FE-05B Generation",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/generate-happy-path",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "GenerateHappyPathTestsCommandHandler (FE-05B)",
+          "action": "Call IApiTestOrderGateService.RequireApprovedOrderAsync(suiteId).",
+          "output": "Gate status"
+        },
+        {
+          "step": 3,
+          "actor": "IApiTestOrderGateService",
+          "action": "Fail when no active proposal with Status in [Approved, ModifiedAndApproved, Applied] or AppliedOrder is null.",
+          "output": "Allow or ConflictException"
+        },
+        {
+          "step": 4,
+          "actor": "GenerateHappyPathTestsCommandHandler (FE-05B)",
+          "action": "If gate pass, deserialize AppliedOrder and generate test cases by this exact order.",
+          "output": "Deterministic generation order"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "implicitTransactions": [
+      "Create proposal (single aggregate write) may use default EF transaction."
+    ],
+    "explicitTransactions": [
+      {
+        "operation": "Approve proposal",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "TestOrderProposal(update review + applied fields)",
+          "TestSuite(update approval fields)"
+        ]
+      },
+      {
+        "operation": "Reject proposal",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "TestOrderProposal(update rejected status)",
+          "TestSuite(update approval status)"
+        ]
+      }
+    ]
+  },
+  "orderingRules": [
+    {
+      "ruleId": "ORD-01",
+      "name": "Auth-first",
+      "description": "Login/token endpoints di truoc endpoints can auth."
+    },
+    {
+      "ruleId": "ORD-02",
+      "name": "Producer-before-consumer",
+      "description": "Endpoint tao resource di truoc endpoints can id/resource do."
+    },
+    {
+      "ruleId": "ORD-03",
+      "name": "Deterministic tie-break",
+      "description": "Neu cung priority, sort theo method weight + path asc de dam bao deterministic."
+    },
+    {
+      "ruleId": "ORD-04",
+      "name": "Optional AI hint",
+      "description": "AI reasoning duoc luu phuc vu giai thich, nhung final order van phai qua deterministic normalization + user approval."
+    }
+  ],
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "orderedEndpointIds khong hop le (thieu/trung/ngoai scope).",
+        "reviewNotes bat buoc khi reject."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Test suite khong ton tai.",
+        "Proposal khong ton tai."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "CONCURRENCY_CONFLICT: RowVersion khong hop le.",
+        "ORDER_CONFIRMATION_REQUIRED: Chua co proposal duoc approve/applied."
+      ]
+    }
+  },
+  "folderStructure": {
+    "targetModule": "ClassifiedAds.Modules.TestGeneration/",
+    "newFiles": [
+      "Authorization/Permissions.cs",
+      "Controllers/TestOrderController.cs",
+      "Models/ApiTestOrderProposalModel.cs",
+      "Models/ApiTestOrderGateStatusModel.cs",
+      "Models/ApiOrderItemModel.cs",
+      "Models/Requests/ProposeApiTestOrderRequest.cs",
+      "Models/Requests/ReorderApiTestOrderRequest.cs",
+      "Models/Requests/ApproveApiTestOrderRequest.cs",
+      "Models/Requests/RejectApiTestOrderRequest.cs",
+      "Commands/ProposeApiTestOrderCommand.cs",
+      "Commands/ReorderApiTestOrderCommand.cs",
+      "Commands/ApproveApiTestOrderCommand.cs",
+      "Commands/RejectApiTestOrderCommand.cs",
+      "Queries/GetLatestApiTestOrderProposalQuery.cs",
+      "Queries/GetApiTestOrderGateStatusQuery.cs",
+      "Services/IApiTestOrderService.cs",
+      "Services/ApiTestOrderService.cs",
+      "Services/IApiTestOrderGateService.cs",
+      "Services/ApiTestOrderGateService.cs"
+    ],
+    "modifiedFiles": [
+      "ServiceCollectionExtensions.cs (register controllers/services/permissions)",
+      "Commands/GenerateHappyPathTestsCommand.cs (FE-05B gate integration)"
+    ]
+  },
+  "acceptanceCriteria": [
+    "AC-01: Create proposal thanh cong va luu ProposedOrder jsonb.",
+    "AC-02: Reorder chi hop le khi proposal Pending va rowVersion match.",
+    "AC-03: Approve ghi AppliedOrder va cap nhat suite approval fields trong 1 transaction.",
+    "AC-04: Reject cap nhat proposal/suite status trong 1 transaction.",
+    "AC-05: FE-05B block khi gate fail, pass khi gate pass.",
+    "AC-06: Generation order cua FE-05B phai trung AppliedOrder."
+  ],
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Contract + Models",
+      "tasks": [
+        "Define request/response models with rowVersion support.",
+        "Define JSON serializer/deserializer for order payload."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Command/Query Handlers",
+      "tasks": [
+        "Implement propose/reorder/approve/reject handlers.",
+        "Implement latest proposal + gate status queries."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Controller + Authorization",
+      "tasks": [
+        "Add TestOrderController endpoints.",
+        "Apply permission policies and ownership checks."
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "FE-05B Integration + Testing",
+      "tasks": [
+        "Inject IApiTestOrderGateService into generation handler.",
+        "Add integration tests for gate fail/pass and concurrency conflict."
+      ]
+    }
+  ],
+  "observability": {
+    "metrics": [
+      "test_order_proposal_created_total",
+      "test_order_proposal_approved_total",
+      "test_order_proposal_rejected_total",
+      "test_order_gate_blocked_total",
+      "test_order_reorder_conflict_total"
+    ],
+    "traceTags": [
+      "trace_id",
+      "test_suite_id",
+      "proposal_id",
+      "proposal_number",
+      "actor_user_id"
+    ]
+  }
+}

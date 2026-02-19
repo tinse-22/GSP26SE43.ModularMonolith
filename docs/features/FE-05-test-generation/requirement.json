@@ -1,0 +1,95 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05-requirement",
+  "requirement": {
+    "id": "FE-05",
+    "title": "Happy-Path API Test Case Generation",
+    "goal": "Tu dong tao happy-path test cases tu danh sach endpoint da parse, nhung bat buoc qua gate FE-05A (de xuat thu tu API -> user review/reorder -> confirm) truoc khi FE-05B duoc phep generate test case.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "TestGeneration module da co schema testgen va cac entity core (TestSuite, TestCase, TestCaseRequest, TestOrderProposal).",
+      "Tracker da chot FE-05A la mandatory gate truoc FE-05B.",
+      "Can giu deterministic flow: user xac nhan order truoc, he thong moi sinh test."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-05A",
+      "title": "API test order proposal + user verify/reorder gate",
+      "file": "FE-05A/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-05B",
+      "title": "Happy-path generation from approved order",
+      "file": "FE-05B/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "FE-05A: Tao va review API order proposal theo endpoint scope.",
+      "FE-05A: Luu approved order snapshot va gate FE-05B.",
+      "FE-05B: Generate happy-path test cases theo approved order.",
+      "Dong bo voi FE-04 test scope va context auth/header."
+    ],
+    "outOfScope": [
+      "Boundary/negative mutation generation (FE-06).",
+      "LLM failure explanation (FE-09).",
+      "UI review bulk operations cho LLM suggestion (FE-15..FE-17)."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      "FE-02",
+      "FE-03",
+      "FE-04",
+      "FE-12"
+    ],
+    "requiredModules": [
+      "ClassifiedAds.Modules.TestGeneration",
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Contracts.Identity"
+    ],
+    "database": {
+      "schema": "testgen",
+      "existingEntityToReuse": [
+        "TestOrderProposal",
+        "TestSuite",
+        "TestCase",
+        "TestCaseRequest"
+      ]
+    }
+  },
+  "nonFunctionalTargets": {
+    "determinism": {
+      "required": true,
+      "description": "Neu cung input endpoint set thi he thong phai tao cung order khi user chua reorder."
+    },
+    "concurrency": {
+      "required": true,
+      "description": "Review/reorder/approve phai dung optimistic concurrency (RowVersion)."
+    },
+    "auditability": {
+      "requiredFields": [
+        "TestSuiteId",
+        "ProposalId",
+        "ProposalNumber",
+        "ReviewedById",
+        "ReviewedAt",
+        "AppliedAt"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: FE-05B bi chan neu khong co approved/applied order cho TestSuite.",
+    "AC-02: User co the reorder proposal truoc khi approve.",
+    "AC-03: Approved order duoc ghi snapshot de FE-05B consume 1 cach deterministic.",
+    "AC-04: Proposal thao tac tren schema testgen va re-use TestOrderProposal entity.",
+    "AC-05: Khong duoc skip mandatory gate FE-05A."
+  ]
+}

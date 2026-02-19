@@ -1,0 +1,324 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05a-contracts",
+  "requirementId": "FE-05A",
+  "title": "FE-05A Contracts - API Test Order Proposal + Review Gate",
+  "apiContracts": [
+    {
+      "name": "ProposeApiTestOrder",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/order-proposals",
+      "permission": "Permission:ProposeTestOrder",
+      "requestBody": "ProposeApiTestOrderRequest",
+      "responseBody": "ApiTestOrderProposalModel",
+      "successStatus": 201
+    },
+    {
+      "name": "GetLatestApiTestOrderProposal",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/order-proposals/latest",
+      "permission": "Permission:GetTestOrderProposal",
+      "responseBody": "ApiTestOrderProposalModel",
+      "successStatus": 200
+    },
+    {
+      "name": "ReorderApiTestOrder",
+      "method": "PUT",
+      "route": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+      "permission": "Permission:ReorderTestOrder",
+      "requestBody": "ReorderApiTestOrderRequest",
+      "responseBody": "ApiTestOrderProposalModel",
+      "successStatus": 200
+    },
+    {
+      "name": "ApproveApiTestOrder",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+      "permission": "Permission:ApproveTestOrder",
+      "requestBody": "ApproveApiTestOrderRequest",
+      "responseBody": "ApiTestOrderProposalModel",
+      "successStatus": 200
+    },
+    {
+      "name": "RejectApiTestOrder",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reject",
+      "permission": "Permission:ApproveTestOrder",
+      "requestBody": "RejectApiTestOrderRequest",
+      "responseBody": "ApiTestOrderProposalModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetApiTestOrderGateStatus",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/order-gate-status",
+      "permission": "Permission:GetTestOrderProposal",
+      "responseBody": "ApiTestOrderGateStatusModel",
+      "successStatus": 200
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "ProposeApiTestOrderRequest",
+      "fields": {
+        "specificationId": "Guid",
+        "selectedEndpointIds": "Guid[] (optional)",
+        "source": "ProposalSource (default: Ai)",
+        "llmModel": "string? (max 100)",
+        "reasoningNote": "string? (max 2000)"
+      }
+    },
+    {
+      "name": "ReorderApiTestOrderRequest",
+      "fields": {
+        "rowVersion": "string (base64)",
+        "orderedEndpointIds": "Guid[]",
+        "reviewNotes": "string? (max 4000)"
+      }
+    },
+    {
+      "name": "ApproveApiTestOrderRequest",
+      "fields": {
+        "rowVersion": "string (base64)",
+        "reviewNotes": "string? (max 4000)"
+      }
+    },
+    {
+      "name": "RejectApiTestOrderRequest",
+      "fields": {
+        "rowVersion": "string (base64)",
+        "reviewNotes": "string (required, max 4000)"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "ApiTestOrderProposalModel",
+      "fields": {
+        "proposalId": "Guid",
+        "testSuiteId": "Guid",
+        "proposalNumber": "int",
+        "status": "ProposalStatus",
+        "source": "ProposalSource",
+        "proposedOrder": "ApiOrderItem[]",
+        "userModifiedOrder": "ApiOrderItem[]?",
+        "appliedOrder": "ApiOrderItem[]?",
+        "aiReasoning": "string?",
+        "consideredFactors": "object?",
+        "reviewedById": "Guid?",
+        "reviewedAt": "datetime?",
+        "reviewNotes": "string?",
+        "appliedAt": "datetime?",
+        "rowVersion": "string (base64)"
+      }
+    },
+    {
+      "name": "ApiTestOrderGateStatusModel",
+      "fields": {
+        "testSuiteId": "Guid",
+        "isGatePassed": "bool",
+        "reasonCode": "string?",
+        "activeProposalId": "Guid?",
+        "activeProposalStatus": "ProposalStatus?",
+        "orderSize": "int",
+        "evaluatedAt": "datetime"
+      }
+    },
+    {
+      "name": "ApiOrderItem",
+      "fields": {
+        "endpointId": "Guid",
+        "httpMethod": "string",
+        "path": "string",
+        "orderIndex": "int",
+        "dependsOnEndpointIds": "Guid[]",
+        "reasonCodes": "string[]",
+        "isAuthRelated": "bool"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "ProposeApiTestOrderCommand",
+        "handler": "ProposeApiTestOrderCommandHandler",
+        "writes": [
+          "TestOrderProposal(ProposedOrder, Status=Pending)",
+          "TestSuite(ApprovalStatus=PendingReview)"
+        ]
+      },
+      {
+        "name": "ReorderApiTestOrderCommand",
+        "handler": "ReorderApiTestOrderCommandHandler",
+        "writes": [
+          "TestOrderProposal(UserModifiedOrder, ReviewNotes)"
+        ]
+      },
+      {
+        "name": "ApproveApiTestOrderCommand",
+        "handler": "ApproveApiTestOrderCommandHandler",
+        "writes": [
+          "TestOrderProposal(Status, ReviewedById, ReviewedAt, AppliedOrder, AppliedAt)",
+          "TestSuite(ApprovalStatus, ApprovedById, ApprovedAt)"
+        ],
+        "transactionRequired": true
+      },
+      {
+        "name": "RejectApiTestOrderCommand",
+        "handler": "RejectApiTestOrderCommandHandler",
+        "writes": [
+          "TestOrderProposal(Status=Rejected, ReviewedById, ReviewedAt, ReviewNotes)",
+          "TestSuite(ApprovalStatus=Rejected)"
+        ],
+        "transactionRequired": true
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetLatestApiTestOrderProposalQuery",
+        "handler": "GetLatestApiTestOrderProposalQueryHandler",
+        "reads": [
+          "TestOrderProposal by TestSuiteId order by ProposalNumber desc"
+        ]
+      },
+      {
+        "name": "GetApiTestOrderGateStatusQuery",
+        "handler": "GetApiTestOrderGateStatusQueryHandler",
+        "reads": [
+          "Latest active proposal + suite approval state"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "IApiTestOrderService",
+        "methods": [
+          "BuildProposalOrderAsync(suiteId, specificationId, selectedEndpointIds)",
+          "ValidateReorderedEndpointSet(proposedOrder, orderedEndpointIds)",
+          "DeserializeOrderJson(json)",
+          "SerializeOrderJson(items)"
+        ]
+      },
+      {
+        "name": "IApiTestOrderGateService",
+        "methods": [
+          "RequireApprovedOrderAsync(testSuiteId)",
+          "GetGateStatusAsync(testSuiteId)"
+        ],
+        "consumer": "GenerateHappyPathTestsCommandHandler (FE-05B)"
+      }
+    ]
+  },
+  "stateTransitionRules": [
+    {
+      "from": "Pending",
+      "to": "Approved",
+      "condition": "User approve, khong co userModifiedOrder"
+    },
+    {
+      "from": "Pending",
+      "to": "ModifiedAndApproved",
+      "condition": "User approve va co userModifiedOrder"
+    },
+    {
+      "from": "Pending",
+      "to": "Rejected",
+      "condition": "User reject"
+    },
+    {
+      "from": "Approved",
+      "to": "Applied",
+      "condition": "FE-05B da bat dau generate theo order nay (optional mark)"
+    },
+    {
+      "from": "ModifiedAndApproved",
+      "to": "Applied",
+      "condition": "FE-05B da bat dau generate theo order nay (optional mark)"
+    },
+    {
+      "from": "Pending|Approved|ModifiedAndApproved",
+      "to": "Superseded",
+      "condition": "Tao proposal moi cho cung suite"
+    }
+  ],
+  "gateContract": {
+    "gateRule": "Gate pass khi ton tai proposal active cho suite voi status in [Approved, ModifiedAndApproved, Applied] va AppliedOrder != null.",
+    "gateFailHttpStatus": 409,
+    "gateFailReasonCode": "ORDER_CONFIRMATION_REQUIRED",
+    "gateFailMessageVi": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases."
+  },
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "orderedEndpointIds phai cung so luong voi ProposedOrder."
+    },
+    {
+      "id": "VAL-02",
+      "rule": "orderedEndpointIds khong duoc duplicate."
+    },
+    {
+      "id": "VAL-03",
+      "rule": "orderedEndpointIds khong duoc chua endpoint ngoai scope proposal."
+    },
+    {
+      "id": "VAL-04",
+      "rule": "reviewNotes bat buoc khi reject."
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Request rowVersion phai match entity RowVersion."
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_ORDER_SET",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 401,
+      "reasonCode": "UNAUTHORIZED",
+      "exceptionType": "UnauthorizedAccessException"
+    },
+    {
+      "httpStatus": 403,
+      "reasonCode": "FORBIDDEN",
+      "exceptionType": "ForbiddenException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "PROPOSAL_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "CONCURRENCY_CONFLICT",
+      "exceptionType": "DbUpdateConcurrencyException"
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED",
+      "exceptionType": "ConflictException"
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "testgen",
+    "tables": [
+      "TestOrderProposals",
+      "TestSuites"
+    ],
+    "notes": [
+      "ProposedOrder/UserModifiedOrder/AppliedOrder luu duoi dang jsonb.",
+      "Approve/reject phai cap nhat proposal + suite trong cung transaction.",
+      "Khong tao table moi neu co the reuse TestOrderProposal."
+    ]
+  },
+  "securityAndAuthorization": {
+    "requirements": [
+      "Tat ca endpoint FE-05A phai co [Authorize].",
+      "Tat ca endpoint FE-05A phai bind permission policy rieng.",
+      "Ownership check theo project/suite owner hoac role co quyen."
+    ]
+  }
+}

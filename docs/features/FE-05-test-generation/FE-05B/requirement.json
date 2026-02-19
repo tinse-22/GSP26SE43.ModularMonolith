@@ -1,0 +1,33 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05b-requirement",
+  "requirement": {
+    "id": "FE-05B",
+    "parentId": "FE-05",
+    "title": "Happy-path Test Generation From Approved API Order",
+    "goal": "Generate happy-path test cases theo dung AppliedOrder da duoc user xac nhan o FE-05A.",
+    "priority": "P0",
+    "status": "planned"
+  },
+  "scope": {
+    "inScope": [
+      "Gate check FE-05A truoc generation.",
+      "Generate TestCase/TestCaseRequest/TestCaseExpectation theo AppliedOrder.",
+      "Cap nhat TestSuite status sang Ready khi generation thanh cong."
+    ],
+    "outOfScope": [
+      "Boundary/negative generation (FE-06).",
+      "Failure explanation (FE-09)."
+    ]
+  },
+  "dependencyGate": {
+    "required": "FE-05A approved/applied order",
+    "failReasonCode": "ORDER_CONFIRMATION_REQUIRED"
+  },
+  "acceptanceCriteria": [
+    "AC-01: FE-05B block neu gate fail.",
+    "AC-02: FE-05B generate theo thu tu AppliedOrder.",
+    "AC-03: Happy-path test request values su dung schema-valid defaults."
+  ]
+}
