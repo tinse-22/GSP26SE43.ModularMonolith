@@ -3,6 +3,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
+using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -36,6 +37,8 @@ public static class TestGenerationServiceCollectionExtensions
         // Register repositories
         services
             .AddScoped<IRepository<TestSuite, Guid>, Repository<TestSuite, Guid>>()
+            .AddScoped<IRepository<TestOrderProposal, Guid>, Repository<TestOrderProposal, Guid>>()
+            .AddScoped<IRepository<TestSuiteVersion, Guid>, Repository<TestSuiteVersion, Guid>>()
             .AddScoped<IRepository<TestCase, Guid>, Repository<TestCase, Guid>>()
             .AddScoped<IRepository<TestCaseRequest, Guid>, Repository<TestCaseRequest, Guid>>()
             .AddScoped<IRepository<TestCaseExpectation, Guid>, Repository<TestCaseExpectation, Guid>>()
@@ -43,6 +46,10 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<TestDataSet, Guid>, Repository<TestDataSet, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
+
+        services
+            .AddScoped<IApiTestOrderService, ApiTestOrderService>()
+            .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>();
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
