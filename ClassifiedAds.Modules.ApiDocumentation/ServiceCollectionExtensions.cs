@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.ConfigurationOptions;
@@ -51,6 +52,7 @@ public static class ApiDocumentationServiceCollectionExtensions
         // Register services
         services.AddScoped<ClassifiedAds.Modules.ApiDocumentation.Services.IPathParameterTemplateService,
             ClassifiedAds.Modules.ApiDocumentation.Services.PathParameterTemplateService>();
+        services.AddScoped<IApiEndpointMetadataService, ClassifiedAds.Modules.ApiDocumentation.Services.ApiEndpointMetadataService>();
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());

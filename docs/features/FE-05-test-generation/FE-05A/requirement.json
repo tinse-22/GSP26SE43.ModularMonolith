@@ -1,0 +1,236 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05a-requirement",
+  "requirement": {
+    "id": "FE-05A",
+    "parentId": "FE-05",
+    "title": "API Test Order Proposal + User Verify/Reorder Gate",
+    "goal": "Tao mandatory human-in-the-loop gate de user xac nhan thu tu endpoint/API truoc khi he thong generate happy-path test cases (FE-05B).",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "ClassifiedAds.Modules.TestGeneration da co entity TestOrderProposal va TestSuite approval fields, co the reuse thay vi tao model moi.",
+      "Tracker FE roadmap da quy dinh FE-05A la gate bat buoc truoc FE-05B.",
+      "Giam risk generate sai thu tu phu thuoc API (auth, create-resource, query-resource)."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Tao order proposal tu endpoint set da chon trong FE-04.",
+      "Cho user xem, reorder, approve, reject proposal.",
+      "Luu approved/applied order snapshot vao TestOrderProposal json fields.",
+      "Cap nhat TestSuite.ApprovalStatus, ApprovedById, ApprovedAt.",
+      "Expose gate contract cho FE-05B de chan generation neu chua approve."
+    ],
+    "outOfScope": [
+      "Tao happy-path test case details (FE-05B).",
+      "Boundary/negative mutations (FE-06).",
+      "UI implementation chi tiet (chi define API/data contract)."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "skeleton-entities-ready",
+        "reusedEntities": [
+          "TestOrderProposal",
+          "TestSuite"
+        ],
+        "schema": "testgen"
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "consumptionPattern": "Consume endpoint metadata via API/contract, khong truy cap truc tiep entity repository cua module khac."
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "usage": "ICurrentUser de set ReviewedById, ApprovedById."
+      }
+    ],
+    "featureDependencies": [
+      "FE-04",
+      "FE-12"
+    ]
+  },
+  "existingEntities": {
+    "schema": "testgen",
+    "entities": [
+      {
+        "name": "TestOrderProposal",
+        "keyFields": [
+          "Id",
+          "TestSuiteId",
+          "ProposalNumber",
+          "Status",
+          "ProposedOrder(jsonb)",
+          "UserModifiedOrder(jsonb)",
+          "AppliedOrder(jsonb)",
+          "ReviewedById",
+          "ReviewedAt",
+          "AppliedAt",
+          "RowVersion"
+        ]
+      },
+      {
+        "name": "TestSuite",
+        "keyFields": [
+          "Id",
+          "ApprovalStatus",
+          "ApprovedById",
+          "ApprovedAt",
+          "Version",
+          "RowVersion"
+        ]
+      }
+    ]
+  },
+  "architecturePatterns": {
+    "referenceModules": [
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Modules.Subscription"
+    ],
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Command/Query + Handler trong cung file. Controller chi bind request va dispatch."
+      },
+      {
+        "pattern": "Schema Isolation",
+        "description": "Du lieu FE-05A nam trong schema testgen. Khong query bang table non-schema-qualified khi viet SQL raw."
+      },
+      {
+        "pattern": "Optimistic Concurrency",
+        "description": "Dung RowVersion cua Entity<TKey> cho reorder/approve/reject de tranh lost update."
+      },
+      {
+        "pattern": "Transaction Boundary",
+        "description": "Approve/apply phai chay trong 1 transaction cap nhat TestOrderProposal + TestSuite."
+      },
+      {
+        "pattern": "Cross-Module Boundary",
+        "description": "Khong tham chieu DbContext/repository cua ApiDocumentation truc tiep. Chi consume qua API/contract."
+      }
+    ]
+  },
+  "proposalLifecycle": {
+    "sourceEnum": [
+      "Ai",
+      "User",
+      "System",
+      "Imported"
+    ],
+    "statusEnum": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "ModifiedAndApproved",
+      "Superseded",
+      "Applied",
+      "Expired"
+    ],
+    "activeDefinition": "Proposal active cho gate khi Status in [Approved, ModifiedAndApproved, Applied] va AppliedOrder != null."
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "proposeP95Ms": 500,
+      "reorderP95Ms": 300,
+      "approveP95Ms": 400
+    },
+    "reliability": {
+      "concurrencySafe": true,
+      "idempotentApprove": true
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true
+    }
+  },
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testSuiteId",
+        "proposalId",
+        "proposalNumber",
+        "actorUserId",
+        "action"
+      ]
+    }
+  },
+  "implementationOrder": [
+    "1. Authorization/Permissions.cs: them permissions cho propose/reorder/approve/reject/get.",
+    "2. Models/: tao request/response models cho FE-05A API.",
+    "3. Services/: IApiTestOrderService, ApiTestOrderService, IApiTestOrderGateService.",
+    "4. Commands/: ProposeApiTestOrderCommand, ReorderApiTestOrderCommand, ApproveApiTestOrderCommand, RejectApiTestOrderCommand.",
+    "5. Queries/: GetLatestApiTestOrderProposalQuery, GetApiTestOrderGateStatusQuery.",
+    "6. Controller: TestOrderController endpoints cho FE-05A.",
+    "7. FE-05B integration: GenerateHappyPathTestsCommandHandler goi gate service truoc generation.",
+    "8. Tests: unit test ordering rules + integration test concurrency + gate fail/pass."
+  ],
+  "acceptanceCriteria": [
+    "AC-01: He thong tao proposal moi voi Status=Pending va ProposedOrder(jsonb) khong rong.",
+    "AC-02: User co the reorder proposal khi Status=Pending va request dung RowVersion hop le.",
+    "AC-03: Approve proposal cap nhat ReviewedById/ReviewedAt va ghi AppliedOrder.",
+    "AC-04: Neu user co reorder truoc khi approve thi Status=ModifiedAndApproved; neu khong reorder thi Status=Approved.",
+    "AC-05: Reject proposal cap nhat Status=Rejected va luu ReviewNotes.",
+    "AC-06: Khi tao proposal moi cho cung suite, proposal Pending truoc do bi Superseded.",
+    "AC-07: FE-05B block voi HTTP 409 reason ORDER_CONFIRMATION_REQUIRED neu gate fail.",
+    "AC-08: FE-05B chi doc thu tu tu AppliedOrder cua proposal active.",
+    "AC-09: Ownership check bat buoc: user chi duoc review proposal cua suite thuoc project ma user co quyen.",
+    "AC-10: Moi endpoint FE-05A deu yeu cau authorize + permission policy."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Propose new order",
+      "given": "Suite co endpoint scope hop le",
+      "when": "POST propose",
+      "then": "Tao TestOrderProposal Pending voi ProposalNumber tang 1"
+    },
+    {
+      "id": "TS-02",
+      "name": "Reorder with stale rowVersion",
+      "given": "Proposal da duoc cap nhat boi request khac",
+      "when": "PUT reorder voi rowVersion cu",
+      "then": "Tra 409 conflict concurrency"
+    },
+    {
+      "id": "TS-03",
+      "name": "Approve without reorder",
+      "given": "Proposal Pending va user khong sua order",
+      "when": "POST approve",
+      "then": "Status=Approved, AppliedOrder=ProposedOrder"
+    },
+    {
+      "id": "TS-04",
+      "name": "Approve with reorder",
+      "given": "Proposal Pending va user da reorder",
+      "when": "POST approve",
+      "then": "Status=ModifiedAndApproved, AppliedOrder=UserModifiedOrder"
+    },
+    {
+      "id": "TS-05",
+      "name": "Gate fail",
+      "given": "Suite chua co proposal approved/applied",
+      "when": "FE-05B generate",
+      "then": "HTTP 409 ORDER_CONFIRMATION_REQUIRED"
+    },
+    {
+      "id": "TS-06",
+      "name": "Gate pass",
+      "given": "Suite co proposal active va AppliedOrder hop le",
+      "when": "FE-05B generate",
+      "then": "Generate theo dung thu tu trong AppliedOrder"
+    }
+  ]
+}

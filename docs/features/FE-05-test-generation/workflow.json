@@ -1,0 +1,107 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-05-workflow",
+  "workflow": {
+    "id": "wf-fe05-happy-path-generation-v1",
+    "requirementId": "FE-05",
+    "name": "FE-05 End-to-End Flow (Order Gate + Happy-path Generation)",
+    "mode": "request-response + transactional-gate",
+    "description": "Tong flow FE-05 gom 2 phase: FE-05A (order proposal gate) va FE-05B (generate happy-path tests)."
+  },
+  "architectureOverview": {
+    "summary": "Flow chay trong TestGeneration module theo CQRS. FE-05A dung TestOrderProposal de ghi review history va approved/applied order snapshot. FE-05B chi generate neu gate pass.",
+    "noDirectMessageBrokerNeeded": true,
+    "outboxRequired": false,
+    "transactionRequired": "Can cho approve/apply de tranh race condition khi nhieu user cung review."
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "feature": "FE-05A",
+      "description": "Generate proposal -> user reorder -> approve/apply."
+    },
+    {
+      "phase": 2,
+      "feature": "FE-05B",
+      "description": "Generate happy-path test cases from approved/applied order."
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Prepare Scope",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "Select project/specification/endpoints in FE-04 scope.",
+          "output": "Scoped endpoint set"
+        },
+        {
+          "step": 2,
+          "actor": "TestGeneration",
+          "action": "Create or load TestSuite(Draft) with ApiSpecId and CreatedById.",
+          "output": "Target suite ready"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "FE-05A Mandatory Gate",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "TestOrderController",
+          "action": "Propose order and persist TestOrderProposal(Status=Pending).",
+          "output": "Proposal created"
+        },
+        {
+          "step": 2,
+          "actor": "User",
+          "action": "Review and optionally reorder proposal.",
+          "output": "Approved order candidate"
+        },
+        {
+          "step": 3,
+          "actor": "TestOrderController",
+          "action": "Approve/apply proposal in transaction and update TestSuite approval state.",
+          "output": "Approved/applied order snapshot"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "FE-05B Generation",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "GenerateHappyPathTestsCommandHandler",
+          "action": "Call order gate service to require approved/applied order snapshot.",
+          "output": "Gate pass or block(409)"
+        },
+        {
+          "step": 2,
+          "actor": "GenerateHappyPathTestsCommandHandler",
+          "action": "If gate pass, iterate ordered endpoints and generate TestCase + Request + Expectation.",
+          "output": "Happy-path test suite content"
+        }
+      ]
+    }
+  ],
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "Order Approval Gate",
+      "rule": "Khong duoc generate test case khi suite chua co approved/applied proposal order."
+    },
+    {
+      "id": "QG-02",
+      "name": "Deterministic Generation Gate",
+      "rule": "Thu tu generation phai trung voi AppliedOrder snapshot."
+    }
+  ]
+}

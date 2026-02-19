@@ -1,6 +1,6 @@
 # Feature (FE) Completion Tracker
 
-> **Last Updated:** 2026-02-13  
+> **Last Updated:** 2026-02-18  
 > **Purpose:** Theo dõi trạng thái hoàn thành của từng Feature (FE) trong PROJECT_REQUIREMENTS.md  
 > **Maintained by:** AI Agents & Developers  
 
@@ -15,6 +15,34 @@
 | 📋 Skeleton Only | 6 |
 | ❌ Not Started | 6 |
 | **Total** | **17** |
+
+---
+
+## Recommended Implementation Sequence (Updated)
+
+This sequence defines the delivery order so users can verify API test order before auto-generation, while keeping generated-test review at the end.
+
+| Phase | FE | Deliverable | Reason |
+|------|----|-------------|--------|
+| 1 | **FE-14** | Subscription & Billing | In-progress work; finish first to unblock merge |
+| 2 | **FE-12** | Path-parameter templating | Small ApiDocumentation dependency needed for deterministic generation |
+| 3 | **FE-04** | Test scope & execution config | Required before generation (environment, target endpoints, auth/headers) |
+| 4 | **FE-05A** *(within FE-05)* | API test order proposal + user verify/reorder | Mandatory gate before generating test cases |
+| 5 | **FE-05B** *(within FE-05)* | Happy-path test generation from approved API order | LLM generates tests only after user confirms order |
+| 6 | **FE-06** | Boundary & negative generation | Extend FE-05 with mutations + LLM scenario suggestions |
+| 7 | **FE-07 + FE-08** | Test execution + deterministic validation | Execute and validate together as one flow |
+| 8 | **FE-09** | LLM failure explanation | Depends on failed validation outputs |
+| 9 | **FE-10** | Reports + PDF/CSV export | Depends on execution/validation result data |
+| 10 | **FE-15 → FE-16 → FE-17** | LLM suggestion review UI | Final review loop for generated tests (preview/approve/reject/feedback/bulk) |
+
+### Mandatory User Flow Gate Before Test Generation
+
+1. User uploads OpenAPI/Postman/manual source.
+2. LLM proposes API test order.
+3. User verifies and reorders API sequence as desired.
+4. System saves confirmed order snapshot.
+5. LLM/rule engine generates test cases following that confirmed order.
+6. Later review of generated tests still follows **FE-15 → FE-16 → FE-17**.
 
 ---
 
@@ -137,3 +165,4 @@ When an AI Agent or developer completes a Feature (FE):
 | 2026-02-07 | FE-01 | Identity module completed (v2 production ready) | AI Agent |
 | 2026-02-13 | FE-02, FE-03, FE-11, FE-13 | ApiDocumentation module completed | AI Agent |
 | 2026-02-13 | FE-14 | Subscription module in progress | AI Agent |
+| 2026-02-18 | FE roadmap | Reordered implementation phases; added mandatory user verify/reorder gate before FE-05 generation | AI Agent |
