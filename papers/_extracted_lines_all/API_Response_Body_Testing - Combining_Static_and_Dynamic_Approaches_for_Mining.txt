@@ -1,0 +1,1898 @@
+===== PAGE 1 =====
+1 59
+Combining Static and Dynamic Approaches for Mining and
+2 60
+3 61
+Testing Constraints for RESTful API Testing
+4 62
+5 63
+Anonymous Author(s)
+6 64
+7 65
+Abstract logical correctness and validity of the response data from the APIs ,
+8 66
+which is essential for software reliability. For example, an API
+In API testing, deriving logical constraints on API response bodies
+9 67
+request for a customer older than 18 receiving a response for one
+is crucial in generating the test cases to cover various aspects of
+10 68
+younger than 18 would not be detected by just validating the status
+RESTful APIs. However, existing approaches are limited to dynamic
+11 69
+code or schema. Deriving logical constraints on API response bodies
+analysis in which constraints are extracted from the execution of
+12 70
+is essential for generating test cases to cover RESTful APIs.
+APIs as part of the system under test. The key limitation of such a
+13 71
+The state-of-the-art approaches for mining constraints on API
+dynamic approach is its under-estimation in which inputs in API
+14 72
+response bodies focus only on dynamic analysis in which the con-
+executions are not sufficiently diverse to uncover actual constraints
+15 73
+straints are extracted from the execution data of the system under
+on API response bodies. In this paper, we propose a static anal-
+16 74
+test (SUT). AGORA [ 9 ] automatically detects invariants —properties
+ysis approach in which the constraints for API response bodies
+17 75
+of the output that should consistently hold true. To identify invari-
+are mined from API specifications. This static approach detects
+18 76
+ants, which serve as logical constraints on API response bodies, it
+constraints uncovered by dynamic approaches, which rely on data
+19 77
+extends Daikon [ 16 ], a dynamic instrumenter used to detect invari-
+obtained from API executions. We leverage large language models
+20 78
+ants during execution. As with dynamic analysis, it under-estimates
+(LLMs) to comprehend textual descriptions in API specifications,
+21 79
+the constraints due to the lack of diverse inputs to cover different
+mine constraints for response bodies, and generate test cases. To
+22 80
+logical aspects of API response bodies. For example, the inputs of
+reduce LLM’s hallucination and error propagation, we apply an
+23 81
+the APIs might not be diverse enough to discover that the minimum
+Observation-Confirmation (OC) scheme which uses initial prompts
+24 82
+age for an operation on a website is 18. Another important limita-
+to contextualize constraints, allowing subsequent prompts to more
+25 83
+tion of this approach is that it requires the SUT to operate accurately
+accurately confirm their presence. Our empirical results show that
+26 84
+to extract the constraints from accurate inputs and outputs.
+LLMs with OC prompting achieve high precision in constraint min-
+27 85
+We propose RBCTest in which the dynamic analysis approach
+ing with the average of 91.2%. When combining static and dynamic
+28 86
+(when the execution data is available) is complemented with a
+analysis, our tool, RBCTest , achieves a precision of 78.5%. We also
+29 87
+LLM-based static analysis approach to mine the constraints of API
+use its generated test cases to detect 21 mismatches in real-world
+30 88
+response bodies from the API specification (when it is available).
+APIs between their API specifications and actual response data.
+31 89
+Our static approach and AGORA complement to each other in the fol-
+Four of those mismatches were, in fact, reported in developers’
+32 90
+lowing ways . First, constraint mining remains feasible even if only
+forums.
+33 91
+the API specification or execution data is available. For instance,
+34 92
+when an API specification exists but the APIs and the system uti-
+1 Introduction
+35 93
+lizing them are still under testing and development and may not
+By adhering to the principles of Representational State Transfer
+36 94
+function correctly, execution data is unavailable. Conversely, in a re-
+(REST), the RESTful APIs provide a standardized way for interop-
+37 95
+gression testing scenario with no up-to-date specification, the SUT
+erability among components and software systems. RESTful API
+38 96
+with APIs from previous versions has been functioning, while the
+testing helps identify and resolve several issues, ensuring that APIs
+39 97
+current version is still under development. In such cases, execution
+perform as expected [ 8 , 10 , 14 , 24 , 27 , 33 ]. It also helps verify that
+40 98
+data from the previous version can be used to extract constraints
+APIs adhere to specifications and handle edge cases gracefully.
+41 99
+to generate test cases for regression testing of the current version.
+Among techniques for API testing, black-box testing uses the Ope-
+42 100
+Second, the specification often provides API details, including re-
+nAPI Specification (OAS) as a basis to generate test cases and data
+43 101
+quest bodies sent to the API and response bodies returned for each
+[ 18 , 22 , 27 ]. The state-of-the-art API testing approaches are fo-
+44 102
+operation. This enables mining constraints on the API’s response
+cused on status code [ 5 , 6 , 22 , 33 ] and schema validation [ 5 , 6 , 33 ],
+45 103
+bodies to uncover more comprehensive information about these
+even with rule extraction using human-readable descriptions in the
+46 104
+constraints, which might be overlooked by the dynamic approach.
+OAS [ 19 ]. In status code validation , each HTTP request returns a
+47 105
+In contrast, due to actual execution, the runtime data helps derive
+response with a status code, a three-digit integer, indicating the
+48 106
+more detailed constraints that are not defined in the specifications.
+outcome of the HTTP request. Current testing approaches define
+49 107
+To mine constraints, we leverage the ability of large language
+an oracle for a test case by validating whether the response status
+50 108
+models (LLMs) to comprehend natural language descriptions found
+code matches the expected value. In contrast, schema validation
+51 109
+in API specifications. Constraints on API response bodies are in-
+ensures the correctness of the response data by checking it against
+52 110
+ferred from different sources, including response properties, re-
+a specified schema. This involves verifying the presence of all re-
+53 111
+sponse schema, operations, and request parameters. We also har-
+quired properties and ensuring the data types of these properties
+54 112
+ness LLMs’ proficiency in generating source code to create auto-
+match their schema in the specification.
+55 113
+mated test cases from the mined constraints to verify if the SUT
+While status code and schema validation effectively cover aspects
+56 114
+of data representation and status checking, they may overlook the
+57 115
+58 116
+
+===== PAGE 2 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+117 175
+correctly returns the content satisfying the mined constraints. Fur-
+1 (a) charge:
+118 176
+thermore, we apply an Observation-Confirmation scheme. We divide
+2 description : The ' charge ' object represents an attempt to move
+money into your account.
+119 177
+the task of mining constraints into two phases: observation and
+3 properties :
+4 amount:
+120 178
+confirmation. The initial prompt contextualizes the description of
+5 description : A positive integer can be up to eight digits .
+121 179
+constraints, enabling the next prompt to more accurately decide 6 type : integer
+7 example: 99999999
+122 180
+their presence. As another issue in LLMs’ exploration capability,
+8 created :
+9 description : Time at which the object was created . Measured
+123 181
+they could produce resulting constraints that are not true. Thus,
+in seconds since the Unix epoch.
+124 182
+10 type : integer
+to improve the precision of the resulting constraints, we addition-
+11 currency:
+125 183
+ally enhance RBCTest with two extra mechanisms. First, before
+12 description : Three lowercase letters .
+13 type : string
+126 184
+requesting the LLM to make observations concerning constraints
+14 example: usd
+15 customer:
+127 185
+on parameters, we perform a filtering process to keep only the valid
+16 description : ID of the customer this charge is for if existed .
+128 186
+ones. Second, after generating test cases for mined constraints, we 17 type : string ...
+129 187
+add a semantic verifier to verify those test cases against the ex-
+130 188
+amples specified in the OAS file. The idea is that such examples
+131 189
+tend to be correct because they illustrate the descriptions on the
+1 (b)paths :
+2 /v1/charges :
+132 190
+data types or the data specified in the OAS. For example, the OAS
+3 get :
+4 description : Returns a list of charges you have created . The
+133 191
+could give "March" as a valid month. If such a correct example does
+charges are returned in sorted order ...
+5 parameters:
+134 192
+not pass a test case generated by RBCTest based on the mined
+6 name: created
+135 193
+constraint(s), the test case must be incorrect, which is caused by
+7 description : Only return charges that were created during the
+given date interval .
+136 194
+incorrect constraint(s). Thus, our verifier will discard them, leading
+8 schema:
+137 9 anyOf: 195
+to an improved precision.
+10 − properties :
+138 196
+We conducted several experiments to evaluate RBCTest using
+11 gt ( integer )
+12 lt ( integer )
+139 197
+two datasets, one from the baseline [ 9 ] (AGORA dataset) with 11
+13 name: customer
+14 description : Only return charges for the customer specified by
+140 198
+operations in 7 API services and our RBCTest dataset collected
+this customer ID.
+141 199
+from 8 real-world API services consisting of 59 endpoints and 83
+15 schema:
+16 type : string ...
+142 200
+operations [ 7 ]. Our empirical results show that RBCTest with
+143 201
+GPT-4-turbo and our OC prompting achieves high precision in
+Figure 1: (a) Schema of a response for ‘charge’ API in the
+144 202
+constraint mining with the average of 91.2%. When combining
+project Stripe described in a Swagger file and (b) a simplified
+145 203
+static and dynamic analysis, RBCTest achieves a precision of 78.5% .
+description for the GET charges API operation from Stripe
+146 204
+RBCTest detects 107 constraints that the dynamic approach misses
+147 205
+and 46 more precise (stricter) constraints than the baseline using
+148 206
+the AGORA dataset. We also evaluate RBCTest ’s usefulness by 1 {
+2 "id": "ch...15",
+149 207
+leveraging its generated tests to detect the mismatches between 3 "object": "charge",
+4 "customer": "cus_id",
+150 208
+the API specifications and actual execution of the SUTs. A detected 5 "amount": 1099,
+6 "created": 1679090539,
+151 209
+mismatch indicates a fault in the SUT or that the specification does 7 "currency": "usd",...
+8 }
+152 210
+not reflect the SUT. We report 21 actual faults found in 8 real-world
+153 211
+applications, including 4 issues reported by users on GitLab Forum
+Figure 2: A response’s body from a GET request for Stripe
+154 212
+[1–4]. In brief, this paper makes the following contributions:
+155 213
+1. RBCTest : [A combination of static and dynamic ap-
+(less than) parameters, representing the lower and upper bounds of
+156 214
+proaches] for constraint mining and test generation for API re-
+the time range, respectively. Users can also specify the customer
+157 215
+sponse bodies by using API specifications.
+for whom they wish to retrieve charging history (lines 13-16). A
+158 216
+2. [A manually-verified benchmark] for API testing with re-
+successful request returns a response with a status code of 200
+159 217
+spect to response bodies. Our benchmark and code [ 7 ] are available
+and a response body with data. The structure of the response data
+160 218
+for future research on API testing approaches.
+is outlined in the schema in Figure 1(a), which consists of a list
+161 219
+3. [An extensive evaluation] showing RBCTest outperform-
+of charge objects, each associated with various properties, e.g.,
+162 220
+ing the state-of-the-art baselines.
+amount, created timestamp, currency, and others. For instance,
+163 221
+2 Motivating Example
+a GET request to the /v1/charges endpoint with parameters like
+164 222
+‘created[gt]=1679090500&customer=cus_idA’ returns a list of charges that
+165 223
+2.1 Example and Observations
+satisfy the given conditions. An example response object is dis-
+166 224
+To illustrate the challenges and motivate our approach, we use
+played in Figure 2. The content of the response is constrained by
+167 225
+Stripe, an online payment service, streamlining the process of charg-
+the actual input parameters in the request. Thus, a complete testing
+168 226
+ing customers via APIs. Figure 1 shows a simplified description
+process needs to verify the response content in addition to the re-
+169 227
+from the API specification (OpenAPI Specification), detailing the
+turned status code. For example, a test case can check if the created
+170 228
+GET operation for retrieving past charges. This API enables users
+field of each returned charge object falls within the specified inter-
+171 229
+to retrieve charging records within a specific time interval (lines
+val and ensuring that the customer field matches the requested ID.
+172 230
+11-12). The time interval is defined by the gt (greater than) and lt
+173 231
+174 232
+
+===== PAGE 3 =====
+Combining Static and Dynamic Approaches for Mining and Testing Constraints for RESTful API Testing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+233 291
+Observation 1 (Constraints from input parameters). The on the values observed during the execution, which might not be
+234 292
+response data is constrained by the input parameters from the request. diverse enough to reveal the correct constraints. For example, for
+235 293
+When testing, in addition to verifying the status code, testers need to all the inputs, the charge values might never reach 99,999,999, thus,
+236 294
+verify the response data. Daikon returns the maximum charge that is less than that value.
+237 295
+In Figure 1, the descriptions on the properties of the returned
+238 2.3 Key Ideas 296
+charge objects define certain constraints on the attributes of those
+239 297
+From the above observations, we draw the following key ideas
+objects. For example, the amount property must be a positive integer,
+240 298
+to design RBCTest , an approach for mining the constraints of
+with a maximum value of eight digits. The currency attribute has a
+241 299
+response bodies and then generating test cases to validate them.
+three-letter lowercase code (e.g., usd ).
+242 300
+Key Idea 1 [Combining Static and Dynamic Approaches to
+Observation 2 (Constraints within response body). Natural
+243 301
+Mine Constraints of API’s response bodies]. The first component
+language descriptions on operations express logical constraints on
+244 302
+of RBCTest is a novel LLM-based static approach to mine the con-
+operations, their responses and others, formatting requirements, or
+245 303
+straints for API’s response bodies from the OpenAPI Specification
+value range limitations that must be validated during API testing.
+246 304
+(OAS). The constraints on the response data can be found in the
+247 305
+The Swagger file often includes examples that illustrate specific
+specification in either the descriptions of the operations (e.g., line 5
+248 306
+constraints on data or data types. For instance, in Figure 1(a), the file
+of Figure 1(a)) or the descriptions of the schema for the response data
+249 307
+provides an example of $999,999.99 USD as a positive number for
+(lines 2–24 in Figure 1(b)). For example, the description in Figure 1
+250 308
+the property amount . We can validate the generated test cases against
+states that ‘the charges are returned in a sorted order with the most
+251 309
+them. An example failing the corresponding test case indicates that
+recent ones appearing first’ . The schema for the returned values
+252 310
+the test case—and therefore the mined constraint—may be incorrect.
+in Figure 1 also provides us several constraints on the parameters
+253 311
+(lines 5–6) as well as the description of the returned object as a
+Observation 3 (Verification with examples). The illustrating
+254 312
+whole (line 2). For example, the amount of a charge is a positive
+examples in the description can be used to verify against the generated
+255 313
+number with up to 8 digits and such value must be of integer.
+test cases, i.e., the validity of the mined constraints.
+256 314
+We integrate AGORA as the dynamic component, leveraging
+257 315
+execution data from the SUT to mine invariants for API response
+2.2 State-of-the-art Approaches
+258 316
+bodies. The static and dynamic components complement each other.
+In API test case generation, validation typically falls into two main
+259 317
+First, constraint mining remains feasible even if only the API speci-
+categories: status code validation and schema validation.
+260 318
+fication or execution data is available. Second, the static component
+Status Code Validation: Each HTTP request is returned with
+261 319
+facilitates mining constraints on API response bodies from API
+a response containing a status code and data. The status code, a
+262 320
+specifications, capturing broader constraint information that the
+3-digit integer, indicates the outcome of the HTTP request. 2xx
+263 321
+dynamic approach might miss. Conversely, runtime data, derived
+codes signify a successful request. Conversely, 4xx codes indicate
+264 322
+from actual executions, can help refine constraints, providing more
+errors, such as a bad syntax request or invalid input values. For
+265 323
+precise insights than those typically found in API specifications.
+instance, in testing the API ’GET/user_information’ with various valid
+266 324
+Key Idea 2 [Observation-Confirmation scheme on LLMs for
+and invalid user IDs, testers would expect the API to return status
+267 325
+constraints discovery and test generation] . For the task of ex-
+codes 200 or 404 based on the inputs provided. This validation
+268 326
+tracting constraints from API specifications, we utilize the ability
+method is widely used in automation testing tools, e.g., Postman [ 6 ]
+269 327
+of LLMs to comprehend natural language descriptions found in API
+and Katalon [5], RestTestGen [33], or KAT [22].
+270 328
+specifications for constraint mining on the APIs and their parame-
+271 329
+Schema Validation: Schema validation ensures the response
+ters. Our experiment showed that direct use of LLMs for constraint
+272 330
+correctness by checking it against a predefined response schema.
+mining yields sub-optimal performance. To improve it, we apply
+273 331
+This verifies the presence of all required properties and the con-
+an Observation-Confirmation scheme in which the initial result
+274 332
+sistency of property data types with their specifications. A lack of
+returned from the LLMs will be fed back to themselves in a confir-
+275 333
+required data or a mismatch in data types indicates errors in API
+mation prompt to provide better contexts on the constraints.
+276 334
+services. Tools, e.g., RestTestGen [ 33 ], leverage external libraries,
+Key Idea 3 [Generating test cases for the constraints on re-
+277 335
+such as ‘swagger-schema-validator’, to facilitate schema validation.
+sponse bodies]. Our goal is to advance beyond current API testing
+278 336
+While status code and schema validation effectively cover aspects
+techniques: we also generate test cases to evaluate the mined con-
+279 337
+of data representation and status checking, they may overlook the
+straints. For instance, a test case is generated to verify that the list
+280 338
+logical correctness and validity in the response data . For instance, if
+of charges returned by the API endpoint ‘v1/charges’ is sorted in
+281 339
+an API request for a charge in 2025 returns one from 2024, or if the
+reverse chronological order. Another example includes generating a
+282 340
+charge amount is negative, these issues would not be detected by
+test case to validate the format/value of the returned charge amount.
+283 341
+merely validating the status code or schema.
+Key Idea 4 [Filter and Semantic Verifier]. Before asking the
+284 342
+To address that, the state-of-the-art dynamic approach, AGORA [ 9 ]
+LLM to analyze constraints on parameters, we first perform a fil-
+285 343
+extends Daikon [ 16 ], a dynamic instrumenter, to infer the invariants
+tering process to remove invalid constraints. After generating test
+286 344
+from the values extracted from the execution of the SUT using the
+287 cases based on the mined constraints, we then introduce a semantic 345
+APIs. AGORA considers these derived invariants as the constraints
+288 verifier to check these test cases against the examples in the OAS. 346
+for the response bodies. However, inherent from the nature of a
+289 The rationale is that these examples are typically accurate, as they 347
+dynamic approach, the quality of the derived invariants depends
+290 348
+
+===== PAGE 4 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+349 407
+1
+LLM
+Operation Description
+Operation
+Operation Observation
+350 408
+Operation
+Description
+description
+Operation
+observation
+Extraction
+351 409
+observing instruction
+352 410
+2
+5
+LLM LLM
+4
+Request Parameter
+LLM Request-Response
+353 411
+Request-Response
+for
+Request
+Request-
+- param 1 Observation Constraint Confirmation
+each
+- param 1 Parameter Mapping
+Parameter
+- param A
+Parameters
+Response
+354 412
+- descr 1 Parameter
+Request-response
+- descr 1
+observation Request-response parameter
+- descr A
+Extraction constraint
+observing instruction
+constraint confirming instruction
+mapping instruction
+355 413
+OpenAPI
+356 414
+yes/no
+3
+LLM
+Spec Response Schema
+- param 1
+Observation
+357 - param 1 415
+Schema
+- prop X
+- descr 1
+- descr 1 Schema
+- descr X observation
+358 416
+observing instruction
+Request-Response
+359 417
+Constraints
+Extract Constraints from Request Specification and Operation Description
+Syntactic
+360 418
+Filter
+Extract Constraints from Response Specification
+Response Property
+361 419
+6
+7 Constraints
+LLM LLM
+Property
+Constraint
+Property
+362 Observation 420
+- param 1
+- param 1 for
+- param 1 Confirmation
+Property
+- param 1
+- prop X Detected Constraints
+Extraction
+- descr 1
+- descr 1 each
+Property
+- descr 1
+- descr 1 observation Constraint confirming
+- descr X
+yes/no
+363 421
+observing instruction
+instruction
+364 422
+Figure 3: Static Constraint Mining with LLMs
+365 423
+366 424
+367 425
+represent the valid data types or values. For instance, an example
+1 PARAMETER_SCHEMA_MAPPING_PROMPT = ''' Given a request parameter
+368 426
+of $999,999.99 is used to illustrate a positive number for amount . We
+and an API response schema, check if there is a matching
+369 property in the API response schema. 427
+can validate the generated test cases against such examples. If an
+2 Request parameter for {method} {endpoint}:
+370 428
+3 - "{parameter}": "{description}"
+example does not pass the corresponding test case, it suggests that
+4
+371 429
+the test case, and thus the mined constraint, may be incorrect. 5 Follow these steps to find the matching property: {Instructions
+for chain-of-thought steps}
+372 430
+6
+373 431
+7 Schema specification "{schema}": {schema_observation}
+3 Static Constraint Mining
+8
+374 432
+9 Confirm if the request parameter has a matching property in the
+To mine the constraints, we observe that the specification for an
+response schema: ...
+375 433
+10 Identify the corresponding property name of the provided request
+API endpoint includes two main parts: the request specification (the
+parameter in the schema. ...
+376 434
+input of the API) and response schema specification (the output of 11 If a matching property exists, explain it using this format: ...
+377 435
+the API). (1) A request specification guides us on how to call an API
+378 436
+Figure 4: Request-Response Parameter Mapping Observation
+endpoint, detailing the required input parameters , their roles, and
+379 437
+the parameters within the request body along with their respective
+380 438
+roles. It might also contain the description of the API operations .
+381 439
+For instance, to verify a "customerID" constraint from Observation
+(2) The response schema specification provides instructions on the
+382 440
+1, the response data should contain a property that identifies the
+response data , including each property in the response data, its
+383 441
+customer. Thus, the required pair is <"customerID", "customer">. If
+description, datatype, nullability, and other relevant details. These
+384 442
+the response data does not have a field to represent a constraint,
+parts contain descriptions that are the targets for constraint mining.
+385 443
+that constraint is disregarded as it cannot be validated.
+386 444
+3.1 Constraints from Request Specifications
+387 445
+An essential component of an API specification is the request spec-
+1 MAPPING_CONFIRMATION = ''' {System prompt}
+388 446
+2 The request parameter ' s information:
+ification. This part instructs clients on how to correctly initiate
+3 - Operation: {method} {endpoint}
+389 447
+4 - Parameter: {parameter_name}
+API calls, detailing the required inputs and the returned data. Our
+390 448
+5 - Description: {description}
+6 The corresponding property ' s information:
+constraint mining relies on natural language descriptions attached
+391 449
+7 - Resource: {schema}
+to request parameters or response properties. Since descriptions are
+8 - Corresponding property: {corresponding_property}
+392 450
+9 {Instructions for chain-of-thought steps}
+optional in OAS, they may appear in one endpoint but not others.
+393 451
+10 Answer format: ... '''
+To extract them, we first check the current response schema; if none
+394 452
+are found, we search the entire OAS document. Unlike KAT [ 22 ],
+395 Figure 5: Request-Response Constraint Confirmation 453
+which uses LLM-based "description mapping," we avoid potential
+396 454
+inaccuracies that could propagate errors. Instead, we adopt descrip-
+397 455
+tions from properties with the same name in other schemas. If none 3.1.2 Detailed Process. The process of extracting constraints from
+398 456
+exist, we exclude the property, prioritizing precision over recall. request parameters encompasses four steps: (1) description extrac-
+399 457
+tion, (2) observation ( 1 - 3 from Figure 3), (3) Request-Response
+400 458
+3.1.1 Request-Response Constraint Mapping. The idea is that to
+constraint mapping ( 4 ), and (4) constraint confirmation ( 5 ).
+401 459
+determine a constraint from request parameters, the response data
+Initially, the description extraction phase follows the process
+402 460
+must contain a property that reflects this constraint. Thus, we iden-
+shown in Figure 6. An API request comprises multiple parameters
+403 461
+tify pairs consisting of a request parameter that includes a constraint
+and a response data schema. Firstly, a prompt is made to gather
+404 462
+and a response data property that reflects this constraint (Figure 4).
+observations on the response schema and operations associated
+405 463
+406 464
+
+===== PAGE 5 =====
+Combining Static and Dynamic Approaches for Mining and Testing Constraints for RESTful API Testing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+465 523
+Input: Input:
+466 API_spec(dict): obj of entire API specification. API_spec(dict): obj of entire API specification. 524
+req_spec(dict): specification obj of a certain request. response_schema(dict): schema obj of a certain response.
+467 525
+resp_schema(dict): schema obj of the associated response. knowledge_base(dict): gained knowledge.
+468 526
+Output: list of request-response constraint properties Output: list of constraint properties.
+469 527
+1: function getConstrFromReqParas(API_spec, req_spec, resp_schema) 1: function getConstraintInsideResponseSchema(API_spec, re-
+470 528
+2: reqRespConstraint ← [] sponse_schema, knowledge_base)
+471 529
+3: respSchemaObser ← LLM().respSchemaObser(resp_schema) 2: constraint_properties ← []
+472 530
+4: operationObservation ← LLM().operationObser(desc) 3: for each prop in response_schema do
+473 531
+5: for each param in req_spec do 4: description ← response_schema[prop]["description"]
+474 532
+6: desc ← req_spec[param]["desc"] 5: if description = NULL then
+475 533
+7: if req_spec[param]["desc"] = NULL then 6: description ← exactMatchProp(API_spec, prop)
+476 534
+8: desc ← findExactMatchParameter(API_spec, param) 7: if description = NULL then
+477 535
+9: if desc = NULL then 8: # Skip this property
+10: # Skip this param 9: continue
+478 536
+11: continue 10: if prop in knowledge_base then
+479 537
+12: # Use LLM to find constraint for this param 11: if knowledge_base[prop] = TRUE then
+480 538
+13: paramObser ← LLM().parameterObser(param, desc) 12: constraint_properties.append(prop)
+481 539
+14: answer, corrProp, explain ← LLM().reqRespMapping 13: else
+482 540
+(param, desc, paramObser, respSchemaObser) 14: datatype ← response_schema[prop]["datatype"]
+483 541
+15: if answer = TRUE then 15: prop_obser ← LLM().propertyObser(prop, datatype, descrip-
+484 542
+16: confirmation ← LLM(). tion)
+485 543
+confirmReqRespMapping(param, corrProp, explain) 16: constraint_confirmation ← LLM(). constraint_ confirmation
+486 544
+17: if confirmation = TRUE then (prop, datatype, description, prop_obser)
+487 545
+18: reqRespConstraint.append((param, corrProp)) 17: if constraint_confirmation = TRUE then
+19: return reqRespConstraint 18: constraint_properties.append(prop)
+488 546
+20: end function =0 19: # Add this property to knowledge base
+489 547
+20: knowledge_base[prop] ← constraint_confirmation
+490 548
+Figure 6: Extract Constraints from Request Parameters
+21: return constraint_properties
+491 549
+22: end function =0
+492 550
+with this request (lines 3–4, Figure 6). For each request parameter,
+493 Figure 7: Extract Constraints from Response Specifications 551
+we engage LLM to provide its observations on that parameter by
+494 552
+presenting it alongside its description (line 13, Figure 6). The LLM
+495 553
+3.2 Constraints from Response Specifications
+is expected to provide a description of any constraint within this pa-
+496 554
+rameter description. If such description is missing, the specification
+First, we examine descriptions within the response schema spec-
+497 555
+is searched for another parameter with an identical name.
+ification, as they provide direct constraints by mapping each prop-
+498 556
+These descriptions support the next step: Request-Response pa-
+erty. Each endpoint includes a response schema that guides clients
+499 557
+rameter mapping (Block 4 , line 14). We guide LLM through a
+on parsing returned data, structuring the response object with prop-
+500 558
+two-step reasoning process using a tailored prompt (Figure 4). First,
+erties and descriptions (Figure 2). Our constraint-mining algorithm,
+501 559
+LLM receives a brief description of the request parameter, including
+leveraging LLM, is outlined in Figure 7. It first extracts descriptions
+502 560
+its details and observations ( 2 ), ensuring a clear understanding of
+for each property (lines 4-8) following Section 3.1. If a description
+503 561
+its intent and constraints. Second, we present the response schema,
+exists, we check a knowledge base of LLM-identified constraints to
+504 562
+observations from Block 3 , and ask LLM to identify a matching
+avoid redundant queries. If found, we reuse the stored information;
+505 563
+property. A match occurs when the request parameter filters re-
+otherwise, we prompt LLM to extract constraints.
+506 564
+sponse data or both share the same value meaning.
+Observation-Confirmation Strategy . This process involves
+507 565
+From this two-step reasoning, we require LLM to answer three
+two phases: observation (line 15) and confirmation (line 16). Our
+508 566
+questions: (1) Is there a matching property in the response schema?
+experiments reveal that when descriptions lack detail for constraint
+509 567
+(2) What is this property? (3) How does the request parameter
+extraction, LLM may resort to fabricating details, a phenomenon
+510 568
+influence this property?
+known as hallucination. Drawing inspiration from the Chain-of-
+511 569
+If the answer to (1) is negative, indicating no property reflects
+thought [ 34 ], we divide the task of extracting constraints into two
+512 570
+this request parameter, we disregard this parameter. Otherwise, we
+phases of observation and confirmation , the initial prompt better
+513 571
+proceed to the final prompt (Figure 5), which is the confirmation of
+contextualizes the description of constraints, enabling the subse-
+514 572
+the mapping (lines 15–18, Block 5 ). In this prompt, we present the
+quent prompt to more accurately determine a constraint.
+515 573
+pair of the request parameter and the matched property from Block
+In the observation phase (Block 6 ), LLM is prompted to identify
+516 574
+4 and ask LLM to confirm the accuracy of this mapping (line 16).
+constraints from the description. For example, given a property date
+517 575
+This step aims to minimize the occurrence of false positives. Finally,
+(type: string ) described as “ISO date: the literal date of the holiday” ,
+518 576
+the validated pairs of request parameters and response properties
+LLM might infer: "The date must follow the YYYY-MM-DD format for
+519 577
+are stored as Request-Response constraints (lines 17–18).
+validity, ensuring consistency within the API.” This adds specificity
+520 578
+not explicitly mentioned in the description.
+521 579
+522 580
+
+===== PAGE 6 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+581 639
+1 CONSTRAINT_TEST_GEN_PROMPT = '''
+Figure 8: Example outputs from RBCTest and AGORA.
+582 640
+2 Generate a Python script to check if a property in a REST API ' s
+response meets specified constraints and rules.
+ID Constraints Invariants
+583 641
+3 Constraint description:
+the number of returned items
+4 - Constraint from request parameter: {parameter}
+584 642
+1 has to be less than or equal input.limit >= size(return.items[])
+5 - Constraint description: {constraint_description}
+585 643
+to the requested limit 6 API response schema: {response_schema_specification}
+7 The property of the provided request parameter in API response:
+2 – return.total >= size(return.items[])
+586 644
+8 - "{property}": "{prop_description}"
+3 return.total is an integer larger return.total >= 1
+9 Based on the provided constraint from request param, and the
+587 645
+4 than or equal to 1 return.total is Integer
+respective attribute in the API response, generate a Python
+588 646
+script to verify the ' {property} ' property in the response.
+5 – input.market is a substring of return.href
+10 Rules: {Rules for test gen}
+6 – input.id is a substring of return.href
+589 647
+11 Format the script as shown: ...
+number of adult
+590 648
+7 return.adults is Integer
+guests (1-9) per room
+591 649
+return.price must be Figure 9: Constraint Test Generation Prompts
+8 –
+within input.price_range
+592 650
+9 An amount is a positive integer –
+593 651
+can be up to eight digits –
+Response
+Body
+594 652
+matched/
+Execute
+595 653
+mismatched/
+Request-Response
+Test Cases
+LLM
+for unknown
+Constraints Test
+Next, the observation is fed into the Constraint Confirmation
+Constraints
+596 654
+each
+Generation
+Constraint Semantic
+Constraint test
+Verifier
+Response property Test Cases
+Prompt (Block 7 ), where LLM validates whether the extracted
+597 655
+generation instruction
+constraints
+constraint provides enough detail for script generation. This step,
+Detected Constraints
+598 656
+similar to Figure 5, ensures constraints specify values, ranges, or for-
+599 657
+Figure 10: Constraint Test Generation in RBCTest
+mats. If confirmed, the constraint is marked as a Response Property
+600 658
+constraint and stored in the knowledge base.
+601 659
+602 660
+from request parameter descriptions, while Response Property con-
+4 Combining Constraints and Invariants
+603 661
+straints are derived from the response schema. These tests take a
+604 662
+Constraints detected by our static method are based on OAS while
+response body and request details as input, producing outcomes
+605 663
+invariants determined by AGORA come from execution data. Let us
+of ‘matched,’ ‘mismatched,’ or ‘unknown.’ A ‘matched’ outcome
+606 664
+present our ensemble approach to combine the constraints and in-
+confirms that the response satisfies the constraint, whereas ‘mis-
+607 665
+variants. Figure 8 shows sample outputs produced by each method.
+matched’ indicates a violation. An ‘unknown’ outcome suggests
+608 666
+Several constraints can only be identified using the OAS. For in-
+the absence of the relevant property, possibly due to its optional
+609 667
+stance, Constraint 9 in Figure 8, which specifies that the charge
+nature in the specification. We also incorporate a semantic verifier
+610 668
+amount must be smaller than 99,999,999, can only be extracted
+that cross-checks test cases against examples in the OAS file. If a
+611 669
+from the OAS. This is because AGORA requires a sufficiently large
+valid example fails a generated test, the test is deemed incorrect.
+612 670
+number of API executions to infer such constraints. Conversely,
+613 671
+some constraints can only be inferred at run-time, e.g., those related 5.1 Request-Response Constraints Testing
+614 672
+to returned Hrefs—URLs containing requested information.
+The Request-Response Constraint Test identifies dependencies be-
+615 673
+In AGORA, each detected invariant is associated with a set of
+tween a constrained request parameter and its corresponding re-
+616 674
+variables, as depicted in Figure 8, and a given set of variables may
+sponse property. To generate a test case, we use the prompt in Fig-
+617 675
+be linked to one or more invariants (e.g. Invariants 3-4). In our
+ure 9, which requires four inputs: the parameter name, its constraint
+618 676
+static method, each constraint is tied to a specific set of variables,
+description, the corresponding property name, and the response
+619 677
+which aligns with how AGORA groups invariants. Because each
+schema. LLM generates a validation function with two inputs: the
+620 678
+constraint is modeled via textual representations, we leverage an
+response body and the request parameter . It then creates a script to
+621 679
+LLM and its natural-language text understanding to derive the
+check conditions between them. For instance, when validating a
+622 680
+relevant variables in the constraint.
+‘created’ time interval (Observation 1), LLM extracts the ‘created’
+623 681
+If a constraint and an invariant involve different sets of variables,
+time from the response body and the conditional values from the
+624 682
+we include both in the resulting constraints for RBCTest , as they
+request parameter (‘created[gte]’, ‘created[lte]’) before performing
+625 683
+are uniquely detected by each approach. If they involve the same,
+logical comparisons. To ensure robustness, we guide LLM with pre-
+626 684
+we select the constraint or invariant with the stricter condition. For
+defined rules: using a try-catch block for error handling, excluding
+627 685
+instance, in Figure 8, row 7, we chose the constraint identified by
+examples, and following a standardized function template. These
+628 686
+our static method, as it is stricter than the invariant detected by
+rules ensure consistency and focus on constraint verification.
+629 687
+AGORA. To determine which is stricter, we leverage an LLM, which
+630 688
+can interpret well the conditions expressed in natural language.
+5.2 Response Property Constraints Testing
+631 689
+The Response Property constraint Test directly correlates the prop-
+632 5 Constraint Test Generation 690
+erty’s description with the property itself. To create a test case for
+633 691
+Constraint tests are generated using LLM (Figure 10) based on
+this constraint, we utilize a specific prompt (Figure 9). This prompt
+634 692
+two types of constraints: Request-Response constraints and Re-
+requires three inputs: the property name, the constraint description,
+635 693
+sponse Property constraints. Request-Response constraints stem
+and the response data schema. The description extracted from the
+636 694
+637 695
+638 696
+
+===== PAGE 7 =====
+Combining Static and Dynamic Approaches for Mining and Testing Constraints for RESTful API Testing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+Table 1: Constraints Test Generation on AGORA dataset.
+697 755
+previous mining step gives the necessary information for generat-
+698 756
+ing constraint verification code, while the response data schema
+Static Dynamic Unique Overlapping
+699 757
+defines the structure and type of the expected data. This schema
+APIs Total TP P Total TP P Static Dynamic +S +D Eq.
+A.Hotel 44 39 88.6 117 61 52.1 20 34 8 1 10
+700 758
+guides LLM in generating code to parse response data. We guide
+GitHub’ 16 13 81.3 198 194 98 3 175 6 0 4
+701 759
+LLM to follow predefined rules (similar to 5.1) to maintain consis-
+GitHub” 7 7 100 150 127 84.7 7 121 0 0 0
+702 760
+Marvel 28 23 82.1 115 55 47.8 13 35 6 0 4
+tency in the generated code in different constraints.
+OMDB 4 4 100 16 15 93.8 3 13 0 0 1
+703 761
+OMDB’ 2 1 50 5 5 100 0 3 0 0 1
+704 6 Empirical Evaluation 762
+Spotify 21 21 100 41 41 100 11 26 3 2 5
+Spotify’ 13 12 92.3 68 58 85.3 1 29 5 4 2
+705 763
+For evaluation, we seek to answer the following questions:
+Spotify” 15 15 100 55 45 81.8 3 28 6 2 4
+706 764
+Yelp 2 1 50 30 12 40 1 11 0 0 0
+RQ1. [Constraints Test Generation Accuracy] How well does
+707 765
+YouTube 65 62 95.4 194 111 57.2 45 52 12 2 3
+RBCTest perform in comparison with individual static and dynamic
+TOTAL 217 198 91.2 989 724 73.2 107 527 46 11 34
+708 766
+approach in generating test cases from the mined constraints?
+709 767
+Static: LLM-based, Dynamic: Execution-based (AGORA), +S: Static con-
+RQ2. [Constraints Mining Accuracy] How well does RBCTest
+straint better, +D: Dynamic constraint better, Eq: Equivalent.
+710 768
+perform in detecting constraints in the RESTful API specification?
+711 769
+RQ3. [Accuracy in Test Generation from the Correctly
+712 770
+Mined Constraints] How accurate is our approach in generating 7.1.2 Results on AGORA dataset. Table 1 shows the results on the
+713 771
+test cases for mined constraints? AGORA dataset with 11 API operations on 7 APIs. Our LLM-based
+714 772
+RQ4. [Usefulness in Response Body Testing] How accurate static method identified 217 constraints, with 198 true positives,
+715 773
+is our approach in detecting mismatches between the specification resulting in a precision of 91.2%. In contrast, AGORA detected 724
+716 774
+true positives out of 989 invariants, resulting a precision of 73.2%.
+and its working APIs?
+717 775
+RBCTest combines the constraint results from both LLM-based
+RQ5. [Ablation Study] How much Confirmation-Observation
+718 776
+static method and the dynamic approach in AGORA. Thus, we
+prompting and Semantic Verifier contribute to its performance?
+719 777
+also conducted an overlapping analysis between them. Overlapping
+Data Collection. We curated a dataset from eight real-world ser-
+720 778
+constraints are those applied to the same variables, and we compare
+vices, including GitLab and Stripe, comprising 59 endpoints and
+721 779
+how well the constraints are detected. A constraint is considered
+83 operations. These services were selected for several reasons: (1)
+722 780
+as better than one invariant or a group of invariants if it refers
+They feature complex request-response structures across diverse
+723 781
+to a narrower set of values for the variable(s) while still adhering
+business domains. (2) They have been widely used in API testing
+724 782
+to the variables’ description. Similar definition is used for a better
+research, such as ‘Canada Holidays’ [ 22 ], GitLab-services [ 14 , 18 , 22 ,
+725 783
+invariant or group of invariants. They are equivalent if they cover
+23 , 35 , 36 ], and ‘Stripe’ [ 22 , 28 , 30 ]. (3) Their active status allows API
+726 784
+exactly the same set of possible values for the variable(s).
+calls to collect real response data. (4) Their specifications vary in
+727 785
+Our overlapping analysis results reveal that 107 constraints were
+documentation quality, enabling evaluation across different levels
+728 786
+uniquely detected by our LLM-based static method, while 527 were
+of completeness. We selected API endpoints based on the presence
+729 787
+exclusively identified by AGORA . We further investigated the in-
+of parameter or response descriptions, excluding those without any
+730 788
+variants detected only by AGORA and found that 319 of them
+descriptions, as constraints could not be identified. Stripe, offering a
+731 789
+pertained to variables lacking descriptions in API specification.
+test mode with limited endpoints, contains deeply nested response
+732 790
+This suggests that these invariants were only detectable through
+schemas, often missing values for validation. To mitigate this, we
+733 791
+the API responses. These invariants primarily involved checks such
+included only Stripe endpoints without nested schemas, retaining 7
+734 792
+as 1) whether a variable is URL (33%), 2) a substring of another vari-
+in total. We cover 3 REST methods: GET, PUT, and POST (Table 3).
+735 793
+able (32%), 3) equal to another variable (13%), or 4) related to string
+736 794
+length (7%), and (5) 15.6% covering other types.
+7 Experimental Results
+737 795
+Conversely, the constraints uniquely detected by our LLM-based
+738 796
+7.1 Constraints Test Generation Accuracy (RQ1)
+static method mainly occurred in scenarios where the API speci-
+739 797
+fication provided variable descriptions, but the AGORA dataset’s
+7.1.1 Methodology. We evaluated the entire process in our LLM-
+740 798
+API responses did not include these variables (often optional fields).
+based static method. Specifically, we manually evaluated the gen-
+741 799
+AGORA’s dependency on the diversity of API responses at runtime
+erated test cases produced by the entire process from mining con-
+742 800
+limits its detection capability in such cases. For instance, in the
+straints and test case generation from mined constraints.
+743 801
+YouTube API, there are 14 distinct rating schemas that appear only
+We used two datasets : 1) the AGORA [ 9 ] dataset, and 2) a self-
+744 802
+in specific request regions. If AGORA’s API calls do not cover all
+collected dataset (will be explained later). For comparison, we
+745 803
+regions, these schemas remain undetected.
+grouped the invariants from AGORA into the groups for one spe-
+746 804
+cific variable, two variables, and so on. We similarly grouped the
+7.1.3 Result Analysis. A closer look at the cases where our LLM-
+747 805
+mined constraints from our LLM-based static method and compared
+based static method was superior reveals two main reasons for
+748 806
+the groups on the same set of variables from both approaches.
+its better performance. First, our LLM-based static method han-
+749 807
+As evaluation metrics , we report the number of detected con-
+dled more specific domains or ranges of values . For example, in the
+750 808
+straints, the number of True Positives (TP), False Positives (FP), and
+Amadeus Hotel API, the roomQuantity value is specified as "an integer
+751 809
+TP
+the precision 𝑃 , with P = . Specifically, for AGORA, we reuse
+TP + FP
+between 1 and 9." Our LLM-based static method correctly identified
+752 810
+their experimental results (Total, TP, and P) on their dataset.
+this constraint and generated an appropriate test, whereas AGORA
+753 811
+754 812
+
+===== PAGE 8 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+Table 2: RBCTest : Combining constraints and invariants Table 3: Constraints Test Generation on RBCTest Dataset
+813 871
+814 872
+Overlapping Combination RBCTest
+API-Op Static Dyn. Unq. S Unq. D Dist. API # Op. Methods Type GT
+815 873
+Cons. Incons. Total TP P% TP FP FN P% R% F1%
+A.Hotel 39 61 20 34 54 11 8 109 73 67 C.Holiday 4 GET RP 24 16 0 8 100 66.7 80
+816 874
+GitHub 13 194 3 175 178 4 6 194 188 96.9 G.Branch 5 GET,POST RR 49 35 3 14 92.1 71.4 80.4
+817 875
+GitHub’ 7 127 7 121 128 0 0 152 128 84.2 G.Commit 11 GET,POST,PUT RR 73 54 3 19 94.7 74 83.1
+818 876
+Marvel 23 55 13 35 48 4 6 113 58 51.3 G.Groups 14 GET,POST,PUT RR 85 61 3 24 95.3 71.8 81.9
+OMDB 4 15 3 13 16 1 0 18 17 94.4 G.Issues 21 GET,POST,PUT RR 141 92 3 49 96.8 65.2 77.9
+819 877
+OMDB’ 1 5 0 3 3 1 0 6 4 66.7 G.Project 15 GET,POST,PUT RR 144 110 11 34 90.9 76.4 83
+820 878
+Spotify 21 41 6 35 41 7 3 47 47 100 G.Repo. 3 GET,POST RR 44 33 3 11 91.7 75 82.5
+Spotify’ 12 58 1 29 30 6 5 50 41 82 RR 19 12 1 7 92.3 63.2 75
+821 879
+Stripe 10 GET,POST
+Spotify" 15 45 1 11 12 6 6 53 43 81.1 RP 21 16 1 5 94.1 76.2 84.2
+822 880
+Yelp 1 4 1 11 12 0 0 31 12 38.7
+Total 83 600 429 28 171 93.9 71.5 81.2
+823 881
+YouTube 62 111 45 52 97 5 12 151 114 75.5
+Stdev 2.9 4.9 2.9
+Total 198 724 107 527 634 45 46 924 725 78.5
+824 882
+Services: Canada Holidays, GitLab {Branch, Commit, Groups, Issues,
+825 883
+Unq: Uniquely detected, Dist: Distinct, (In)Cons: (In)Consistent.
+Project, Repository}, and Stripe. # of Operations (No. Ops), # of ground
+826 884
+truth constraints (GT), Precision (P), and Recall (R). RR for Request-
+827 Response Constraints, and RP for Response-Property Constraints. 885
+provided a general invariant "Numeric," encompassing any inte-
+828 886
+ger, float, etc. Similarly, in the Spotify API, AGORA expected the
+Table 4: LLM-based Constraint Mining, Constraints Test Gen-
+829 887
+thumbnailHeight to be "one of (64, 300, 640)," based on the observed
+eration, and Test Outcomes on RBCTest Dataset.
+830 888
+data at runtime, but our LLM-based static method correctly identi-
+831 889
+Constraints Mining (RQ2) Test Gen. (RQ3) Test Out. (RQ4)
+fied it as "image height in pixels," which implies any positive integer.
+API Type
+832 890
+TP FP FN P% R% F1% N ✓ P% ✓ × ?
+Second, our LLM-based static method excelled in mining specific
+C.Holiday RP 16 0 8 100 66.7 80 16 16 100 12 0 4
+833 891
+constraints. For instance, in the Amadeus Hotel API, the sellingTotal
+G.Branch RR 36 2 13 94.7 73.5 82.8 36 35 97.2 33 2 0
+834 892
+G.Commit RR 55 2 18 96.5 75.3 84.6 55 54 98.2 40 8 6
+is defined as "= Total + margins + markup + totalFees - discounts."
+835 893
+G.Groups RR 63 2 22 96.9 74.1 84 62 61 98.4 60 1 0
+While AGORA simply concluded that sellingTotal was numeric,
+G.Issues RR 93 2 48 97.9 66 78.8 93 92 98.9 80 7 5
+836 894
+our LLM-based static method was able to be more specific in the
+G.Project RR 110 11 34 90.9 76.4 83 110 110 100 102 0 8
+837 895
+G.Repo. RR 33 3 11 91.7 75 82.5 33 33 100 30 2 1
+constraint mined from the specification. However, there were a few
+RR 12 1 7 92.3 63.2 75 12 12 100 7 0 5
+838 896
+Stripe
+cases where AGORA outperformed our LLM-based static method.
+RP 17 0 4 100 81 89.5 17 16 94.1 14 1 1
+839 897
+Those cases often involve invariants verifying the format of vari- Total 435 23 165 95.7 72.4 82.2 434 429 98.8 378 21 30
+840 898
+ables containing URL, and our LLM-based static method sometimes
+For test outcomes: ✓ (Matched), × (Mismatched), and ? (Unknown).
+841 899
+treated URLs as mere strings without further validation.
+842 900
+843 7.1.4 Combined method. From Table 2, we can see that combining 901
+covering the ‘GET’, ‘POST’, and ‘PUT’ methods. We manually re-
+844 both static and dynamic approaches yield a better result than that of 902
+viewed the API specifications of these services and identified a set
+845 individual method. In total, RBCTest has 107 constraints detected 903
+of 600 correct constraints as the ground truth.
+846 only by our static method, 527 detected only by AGORA. For cases 904
+As seen in Table 3, within this dataset, RBCTest via LLM-based
+where both approaches detected constraints and invariants on the
+847 905
+static method (no AGORA) identified 457 constraints, correspond-
+same variables, in total, we identified 91 overlapping constraints
+848 906
+ing to 457 test cases generated by our LLM-based static method.
+and invariants. Among them, 46 cases are inconsistent. Inconsisten-
+849 907
+This includes 28 false positives and 171 missed constraints, yielding
+cies occur where an invariant extracted from execution data defines
+850 908
+an overall precision of 93.9% and a recall of 71.5% , with an F1
+a set of instances outside of the set defined by the respective con-
+851 909
+score of 81.2% . All standard deviations were below 5%, indicating
+straints mined from the specification. The inconsistencies detected
+852 910
+consistently strong performance across different APIs. The inaccu-
+by RBCTest reflect a coding bug or out-of-date specification.
+853 racy mainly arises from the effects of the filter and verifier: in an 911
+As seen in Table 2, RBCTest (the combined method) detects a
+854 effort to minimize the potential for erroneous outputs from the LLM, 912
+855 total of 924 constraints, of which 725 are true positives, i.e., 78.5% 913
+we restricted both the input to and the output from the model to
+856 precision. RBCTest can identify constraints from both views while 914
+ensure accuracy. This result is consistent with that in Section 7.1.2.
+857 maintaining sufficient precision. Despite of lower precision than 915
+Our analysis reveals that response-property constraints —which
+858 the LLM-based static method, RBCTest detects more true positive 916
+apply to a single response property—are typically straightforward,
+constraints (725) in comparison to the individual methods, that is, the
+859 917
+focusing on format or value range. They account for 32 of the
+198 true positive constraints from the LLM-based static method and
+860 918
+429 detected constraints. However, in GitLab services, they were
+the 618 grouped invariants from the dynamic approach, AGORA .
+861 919
+difficult to detect due to sparse property descriptions. In contrast,
+862 920
+request-response constraints were more prevalent, as they involve
+7.1.5 Results on RBCTest dataset. For more generalization, we
+863 921
+multiple variables, capturing complex relationships where a request
+repeated the above experiment on our collected dataset whose
+864 922
+parameter can influence multiple response properties.
+statistics are shown in Table 3. Due to certain services requiring
+865 923
+enterprise subscriptions, we were unable to execute AGORA on
+7.2 Constraint Mining Accuracy (RQ2)
+866 924
+this dataset. In general, our dataset has 8 APIs with 83 operations,
+867 925
+7.2.1 Methodology. In RQ1, we assess the entire process from the
+868 926
+input of API specifications to the test generation. In this RQ2, we
+869 927
+870 928
+
+===== PAGE 9 =====
+Combining Static and Dynamic Approaches for Mining and Testing Constraints for RESTful API Testing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+929 987
+focus on RBCTest ’s first component, Static Constraint Mining via iii) -1 ( mismatched ) if the provided input does not satisfy it.
+930 988
+LLMs. We used the RBCTest dataset with the available API specifi- We only consider the set of test cases derived from valid con-
+931 989
+cations. Thus, we did not run AGORA. To decide the constraints’ straints as identified in RQ2 (denoted as 𝑁 in Table 4).
+932 990
+correctness in natural language, we use the following rules:
+7.3.2 Results. As shown in Table 4, RBCTest generated 434 test
+933 991
+(1) Request-Response Property constraint : This type of con-
+cases for 435 TP constraints (one test case was discarded by the
+934 992
+straint on a request parameter must correspond to a property in
+verifier), including 401 for Request-Response constraints and 33
+935 993
+the response data that reflects this constraint.
+for Response Property constraints. It achieves a precision of 98.8%
+936 994
+(2) Range-of-Value constraint : The type of constraint must
+across 8 services and confirmed 429 correct test cases. Examining
+937 995
+specify all possible values or provide a specific data range.
+services, 4/8 services achieved a precision of 100%, while the lowest
+938 996
+(3) Data Format constraint : This must describe the constraints
+precision was in the Stripe service, with a precision of 94.1%.
+939 997
+on data format or refer to widely used formats (e.g., ISO, Unix).
+Results indicate that RBCTest excels in generating code for
+940 998
+7.2.2 Results. As seen in Table 4, overall, 95.7% of the constraints Response Property constraints , which mainly involve format or value
+941 999
+identified by our LLM-based static method are valid, although it range validation. In contrast, Request-Response constraints are more
+942 1000
+missed 165 out of 600 constraints noted in the ground truth. All error-prone due to the complex logic required to parse and verify
+943 1001
+metrics are notably higher than those of the entire process eval- dependencies between request parameters and response properties.
+944 1002
+uated in RQ1, as in RQ1’s experiment, we aim to account for the Further analysis reveals that test generation errors primarily stem
+945 1003
+entire process including both the validity of constraints and the ac- from (1) missing descriptions and (2) ambiguous keywords.
+946 1004
+curacy of the generated tests. As outlined in Section 3, the detected Consider the ‘get-/issues’ endpoint in GitLab Issues, where a
+947 1005
+constraints fall into two categories: Response Property constraints constraint exists between the request parameter ‘due_date’ and a
+948 1006
+and Request-Response constraints. Our LLM-based static method’s response property of the same name. The parameter is described as
+949 1007
+constraint mining for Response Properties proves more effective “Accepts: 0 (no due date), overdue, week, month, next_month,” while
+950 1008
+than for Request-Response constraints, achieving 100% precision the response property lacks a description. As a result, our tool gen-
+951 1009
+and 73.3% recall compared to 94.6% precision and 72.4% recall for erates test cases to validate the property against this constraint,
+952 1010
+Request-Response constraints. even though ‘due_date’ in the response is a date-time string, lead-
+953 1011
+Response Property constraints primarily define format and value ing to incorrect tests. Such errors are common in GitLab due to
+954 1012
+ranges, with clear descriptions like “three-letter currency code” or insufficient descriptions for response properties.
+955 1013
+“Unix epoch timestamp.” In contrast, Request-Response constraints In the same ‘get-/issues’ endpoint, the ‘milestone’ parameter is
+956 1014
+are more complex, requiring precise mappings between request described as “The milestone title. None lists all issues with no mile-
+957 1015
+parameters and response properties. For example, in GitLab, ‘since’ stone. Any lists all issues that have an assigned milestone.” The API
+958 1016
+and ‘until’ correctly map to ‘created_at’ to enforce range condi- filters returned issues based on ‘None’ or ‘Any’ from the request pa-
+959 1017
+tions. However, most false positives arise from incorrect mappings, rameter. However, RBCTest misinterpreted ‘None’ as Python’s null ,
+960 1018
+especially in GitLab, where response body descriptions are lack- leading to errors. This mistake in ‘milestone’ propagated to 13 other
+961 1019
+ing. Without details, mappings rely on attribute names, leading to incorrect test cases due to its involvement in multiple operations.
+962 1020
+errors—e.g., the ‘avatar’ parameter (for uploading images) is mistak-
+963 1021
+7.4 Usefulness: Detecting Mismatches between
+enly linked to ‘avatar_url’ in the response due to name similarity.
+964 1022
+Constraints and Response Bodies (RQ4)
+965 1023
+7.3 Test Generation Accuracy from Correctly
+7.4.1 Methodology. We use the generated test cases to detect mis-
+966 1024
+Mined Constraints (RQ3)
+matches between the constraints in the API specification and the API
+967 1025
+7.3.1 Methodology. While RQ1 evaluates the entire process from response bodies . With this goal, we did not run AGORA. For each
+968 1026
+constraint mining to test generation, this RQ3 focuses only on evalu- API endpoint, we execute the API with multiple sets of request pa-
+969 1027
+ating the test generation component for the constraints correctly de- rameters. For each API execution, we collect 1) request information
+970 1028
+tected by RBCTest via our LLM-based mining on the RBCTest dataset (i.e., what is expected from the API call), and 2) response data (i.e.,
+971 1029
+(thus, we did not run AGORA) . We performed test generation from the actual response ). Response data contains multiple properties,
+972 1030
+those correct constraints. The generated test cases are manually each attached with constraints and generated constraint test cases.
+973 1031
+evaluated if they correctly verify the associated constraints. We ran the test cases associated with the response data to collect the
+974 1032
+We used the following rules to check if a test case is correct: outcomes. We also ran the inputs used in AGORA to verify against
+975 1033
+(1) Test Input: The generated test case is correct if it correctly our test cases of correctly generated constraints. If the result is
+976 1034
+receives two inputs for Request-Response constraints: 1) requested false, we report a mismatch. Otherwise, it is a match.
+977 1035
+information and 2) response data, and one input for Response Prop-
+978 1036
+7.4.2 Results. We performed test runs on 429 correctly generated
+erty constraints: response data.
+979 1037
+tests from RQ3 (Table 4). Our test results indicate 378 ‘matched’
+(2) Constraint Handling: The generated test case must cover
+980 1038
+response bodies (i.e., consistent with the specification), 21 ‘mis-
+all conditions in the constraint.
+981 1039
+matched’, and 30 ‘unknown’. Out of 434 correctly mined constraints,
+(3) Test Output: The test must return:
+982 1040
+378 were verified by the tests, meaning that 87.1% of the constraints
+i) 0 ( unknown ) if lacking of sufficient data for condition checking
+983 1041
+are met by the actual execution of the SUTs. Our tool detected
+(e.g., empty or null value).
+984 1042
+ii) 1 ( matched ) if the provided input satisfies the constraint.
+985 1043
+986 1044
+
+===== PAGE 10 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+Table 5: Contribution of components in RBCTest (RQ5)
+1045 1103
+information before it is processed by the confirmation prompt. This
+1046 Constraints Mining 1104
+result confirms our key contribution of our LLM prompting strategy .
+Variant
+TP FP FN P R F1
+1047 1105
+Regarding the semantic verifier, its goal is to remove the invalid
+RBCTest 435 22 165 95.2 72.5 82.3
+1048 1106
+constraints to improve precision. we currently used a simple ver-
+−
+RBCTest 197 127 403 60.8 32.8 42.6
+1049 1107
+ifying mechanism via examples in API specification (Section 2.3).
+1050 1108
+We removed the semantic verifier and ran the static component on
+1051 1109
+two datasets. In RBCTesting dataset with 89 examples, one example
+21 mismatches, revealing inconsistencies between specifica-
+1052 1110
+invalidated one detected constraint. In AGORA dataset, with 223
+tions and execution of the APIs . An ‘unknown’ occurs when a
+1053 1111
+examples over 11 API operations, 6 examples were able to invalidate
+property is absent in the response body due to its optional nature.
+1054 1112
+6 false-positive constraints. We reported that the verifier accurately
+7.4.3 Analysis. We revealed the following root causes of these mis-
+1055 1113
+preserves all valid constraints and successfully eliminates 7 incor-
+matches: (1) incompatible data formats, (2) not-explicitly-described
+1056 1114
+rect constraints, thus achieving higher precision (89.0% increasing
+nullable properties, and (3) inter-parameter request dependencies.
+1057 1115
+to 91.2%) while maintaining recall (72.5%). This results show that
+(1) Incompatible Data Formats : Our tool detected 21 con-
+1058 1116
+more examples in the API specification might help invalidate more
+straint mismatches , mainly from GitLab services. For instance, the
+1059 1117
+incorrect constraints and confirm the correct ones. Moreover, other
+constraint "date will be returned in ISO 8601 format YYYY-MM-DDTHH:MM"
+1060 1118
+types of semantic verifier can be integrated into our framework
+appears in GitLab operations. However, the actual data format is
+1061 1119
+such as constraint solvers, SMT solvers, domain-specific checkers
+"2012-09-20T08:50:22.000Z" , which includes a decimal part for sec-
+1062 1120
+(valid zip code, phone number format, or valid date checkers), etc.
+1063 onds, leading to an inconsistency. Interestingly, we found that three 1121
+1064 instances of this type of inconsistency were reported as the is- 8 Threats to Validity 1122
+1065 sues on the GitLab forum [ 1 , 3 , 4 ]. This is anecdotal evidence on 1123
+1. Internal Validity. LLM hallucinations might lead to unexpected
+1066 RBCTest ’s usefulness in detecting real-world issues . 1124
+outcomes. To mitigate this, we incorporated (1) a semantic verifier
+1067 1125
+(2) Not-Explicitly-Described, Nullable Properties : This issue
+(Figure 10) and (2) observation-confirmation prompting (Figure 3),
+1068 1126
+is common in GitLab, where some response properties are nullable
+which enhance validation through external API specifications and
+1069 1127
+but lack descriptions in the specification, leading to parsing errors.
+internal consistency checks. Our ablation study confirmed that
+1070 1128
+Notably, these issues have been reported on the GitLab forum [2].
+these methods have a positive impact on performance. We seg-
+1071 1129
+(3) Inter-Parameter Request Dependencies : This was found
+mented specifications into small sections (Figure 3) to reduce con-
+1072 1130
+in only one case. For the operation ’GET/groups’ from GitLab Group,
+text window, minimizing hallucinations and improving accuracy.
+1073 1131
+there is a constraint on the request parameter "order_by" affecting
+2. External Validity. Our dataset may not fully represent the API
+1074 1132
+the "name" property in the response data. This logic dictates that the
+landscape, affecting generalizability. Outcomes could vary with
+1075 1133
+array of groups in the API response should be sorted according to
+different datasets, particularly those with unique constraints. Gen-
+1076 1134
+the "order_by" parameter. RBCTest checked only one-to-one con-
+erated test cases may miss general constraints or edge cases beyond
+1077 1135
+ditions among parameters, whereas the sorting order depends on
+what is explicitly documented. Implicit constraints not in API spec-
+1078 1136
+both "order_by" and "sort" parameters (specifying the sort direction).
+ifications might also be valid but unaccounted for. External tools
+1079 1137
+As a result, this resulted in a detected mismatch.
+may introduce inaccuracies, potentially affecting the results.
+1080 1138
+1081 1139
+7.5 Ablation Study (RQ5)
+9 Related Work
+1082 1140
+In this experiment, we first built a variant that does not contain both
+Recent surveys on API testing [ 15 , 17 , 21 , 25 , 26 , 28 , 32 ] reveal a
+1083 1141
+observation-confirmation and semantic verifier components. To
+trend towards automation adoption. AI/ML are used to enhance var-
+1084 1142
+learn more the static method, the dynamic component was excluded.
+ious aspects of API testing including of generating test cases [ 14 , 27 ,
+1085 1143
+We modify the prompt in Figure 4 as follows for constraint mining.
+33 ], realistic test inputs [ 8 ], and identify defects early in the devel-
+1086 1144
+Instead of providing GPT-4-Turbo with observations derived from
+opment [ 11 – 13 , 24 , 31 , 37 – 40 ]. AGORA is a dynamic approach [ 9 ].
+1087 1145
+another prompt, we feed the description of the parameters and
+The advances of LLMs have impacted API testing. [ 22 ] leverages
+1088 1146
+response schema as in the API specification. This prompt replaces
+the language capabilities of GPT to fully automate API testing using
+1089 1147
+Blocks 1 - 5 from Figure 3. After providing data on a property,
+only an input OpenAPI specification. It builds a dependency graph
+1090 1148
+we instruct the LLM to decide if the given property contains a
+among API operations, generating test scripts and inputs. Moreover,
+1091 1149
+constraint and if there is enough to verify it. This modification
+[ 20 ] applied GPT to augment specifications, enriching them with
+1092 1150
+merges steps 6 and 7 into a single step. The output is yes or no .
+explanations of rules and example inputs. Before the era of LLMs,
+1093 1151
+As seen in Table 5, the elimination of observation-confirmation
+ARTE [ 8 ] aimed to generate test inputs for API testing, employing
+1094 1152
+prompting and semantic verifier affects the outcomes, as evidenced
+NLP. Morest [ 24 ] introduced a model-based RESTful API testing
+1095 1153
+by a reduction of 238 correct constraints. Concurrently, there is an
+method using a dynamically updating RESTful-service Property
+1096 1154
+−
+increase in the number of false positives. The F1-score of RBCTest
+Graph, showing improvements in code coverage and bug detection.
+1097 1155
+is reduced by half. False positives frequently arise when the model
+RESTler [ 14 ] is a stateful fuzzing tool of REST APIs, which ana-
+1098 1156
+mis-mapping the request parameters with the response properties
+lyzed specifications, inferred dependencies among request types,
+1099 1157
+based on their names. Such mistakes are less common in RBCTest,
+and dynamically generated tests guided by feedback from service
+1100 1158
+where the observation prompt is used to enhance the property
+1101 1159
+1102 1160
+
+===== PAGE 11 =====
+Combining Static and Dynamic Approaches for Mining and Testing Constraints for RESTful API Testing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+1161 1219
+responses using a test-generation grammar. Similarly, RestTest- References
+1162 1220
+Gen [ 33 ] applied specifications for automatically generating test [1] 2024. GitLab Issue 19667. https://gitlab.com/gitlab-org/gitlab/-/issues/19667
+[2] 2024. GitLab Issue 348376. https://gitlab.com/gitlab-org/gitlab/-/issues/348376
+1163 1221
+cases, checking both response status and response data schemas.
+[3] 2024. GitLab Issue 349664. https://gitlab.com/gitlab-org/gitlab/-/issues/349664
+1164 1222
+NLPtoREST [ 19 ] used the NLP technique Word2Vec [ 29 ] to extract
+[4] 2024. GitLab Issue 410638. https://gitlab.com/gitlab-org/gitlab/-/issues/410638
+[5] 2024. Katalon Studio Automation Testing Tool. https://katalon.com/
+1165 1223
+rules from human-readable descriptions in an OpenAPI specifica-
+[6] 2024. Postman API Testing Tool. https://www.postman.com/
+1166 1224
+tion, enhance, and add them back to the specification.
+[7] 2024. RBCTest. https://github.com/api-rbtest/api-rbtest-public-code
+1167 1225
+[8] Juan C Alonso, Alberto Martin-Lopez, Sergio Segura, Jose Maria Garcia, and
+Antonio Ruiz-Cortes. 2022. ARTE: Automated Generation of Realistic Test Inputs
+1168 10 Conclusion 1226
+for Web APIs. IEEE Transactions on Software Engineering 49, 1 (2022), 348–363.
+1169 1227
+This paper presents RBCTest , a combination of an LLM-based static
+[9] Juan C. Alonso, Sergio Segura, and Antonio Ruiz-Cortés. 2023. AGORA: Auto-
+1170 1228
+mated Generation of Test Oracles for REST APIs. In Proceedings of the 32nd ACM
+method and a dynamic method for mining constraints from API re-
+SIGSOFT International Symposium on Software Testing and Analysis (Seattle, WA,
+1171 1229
+sponse bodies. We found that the two approaches complement well,
+USA) (ISSTA 2023) . Association for Computing Machinery, New York, NY, USA,
+1172 1230
+leading to RBCTest ’s high precision of 78.5%. Specifically, LLMs 1018–1030. https://doi.org/10.1145/3597926.3598114
+[10] Andrea Arcuri. 2019. RESTful API automated test case generation with EvoMaster.
+1173 1231
+with Observation-Confirmation prompting achieve high precision
+ACM Transactions on Software Engineering and Methodology (TOSEM) 28, 1 (2019),
+1174 1232
+in constraint mining of 95.7%. Despite a lower combined precision,
+1–37.
+1175 1233
+[11] Andrea Arcuri. 2020. Automated black-and white-box testing of restful apis with
+RBCTest detects more true positive constraints. It also generates
+evomaster. IEEE Software 38, 3 (2020), 72–78.
+1176 1234
+test cases to validate these constraints. Our test cases detected 21
+[12] Andrea Arcuri and Juan P Galeotti. 2020. Handling SQL databases in auto-
+1177 1235
+mismatches in real-world APIs. Our reported mismatches were
+mated system test generation. ACM Transactions on Software Engineering and
+1178 Methodology (TOSEM) 29, 4 (2020), 1–31. 1236
+actually confirmed by developers in their forums.
+[13] Andrea Arcuri and Juan P Galeotti. 2021. Enhancing search-based testing with
+1179 1237
+When combining static and dynamic approaches, RBCTest takes
+testability transformations for existing APIs. ACM Transactions on Software
+1180 1238
+Engineering and Methodology (TOSEM) 31, 1 (2021), 1–34.
+advantage of both LLM’s capabilities to comprehend natural lan-
+[14] Vaggelis Atlidakis, Patrice Godefroid, and Marina Polishchuk. 2019. Restler:
+1181 1239
+guage in API specifications, when available, and API execution
+Stateful rest api fuzzing. In 2019 IEEE/ACM 41st International Conference on
+1182 1240
+information to detect constraints on response bodies. This method
+Software Engineering (ICSE) . IEEE, 748–758.
+1183 1241
+[15] Adeel Ehsan, Mohammed Ahmad ME Abuhaliqa, Cagatay Catal, and Deepti
+allows software teams to test API services of SUTs in both the devel-
+Mishra. 2022. RESTful API testing methodologies: Rationale, challenges, and
+1184 1242
+opment and evolution stages. By using API specifications, RBCTest
+solution directions. Applied Sciences 12, 9 (2022), 4369.
+1185 1243
+supports applicable use cases where developers need to investi-
+[16] Michael D. Ernst, Jeff H. Perkins, Philip J. Guo, Stephen McCamant, Carlos
+1186 1244
+Pacheco, Matthew S. Tschantz, and Chen Xiao. 2007. The Daikon system for
+gate and test third-party APIs with publicly available specifications
+dynamic detection of likely invariants. Sci. Comput. Program. 69, 1–3 (dec 2007),
+1187 1245
+before using them for their applications.
+35–45. https://doi.org/10.1016/j.scico.2007.01.015
+1188 1246
+[17] Amid Golmohammadi, Man Zhang, and Andrea Arcuri. 2022. Testing RESTful
+APIs: A Survey. ACM Transactions on Software Engineering and Methodology
+1189 1247
+(2022).
+1190 1248
+[18] Stefan Karlsson, Adnan Čaušević, and Daniel Sundmark. 2020. QuickREST:
+1191 1249
+Property-based test generation of OpenAPI-described RESTful APIs. In 2020
+IEEE 13th International Conference on Software Testing, Validation and Verification
+1192 1250
+(ICST) . IEEE, 131–141.
+1193 1251
+[19] Myeongsoo Kim, Davide Corradini, Saurabh Sinha, Alessandro Orso, Michele
+1194 1252
+Pasqua, Rachel Tzoref-Brill, and Mariano Ceccato. 2023. Enhancing REST API
+Testing with NLP Techniques. In Proceedings of the 32nd ACM SIGSOFT Interna-
+1195 1253
+tional Symposium on Software Testing and Analysis . 1232–1243.
+1196 1254
+[20] Myeongsoo Kim, Tyler Stennett, Dhruv Shah, Saurabh Sinha, and Alessandro
+Orso. 2024. Leveraging large language models to improve REST API testing.
+1197 1255
+In Proceedings of the 2024 ACM/IEEE 44th International Conference on Software
+1198 1256
+Engineering: New Ideas and Emerging Results . 37–41.
+1199 1257
+[21] Myeongsoo Kim, Qi Xin, Saurabh Sinha, and Alessandro Orso. 2022. Automated
+test generation for rest apis: No time to rest yet. In Proceedings of the 31st ACM
+1200 1258
+SIGSOFT International Symposium on Software Testing and Analysis . 289–301.
+1201 1259
+[22] Tri Le, Thien Tran, Duy Cao, Vy Le, Vu Nguyen, and Tien N. Nguyen. 2024.
+1202 1260
+KAT: Dependency-aware Automated API Testing with Large Language Models.
+In 2024 IEEE Conference on Software Testing, Verification and Validation (ICST) .
+1203 1261
+IEEE.
+1204 1262
+[23] Jiaxian Lin, Tianyu Li, Yang Chen, Guangsheng Wei, Jiadong Lin, Sen Zhang,
+and Hui Xu. 2022. foREST: A Tree-based Approach for Fuzzing RESTful APIs.
+1205 1263
+arXiv preprint arXiv:2203.02906 (2022).
+1206 1264
+[24] Yi Liu, Yuekang Li, Gelei Deng, Yang Liu, Ruiyuan Wan, Runchao Wu, Dandan
+1207 1265
+Ji, Shiheng Xu, and Minli Bao. 2022. Morest: model-based RESTful API testing
+with execution feedback. In Proceedings of the 44th International Conference on
+1208 1266
+Software Engineering . 1406–1417.
+1209 1267
+[25] Bogdan Marculescu, Man Zhang, and Andrea Arcuri. 2022. On the faults found in
+1210 1268
+rest apis by automated test generation. ACM Transactions on Software Engineering
+and Methodology (TOSEM) 31, 3 (2022), 1–43.
+1211 1269
+[26] Alberto Martin-Lopez, Andrea Arcuri, Sergio Segura, and Antonio Ruiz-Cortés.
+1212 1270
+2021. Black-box and white-box test case generation for RESTful APIs: Enemies
+or allies?. In 2021 IEEE 32nd International Symposium on Software Reliability
+1213 1271
+Engineering (ISSRE) . IEEE, 231–241.
+1214 1272
+[27] Alberto Martin-Lopez, Sergio Segura, and Antonio Ruiz-Cortés. 2021. RESTest:
+1215 1273
+Automated Black-Box Testing of RESTful Web APIs. In Proceedings of the 30th
+ACM SIGSOFT International Symposium on Software Testing and Analysis (ISSTA
+1216 1274
+’21) . Association for Computing Machinery.
+1217 1275
+1218 1276
+
+===== PAGE 12 =====
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Anon.
+1277 1335
+[28] Alberto Martin-Lopez, Sergio Segura, and Antonio Ruiz-Cortés. 2022. Online [34] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Ed H. Chi, Quoc
+testing of RESTful APIs: Promises and challenges. In Proceedings of the 30th Le, and Denny Zhou. 2022. Chain of Thought Prompting Elicits Reasoning
+1278 1336
+ACM Joint European Software Engineering Conference and Symposium on the in Large Language Models. CoRR abs/2201.11903 (2022). arXiv:2201.11903
+1279 1337
+Foundations of Software Engineering . 408–420. https://arxiv.org/abs/2201.11903
+[29] Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey Dean. 2013. Efficient [35] Huayao Wu, Lixin Xu, Xintao Niu, and Changhai Nie. 2022. Combinatorial
+1280 1338
+Estimation of Word Representations in Vector Space. arXiv:1301.3781 [cs.CL] testing of restful apis. In Proceedings of the 44th International Conference on
+1281 1339
+https://arxiv.org/abs/1301.3781 Software Engineering . 426–437.
+1282 1340
+[30] A Giuliano Mirabella, Alberto Martin-Lopez, Sergio Segura, Luis Valencia- [36] Koji Yamamoto. 2021. Efficient penetration of API sequences to test stateful
+Cabrera, and Antonio Ruiz-Cortés. 2021. Deep learning-based prediction of RESTful services. In 2021 IEEE International Conference on Web Services (ICWS) .
+1283 1341
+test input validity for restful apis. In 2021 IEEE/ACM Third International Work- IEEE, 734–740.
+1284 1342
+shop on Deep Learning for Testing and Testing for Deep Learning (DeepTest) . IEEE, [37] Man Zhang and Andrea Arcuri. 2021. Adaptive hypermutation for search-based
+1285 1343
+9–16. system test generation: A study on rest apis with evomaster. ACM Transactions
+[31] Omur Sahin and Bahriye Akay. 2021. A discrete dynamic artificial bee colony on Software Engineering and Methodology (TOSEM) 31, 1 (2021), 1–52.
+1286 1344
+with hyper-scout for RESTful web service API test suite generation. Applied Soft [38] Man Zhang and Andrea Arcuri. 2021. Enhancing resource-based test case gener-
+1287 1345
+Computing 104 (2021), 107246. ation for RESTful APIs with SQL handling. In International Symposium on Search
+[32] Abhinav Sharma, M Revathi, et al . 2018. Automated API testing. In 2018 3rd Based Software Engineering . Springer, 103–117.
+1288 1346
+International Conference on Inventive Computation Technologies (ICICT) . IEEE, [39] Man Zhang, Bogdan Marculescu, and Andrea Arcuri. 2019. Resource-based
+1289 1347
+788–791. test case generation for restful web services. In Proceedings of the genetic and
+1290 1348
+[33] Emanuele Viglianisi, Michael Dallago, and Mariano Ceccato. 2020. Resttest- evolutionary computation conference . 1426–1434.
+gen: automated black-box testing of restful apis. In 2020 IEEE 13th International [40] Man Zhang, Bogdan Marculescu, and Andrea Arcuri. 2021. Resource and depen-
+1291 1349
+Conference on Software Testing, Validation and Verification (ICST) . IEEE, 142–152. dency based test case generation for RESTful Web services. Empirical Software
+1292 1350
+Engineering 26, 4 (2021), 76.
+1293 1351
+1294 1352
+1295 1353
+1296 1354
+1297 1355
+1298 1356
+1299 1357
+1300 1358
+1301 1359
+1302 1360
+1303 1361
+1304 1362
+1305 1363
+1306 1364
+1307 1365
+1308 1366
+1309 1367
+1310 1368
+1311 1369
+1312 1370
+1313 1371
+1314 1372
+1315 1373
+1316 1374
+1317 1375
+1318 1376
+1319 1377
+1320 1378
+1321 1379
+1322 1380
+1323 1381
+1324 1382
+1325 1383
+1326 1384
+1327 1385
+1328 1386
+1329 1387
+1330 1388
+1331 1389
+1332 1390
+1333 1391
+1334 1392
