@@ -124,6 +124,7 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
             ApprovalStatus = ApprovalStatus.NotApplicable,
             CreatedById = command.CurrentUserId,
             SelectedEndpointIds = normalizedEndpointIds,
+            RowVersion = Guid.NewGuid().ToByteArray(),
         };
 
         await _suiteRepository.AddAsync(suite, cancellationToken);
@@ -177,6 +178,7 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
         suite.GenerationType = command.GenerationType;
         suite.SelectedEndpointIds = normalizedEndpointIds;
         suite.LastModifiedById = command.CurrentUserId;
+        suite.RowVersion = Guid.NewGuid().ToByteArray();
 
         try
         {

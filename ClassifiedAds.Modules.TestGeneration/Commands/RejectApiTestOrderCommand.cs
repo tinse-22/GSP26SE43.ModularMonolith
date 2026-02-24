@@ -87,11 +87,13 @@ public class RejectApiTestOrderCommandHandler : ICommandHandler<RejectApiTestOrd
         proposal.ReviewedById = command.CurrentUserId;
         proposal.ReviewedAt = reviewedAt;
         proposal.ReviewNotes = command.ReviewNotes.Trim();
+        proposal.RowVersion = Guid.NewGuid().ToByteArray();
 
         suite.ApprovalStatus = ApprovalStatus.Rejected;
         suite.ApprovedById = null;
         suite.ApprovedAt = null;
         suite.LastModifiedById = command.CurrentUserId;
+        suite.RowVersion = Guid.NewGuid().ToByteArray();
 
         try
         {
