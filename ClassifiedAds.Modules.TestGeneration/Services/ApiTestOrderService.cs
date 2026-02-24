@@ -1,5 +1,6 @@
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
@@ -13,17 +14,6 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 
 public class ApiTestOrderService : IApiTestOrderService
 {
-    private static readonly IReadOnlyDictionary<string, int> MethodWeights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["POST"] = 1,
-        ["PUT"] = 2,
-        ["PATCH"] = 3,
-        ["GET"] = 4,
-        ["DELETE"] = 5,
-        ["OPTIONS"] = 6,
-        ["HEAD"] = 7,
-    };
-
     private static readonly JsonSerializerOptions SerializeOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -36,10 +26,14 @@ public class ApiTestOrderService : IApiTestOrderService
     };
 
     private readonly IApiEndpointMetadataService _endpointMetadataService;
+    private readonly IApiTestOrderAlgorithm _apiTestOrderAlgorithm;
 
-    public ApiTestOrderService(IApiEndpointMetadataService endpointMetadataService)
+    public ApiTestOrderService(
+        IApiEndpointMetadataService endpointMetadataService,
+        IApiTestOrderAlgorithm apiTestOrderAlgorithm)
     {
         _endpointMetadataService = endpointMetadataService;
+        _apiTestOrderAlgorithm = apiTestOrderAlgorithm;
     }
 
     public async Task<IReadOnlyList<ApiOrderItemModel>> BuildProposalOrderAsync(
@@ -60,26 +54,10 @@ public class ApiTestOrderService : IApiTestOrderService
 
         if (endpoints == null || endpoints.Count == 0)
         {
-            throw new ValidationException("Không tìm thấy endpoint phù hợp để tạo đề xuất thứ tự API.");
+            throw new ValidationException("Không tìm thấy metadata endpoint để xây dựng đề xuất thứ tự API.");
         }
 
-        return endpoints
-            .OrderBy(x => x.IsAuthRelated ? 0 : 1)
-            .ThenBy(x => x.DependsOnEndpointIds?.Count ?? 0)
-            .ThenBy(x => GetMethodWeight(x.HttpMethod))
-            .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.EndpointId)
-            .Select((endpoint, index) => new ApiOrderItemModel
-            {
-                EndpointId = endpoint.EndpointId,
-                HttpMethod = endpoint.HttpMethod,
-                Path = endpoint.Path,
-                OrderIndex = index + 1,
-                DependsOnEndpointIds = endpoint.DependsOnEndpointIds?.ToList() ?? new List<Guid>(),
-                ReasonCodes = BuildReasonCodes(endpoint.IsAuthRelated, endpoint.DependsOnEndpointIds?.Count ?? 0),
-                IsAuthRelated = endpoint.IsAuthRelated,
-            })
-            .ToList();
+        return _apiTestOrderAlgorithm.BuildProposalOrder(endpoints);
     }
 
     public IReadOnlyList<Guid> ValidateReorderedEndpointSet(
@@ -180,34 +158,5 @@ public class ApiTestOrderService : IApiTestOrderService
             .ToList();
 
         return JsonSerializer.Serialize(normalizedItems, SerializeOptions);
-    }
-
-    private static int GetMethodWeight(string method)
-    {
-        if (string.IsNullOrWhiteSpace(method))
-        {
-            return int.MaxValue;
-        }
-
-        return MethodWeights.TryGetValue(method.Trim(), out var weight) ? weight : int.MaxValue;
-    }
-
-    private static List<string> BuildReasonCodes(bool isAuthRelated, int dependencyCount)
-    {
-        var reasonCodes = new List<string>();
-
-        if (isAuthRelated)
-        {
-            reasonCodes.Add("AUTH_FIRST");
-        }
-
-        if (dependencyCount > 0)
-        {
-            reasonCodes.Add("DEPENDENCY_FIRST");
-        }
-
-        reasonCodes.Add("DETERMINISTIC_TIE_BREAK");
-
-        return reasonCodes;
     }
 }

@@ -105,7 +105,7 @@ public class ApiTestOrderGateService : IApiTestOrderGateService
             _proposalRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == testSuiteId
                     && ActiveStatuses.Contains(x.Status)
-                    && !string.IsNullOrWhiteSpace(x.AppliedOrder))
+                    && x.AppliedOrder != null)
                 .OrderByDescending(x => x.ProposalNumber));
     }
 }
