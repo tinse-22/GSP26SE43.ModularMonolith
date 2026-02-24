@@ -72,6 +72,7 @@ public class ArchiveTestSuiteScopeCommandHandler : ICommandHandler<ArchiveTestSu
 
         suite.Status = TestSuiteStatus.Archived;
         suite.LastModifiedById = command.CurrentUserId;
+        suite.RowVersion = Guid.NewGuid().ToByteArray();
 
         try
         {

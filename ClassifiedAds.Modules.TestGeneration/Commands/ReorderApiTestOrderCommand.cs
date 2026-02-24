@@ -104,6 +104,7 @@ public class ReorderApiTestOrderCommandHandler : ICommandHandler<ReorderApiTestO
 
         proposal.UserModifiedOrder = _apiTestOrderService.SerializeOrderJson(reorderedItems);
         proposal.ReviewNotes = string.IsNullOrWhiteSpace(command.ReviewNotes) ? null : command.ReviewNotes.Trim();
+        proposal.RowVersion = Guid.NewGuid().ToByteArray();
 
         await _proposalRepository.UpdateAsync(proposal, cancellationToken);
 

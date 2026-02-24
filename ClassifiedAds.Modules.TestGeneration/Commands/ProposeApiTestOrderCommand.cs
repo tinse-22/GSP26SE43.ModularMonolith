@@ -118,6 +118,7 @@ public class ProposeApiTestOrderCommandHandler : ICommandHandler<ProposeApiTestO
             ProposedOrder = _apiTestOrderService.SerializeOrderJson(order),
             AiReasoning = string.IsNullOrWhiteSpace(command.ReasoningNote) ? null : command.ReasoningNote.Trim(),
             LlmModel = string.IsNullOrWhiteSpace(command.LlmModel) ? null : command.LlmModel.Trim(),
+            RowVersion = Guid.NewGuid().ToByteArray(),
         };
 
         await _proposalRepository.AddAsync(newProposal, cancellationToken);
@@ -126,6 +127,7 @@ public class ProposeApiTestOrderCommandHandler : ICommandHandler<ProposeApiTestO
         suite.ApprovedById = null;
         suite.ApprovedAt = null;
         suite.LastModifiedById = command.CurrentUserId;
+        suite.RowVersion = Guid.NewGuid().ToByteArray();
         await _suiteRepository.UpdateAsync(suite, cancellationToken);
 
         await _proposalRepository.UnitOfWork.SaveChangesAsync(cancellationToken);

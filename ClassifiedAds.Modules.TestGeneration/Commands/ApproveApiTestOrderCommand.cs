@@ -102,6 +102,7 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
         proposal.ReviewNotes = string.IsNullOrWhiteSpace(command.ReviewNotes) ? proposal.ReviewNotes : command.ReviewNotes.Trim();
         proposal.AppliedOrder = _apiTestOrderService.SerializeOrderJson(finalOrder);
         proposal.AppliedAt = reviewedAt;
+        proposal.RowVersion = Guid.NewGuid().ToByteArray();
 
         suite.ApprovalStatus = hasUserReorder
             ? ApprovalStatus.ModifiedAndApproved
@@ -109,6 +110,7 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
         suite.ApprovedById = command.CurrentUserId;
         suite.ApprovedAt = reviewedAt;
         suite.LastModifiedById = command.CurrentUserId;
+        suite.RowVersion = Guid.NewGuid().ToByteArray();
 
         try
         {
