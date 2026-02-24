@@ -1,6 +1,7 @@
 using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using System;
 using System.Collections.Generic;
@@ -16,7 +17,9 @@ public class ApiTestOrderServiceTests
     public ApiTestOrderServiceTests()
     {
         _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
-        _service = new ApiTestOrderService(_endpointMetadataServiceMock.Object);
+        _service = new ApiTestOrderService(
+            _endpointMetadataServiceMock.Object,
+            new ApiTestOrderAlgorithm());
     }
 
     [Fact]
@@ -74,6 +77,173 @@ public class ApiTestOrderServiceTests
     }
 
     [Fact]
+    public async Task BuildProposalOrderAsync_Should_RespectDependencyGraph_WhenMetadataIsUnsorted()
+    {
+        // Arrange
+        var authEndpointId = Guid.NewGuid();
+        var createUserEndpointId = Guid.NewGuid();
+        var updateUserEndpointId = Guid.NewGuid();
+        var deleteUserEndpointId = Guid.NewGuid();
+        var listUserEndpointId = Guid.NewGuid();
+
+        _endpointMetadataServiceMock.Setup(x => x.GetEndpointMetadataAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = deleteUserEndpointId,
+                    HttpMethod = "DELETE",
+                    Path = "/api/users/{id}",
+                    IsAuthRelated = false,
+                    DependsOnEndpointIds = new[] { createUserEndpointId },
+                },
+                new()
+                {
+                    EndpointId = listUserEndpointId,
+                    HttpMethod = "GET",
+                    Path = "/api/users",
+                    IsAuthRelated = false,
+                },
+                new()
+                {
+                    EndpointId = updateUserEndpointId,
+                    HttpMethod = "PATCH",
+                    Path = "/api/users/{id}",
+                    IsAuthRelated = false,
+                    DependsOnEndpointIds = new[] { createUserEndpointId },
+                },
+                new()
+                {
+                    EndpointId = authEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/login",
+                    IsAuthRelated = true,
+                },
+                new()
+                {
+                    EndpointId = createUserEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/users",
+                    IsAuthRelated = false,
+                },
+            });
+
+        // Act
+        var result = await _service.BuildProposalOrderAsync(Guid.NewGuid(), Guid.NewGuid(), Array.Empty<Guid>());
+
+        // Assert
+        result.Should().HaveCount(5);
+        result[0].EndpointId.Should().Be(authEndpointId);
+        result[0].ReasonCodes.Should().Contain("AUTH_FIRST");
+
+        var orderByEndpointId = result.ToDictionary(x => x.EndpointId, x => x.OrderIndex);
+        orderByEndpointId[createUserEndpointId].Should().BeLessThan(orderByEndpointId[updateUserEndpointId]);
+        orderByEndpointId[createUserEndpointId].Should().BeLessThan(orderByEndpointId[deleteUserEndpointId]);
+        result.Should().BeInAscendingOrder(x => x.OrderIndex);
+    }
+
+    [Fact]
+    public async Task BuildProposalOrderAsync_Should_BreakCycleDeterministically_WhenDependenciesAreCircular()
+    {
+        // Arrange
+        var authEndpointId = Guid.NewGuid();
+        var endpointA = Guid.NewGuid();
+        var endpointB = Guid.NewGuid();
+
+        _endpointMetadataServiceMock.Setup(x => x.GetEndpointMetadataAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointA,
+                    HttpMethod = "GET",
+                    Path = "/api/projects/{id}",
+                    IsAuthRelated = false,
+                    DependsOnEndpointIds = new[] { endpointB },
+                },
+                new()
+                {
+                    EndpointId = endpointB,
+                    HttpMethod = "POST",
+                    Path = "/api/projects",
+                    IsAuthRelated = false,
+                    DependsOnEndpointIds = new[] { endpointA },
+                },
+                new()
+                {
+                    EndpointId = authEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/login",
+                    IsAuthRelated = true,
+                },
+            });
+
+        // Act
+        var result = await _service.BuildProposalOrderAsync(Guid.NewGuid(), Guid.NewGuid(), Array.Empty<Guid>());
+
+        // Assert
+        result.Should().HaveCount(3);
+        result[0].EndpointId.Should().Be(authEndpointId);
+        result[1].EndpointId.Should().Be(endpointB);
+        result[1].ReasonCodes.Should().Contain("CYCLE_BREAK_FALLBACK");
+        result[2].EndpointId.Should().Be(endpointA);
+    }
+
+    [Fact]
+    public async Task BuildProposalOrderAsync_Should_ApplyDeterministicTieBreak_WhenNoDependenciesExist()
+    {
+        // Arrange
+        var endpointGetB = Guid.NewGuid();
+        var endpointGetA = Guid.NewGuid();
+        var endpointPost = Guid.NewGuid();
+
+        _endpointMetadataServiceMock.Setup(x => x.GetEndpointMetadataAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointGetB,
+                    HttpMethod = "GET",
+                    Path = "/api/b",
+                    IsAuthRelated = false,
+                },
+                new()
+                {
+                    EndpointId = endpointGetA,
+                    HttpMethod = "GET",
+                    Path = "/api/a",
+                    IsAuthRelated = false,
+                },
+                new()
+                {
+                    EndpointId = endpointPost,
+                    HttpMethod = "POST",
+                    Path = "/api/z",
+                    IsAuthRelated = false,
+                },
+            });
+
+        // Act
+        var result = await _service.BuildProposalOrderAsync(Guid.NewGuid(), Guid.NewGuid(), Array.Empty<Guid>());
+
+        // Assert
+        result.Should().HaveCount(3);
+        result[0].EndpointId.Should().Be(endpointPost);
+        result[1].EndpointId.Should().Be(endpointGetA);
+        result[2].EndpointId.Should().Be(endpointGetB);
+        result.Should().OnlyContain(x => x.ReasonCodes.Contains("DETERMINISTIC_TIE_BREAK"));
+    }
+
+    [Fact]
     public void ValidateReorderedEndpointSet_Should_ThrowValidationException_WhenIdsDuplicate()
     {
         // Arrange
@@ -115,7 +285,9 @@ public class ApiTestOrderServiceValidationTests
     {
         // Arrange
         var endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
-        var service = new ApiTestOrderService(endpointMetadataServiceMock.Object);
+        var service = new ApiTestOrderService(
+            endpointMetadataServiceMock.Object,
+            new ApiTestOrderAlgorithm());
         var endpoint1 = Guid.NewGuid();
         var endpoint2 = Guid.NewGuid();
         var outOfScopeEndpoint = Guid.NewGuid();

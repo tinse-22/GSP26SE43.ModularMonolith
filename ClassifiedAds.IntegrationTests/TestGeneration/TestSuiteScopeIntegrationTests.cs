@@ -4,7 +4,9 @@ using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.IntegrationTests.Infrastructure;
 using ClassifiedAds.Modules.TestGeneration.Commands;
+using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using ClassifiedAds.Modules.TestGeneration.Queries;
 using Microsoft.Extensions.DependencyInjection;
@@ -492,5 +494,301 @@ public class TestSuiteScopeIntegrationTests : IAsyncLifetime
                 ids.Contains(Endpoint1) &&
                 ids.Contains(Endpoint2)),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ProposeOrder_Should_UseDeterministicDependencyAwareOrder()
+    {
+        // Arrange
+        var authEndpointId = Guid.NewGuid();
+        var createUserEndpointId = Guid.NewGuid();
+        var updateUserEndpointId = Guid.NewGuid();
+        var getUserEndpointId = Guid.NewGuid();
+
+        var endpointMetadata = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = getUserEndpointId,
+                HttpMethod = "GET",
+                Path = "/api/users/{id}",
+                IsAuthRelated = false,
+                DependsOnEndpointIds = new[] { createUserEndpointId },
+            },
+            new()
+            {
+                EndpointId = authEndpointId,
+                HttpMethod = "POST",
+                Path = "/api/auth/login",
+                IsAuthRelated = true,
+            },
+            new()
+            {
+                EndpointId = updateUserEndpointId,
+                HttpMethod = "PATCH",
+                Path = "/api/users/{id}",
+                IsAuthRelated = false,
+                DependsOnEndpointIds = new[] { createUserEndpointId },
+            },
+            new()
+            {
+                EndpointId = createUserEndpointId,
+                HttpMethod = "POST",
+                Path = "/api/users",
+                IsAuthRelated = false,
+            },
+        };
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                ApiSpecId,
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid specId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+            {
+                var selected = ids?.ToHashSet() ?? new HashSet<Guid>();
+                return endpointMetadata
+                    .Where(x => selected.Contains(x.EndpointId))
+                    .ToList()
+                    .AsReadOnly();
+            });
+
+        Guid suiteId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            var createCommand = new AddUpdateTestSuiteScopeCommand
+            {
+                ProjectId = ProjectId,
+                CurrentUserId = UserId,
+                Name = "Deterministic Order Suite",
+                ApiSpecId = ApiSpecId,
+                GenerationType = GenerationType.Auto,
+                SelectedEndpointIds = new List<Guid>
+                {
+                    authEndpointId,
+                    createUserEndpointId,
+                    updateUserEndpointId,
+                    getUserEndpointId,
+                },
+            };
+            await dispatcher.DispatchAsync(createCommand);
+            suiteId = createCommand.Result.Id;
+        }
+
+        ProposeApiTestOrderCommand proposeCommand;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            proposeCommand = new ProposeApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+                SpecificationId = ApiSpecId,
+                SelectedEndpointIds = Array.Empty<Guid>(),
+                Source = ProposalSource.Ai,
+            };
+            await dispatcher.DispatchAsync(proposeCommand);
+        }
+
+        // Assert
+        var orderedEndpointIds = proposeCommand.Result.ProposedOrder
+            .OrderBy(x => x.OrderIndex)
+            .Select(x => x.EndpointId)
+            .ToList();
+
+        orderedEndpointIds.Should().Equal(
+            authEndpointId,
+            createUserEndpointId,
+            updateUserEndpointId,
+            getUserEndpointId);
+    }
+
+    [Fact]
+    public async Task FE05A_FullLifecycle_ReorderApproveAndGateStatus_ShouldPass()
+    {
+        // Arrange
+        Guid suiteId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            var createCommand = new AddUpdateTestSuiteScopeCommand
+            {
+                ProjectId = ProjectId,
+                CurrentUserId = UserId,
+                Name = "Lifecycle Suite",
+                ApiSpecId = ApiSpecId,
+                GenerationType = GenerationType.Auto,
+                SelectedEndpointIds = new List<Guid> { Endpoint1, Endpoint2 },
+            };
+            await dispatcher.DispatchAsync(createCommand);
+            suiteId = createCommand.Result.Id;
+        }
+
+        ProposeApiTestOrderCommand proposeCommand;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            proposeCommand = new ProposeApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+                SpecificationId = ApiSpecId,
+                SelectedEndpointIds = Array.Empty<Guid>(),
+                Source = ProposalSource.Ai,
+            };
+            await dispatcher.DispatchAsync(proposeCommand);
+        }
+
+        var proposedIds = proposeCommand.Result.ProposedOrder
+            .OrderBy(x => x.OrderIndex)
+            .Select(x => x.EndpointId)
+            .ToList();
+        var reorderedIds = proposedIds.AsEnumerable().Reverse().ToList();
+        var proposalRowVersion = await GetProposalRowVersionAsync(proposeCommand.Result.ProposalId);
+
+        ReorderApiTestOrderCommand reorderCommand;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            reorderCommand = new ReorderApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                ProposalId = proposeCommand.Result.ProposalId,
+                CurrentUserId = UserId,
+                RowVersion = proposalRowVersion,
+                OrderedEndpointIds = reorderedIds,
+                ReviewNotes = "Manual reorder before approval",
+            };
+            await dispatcher.DispatchAsync(reorderCommand);
+        }
+
+        var approvedRowVersion = await GetProposalRowVersionAsync(proposeCommand.Result.ProposalId);
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            await dispatcher.DispatchAsync(new ApproveApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                ProposalId = proposeCommand.Result.ProposalId,
+                CurrentUserId = UserId,
+                RowVersion = approvedRowVersion,
+                ReviewNotes = "Approved after reordering",
+            });
+        }
+
+        ApiTestOrderGateStatusModel gateStatus;
+        ApiTestOrderProposalModel latestProposal;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            gateStatus = await dispatcher.DispatchAsync(new GetApiTestOrderGateStatusQuery
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+            });
+            latestProposal = await dispatcher.DispatchAsync(new GetLatestApiTestOrderProposalQuery
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+            });
+        }
+
+        // Assert
+        gateStatus.IsGatePassed.Should().BeTrue();
+        gateStatus.OrderSize.Should().Be(2);
+
+        latestProposal.Status.Should().Be(ProposalStatus.ModifiedAndApproved);
+        latestProposal.AppliedOrder.Should().NotBeNull();
+        latestProposal.AppliedOrder.Select(x => x.EndpointId).Should().Equal(reorderedIds);
+    }
+
+    [Fact]
+    public async Task FE05A_RejectProposal_ShouldFailGate()
+    {
+        // Arrange
+        Guid suiteId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            var createCommand = new AddUpdateTestSuiteScopeCommand
+            {
+                ProjectId = ProjectId,
+                CurrentUserId = UserId,
+                Name = "Reject Gate Suite",
+                ApiSpecId = ApiSpecId,
+                GenerationType = GenerationType.Auto,
+                SelectedEndpointIds = new List<Guid> { Endpoint1, Endpoint2 },
+            };
+            await dispatcher.DispatchAsync(createCommand);
+            suiteId = createCommand.Result.Id;
+        }
+
+        ProposeApiTestOrderCommand proposeCommand;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            proposeCommand = new ProposeApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+                SpecificationId = ApiSpecId,
+                SelectedEndpointIds = Array.Empty<Guid>(),
+                Source = ProposalSource.Ai,
+            };
+            await dispatcher.DispatchAsync(proposeCommand);
+        }
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            await dispatcher.DispatchAsync(new RejectApiTestOrderCommand
+            {
+                TestSuiteId = suiteId,
+                ProposalId = proposeCommand.Result.ProposalId,
+                CurrentUserId = UserId,
+                RowVersion = await GetProposalRowVersionAsync(proposeCommand.Result.ProposalId),
+                ReviewNotes = "Dependency order is not acceptable",
+            });
+        }
+
+        ApiTestOrderGateStatusModel gateStatus;
+        ApiTestOrderProposalModel latestProposal;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var dispatcher = scope.ServiceProvider.GetRequiredService<Dispatcher>();
+            gateStatus = await dispatcher.DispatchAsync(new GetApiTestOrderGateStatusQuery
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+            });
+            latestProposal = await dispatcher.DispatchAsync(new GetLatestApiTestOrderProposalQuery
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = UserId,
+            });
+        }
+
+        // Assert
+        gateStatus.IsGatePassed.Should().BeFalse();
+        gateStatus.ReasonCode.Should().Be(TestOrderReasonCodes.OrderConfirmationRequired);
+        latestProposal.Status.Should().Be(ProposalStatus.Rejected);
+    }
+
+    private async Task<string> GetProposalRowVersionAsync(Guid proposalId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TestGenerationDbContext>();
+        var proposal = await dbContext.TestOrderProposals.FindAsync(proposalId);
+        proposal.Should().NotBeNull();
+
+        if (proposal!.RowVersion == null || proposal.RowVersion.Length == 0)
+        {
+            proposal.RowVersion = new byte[] { 1, 2, 3, 4 };
+            await dbContext.SaveChangesAsync();
+        }
+
+        return Convert.ToBase64String(proposal!.RowVersion);
     }
 }
