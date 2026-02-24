@@ -35,6 +35,12 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
         builder.Property(x => x.Version)
             .HasDefaultValue(1);
 
+        builder.Property(x => x.RowVersion)
+            .HasColumnType("bytea")
+            .IsConcurrencyToken()
+            .ValueGeneratedNever()
+            .IsRequired();
+
         builder.HasIndex(x => x.ProjectId);
         builder.HasIndex(x => x.ApiSpecId);
 

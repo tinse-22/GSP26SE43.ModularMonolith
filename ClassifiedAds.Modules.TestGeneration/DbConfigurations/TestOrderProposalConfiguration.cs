@@ -13,6 +13,12 @@ public class TestOrderProposalConfiguration : IEntityTypeConfiguration<Entities.
         builder.Property(x => x.ProposalNumber)
             .IsRequired();
 
+        builder.Property(x => x.RowVersion)
+            .HasColumnType("bytea")
+            .IsConcurrencyToken()
+            .ValueGeneratedNever()
+            .IsRequired();
+
         builder.Property(x => x.Source)
             .HasConversion<string>()
             .HasMaxLength(20)

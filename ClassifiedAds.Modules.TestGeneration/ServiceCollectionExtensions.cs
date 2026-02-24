@@ -1,5 +1,6 @@
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
@@ -47,7 +48,15 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
+        // Register paper-based algorithms (standalone, reusable, no DB dependency)
         services
+            .AddSingleton<ISchemaRelationshipAnalyzer, SchemaRelationshipAnalyzer>()
+            .AddSingleton<ISemanticTokenMatcher, SemanticTokenMatcher>()
+            .AddSingleton<IDependencyAwareTopologicalSorter, DependencyAwareTopologicalSorter>()
+            .AddSingleton<IObservationConfirmationPromptBuilder, ObservationConfirmationPromptBuilder>();
+
+        services
+            .AddScoped<IApiTestOrderAlgorithm, ApiTestOrderAlgorithm>()
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
             .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
