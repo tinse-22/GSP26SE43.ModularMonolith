@@ -25,6 +25,20 @@ public class TestSuite : Entity<Guid>, IAggregateRoot
     public List<Guid> SelectedEndpointIds { get; set; } = new();
 
     /// <summary>
+    /// User-provided business rules/context per endpoint (stored as jsonb).
+    /// Key = EndpointId, Value = free-text business rule description.
+    /// Injected into LLM prompts as supplementary context alongside OAS spec.
+    /// </summary>
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+
+    /// <summary>
+    /// User-provided global business rules that apply to the entire test suite scope (free text).
+    /// Not tied to any specific endpoint. AI Agent uses this as high-level context
+    /// to understand cross-cutting business logic, constraints, and domain knowledge.
+    /// </summary>
+    public string GlobalBusinessRules { get; set; }
+
+    /// <summary>
     /// Test suite name.
     /// </summary>
     public string Name { get; set; }

@@ -24,6 +24,16 @@ public class TestSuiteScopeModel
 
     public List<Guid> SelectedEndpointIds { get; set; } = new();
 
+    /// <summary>
+    /// User-provided business rules per endpoint (plain text).
+    /// </summary>
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+
+    /// <summary>
+    /// Global business rules that apply to all endpoints in this suite (free text).
+    /// </summary>
+    public string GlobalBusinessRules { get; set; }
+
     public int SelectedEndpointCount { get; set; }
 
     public Guid CreatedById { get; set; }
@@ -47,6 +57,8 @@ public class TestSuiteScopeModel
             Status = suite.Status,
             ApprovalStatus = suite.ApprovalStatus,
             SelectedEndpointIds = suite.SelectedEndpointIds ?? new List<Guid>(),
+            EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new Dictionary<Guid, string>(),
+            GlobalBusinessRules = suite.GlobalBusinessRules,
             SelectedEndpointCount = suite.SelectedEndpointIds?.Count ?? 0,
             CreatedById = suite.CreatedById,
             CreatedDateTime = suite.CreatedDateTime,

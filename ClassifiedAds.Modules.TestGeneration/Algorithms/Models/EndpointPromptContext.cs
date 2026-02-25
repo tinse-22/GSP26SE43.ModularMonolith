@@ -43,6 +43,13 @@ public class EndpointPromptContext
     /// Used in Confirmation phase to cross-check constraints.
     /// </summary>
     public string ResponseExample { get; set; }
+
+    /// <summary>
+    /// User-provided business rules for this endpoint (plain text, optional).
+    /// Provides domain-specific context that is not captured in OAS spec.
+    /// Example: "Only allow registration when user >= 17 years old"
+    /// </summary>
+    public string BusinessContext { get; set; }
 }
 
 public class ParameterPromptContext
