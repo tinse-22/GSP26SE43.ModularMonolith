@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 {
     [DbContext(typeof(TestGenerationDbContext))]
-    partial class TestGenerationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260225073403_AddEndpointBusinessContexts")]
+    partial class AddEndpointBusinessContexts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -574,9 +577,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
-
-                    b.Property<string>("GlobalBusinessRules")
-                        .HasColumnType("text");
 
                     b.Property<Guid?>("LastModifiedById")
                         .HasColumnType("uuid");
