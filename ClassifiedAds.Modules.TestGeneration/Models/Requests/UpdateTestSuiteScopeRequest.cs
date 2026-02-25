@@ -25,4 +25,16 @@ public class UpdateTestSuiteScopeRequest
     [Required]
     [MinLength(1)]
     public List<Guid> SelectedEndpointIds { get; set; } = new();
+
+    /// <summary>
+    /// Optional business rules per endpoint. Key = EndpointId, Value = plain text business rule.
+    /// </summary>
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+
+    /// <summary>
+    /// Optional global business rules (free text) that apply to all endpoints in this suite.
+    /// AI Agent uses this as high-level context for test generation.
+    /// </summary>
+    [MaxLength(8000)]
+    public string GlobalBusinessRules { get; set; }
 }

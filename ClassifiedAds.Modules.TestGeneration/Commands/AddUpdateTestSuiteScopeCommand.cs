@@ -33,6 +33,16 @@ public class AddUpdateTestSuiteScopeCommand : ICommand
 
     public IReadOnlyCollection<Guid> SelectedEndpointIds { get; set; } = Array.Empty<Guid>();
 
+    /// <summary>
+    /// Optional user-provided business rules per endpoint (plain text).
+    /// </summary>
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+
+    /// <summary>
+    /// Optional global business rules (free text) for the entire suite scope.
+    /// </summary>
+    public string GlobalBusinessRules { get; set; }
+
     public string RowVersion { get; set; }
 
     public TestSuiteScopeModel Result { get; set; }
@@ -124,6 +134,8 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
             ApprovalStatus = ApprovalStatus.NotApplicable,
             CreatedById = command.CurrentUserId,
             SelectedEndpointIds = normalizedEndpointIds,
+            EndpointBusinessContexts = SanitizeBusinessContexts(command.EndpointBusinessContexts, normalizedEndpointIds),
+            GlobalBusinessRules = command.GlobalBusinessRules?.Trim(),
             RowVersion = Guid.NewGuid().ToByteArray(),
         };
 
@@ -177,6 +189,8 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
         suite.ApiSpecId = command.ApiSpecId;
         suite.GenerationType = command.GenerationType;
         suite.SelectedEndpointIds = normalizedEndpointIds;
+        suite.EndpointBusinessContexts = SanitizeBusinessContexts(command.EndpointBusinessContexts, normalizedEndpointIds);
+        suite.GlobalBusinessRules = command.GlobalBusinessRules?.Trim();
         suite.LastModifiedById = command.CurrentUserId;
         suite.RowVersion = Guid.NewGuid().ToByteArray();
 
@@ -195,5 +209,22 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
         _logger.LogInformation(
             "Updated test suite scope. SuiteId={SuiteId}, ProjectId={ProjectId}, EndpointCount={EndpointCount}, ActorUserId={ActorUserId}",
             suite.Id, command.ProjectId, normalizedEndpointIds.Count, command.CurrentUserId);
+    }
+
+    /// <summary>
+    /// Keep only business contexts for selected endpoints, trim values, drop empty.
+    /// </summary>
+    private static Dictionary<Guid, string> SanitizeBusinessContexts(
+        Dictionary<Guid, string> raw, List<Guid> validEndpointIds)
+    {
+        if (raw == null || raw.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var validSet = validEndpointIds.ToHashSet();
+        return raw
+            .Where(kv => validSet.Contains(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Trim());
     }
 }

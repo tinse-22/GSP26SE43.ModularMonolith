@@ -85,6 +85,90 @@ public class AddUpdateTestSuiteScopeCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Create_Should_PersistGlobalBusinessRules()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var normalizedIds = new List<Guid> { endpointId };
+
+        _scopeServiceMock.Setup(x => x.NormalizeEndpointIds(It.IsAny<IReadOnlyCollection<Guid>>()))
+            .Returns(normalizedIds);
+
+        _endpointMetadataServiceMock.Setup(x => x.GetEndpointMetadataAsync(
+                specId, normalizedIds, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(normalizedIds.Select(id => new ApiEndpointMetadataDto { EndpointId = id }).ToList());
+
+        var globalRules = "  Users must verify email before placing orders. All monetary amounts use VND.  ";
+
+        var command = new AddUpdateTestSuiteScopeCommand
+        {
+            ProjectId = projectId,
+            CurrentUserId = userId,
+            Name = "Suite with Global BR",
+            ApiSpecId = specId,
+            GenerationType = GenerationType.Auto,
+            SelectedEndpointIds = new List<Guid> { endpointId },
+            GlobalBusinessRules = globalRules,
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        _suiteRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestSuite>(s =>
+                s.GlobalBusinessRules == globalRules.Trim() &&
+                s.Name == "Suite with Global BR"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        command.Result.Should().NotBeNull();
+        command.Result.GlobalBusinessRules.Should().Be(globalRules.Trim());
+    }
+
+    [Fact]
+    public async Task HandleAsync_Create_Should_AllowNullGlobalBusinessRules()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var normalizedIds = new List<Guid> { endpointId };
+
+        _scopeServiceMock.Setup(x => x.NormalizeEndpointIds(It.IsAny<IReadOnlyCollection<Guid>>()))
+            .Returns(normalizedIds);
+
+        _endpointMetadataServiceMock.Setup(x => x.GetEndpointMetadataAsync(
+                specId, normalizedIds, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(normalizedIds.Select(id => new ApiEndpointMetadataDto { EndpointId = id }).ToList());
+
+        var command = new AddUpdateTestSuiteScopeCommand
+        {
+            ProjectId = projectId,
+            CurrentUserId = userId,
+            Name = "Suite without BR",
+            ApiSpecId = specId,
+            GenerationType = GenerationType.Auto,
+            SelectedEndpointIds = new List<Guid> { endpointId },
+            GlobalBusinessRules = null,
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        _suiteRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestSuite>(s => s.GlobalBusinessRules == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        command.Result.Should().NotBeNull();
+        command.Result.GlobalBusinessRules.Should().BeNull();
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ThrowValidationException_WhenEndpointsNotInSpec()
     {
         // Arrange

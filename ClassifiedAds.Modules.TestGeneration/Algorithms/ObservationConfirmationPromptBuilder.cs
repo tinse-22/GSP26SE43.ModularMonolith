@@ -23,12 +23,15 @@ namespace ClassifiedAds.Modules.TestGeneration.Algorithms;
 /// </summary>
 public class ObservationConfirmationPromptBuilder : IObservationConfirmationPromptBuilder
 {
-    private const string SystemPromptTemplate = @"You are a precise API test engineer. Your task is to generate test expectations for API endpoints based STRICTLY on the OpenAPI specification provided.
+    private const string SystemPromptTemplate = @"You are a precise API test engineer. Your task is to generate test expectations for API endpoints based on TWO sources:
+1. The OpenAPI specification provided (primary source).
+2. User-provided business rules (supplementary source, if any).
 
 RULES:
-- Only generate constraints that are DIRECTLY supported by the specification text.
-- Do NOT infer or assume constraints not stated in the spec.
-- Each constraint MUST reference the specific part of the spec that supports it.
+- For spec-based constraints: only generate constraints DIRECTLY supported by the specification text.
+- For business-rule constraints: generate constraints based on user-provided rules. Mark these with source 'business_rule'.
+- Do NOT infer or assume constraints not stated in the spec or business rules.
+- Each constraint MUST reference the specific source that supports it.
 - Output constraints as structured JSON objects.
 - If examples are provided in the spec, cross-check your constraints against them.
 
@@ -37,7 +40,8 @@ OUTPUT FORMAT (JSON array):
   {
     ""field"": ""response.body.id"",
     ""constraint"": ""must be a non-empty string"",
-    ""type"": ""type_check|value_check|presence_check|format_check|range_check|relationship_check"",
+    ""type"": ""type_check|value_check|presence_check|format_check|range_check|relationship_check|business_rule_check"",
+    ""source"": ""spec|business_rule"",
     ""evidence"": ""Schema defines id as { type: string, format: uuid }"",
     ""confidence"": ""high|medium"",
     ""assertion"": ""expect(response.body.id).toBeType('string')""
@@ -206,6 +210,19 @@ OUTPUT FORMAT (JSON array):
             sb.AppendLine("```");
         }
 
+        // User-provided business rules.
+        if (!string.IsNullOrWhiteSpace(context.BusinessContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine("### User-Provided Business Rules");
+            sb.AppendLine();
+            sb.AppendLine("The user has provided the following domain-specific business rules for this endpoint.");
+            sb.AppendLine("These rules describe constraints NOT captured in the OpenAPI specification.");
+            sb.AppendLine("Generate additional test expectations based on these rules (mark source as 'business_rule').");
+            sb.AppendLine();
+            sb.AppendLine($"> {context.BusinessContext}");
+        }
+
         return sb.ToString();
     }
 
@@ -232,6 +249,7 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("- **Value checks**: specific values, enums, patterns");
         sb.AppendLine("- **Range checks**: min/max for numbers, minLength/maxLength for strings");
         sb.AppendLine("- **Relationship checks**: relationships between fields (e.g., createdAt <= updatedAt)");
+        sb.AppendLine("- **Business rule checks**: constraints from user-provided business rules (if any)");
         sb.AppendLine();
         sb.AppendLine("List ALL constraints, even obvious ones. Do NOT filter yet.");
         sb.AppendLine();
@@ -261,7 +279,7 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("2. **Cross-check examples**: If the spec includes examples, verify the constraint is consistent with them.");
         sb.AppendLine("3. **Verify applicability**: Is this constraint for a happy-path (2xx) test case?");
         sb.AppendLine("4. **Decision**: KEEP or REMOVE. Remove if:");
-        sb.AppendLine("   - No direct evidence in the spec (you inferred it)");
+        sb.AppendLine("   - No direct evidence in the spec or business rules (you inferred it)");
         sb.AppendLine("   - Contradicted by examples");
         sb.AppendLine("   - Only applies to error cases (4xx/5xx)");
         sb.AppendLine("   - Too implementation-specific (e.g., response time)");
@@ -289,6 +307,7 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("## Step 1: Observe");
         sb.AppendLine("Read the API specification below carefully. List ALL constraints you can find about the response.");
         sb.AppendLine("Look for: types, formats, required fields, enums, ranges, patterns, relationships.");
+        sb.AppendLine("Also check for any user-provided business rules listed in the spec block below.");
         sb.AppendLine();
         sb.AppendLine("## Step 2: Confirm");
         sb.AppendLine("For EACH constraint from Step 1:");

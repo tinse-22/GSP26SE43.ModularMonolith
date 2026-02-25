@@ -22,4 +22,18 @@ public class CreateTestSuiteScopeRequest
     [Required]
     [MinLength(1)]
     public List<Guid> SelectedEndpointIds { get; set; } = new();
+
+    /// <summary>
+    /// Optional business rules per endpoint. Key = EndpointId, Value = plain text business rule.
+    /// Example: { "ep-id": "Only allow registration when user >= 17 years old" }
+    /// </summary>
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+
+    /// <summary>
+    /// Optional global business rules (free text) that apply to all endpoints in this suite.
+    /// AI Agent uses this as high-level context for test generation.
+    /// Example: "Users must verify email before placing orders. All monetary amounts use VND currency."
+    /// </summary>
+    [MaxLength(8000)]
+    public string GlobalBusinessRules { get; set; }
 }
