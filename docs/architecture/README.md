@@ -19,6 +19,7 @@
 | [09 - Observability & Cross-Cutting](09-observability-and-crosscutting.md) | Aspire Dashboard, logging (Serilog), tracing (OpenTelemetry), metrics, and health checks |
 | [10 - Local Development](10-devops-and-local-development.md) | .NET Aspire orchestration, Docker Compose, database migrations, and local workflows |
 | [11 - Extension Playbook](11-extension-playbook.md) | Step-by-step guides for common development tasks (adding entities, commands, modules) |
+| [12 - Sequence Diagram Playbook](12-sequence-diagram-playbook.md) | Detailed guide to model medium-sized sequence diagrams for real system flows |
 | [Testing Guide](testing.md) | Test project structure, running tests, writing tests, and CI/CD integration |
 | [Appendix - Glossary](appendix-glossary.md) | Key terms and definitions used throughout this documentation |
 

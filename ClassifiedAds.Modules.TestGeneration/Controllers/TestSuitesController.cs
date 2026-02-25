@@ -81,6 +81,8 @@ public class TestSuitesController : ControllerBase
             ApiSpecId = request.ApiSpecId,
             GenerationType = request.GenerationType,
             SelectedEndpointIds = request.SelectedEndpointIds,
+            EndpointBusinessContexts = request.EndpointBusinessContexts,
+            GlobalBusinessRules = request.GlobalBusinessRules,
         };
 
         await _dispatcher.DispatchAsync(command);
@@ -116,6 +118,8 @@ public class TestSuitesController : ControllerBase
             ApiSpecId = request.ApiSpecId,
             GenerationType = request.GenerationType,
             SelectedEndpointIds = request.SelectedEndpointIds,
+            EndpointBusinessContexts = request.EndpointBusinessContexts,
+            GlobalBusinessRules = request.GlobalBusinessRules,
             RowVersion = request.RowVersion,
         };
 
