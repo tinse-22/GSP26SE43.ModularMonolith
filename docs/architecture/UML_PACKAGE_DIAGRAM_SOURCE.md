@@ -105,6 +105,8 @@
 - `LlmAssistant ..> ApiDocumentation` (FE-09: API context for failure analysis)
 - `LlmAssistant ..> Identity` (FE-09/15/16/17: user context)
 - `TestGeneration ..> LlmAssistant` (FE-06: LLM scenario suggestions for boundary/negative)
+- `TestExecution ..> Subscription` (FE-07: plan limit check khi chạy test)
+- `TestReporting ..> ApiDocumentation` (FE-10: coverage metrics — tỷ lệ endpoints đã test / tổng endpoints)
 
 ### Coupling Path Summary
 - Client application communicates exclusively with WebAPI host via REST API. No direct module or Core access from client layer.
@@ -157,364 +159,29 @@
 
 ---
 
-## STEP 4 - UML Package Diagrams (PlantUML)
+## STEP 4 - UML Package Diagrams (Mermaid — draw.io Compatible)
 
-Chia thành 4 diagram riêng biệt để dễ đọc, dễ render, và AI có thể vẽ chuẩn.
+Tất cả diagram sử dụng cú pháp Mermaid chuẩn, tương thích import trực tiếp vào draw.io (Extras > Edit Diagram > chọn Mermaid, hoặc dùng Insert > Advanced > Mermaid).
+
+Chia thành 5 diagram riêng biệt để dễ đọc, dễ render.
+
+**Quy ước chung:**
+- Nét liền (`-->`) = project reference đã implement trong codebase
+- Nét đứt (`-.->`) = contract-based coupling hoặc dependency planned
+- Nét đứt + label chứa `PLANNED` = dependency chưa implement, dự kiến cho FE tương lai
+- Nét dày (`==>`) = uniform dependency (tất cả module cùng depend)
+- Node border nét đứt / màu xám = component planned, chưa implement
 
 ---
 
 ### Diagram 1 — High-Level Architecture Overview
 
-Tổng quan kiến trúc phân tầng: Hosts → Modules → Core.
-
-```plantuml
-@startuml diagram1_overview
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 12
-skinparam padding 4
-
-skinparam package {
-  BackgroundColor<<host>> #E3F2FD
-  BackgroundColor<<module>> #FFF3E0
-  BackgroundColor<<core>> #E8F5E9
-  BackgroundColor<<shared>> #F3E5F5
-  BackgroundColor<<planned>> #F5F5F5
-  BorderColor<<planned>> #9E9E9E
-}
-skinparam component {
-  BackgroundColor<<planned>> #BDBDBD
-  BorderColor<<planned>> #9E9E9E
-}
-
-package "Client Applications" <<planned>> {
-  component "WebApp (SPA)" as WebApp <<planned>>
-}
-
-package "Hosts" <<host>> {
-  component AppHost
-  component WebAPI
-  component Background
-  component Migrator
-}
-
-package "Shared Platform" <<shared>> {
-  component ServiceDefaults
-}
-
-package "Feature Modules" <<module>> {
-  package "API Quality Lifecycle" {
-    component ApiDocumentation
-    component TestGeneration
-    component TestExecution
-    component TestReporting
-  }
-  package "Identity & Collaboration" {
-    component Identity
-    component AuditLog
-    component Notification
-  }
-  package "Monetization & Assets" {
-    component Subscription
-    component Storage
-  }
-  package "Support" {
-    component Configuration
-    component LlmAssistant
-  }
-}
-
-package "Core Layers" <<core>> {
-  component Application
-  component Domain
-  component Infrastructure
-  component "Persistence.PostgreSQL" as Postgres
-  component Contracts
-  component CrossCuttingConcerns
-}
-
-' === Client Application to Host ===
-WebApp ..> WebAPI : <<planned>>
-
-' === Host orchestration (simplified) ===
-AppHost --> WebAPI
-AppHost --> Background
-AppHost --> Migrator
-
-' === All hosts use ServiceDefaults ===
-WebAPI --> ServiceDefaults
-Background --> ServiceDefaults
-Migrator --> ServiceDefaults
-
-' === Hosts compose modules (grouped edges) ===
-WebAPI -[#336699]-> "Feature Modules" : composes
-Background -[#336699]-> "Identity & Collaboration" : composes
-Background -[#336699]-> "Monetization & Assets" : composes
-Migrator -[#336699]-> "Feature Modules" : composes
-
-' === All modules depend on Core (single grouped edge) ===
-"Feature Modules" -[#2E7D32]-> "Core Layers" : depends on
-
-' === Core internal layering ===
-Application --> Domain
-Domain --> CrossCuttingConcerns
-Infrastructure --> Application
-Infrastructure --> Domain
-Postgres --> Domain
-Postgres --> CrossCuttingConcerns
-
-legend right
-  Dashed border / grey = planned, not yet implemented
-end legend
-@enduml
-```
-
----
-
-### Diagram 2 — Core Layers Internal Dependencies
-
-Chi tiết dependency giữa các layer trong Core.
-
-```plantuml
-@startuml diagram2_core
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 13
-
-skinparam component {
-  BackgroundColor #E8F5E9
-  BorderColor #2E7D32
-}
-
-component CrossCuttingConcerns as CCC
-component Domain
-component Application as App
-component Contracts
-component Infrastructure as Infra
-component "Persistence.PostgreSQL" as PG
-
-App --> Domain : depends
-Domain --> CCC : depends
-Infra --> App : depends
-Infra --> Domain : depends
-PG --> Domain : depends
-PG --> CCC : depends
-
-note right of Contracts
-  Contract-based interface
-  for cross-module coupling
-end note
-
-note bottom of CCC
-  Logging, Validation,
-  Exception handling
-end note
-@enduml
-```
-
----
-
-### Diagram 3 — Host-to-Module Composition
-
-Chi tiết từng Host compose những module nào.
-
-```plantuml
-@startuml diagram3_host_composition
-left to right direction
-skinparam packageStyle rectangle
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 11
-
-skinparam component {
-  BackgroundColor<<host>> #E3F2FD
-  BackgroundColor<<api>> #FFF9C4
-  BackgroundColor<<id>> #F3E5F5
-  BackgroundColor<<mon>> #FFCCBC
-  BackgroundColor<<sup>> #E0F7FA
-  BackgroundColor<<planned>> #BDBDBD
-  BorderColor<<planned>> #9E9E9E
-}
-
-component "WebApp (SPA)" as WebApp <<planned>>
-
-component AppHost <<host>>
-component WebAPI <<host>>
-component Background <<host>>
-component Migrator <<host>>
-
-component ApiDocumentation <<api>>
-component TestGeneration <<api>>
-component TestExecution <<api>>
-component TestReporting <<api>>
-
-component Identity <<id>>
-component AuditLog <<id>>
-component Notification <<id>>
-
-component Subscription <<mon>>
-component Storage <<mon>>
-
-component Configuration <<sup>>
-component LlmAssistant <<sup>>
-
-' === Client Application to Host ===
-WebApp ..> WebAPI : <<planned>>
-
-' === AppHost ===
-AppHost --> WebAPI
-AppHost --> Background
-AppHost --> Migrator
-
-' === WebAPI composes ===
-WebAPI --> ApiDocumentation
-WebAPI --> TestGeneration
-WebAPI --> TestExecution
-WebAPI --> Identity
-WebAPI --> AuditLog
-WebAPI --> Notification
-WebAPI --> Subscription
-WebAPI --> Storage
-WebAPI --> Configuration
-WebAPI ..> TestReporting : <<planned>>
-WebAPI ..> LlmAssistant : <<planned>>
-
-' === Background composes ===
-Background --> Identity
-Background --> AuditLog
-Background --> Notification
-Background --> Subscription
-Background --> Storage
-Background ..> TestExecution : <<planned>>
-
-' === Migrator composes ===
-Migrator --> ApiDocumentation
-Migrator --> TestGeneration
-Migrator --> TestExecution
-Migrator --> TestReporting
-Migrator --> Identity
-Migrator --> AuditLog
-Migrator --> Notification
-Migrator --> Subscription
-Migrator --> Storage
-Migrator --> Configuration
-Migrator ..> LlmAssistant : <<planned>>
-
-legend right
-  Dashed border / grey = planned, not yet implemented
-end legend
-@enduml
-```
-
----
-
-### Diagram 4 — Cross-Context Coupling via Contracts
-
-Quan trọng nhất: coupling giữa các bounded context qua Contracts (đường nét đứt).
-
-```plantuml
-@startuml diagram4_cross_context
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 12
-skinparam linetype polyline
-
-skinparam component {
-  BackgroundColor<<api>> #FFF9C4
-  BorderColor<<api>> #F9A825
-  BackgroundColor<<id>> #F3E5F5
-  BorderColor<<id>> #7B1FA2
-  BackgroundColor<<mon>> #FFCCBC
-  BorderColor<<mon>> #E64A19
-  BackgroundColor<<sup>> #E0F7FA
-  BorderColor<<sup>> #00838F
-}
-
-package "API Quality Lifecycle" {
-  component ApiDocumentation <<api>>
-  component TestGeneration <<api>>
-  component TestExecution <<api>>
-  component TestReporting <<api>>
-}
-
-package "Identity & Collaboration" {
-  component Identity <<id>>
-  component AuditLog <<id>>
-  component Notification <<id>>
-}
-
-package "Monetization & Assets" {
-  component Subscription <<mon>>
-  component Storage <<mon>>
-}
-
-package "Support" {
-  component LlmAssistant <<sup>>
-}
-
-' === Cross-context via Contracts ===
-
-ApiDocumentation ..[#E65100]..> Identity : <<Contracts.Identity>>
-ApiDocumentation ..[#E65100]..> Subscription : <<Contracts.Subscription>>
-ApiDocumentation ..[#E65100]..> Storage : <<Contracts.Storage>>
-ApiDocumentation ..[#E65100]..> AuditLog : <<Contracts.AuditLog>>
-
-TestGeneration ..[#E65100]..> ApiDocumentation : <<Contracts.ApiDoc>>
-TestGeneration ..[#E65100]..> Identity : <<Contracts.Identity>>
-
-TestExecution ..[#E65100]..> Identity : <<Contracts.Identity>>
-
-Subscription ..[#1565C0]..> Identity : <<Contracts.Identity>>
-Subscription ..[#1565C0]..> Notification : <<Contracts.Notification>>
-Subscription ..[#1565C0]..> AuditLog : <<Contracts.AuditLog>>
-
-Storage ..[#1565C0]..> Identity : <<Contracts.Identity>>
-Storage ..[#1565C0]..> AuditLog : <<Contracts.AuditLog>>
-
-Identity ..[#7B1FA2]..> Notification : <<Contracts.Notification>>
-
-AuditLog ..[#7B1FA2]..> Identity : <<Contracts.Identity>>
-
-' === Planned Cross-Context via Contracts ===
-TestExecution ..[#9E9E9E]..> TestGeneration : <<planned>>
-TestExecution ..[#9E9E9E]..> ApiDocumentation : <<planned>>
-TestReporting ..[#9E9E9E]..> TestExecution : <<planned>>
-TestReporting ..[#9E9E9E]..> Identity : <<planned>>
-LlmAssistant ..[#9E9E9E]..> TestExecution : <<planned>>
-LlmAssistant ..[#9E9E9E]..> ApiDocumentation : <<planned>>
-LlmAssistant ..[#9E9E9E]..> Identity : <<planned>>
-TestGeneration ..[#9E9E9E]..> LlmAssistant : <<planned>>
-
-legend right
-  |= Color |= Meaning |
-  | <#E65100> | API Quality → other context |
-  | <#1565C0> | Monetization → other context |
-  | <#7B1FA2> | Identity/Collab internal |
-  | <#9E9E9E> | Planned coupling |
-  -- -- --
-  Dotted lines = contract-based coupling
-  No direct module-to-module references
-  Dashed border / grey / <<planned>> = not yet implemented
-end legend
-@enduml
-```
-
----
-
-### Diagram 5A — Mermaid: High-Level Overview
-
-Tổng quan kiến trúc: Hosts → Modules (grouped by BC) → Core Layers.
+Tổng quan kiến trúc phân tầng: Client > Hosts > Modules (grouped by BC) > Core Layers.
 
 ```mermaid
-graph TB
-    subgraph ClientApps["Client Applications «planned»"]
-        WebApp["WebApp (SPA)"]
+flowchart TB
+    subgraph ClientApps["Client Applications - PLANNED"]
+        WebApp["WebApp SPA"]
     end
 
     subgraph Hosts["Hosts"]
@@ -559,8 +226,8 @@ graph TB
         CCC["CrossCuttingConcerns"]
     end
 
-    %% Client Application to Host
-    WebApp -.->|«planned»| WebAPI
+    %% Client to Host - planned
+    WebApp -.->|PLANNED| WebAPI
 
     %% Host orchestration
     AppHost --> WebAPI
@@ -571,16 +238,16 @@ graph TB
     Background --> ServiceDefaults
     Migrator --> ServiceDefaults
 
-    %% Hosts → Modules (simplified)
-    WebAPI --> Modules
-    Background --> BC_ID
-    Background --> BC_MON
-    Migrator --> Modules
+    %% Hosts compose modules - simplified grouped edges
+    WebAPI -->|composes| Modules
+    Background -->|composes| BC_ID
+    Background -->|composes| BC_MON
+    Migrator -->|composes| Modules
 
-    %% Modules → Core (all modules share same deps)
-    Modules --> Core
+    %% All modules depend on Core
+    Modules -->|depends on| Core
 
-    %% Core internal
+    %% Core internal layering
     Application --> Domain
     Domain --> CCC
     Infrastructure --> Application
@@ -592,7 +259,7 @@ graph TB
     classDef module fill:#FFF3E0,stroke:#E65100,color:#000
     classDef core fill:#E8F5E9,stroke:#2E7D32,color:#000
     classDef shared fill:#F3E5F5,stroke:#7B1FA2,color:#000
-    classDef planned fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray: 5 5,color:#000
+    classDef planned fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray:5 5,color:#616161
 
     class WebApp planned
     class AppHost,WebAPI,Background,Migrator host
@@ -603,15 +270,42 @@ graph TB
 
 ---
 
-### Diagram 5B — Mermaid: Host → Module Composition
+### Diagram 2 — Core Layers Internal Dependencies
 
-Chi tiết từng Host compose những module nào + Host → Core trực tiếp.
+Chi tiết dependency giữa các layer trong Core. Contracts đứng riêng vì là interface layer cho cross-module coupling.
 
 ```mermaid
-graph LR
-    subgraph ClientApps["Client Applications «planned»"]
-        WebApp["WebApp (SPA)"]
-    end
+flowchart TB
+    App["Application"]
+    Domain
+    CCC["CrossCuttingConcerns"]
+    Contracts
+    Infra["Infrastructure"]
+    PG["Persistence.PostgreSQL"]
+
+    App -->|depends| Domain
+    Domain -->|depends| CCC
+    Infra -->|depends| App
+    Infra -->|depends| Domain
+    PG -->|depends| Domain
+    PG -->|depends| CCC
+
+    classDef core fill:#E8F5E9,stroke:#2E7D32,color:#000
+    classDef contract fill:#E1F5FE,stroke:#0288D1,color:#000
+
+    class App,Domain,CCC,Infra,PG core
+    class Contracts contract
+```
+
+---
+
+### Diagram 3 — Host-to-Module Composition
+
+Chi tiết từng Host compose những module nào. Nét liền = đã implement, nét đứt = planned cho FE tương lai.
+
+```mermaid
+flowchart LR
+    WebApp["WebApp SPA"]
 
     subgraph Hosts["Hosts"]
         AppHost
@@ -619,6 +313,8 @@ graph LR
         Background
         Migrator
     end
+
+    ServiceDefaults
 
     subgraph BC_API["API Quality Lifecycle"]
         ApiDoc["ApiDocumentation"]
@@ -643,16 +339,14 @@ graph LR
         LlmAssistant
     end
 
-    subgraph Core["Core (direct refs)"]
+    subgraph HostCore["Core - direct project refs"]
         Application
         Infrastructure
         Domain
     end
 
-    ServiceDefaults
-
-    %% Client Application to Host
-    WebApp -.->|«planned»| WebAPI
+    %% Client to Host - planned
+    WebApp -.->|PLANNED| WebAPI
 
     %% AppHost orchestration
     AppHost --> WebAPI
@@ -660,12 +354,12 @@ graph LR
     AppHost --> Migrator
     AppHost --> ServiceDefaults
 
-    %% All hosts → ServiceDefaults
+    %% All hosts use ServiceDefaults
     WebAPI --> ServiceDefaults
     Background --> ServiceDefaults
     Migrator --> ServiceDefaults
 
-    %% WebAPI → Modules
+    %% WebAPI composes - implemented
     WebAPI --> ApiDoc
     WebAPI --> TestGen
     WebAPI --> TestExec
@@ -675,18 +369,22 @@ graph LR
     WebAPI --> Subscription
     WebAPI --> Storage
     WebAPI --> Configuration
-    WebAPI -.->|«planned»| TestRep
-    WebAPI -.->|«planned»| LlmAssistant
 
-    %% Background → Modules
-    Background --> AuditLog
+    %% WebAPI composes - planned
+    WebAPI -.->|PLANNED FE-10| TestRep
+    WebAPI -.->|PLANNED FE-09| LlmAssistant
+
+    %% Background composes - implemented
     Background --> Identity
+    Background --> AuditLog
     Background --> Notification
     Background --> Subscription
     Background --> Storage
-    Background -.->|«planned»| TestExec
 
-    %% Migrator → Modules
+    %% Background composes - planned
+    Background -.->|PLANNED FE-07| TestExec
+
+    %% Migrator composes - implemented
     Migrator --> ApiDoc
     Migrator --> TestGen
     Migrator --> TestExec
@@ -697,9 +395,11 @@ graph LR
     Migrator --> Subscription
     Migrator --> Storage
     Migrator --> Configuration
-    Migrator -.->|«planned»| LlmAssistant
 
-    %% Host → Core (direct project refs)
+    %% Migrator composes - planned
+    Migrator -.->|PLANNED| LlmAssistant
+
+    %% Host to Core direct project refs
     WebAPI --> Application
     WebAPI --> Domain
     WebAPI --> Infrastructure
@@ -713,7 +413,7 @@ graph LR
     classDef mon fill:#FFCCBC,stroke:#E64A19,color:#000
     classDef sup fill:#E0F7FA,stroke:#00838F,color:#000
     classDef core fill:#E8F5E9,stroke:#2E7D32,color:#000
-    classDef planned fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray: 5 5,color:#000
+    classDef planned fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray:5 5,color:#616161
 
     class WebApp planned
     class AppHost,WebAPI,Background,Migrator host
@@ -726,13 +426,14 @@ graph LR
 
 ---
 
-### Diagram 5C — Mermaid: Module → Core Dependencies
+### Diagram 4 — Module to Core Dependencies
 
-Tất cả module depend on cùng 5 core layers + Contracts (trừ Configuration).
+Tất cả 11 module depend on cùng 5 core project references. Nét đứt riêng cho Contracts (Configuration không depend Contracts ở project-reference level).
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph Modules["All Feature Modules"]
+        direction LR
         ApiDoc["ApiDocumentation"]
         TestGen["TestGeneration"]
         TestExec["TestExecution"]
@@ -755,20 +456,15 @@ graph TB
         Contracts
     end
 
-    %% Every module → 5 core layers (solid)
-    ApiDoc --> Application & Domain & Infrastructure & Postgres & CCC
-    TestGen --> Application & Domain & Infrastructure & Postgres & CCC
-    TestExec --> Application & Domain & Infrastructure & Postgres & CCC
-    TestRep --> Application & Domain & Infrastructure & Postgres & CCC
-    Identity --> Application & Domain & Infrastructure & Postgres & CCC
-    AuditLog --> Application & Domain & Infrastructure & Postgres & CCC
-    Notification --> Application & Domain & Infrastructure & Postgres & CCC
-    Subscription --> Application & Domain & Infrastructure & Postgres & CCC
-    Storage --> Application & Domain & Infrastructure & Postgres & CCC
-    Configuration --> Application & Domain & Infrastructure & Postgres & CCC
-    LlmAssistant --> Application & Domain & Infrastructure & Postgres & CCC
+    %% All modules depend on the same 5 core layers via project reference
+    %% Represented as thick edges from Modules subgraph
+    Modules ==> Application
+    Modules ==> Domain
+    Modules ==> Infrastructure
+    Modules ==> Postgres
+    Modules ==> CCC
 
-    %% Module → Contracts (dotted, Configuration excluded)
+    %% Module to Contracts - all except Configuration
     ApiDoc -.-> Contracts
     TestGen -.-> Contracts
     TestExec -.-> Contracts
@@ -780,7 +476,7 @@ graph TB
     Storage -.-> Contracts
     LlmAssistant -.-> Contracts
 
-    %% Core internal
+    %% Core internal layering
     Application --> Domain
     Domain --> CCC
     Infrastructure --> Application
@@ -797,12 +493,12 @@ graph TB
 
 ---
 
-### Diagram 5D — Mermaid: Cross-Context Coupling via Contracts
+### Diagram 5 — Cross-Context Coupling via Contracts
 
-Coupling giữa các bounded context qua Contracts (đường nét đứt). Đây là diagram quan trọng nhất.
+Quan trọng nhất: coupling giữa các bounded context qua Contracts (tất cả nét đứt vì là contract-based). Phân biệt implemented vs planned qua label và màu (linkStyle).
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph BC_API["API Quality Lifecycle"]
         ApiDoc["ApiDocumentation"]
         TestGen["TestGeneration"]
@@ -825,7 +521,9 @@ graph TB
         LlmAssistant
     end
 
-    %% API Quality → other contexts
+    %% ===== IMPLEMENTED cross-context via Contracts =====
+
+    %% API Quality to other contexts
     ApiDoc -.->|Contracts.Identity| Identity
     ApiDoc -.->|Contracts.Subscription| Subscription
     ApiDoc -.->|Contracts.Storage| Storage
@@ -836,7 +534,7 @@ graph TB
 
     TestExec -.->|Contracts.Identity| Identity
 
-    %% Monetization → other contexts
+    %% Monetization to other contexts
     Subscription -.->|Contracts.Identity| Identity
     Subscription -.->|Contracts.Notification| Notification
     Subscription -.->|Contracts.AuditLog| AuditLog
@@ -848,15 +546,28 @@ graph TB
     Identity -.->|Contracts.Notification| Notification
     AuditLog -.->|Contracts.Identity| Identity
 
-    %% Planned Cross-Context Couplings
-    TestExec -.->|Contracts.TestGen «planned»| TestGen
-    TestExec -.->|Contracts.ApiDoc «planned»| ApiDoc
-    TestRep -.->|Contracts.TestExec «planned»| TestExec
-    TestRep -.->|Contracts.Identity «planned»| Identity
-    LlmAssistant -.->|Contracts.TestExec «planned»| TestExec
-    LlmAssistant -.->|Contracts.ApiDoc «planned»| ApiDoc
-    LlmAssistant -.->|Contracts.Identity «planned»| Identity
-    TestGen -.->|Contracts.LlmAssistant «planned»| LlmAssistant
+    %% ===== PLANNED cross-context via Contracts =====
+
+    TestExec -.->|PLANNED Contracts.TestGen| TestGen
+    TestExec -.->|PLANNED Contracts.ApiDoc| ApiDoc
+    TestRep -.->|PLANNED Contracts.TestExec| TestExec
+    TestRep -.->|PLANNED Contracts.Identity| Identity
+    LlmAssistant -.->|PLANNED Contracts.TestExec| TestExec
+    LlmAssistant -.->|PLANNED Contracts.ApiDoc| ApiDoc
+    LlmAssistant -.->|PLANNED Contracts.Identity| Identity
+    TestGen -.->|PLANNED Contracts.LlmAssistant| LlmAssistant
+    TestExec -.->|PLANNED Contracts.Subscription| Subscription
+    TestRep -.->|PLANNED Contracts.ApiDoc| ApiDoc
+
+    %% Edge coloring: implemented = context color, planned = grey
+    %% API Quality edges (0-6): orange
+    linkStyle 0,1,2,3,4,5,6 stroke:#E65100,stroke-width:2px
+    %% Monetization edges (7-11): blue
+    linkStyle 7,8,9,10,11 stroke:#1565C0,stroke-width:2px
+    %% Identity/Collab internal edges (12-13): purple
+    linkStyle 12,13 stroke:#7B1FA2,stroke-width:2px
+    %% Planned edges (14-23): grey dashed
+    linkStyle 14,15,16,17,18,19,20,21,22,23 stroke:#9E9E9E,stroke-width:2px,stroke-dasharray:8
 
     classDef api fill:#FFF9C4,stroke:#F9A825,color:#000
     classDef id fill:#F3E5F5,stroke:#7B1FA2,color:#000
@@ -868,3 +579,15 @@ graph TB
     class Subscription,Storage mon
     class LlmAssistant sup
 ```
+
+**Legend cho Diagram 5:**
+
+| Color | Meaning |
+|-------|---------|
+| Orange (#E65100) | API Quality Lifecycle to other context |
+| Blue (#1565C0) | Monetization & Assets to other context |
+| Purple (#7B1FA2) | Identity & Collaboration internal |
+| Grey (#9E9E9E) | PLANNED coupling - chưa implement |
+
+- Tất cả đường đều là nét đứt vì cross-context coupling luôn qua Contracts (không có direct module-to-module project reference).
+- Label `PLANNED` = FE chưa implement, Contracts interface sẽ được tạo khi develop FE tương ứng.
