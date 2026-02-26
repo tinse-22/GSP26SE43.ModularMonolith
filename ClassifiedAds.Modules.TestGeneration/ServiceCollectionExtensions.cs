@@ -61,6 +61,28 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
             .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
 
+        // n8n Integration (typed HttpClient + Options pattern, same as PayOS in Subscription module)
+        services.Configure<N8nIntegrationOptions>(options =>
+        {
+            var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
+            options.BaseUrl = n8n.BaseUrl ?? string.Empty;
+            options.ApiKey = n8n.ApiKey ?? string.Empty;
+            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 30 : n8n.TimeoutSeconds;
+            options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
+        });
+
+        services.AddHttpClient<IN8nIntegrationService, N8nIntegrationService>((sp, client) =>
+        {
+            var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
+            if (!string.IsNullOrWhiteSpace(n8n.BaseUrl))
+            {
+                client.BaseAddress = new System.Uri(n8n.BaseUrl);
+            }
+
+            client.Timeout = System.TimeSpan.FromSeconds(
+                n8n.TimeoutSeconds > 0 ? n8n.TimeoutSeconds : 30);
+        });
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
