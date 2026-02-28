@@ -26,12 +26,11 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 
 | Phase | FE | Deliverable | Trọng số | Why this order |
 |------|----|-------------|----------|----------------|
-| 1 | **FE-05B** | Happy-path test case generation từ approved API order | Critical | FE-05A (order proposal) đã xong — cần sinh test case thực tế từ order đã duyệt |
-| 2 | **FE-07 + FE-08** | Test execution engine + rule-based validation | Critical | Core value: chạy test + đánh giá pass/fail — phần nặng nhất còn lại |
-| 3 | **FE-06** | Body mutations + LLM boundary/negative scenario | Medium | Mở rộng FE-05 với mutations cho request body + LLM gợi ý scenario |
-| 4 | **FE-09** | LLM failure explanations | Medium | Cần kết quả fail từ FE-07/08 làm input |
-| 5 | **FE-10** | Reports + PDF/CSV export | Medium | Cần execution results từ FE-07/08 |
-| 6 | **FE-15 → FE-16 → FE-17** | LLM suggestion review/feedback/bulk | Low | Review loop cuối cùng, không blocking |
+| 1 | **FE-07 + FE-08** | Test execution engine + rule-based validation | Critical | Core value: chạy test + đánh giá pass/fail — phần nặng nhất còn lại |
+| 2 | **FE-06** | Body mutations + LLM boundary/negative scenario | Medium | Mở rộng FE-05 với mutations cho request body + LLM gợi ý scenario |
+| 3 | **FE-09** | LLM failure explanations | Medium | Cần kết quả fail từ FE-07/08 làm input |
+| 4 | **FE-10** | Reports + PDF/CSV export | Medium | Cần execution results từ FE-07/08 |
+| 5 | **FE-15 → FE-16 → FE-17** | LLM suggestion review/feedback/bulk | Low | Review loop cuối cùng, không blocking |
 
 ### Mandatory User Flow (End-to-End)
 
@@ -41,7 +40,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 3. System proposes API test order (algorithm-based)     → FE-05A ✅
 4. User verifies and reorders API sequence             → FE-05A ✅
 5. System saves confirmed order snapshot               → FE-05A ✅
-6. System generates happy-path test cases              → FE-05B 🔨
+6. System generates happy-path test cases              → FE-05B ✅
 7. System generates boundary/negative cases            → FE-06 📋
 8. System executes tests with dependency chaining      → FE-07 📋
 9. System validates results (rule-based pass/fail)     → FE-08 📋
@@ -78,7 +77,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | FE ID | Feature | Sub-scope | Module | Status | Branch | Completed Date | Notes |
 |-------|---------|-----------|--------|--------|--------|----------------|-------|
 | **FE-05A** | API test order proposal + user verify/reorder | Order workflow | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-24 | 2 controllers (TestOrderController 5 endpoints, TestSuitesController CRUD), 6 command handlers with full logic, paper-based algorithms: DependencyAwareTopologicalSorter (Kahn's, KAT), SemanticTokenMatcher (5-tier matching, SPDG), SchemaRelationshipAnalyzer (Warshall's transitive closure, KAT), ObservationConfirmationPromptBuilder (COmbine/RBCTest) |
-| **FE-05B** | Happy-path test case generation from approved order | Test case gen | TestGeneration | 🔨 In Progress | `feature/FE-05-test-generation-algorithms` | — | Entity structure ready (TestCase, TestCaseRequest, TestCaseExpectation, TestCaseVariable, TestDataSet); gate service implemented (blocks generation without approved order); actual test case generation logic not yet implemented |
+| **FE-05B** | Happy-path test case generation from approved order | Test case gen | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-25 | Full implementation: n8n webhook integration for LLM calls, Observation-Confirmation prompt → n8n payload pipeline, HappyPathTestCaseGenerator orchestrator, TestCaseRequestBuilder (HTTP method/body type parsing), TestCaseExpectationBuilder (status/schema/checks), EndpointPromptContextMapper (global+endpoint business rules merge), GenerateHappyPathTestCasesCommand (gate check → subscription limit → n8n call → entity persistence → version bump), GetTestCasesByTestSuiteQuery + GetTestCaseDetailQuery, TestCasesController (3 endpoints: generate, list, detail), ForceRegenerate support, dependency chain wiring between test cases, 47 unit tests (command handler + builders + mapper) |
 | **FE-06** | Boundary & negative test case generation (rule-based + LLM) | Mutations + LLM scenarios | TestGeneration + LlmAssistant | 📋 Partial | — | — | Path-parameter mutations implemented via FE-12 (empty, wrongType, boundary, SQL injection, XSS, overflow); request body mutations + LLM scenario suggestions not yet implemented |
 
 ### 5.4.1 LLM Suggestion Review
@@ -133,7 +132,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | FE-03 | Parse & Normalize | 6% | 100% | 6.0% |
 | FE-04 | Test Scope Config | 6% | 100% | 6.0% |
 | FE-05A | Test Order Proposal | 6% | 100% | 6.0% |
-| FE-05B | Happy-path Generation | 6% | 10% | 0.6% |
+| FE-05B | Happy-path Generation | 6% | 100% | 6.0% |
 | FE-06 | Boundary & Negative | 8% | 15% | 1.2% |
 | FE-07 | Test Execution | 10% | 20% | 2.0% |
 | FE-08 | Rule-based Validation | 8% | 0% | 0.0% |
@@ -146,7 +145,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | FE-15 | LLM Review Interface | 2% | 0% | 0.0% |
 | FE-16 | User Feedback on LLM | 2% | 0% | 0.0% |
 | FE-17 | Bulk Approval/Rejection | 1% | 0% | 0.0% |
-| | | **100%** | | **~57%** |
+| | | **100%** | | **~62%** |
 
 ---
 
@@ -161,7 +160,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | **AuditLog** | (Supporting) | ✅ Full | Audit logging |
 | **Notification** | (Supporting) | ✅ Full | Email, notifications |
 | **Configuration** | (Supporting) | ✅ Full | App settings |
-| **TestGeneration** | FE-04, FE-05A, FE-05B, FE-06 | 🔨 ~65% | FE-04 scope APIs ✅, FE-05A order workflow ✅ (controllers + algorithms + commands), FE-05B test case gen 🔨, FE-06 body mutations ❌ |
+| **TestGeneration** | FE-04, FE-05A, FE-05B, FE-06 | 🔨 ~80% | FE-04 scope APIs ✅, FE-05A order workflow ✅ (controllers + algorithms + commands), FE-05B test case gen ✅ (n8n + LLM pipeline, 47 tests), FE-06 body mutations ❌ |
 | **TestExecution** | FE-04, FE-07, FE-08 | 🔨 ~25% | FE-04 environment CRUD ✅, FE-07 execution engine ❌, FE-08 validation engine ❌ |
 | **TestReporting** | FE-10 | 📋 Skeleton | Entities + DbContext only |
 | **LlmAssistant** | FE-06(partial), FE-09, FE-15-17 | 📋 Skeleton | Entities + DbContext only. PromptBuilder exists in TestGeneration but no LLM runtime |
@@ -195,6 +194,7 @@ When an AI Agent or developer completes a Feature (FE):
 
 | Date | FE ID(s) | Action | By |
 |------|----------|--------|----|
+| 2026-02-25 | FE-05B | FE-05B completed: happy-path test case generation with n8n LLM integration, full CQRS pipeline (command/queries/controller), 47 unit tests | AI Agent |
 | 2026-02-24 | All | Full tracker refresh: FE-05 split into FE-05A (✅) + FE-05B (🔨), FE-12 marked ✅, FE-14 marked ✅, FE-07 updated to 🔨 partial, added weighted progress table, updated recommended sequence for remaining work | AI Agent |
 | 2026-02-19 | FE-04 | FE-04 completed; added operations runbook + tracker/module summary refresh | AI Agent |
 | 2026-02-18 | FE roadmap | Reordered implementation phases; added mandatory user verify/reorder gate before FE-05 generation | AI Agent |
