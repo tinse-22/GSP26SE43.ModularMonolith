@@ -19,6 +19,7 @@ public class TestGenerationDbContext : DbContextUnitOfWork<TestGenerationDbConte
     public DbSet<TestOrderProposal> TestOrderProposals { get; set; }
     public DbSet<TestSuiteVersion> TestSuiteVersions { get; set; }
     public DbSet<TestCase> TestCases { get; set; }
+    public DbSet<TestCaseDependency> TestCaseDependencies { get; set; }
     public DbSet<TestCaseRequest> TestCaseRequests { get; set; }
     public DbSet<TestCaseExpectation> TestCaseExpectations { get; set; }
     public DbSet<TestCaseVariable> TestCaseVariables { get; set; }
