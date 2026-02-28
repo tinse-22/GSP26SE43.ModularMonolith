@@ -1,0 +1,993 @@
+erDiagram
+    identity_Users {
+        UUID Id PK
+        string UserName
+        string NormalizedUserName
+        string Email
+        string NormalizedEmail
+        bool EmailConfirmed
+        string PasswordHash
+        string SecurityStamp
+        string ConcurrencyStamp
+        string PhoneNumber
+        bool PhoneNumberConfirmed
+        bool TwoFactorEnabled
+        datetime LockoutEnd
+        bool LockoutEnabled
+        int AccessFailedCount
+        string Auth0UserId
+        string AzureAdB2CUserId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    identity_Roles {
+        UUID Id PK
+        string Name
+        string NormalizedName
+        string ConcurrencyStamp
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    identity_UserRoles {
+        UUID Id PK
+        UUID UserId FK
+        UUID RoleId FK
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    identity_RoleClaims {
+        UUID Id PK
+        UUID RoleId FK
+        string Type
+        string Value
+        datetime CreatedDateTime
+        binary RowVersion
+    }
+
+    identity_UserClaims {
+        UUID Id PK
+        UUID UserId FK
+        string Type
+        string Value
+        datetime CreatedDateTime
+        binary RowVersion
+    }
+
+    identity_UserLogins {
+        UUID Id PK
+        UUID UserId FK
+        string LoginProvider
+        string ProviderKey
+        string ProviderDisplayName
+        datetime CreatedDateTime
+        binary RowVersion
+    }
+
+    identity_UserTokens {
+        UUID Id PK
+        UUID UserId FK
+        string LoginProvider
+        string TokenName
+        string TokenValue
+        datetime CreatedDateTime
+        binary RowVersion
+    }
+
+    identity_UserProfiles {
+        UUID Id PK
+        UUID UserId FK
+        string DisplayName
+        string AvatarUrl
+        string Timezone
+        datetime CreatedDateTime
+        binary RowVersion
+    }
+
+    identity_DataProtectionKeys {
+        int Id PK
+        string FriendlyName
+        string Xml
+    }
+
+    apidoc_Projects {
+        UUID Id PK
+        UUID ActiveSpecId FK
+        UUID OwnerId
+        string Name
+        string Description
+        string BaseUrl
+        string Status
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_ApiSpecifications {
+        UUID Id PK
+        UUID ProjectId FK
+        UUID OriginalFileId
+        string Name
+        string SourceType
+        string Version
+        bool IsActive
+        datetime ParsedAt
+        string ParseStatus
+        jsonb ParseErrors
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_ApiEndpoints {
+        UUID Id PK
+        UUID ApiSpecId FK
+        string HttpMethod
+        string Path
+        string OperationId
+        string Summary
+        string Description
+        jsonb Tags
+        bool IsDeprecated
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_EndpointParameters {
+        UUID Id PK
+        UUID EndpointId FK
+        string Name
+        string Location
+        string DataType
+        string Format
+        bool IsRequired
+        string DefaultValue
+        jsonb Schema
+        jsonb Examples
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_EndpointResponses {
+        UUID Id PK
+        UUID EndpointId FK
+        int StatusCode
+        string Description
+        jsonb Schema
+        jsonb Examples
+        jsonb Headers
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_EndpointSecurityReqs {
+        UUID Id PK
+        UUID EndpointId FK
+        string SecurityType
+        string SchemeName
+        jsonb Scopes
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_SecuritySchemes {
+        UUID Id PK
+        UUID ApiSpecId FK
+        string Name
+        string Type
+        string Scheme
+        string BearerFormat
+        string In
+        string ParameterName
+        jsonb Configuration
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    apidoc_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestSuites {
+        UUID Id PK
+        UUID ProjectId
+        UUID ApiSpecId
+        string Name
+        string Description
+        string GenerationType
+        string Status
+        string ApprovalStatus
+        datetime ApprovedAt
+        UUID ApprovedById
+        UUID CreatedById
+        UUID LastModifiedById
+        jsonb SelectedEndpointIds
+        int Version
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestCases {
+        UUID Id PK
+        UUID TestSuiteId FK
+        UUID DependsOnId FK
+        UUID EndpointId
+        string Name
+        string Description
+        string TestType
+        string Priority
+        bool IsEnabled
+        int OrderIndex
+        bool IsOrderCustomized
+        int CustomOrderIndex
+        UUID LastModifiedById
+        jsonb Tags
+        int Version
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestCaseRequests {
+        UUID Id PK
+        UUID TestCaseId FK
+        string HttpMethod
+        string Url
+        jsonb Headers
+        jsonb PathParams
+        jsonb QueryParams
+        string BodyType
+        string Body
+        int Timeout
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestCaseExpectations {
+        UUID Id PK
+        UUID TestCaseId FK
+        jsonb ExpectedStatus
+        jsonb ResponseSchema
+        jsonb HeaderChecks
+        jsonb BodyContains
+        jsonb BodyNotContains
+        jsonb JsonPathChecks
+        int MaxResponseTime
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestCaseVariables {
+        UUID Id PK
+        UUID TestCaseId FK
+        string VariableName
+        string ExtractFrom
+        string JsonPath
+        string HeaderName
+        string Regex
+        string DefaultValue
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestDataSets {
+        UUID Id PK
+        UUID TestCaseId FK
+        string Name
+        jsonb Data
+        bool IsEnabled
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestCaseChangeLogs {
+        UUID Id PK
+        UUID TestCaseId FK
+        UUID ChangedById
+        string ChangeType
+        string FieldName
+        string OldValue
+        string NewValue
+        string ChangeReason
+        int VersionAfterChange
+        string IpAddress
+        string UserAgent
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestOrderProposals {
+        UUID Id PK
+        UUID TestSuiteId FK
+        int ProposalNumber
+        string Source
+        string Status
+        jsonb ProposedOrder
+        jsonb AppliedOrder
+        jsonb UserModifiedOrder
+        string AiReasoning
+        jsonb ConsideredFactors
+        string LlmModel
+        int TokensUsed
+        UUID ReviewedById
+        datetime ReviewedAt
+        string ReviewNotes
+        datetime AppliedAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_TestSuiteVersions {
+        UUID Id PK
+        UUID TestSuiteId FK
+        int VersionNumber
+        string ChangeType
+        string ChangeDescription
+        UUID ChangedById
+        jsonb PreviousState
+        jsonb NewState
+        jsonb TestCaseOrderSnapshot
+        string ApprovalStatusSnapshot
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testgen_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testexec_ExecutionEnvironments {
+        UUID Id PK
+        UUID ProjectId
+        string Name
+        string BaseUrl
+        jsonb Variables
+        jsonb Headers
+        jsonb AuthConfig
+        bool IsDefault
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testexec_TestRuns {
+        UUID Id PK
+        UUID TestSuiteId
+        UUID EnvironmentId
+        UUID TriggeredById
+        int RunNumber
+        int Status
+        datetime StartedAt
+        datetime CompletedAt
+        int TotalTests
+        int PassedCount
+        int FailedCount
+        int SkippedCount
+        bigint DurationMs
+        string RedisKey
+        datetime ResultsExpireAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testexec_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testexec_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testexec_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testreport_CoverageMetrics {
+        UUID Id PK
+        UUID TestRunId
+        int TotalEndpoints
+        int TestedEndpoints
+        decimal CoveragePercent
+        jsonb ByMethod
+        jsonb ByTag
+        jsonb UncoveredPaths
+        datetime CalculatedAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testreport_TestReports {
+        UUID Id PK
+        UUID TestRunId
+        UUID GeneratedById
+        UUID FileId
+        int ReportType
+        int Format
+        datetime GeneratedAt
+        datetime ExpiresAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testreport_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testreport_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    testreport_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_SubscriptionPlans {
+        UUID Id PK
+        string Name
+        string DisplayName
+        string Description
+        decimal PriceMonthly
+        decimal PriceYearly
+        string Currency
+        bool IsActive
+        int SortOrder
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_PlanLimits {
+        UUID Id PK
+        UUID PlanId FK
+        int LimitType
+        int LimitValue
+        bool IsUnlimited
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_UserSubscriptions {
+        UUID Id PK
+        UUID PlanId FK
+        UUID UserId
+        int Status
+        int BillingCycle
+        date StartDate
+        date EndDate
+        date NextBillingDate
+        datetime TrialEndsAt
+        datetime CancelledAt
+        bool AutoRenew
+        string ExternalSubId
+        string ExternalCustId
+        string SnapshotPlanName
+        decimal SnapshotPriceMonthly
+        decimal SnapshotPriceYearly
+        string SnapshotCurrency
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_PaymentIntents {
+        UUID Id PK
+        UUID PlanId FK
+        UUID SubscriptionId FK
+        UUID UserId
+        decimal Amount
+        string Currency
+        string BillingCycle
+        string Purpose
+        string Status
+        bigint OrderCode
+        string CheckoutUrl
+        datetime ExpiresAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_PaymentTransactions {
+        UUID Id PK
+        UUID PaymentIntentId FK
+        UUID SubscriptionId FK
+        UUID UserId
+        decimal Amount
+        string Currency
+        int Status
+        string PaymentMethod
+        string Provider
+        string ProviderRef
+        string ExternalTxnId
+        string InvoiceUrl
+        string FailureReason
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_SubscriptionHistories {
+        UUID Id PK
+        UUID SubscriptionId FK
+        UUID NewPlanId FK
+        UUID OldPlanId FK
+        int ChangeType
+        string ChangeReason
+        date EffectiveDate
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_UsageTrackings {
+        UUID Id PK
+        UUID UserId
+        date PeriodStart
+        date PeriodEnd
+        int ProjectCount
+        int EndpointCount
+        int TestSuiteCount
+        int TestCaseCount
+        int TestRunCount
+        int LlmCallCount
+        decimal StorageUsedMB
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    sub_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    storage_FileEntries {
+        UUID Id PK
+        UUID OwnerId
+        string FileName
+        string Name
+        string ContentType
+        bigint Size
+        string FileLocation
+        string Description
+        int FileCategory
+        bool Deleted
+        datetime DeletedDate
+        bool Archived
+        datetime ArchivedDate
+        bool Encrypted
+        string EncryptionKey
+        string EncryptionIV
+        datetime ExpiresAt
+        datetime UploadedTime
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    storage_DeletedFileEntries {
+        UUID Id PK
+        UUID FileEntryId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    storage_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    storage_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    storage_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    notif_EmailMessages {
+        UUID Id PK
+        string From
+        string Tos
+        string CCs
+        string BCCs
+        string Subject
+        string Body
+        int AttemptCount
+        int MaxAttemptCount
+        datetime SentDateTime
+        datetime ExpiredDateTime
+        datetime NextAttemptDateTime
+        UUID CopyFromId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    notif_EmailMessageAttachments {
+        UUID Id PK
+        UUID EmailMessageId FK
+        UUID FileEntryId
+        string Name
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    notif_SmsMessages {
+        UUID Id PK
+        string PhoneNumber
+        string Message
+        int AttemptCount
+        int MaxAttemptCount
+        datetime SentDateTime
+        datetime ExpiredDateTime
+        datetime NextAttemptDateTime
+        UUID CopyFromId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    notif_ArchivedEmailMessages {
+        UUID Id PK
+        string From
+        string Tos
+        string CCs
+        string BCCs
+        string Subject
+        string Body
+        int AttemptCount
+        int MaxAttemptCount
+        datetime SentDateTime
+        datetime ExpiredDateTime
+        datetime NextAttemptDateTime
+        UUID CopyFromId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    notif_ArchivedSmsMessages {
+        UUID Id PK
+        string PhoneNumber
+        string Message
+        int AttemptCount
+        int MaxAttemptCount
+        datetime SentDateTime
+        datetime ExpiredDateTime
+        datetime NextAttemptDateTime
+        UUID CopyFromId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    config_ConfigurationEntries {
+        UUID Id PK
+        string Key
+        string Value
+        string Description
+        bool IsSensitive
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    config_LocalizationEntries {
+        UUID Id PK
+        string Name
+        string Value
+        string Culture
+        string Description
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    auditlog_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    auditlog_IdempotentRequests {
+        UUID Id PK
+        string RequestType
+        string RequestId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    llm_LlmInteractions {
+        UUID Id PK
+        UUID UserId
+        int InteractionType
+        string InputContext
+        string LlmResponse
+        string ModelUsed
+        int TokensUsed
+        int LatencyMs
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    llm_LlmSuggestionCaches {
+        UUID Id PK
+        UUID EndpointId
+        int SuggestionType
+        string CacheKey
+        jsonb Suggestions
+        datetime ExpiresAt
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    llm_AuditLogEntries {
+        UUID Id PK
+        UUID UserId
+        string Action
+        string ObjectId
+        string Log
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    llm_OutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    llm_ArchivedOutboxMessages {
+        UUID Id PK
+        string EventType
+        UUID TriggeredById
+        string ObjectId
+        string Payload
+        bool Published
+        string ActivityId
+        datetime CreatedDateTime
+        datetime UpdatedDateTime
+        binary RowVersion
+    }
+
+    identity_Users ||--o{ identity_UserRoles : has
+    identity_Roles ||--o{ identity_UserRoles : assigned_to
+    identity_Users ||--o{ identity_UserClaims : has
+    identity_Users ||--o{ identity_UserLogins : has
+    identity_Users ||--o{ identity_UserTokens : has
+    identity_Roles ||--o{ identity_RoleClaims : has
+    identity_Users ||--o| identity_UserProfiles : has_1_1
+
+    apidoc_Projects ||--o{ apidoc_ApiSpecifications : contains
+    apidoc_Projects ||--o| apidoc_ApiSpecifications : active_spec
+    apidoc_ApiSpecifications ||--o{ apidoc_ApiEndpoints : defines
+    apidoc_ApiSpecifications ||--o{ apidoc_SecuritySchemes : includes
+    apidoc_ApiEndpoints ||--o{ apidoc_EndpointParameters : has
+    apidoc_ApiEndpoints ||--o{ apidoc_EndpointResponses : returns
+    apidoc_ApiEndpoints ||--o{ apidoc_EndpointSecurityReqs : requires
+
+    testgen_TestSuites ||--o{ testgen_TestCases : contains
+    testgen_TestSuites ||--o{ testgen_TestOrderProposals : has
+    testgen_TestSuites ||--o{ testgen_TestSuiteVersions : versions
+    testgen_TestCases ||--o| testgen_TestCases : depends_on_self
+    testgen_TestCases ||--|| testgen_TestCaseRequests : request_1_1
+    testgen_TestCases ||--|| testgen_TestCaseExpectations : expectations_1_1
+    testgen_TestCases ||--o{ testgen_TestCaseVariables : extracts
+    testgen_TestCases ||--o{ testgen_TestDataSets : uses
+    testgen_TestCases ||--o{ testgen_TestCaseChangeLogs : tracks
+
+    sub_SubscriptionPlans ||--o{ sub_PlanLimits : defines
+    sub_SubscriptionPlans ||--o{ sub_UserSubscriptions : subscribed_to
+    sub_UserSubscriptions ||--o{ sub_SubscriptionHistories : tracks
+    sub_SubscriptionPlans ||--o{ sub_SubscriptionHistories : new_plan
+    sub_SubscriptionPlans ||--o{ sub_SubscriptionHistories : old_plan
+    sub_SubscriptionPlans ||--o{ sub_PaymentIntents : for_plan
+    sub_UserSubscriptions ||--o{ sub_PaymentIntents : for_sub
+    sub_PaymentIntents ||--o{ sub_PaymentTransactions : fulfills
+    sub_UserSubscriptions ||--o{ sub_PaymentTransactions : for_sub
+
+    notif_EmailMessages ||--o{ notif_EmailMessageAttachments : has
