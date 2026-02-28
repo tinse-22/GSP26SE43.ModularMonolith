@@ -1,0 +1,388 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-01-contracts",
+  "requirementId": "FE-03-01",
+  "title": "FE-03-01 Contracts - Specification Management",
+  "apiContracts": [
+    {
+      "name": "GetSpecifications",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications",
+      "permission": "Permission:GetSpecifications",
+      "queryParams": ["parseStatus? (ParseStatus enum)", "sourceType? (SourceType enum)"],
+      "responseBody": "SpecificationModel[]",
+      "successStatus": 200
+    },
+    {
+      "name": "GetSpecification",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:GetSpecifications",
+      "responseBody": "SpecificationDetailModel",
+      "successStatus": 200
+    },
+    {
+      "name": "GetUploadMethods",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/upload-methods",
+      "permission": "Permission:AddSpecification",
+      "responseBody": "UploadMethodOptionModel[]",
+      "successStatus": 200
+    },
+    {
+      "name": "UploadSpecification",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/specifications/upload",
+      "permission": "Permission:AddSpecification",
+      "consumes": "multipart/form-data",
+      "requestBody": "UploadSpecificationModel",
+      "responseBody": "SpecificationModel",
+      "successStatus": 201,
+      "requestSizeLimit": "10MB"
+    },
+    {
+      "name": "CreateManualSpecification",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/specifications/manual",
+      "permission": "Permission:AddSpecification",
+      "consumes": "application/json",
+      "requestBody": "CreateManualSpecificationModel",
+      "responseBody": "SpecificationDetailModel",
+      "successStatus": 201
+    },
+    {
+      "name": "ImportCurl",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/specifications/curl-import",
+      "permission": "Permission:AddSpecification",
+      "consumes": "application/json",
+      "requestBody": "ImportCurlModel",
+      "responseBody": "SpecificationDetailModel",
+      "successStatus": 201
+    },
+    {
+      "name": "ActivateSpecification",
+      "method": "PUT",
+      "route": "/api/projects/{projectId}/specifications/{specId}/activate",
+      "permission": "Permission:ActivateSpecification",
+      "responseBody": "SpecificationModel",
+      "successStatus": 200
+    },
+    {
+      "name": "DeactivateSpecification",
+      "method": "PUT",
+      "route": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+      "permission": "Permission:ActivateSpecification",
+      "responseBody": "SpecificationModel",
+      "successStatus": 200
+    },
+    {
+      "name": "DeleteSpecification",
+      "method": "DELETE",
+      "route": "/api/projects/{projectId}/specifications/{specId}",
+      "permission": "Permission:DeleteSpecification",
+      "responseBody": "none",
+      "successStatus": 204
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "UploadSpecificationModel",
+      "fields": {
+        "uploadMethod": "SpecificationUploadMethod (enum, default: StorageGatewayContract)",
+        "file": "IFormFile (required)",
+        "name": "string (required)",
+        "sourceType": "SourceType (enum: OpenAPI=0, Postman=1)",
+        "version": "string",
+        "autoActivate": "bool"
+      }
+    },
+    {
+      "name": "CreateManualSpecificationModel",
+      "fields": {
+        "name": "string (required)",
+        "version": "string",
+        "autoActivate": "bool",
+        "endpoints": "ManualEndpointDefinition[]"
+      }
+    },
+    {
+      "name": "ManualEndpointDefinition",
+      "fields": {
+        "httpMethod": "string (required)",
+        "path": "string (required)",
+        "operationId": "string?",
+        "summary": "string?",
+        "description": "string?",
+        "tags": "string[]?",
+        "isDeprecated": "bool",
+        "parameters": "ManualParameterDefinition[]",
+        "responses": "ManualResponseDefinition[]"
+      }
+    },
+    {
+      "name": "ManualParameterDefinition",
+      "fields": {
+        "name": "string (required)",
+        "location": "string (Path|Query|Header|Body|Cookie)",
+        "dataType": "EndpointParameterDataType (enum: String=0|Integer=1|Number=2|Boolean=3|Object=4|Array=5|Uuid=6)",
+        "format": "string?",
+        "isRequired": "bool",
+        "defaultValue": "string?",
+        "schema": "string? (JSON schema)",
+        "examples": "string? (JSON)"
+      }
+    },
+    {
+      "name": "ManualResponseDefinition",
+      "fields": {
+        "statusCode": "int (required)",
+        "description": "string?",
+        "schema": "string? (JSON schema)",
+        "examples": "string? (JSON)",
+        "headers": "string? (JSON)"
+      }
+    },
+    {
+      "name": "ImportCurlModel",
+      "fields": {
+        "name": "string (required)",
+        "version": "string",
+        "curlCommand": "string (required)",
+        "autoActivate": "bool"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "SpecificationModel",
+      "fields": {
+        "id": "Guid",
+        "projectId": "Guid",
+        "name": "string",
+        "sourceType": "string (OpenAPI|Postman|Manual|cURL)",
+        "version": "string",
+        "isActive": "bool",
+        "parseStatus": "string (Pending|Success|Failed)",
+        "parsedAt": "DateTimeOffset?",
+        "originalFileId": "Guid?",
+        "createdDateTime": "DateTimeOffset",
+        "updatedDateTime": "DateTimeOffset?"
+      }
+    },
+    {
+      "name": "SpecificationDetailModel",
+      "extends": "SpecificationModel",
+      "fields": {
+        "endpointCount": "int",
+        "parseErrors": "string[]?",
+        "originalFileName": "string?"
+      }
+    },
+    {
+      "name": "UploadMethodOptionModel",
+      "fields": {
+        "method": "string",
+        "uploadApi": "string"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "UploadApiSpecificationCommand",
+        "handler": "UploadApiSpecificationCommandHandler",
+        "writes": [
+          "ApiSpecification(ParseStatus=Pending, OriginalFileId)",
+          "OutboxMessage(SPEC_UPLOADED)"
+        ],
+        "crossModuleWrites": [
+          "IStorageFileGatewayService.UploadAsync"
+        ],
+        "crossModuleReads": [
+          "ISubscriptionLimitGatewayService.TryConsumeLimitAsync"
+        ]
+      },
+      {
+        "name": "CreateManualSpecificationCommand",
+        "handler": "CreateManualSpecificationCommandHandler",
+        "writes": [
+          "ApiSpecification(SourceType=Manual, ParseStatus=Success)",
+          "ApiEndpoint + EndpointParameter + EndpointResponse per endpoint definition"
+        ],
+        "internalServices": [
+          "PathParameterTemplateService.EnsurePathParameterConsistency"
+        ]
+      },
+      {
+        "name": "ImportCurlCommand",
+        "handler": "ImportCurlCommandHandler",
+        "writes": [
+          "ApiSpecification(SourceType=cURL, ParseStatus=Success)",
+          "ApiEndpoint + EndpointParameter (path params, query params, headers, body)"
+        ],
+        "internalServices": [
+          "CurlParser.Parse (static)"
+        ]
+      },
+      {
+        "name": "ActivateSpecificationCommand",
+        "handler": "ActivateSpecificationCommandHandler",
+        "writes": [
+          "ApiSpecification(IsActive=true/false)",
+          "Project(ActiveSpecId)",
+          "OutboxMessage(SPEC_ACTIVATED or SPEC_DEACTIVATED)"
+        ]
+      },
+      {
+        "name": "DeleteSpecificationCommand",
+        "handler": "DeleteSpecificationCommandHandler",
+        "writes": [
+          "CASCADE: ApiEndpoint + EndpointParameter + EndpointResponse + EndpointSecurityReq + SecurityScheme",
+          "ApiSpecification (hard delete)",
+          "OutboxMessage(SPEC_DELETED)"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetSpecificationsQuery",
+        "handler": "GetSpecificationsQueryHandler",
+        "reads": [
+          "ApiSpecification list by projectId + ownerId, filterable by ParseStatus, SourceType"
+        ]
+      },
+      {
+        "name": "GetSpecificationQuery",
+        "handler": "GetSpecificationQueryHandler",
+        "reads": [
+          "ApiSpecification by projectId + specId + ownerId, includes EndpointCount and ParseErrors deserialization"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "CurlParser",
+        "type": "static",
+        "methods": [
+          "Parse(string curlCommand) -> CurlParseResult"
+        ],
+        "notes": "Static utility class, khong can DI. Parse cURL command thanh method/url/headers/body/auth."
+      }
+    ]
+  },
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "File extension phai la .json, .yaml, hoac .yml cho upload."
+    },
+    {
+      "id": "VAL-02",
+      "rule": "File size khong duoc vuot 10MB (enforced boi [RequestSizeLimit] attribute)."
+    },
+    {
+      "id": "VAL-03",
+      "rule": "Name bat buoc, khong duoc rong."
+    },
+    {
+      "id": "VAL-04",
+      "rule": "SourceType phai la gia tri hop le (OpenAPI hoac Postman cho upload; Manual/cURL tu dong set)."
+    },
+    {
+      "id": "VAL-05",
+      "rule": "OpenAPI content phai chua key 'openapi' hoac 'swagger' (JSON) hoac pattern 'openapi:' hoac 'swagger:' (YAML)."
+    },
+    {
+      "id": "VAL-06",
+      "rule": "Postman content phai chua 'info' va 'item' properties trong JSON root."
+    },
+    {
+      "id": "VAL-07",
+      "rule": "cURL command string bat buoc, khong rong, va phai parse duoc (co URL hop le)."
+    },
+    {
+      "id": "VAL-08",
+      "rule": "Project phai ton tai va thuoc ve current user (Project.OwnerId == currentUser.UserId)."
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_FILE_EXTENSION",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_OPENAPI_CONTENT",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_POSTMAN_CONTENT",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_CURL_SYNTAX",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_MANUAL_SPEC",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "PROJECT_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "SPECIFICATION_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 413,
+      "reasonCode": "FILE_TOO_LARGE",
+      "exceptionType": "RequestSizeLimitExceededException"
+    },
+    {
+      "httpStatus": 403,
+      "reasonCode": "SUBSCRIPTION_LIMIT_EXCEEDED",
+      "exceptionType": "ForbiddenException"
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "apidoc",
+    "tables": [
+      "ApiSpecifications",
+      "ApiEndpoints",
+      "EndpointParameters",
+      "EndpointResponses",
+      "EndpointSecurityReqs",
+      "SecuritySchemes",
+      "OutboxMessages"
+    ],
+    "notes": [
+      "ParseErrors duoc luu duoi dang JSONB column trong ApiSpecifications.",
+      "Tags duoc luu duoi dang JSONB column trong ApiEndpoints.",
+      "Cascade delete endpoint children khi xoa specification.",
+      "SQL raw (neu co) phai schema-qualified: apidoc.\"ApiSpecifications\"."
+    ]
+  },
+  "securityAndAuthorization": {
+    "existingPermissions": [
+      "Permission:GetSpecifications",
+      "Permission:AddSpecification",
+      "Permission:UpdateSpecification",
+      "Permission:DeleteSpecification",
+      "Permission:ActivateSpecification"
+    ],
+    "requirements": [
+      "Tat ca APIs yeu cau [Authorize] tren controller.",
+      "Moi endpoint yeu cau permission policy tuong ung.",
+      "Ownership validation: Project.OwnerId == currentUser.UserId."
+    ]
+  }
+}

@@ -1,0 +1,161 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-03-requirement",
+  "requirement": {
+    "id": "FE-03-03",
+    "parentId": "FE-03",
+    "title": "Parser Flow (Async Specification Parsing)",
+    "goal": "Pipeline async parser duoc trigger boi SPEC_UPLOADED outbox event de tu dong extract endpoints, parameters, responses, va security schemes tu file OpenAPI/Postman da upload, chuyen ParseStatus tu Pending sang Success hoac Failed.",
+    "priority": "P1",
+    "status": "design-only",
+    "rationale": [
+      "Thiet ke da duoc document tai docs/features/FE-03-parser-flow/parser-flow-design.json.",
+      "Hien tai chua co source code, migration, hoac runtime change nao cho sub-feature nay.",
+      "Can de chuyen ParseStatus ra khoi Pending cho cac specifications da upload.",
+      "Bi chan boi viec mo rong Storage read contract (IStorageFileGatewayService can them download method)."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "ParseUploadedSpecificationCommand orchestration tu outbox event.",
+      "OpenApiSpecificationParser: parse OpenAPI 2.0 (Swagger) va 3.x documents.",
+      "PostmanSpecificationParser: parse Postman Collection format.",
+      "Mo rong IStorageFileGatewayService voi download/read method de doc file bytes.",
+      "Replace-all children persistence strategy trong single transaction.",
+      "Idempotency guard: chi parse khi ParseStatus=Pending.",
+      "ParseStatus transition: Pending -> Success (voi ParsedAt) hoac Pending -> Failed (voi ParseErrors)."
+    ],
+    "outOfScope": [
+      "Source code implementation (chi la design document).",
+      "Migration changes.",
+      "Runtime deployment changes.",
+      "cURL va Manual spec flows (da xu ly truc tiep trong FE-03-01)."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "partially-implemented",
+        "schema": "apidoc",
+        "reusedEntities": [
+          "ApiSpecification",
+          "ApiEndpoint",
+          "EndpointParameter",
+          "EndpointResponse",
+          "EndpointSecurityReq",
+          "SecurityScheme",
+          "OutboxMessage"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Storage",
+        "status": "implemented",
+        "requiredContracts": [
+          "IStorageFileGatewayService.UploadAsync (existing)",
+          "IStorageFileGatewayService.DownloadAsync (planned - can bo sung)"
+        ]
+      }
+    ],
+    "featureDependencies": [
+      "FE-02",
+      "FE-03-01"
+    ]
+  },
+  "designReference": {
+    "file": "../../FE-03-parser-flow/parser-flow-design.json",
+    "documentId": "fe-03-parser-flow-design",
+    "note": "Full technical design bao gom entity mapping, error policy, observability, idempotency, va implementation checklist. Tham khao file nay cho chi tiet thiet ke."
+  },
+  "plannedImplementationMap": {
+    "newFiles": [
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/ParseUploadedSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/ISpecificationParser.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/OpenApiSpecificationParser.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/PostmanSpecificationParser.cs"
+    ],
+    "modifiedFiles": [
+      "ClassifiedAds.Modules.ApiDocumentation/OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs (dispatch ParseUploadedSpecificationCommand)",
+      "ClassifiedAds.Contracts/Storage/Services/IStorageFileGatewayService.cs (them download/read method)"
+    ]
+  },
+  "entityMappingRules": {
+    "apiEndpoint": "Map method/path/operationId/summary/description/tags/isDeprecated tu OpenAPI/Postman",
+    "endpointParameter": "Map location (Path/Query/Header/Body/Cookie), dataType, format, isRequired, schema, examples",
+    "endpointResponse": "Map statusCode, description, schema, examples, headers",
+    "securityScheme": "Map components.securitySchemes (OpenAPI) hoac auth model (Postman)",
+    "endpointSecurityReq": "Map endpoint-level security requirement voi SecurityType, SchemeName, Scopes"
+  },
+  "idempotencyAndConcurrencyRules": {
+    "idempotencyKey": "SpecId",
+    "guardRules": [
+      "Neu spec khong phai Pending tai thoi diem bat dau command, exit khong co side effects.",
+      "Su dung replace-all strategy cho children duoi 1 spec trong 1 transaction.",
+      "Event redelivery khong duoc tao duplicate endpoints."
+    ]
+  },
+  "errorPolicy": {
+    "validationErrors": {
+      "action": "Set ParseStatus=Failed, set ParseErrors, set ParsedAt, khong rethrow",
+      "examples": [
+        "Invalid OpenAPI structure",
+        "Unsupported Postman shape",
+        "Missing required operation fields"
+      ]
+    },
+    "transientInfraErrors": {
+      "action": "Rethrow de cho phep outbox retry",
+      "examples": [
+        "Storage read timeout",
+        "Database connectivity issue",
+        "Message bus temporary failure"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: Upload OpenAPI spec chuyen tu ParseStatus=Pending sang Success voi endpoints duoc persist.",
+    "AC-02: Upload Postman collection chuyen tu ParseStatus=Pending sang Success.",
+    "AC-03: Document khong hop le chuyen sang ParseStatus=Failed voi ParseErrors duoc ghi.",
+    "AC-04: Duplicate SPEC_UPLOADED delivery la idempotent (khong tao duplicate children).",
+    "AC-05: Transient storage failure cho phep outbox retry va cuoi cung thanh cong.",
+    "AC-06: Khong vi pham cross-module boundary (doc file qua Storage contract, khong truy cap truc tiep)."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Parse OpenAPI thanh cong",
+      "given": "Uploaded file la valid OpenAPI 3.x JSON",
+      "when": "SPEC_UPLOADED event duoc publish",
+      "then": "ParseStatus=Success, endpoints/params/responses duoc persist vao apidoc schema"
+    },
+    {
+      "id": "TS-02",
+      "name": "Parse Postman thanh cong",
+      "given": "Uploaded file la valid Postman Collection",
+      "when": "SPEC_UPLOADED event duoc publish",
+      "then": "ParseStatus=Success voi mapped endpoints"
+    },
+    {
+      "id": "TS-03",
+      "name": "Parse that bai do content khong hop le",
+      "given": "Uploaded file co noi dung khong hop le",
+      "when": "SPEC_UPLOADED event duoc publish",
+      "then": "ParseStatus=Failed, ParseErrors khong rong, khong co partial data"
+    },
+    {
+      "id": "TS-04",
+      "name": "Idempotency guard",
+      "given": "Spec da co ParseStatus=Success",
+      "when": "SPEC_UPLOADED event duoc redeliver",
+      "then": "Command exit khong co side effects"
+    },
+    {
+      "id": "TS-05",
+      "name": "Storage read failure retry",
+      "given": "Storage service tam thoi khong available",
+      "when": "ParseUploadedSpecificationCommand duoc goi",
+      "then": "Exception duoc rethrow, outbox retry sau do thanh cong"
+    }
+  ]
+}

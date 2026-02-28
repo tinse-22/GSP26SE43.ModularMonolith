@@ -1,0 +1,403 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-02-contracts",
+  "requirementId": "FE-03-02",
+  "title": "FE-03-02 Contracts - Endpoint Management",
+  "apiContracts": [
+    {
+      "name": "GetEndpoints",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "permission": "Permission:GetEndpoints",
+      "responseBody": "EndpointModel[]",
+      "successStatus": 200
+    },
+    {
+      "name": "GetEndpoint",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:GetEndpoints",
+      "responseBody": "EndpointDetailModel",
+      "successStatus": 200
+    },
+    {
+      "name": "CreateEndpoint",
+      "method": "POST",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "permission": "Permission:AddEndpoint",
+      "consumes": "application/json",
+      "requestBody": "CreateUpdateEndpointModel",
+      "responseBody": "EndpointDetailModel",
+      "successStatus": 201
+    },
+    {
+      "name": "UpdateEndpoint",
+      "method": "PUT",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:UpdateEndpoint",
+      "consumes": "application/json",
+      "requestBody": "CreateUpdateEndpointModel",
+      "responseBody": "EndpointDetailModel",
+      "successStatus": 200
+    },
+    {
+      "name": "DeleteEndpoint",
+      "method": "DELETE",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "permission": "Permission:DeleteEndpoint",
+      "responseBody": "none",
+      "successStatus": 204
+    },
+    {
+      "name": "GetResolvedUrl",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "permission": "Permission:GetEndpoints",
+      "queryParams": ["dynamic key=value pairs from query string (e.g., ?userId=42&orderId=abc)"],
+      "responseBody": "ResolvedUrlResult",
+      "successStatus": 200
+    },
+    {
+      "name": "GetPathParamMutations",
+      "method": "GET",
+      "route": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations",
+      "permission": "Permission:GetEndpoints",
+      "responseBody": "PathParamMutationsResult",
+      "successStatus": 200
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "CreateUpdateEndpointModel",
+      "fields": {
+        "httpMethod": "string (required, valid: GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)",
+        "path": "string (required, max 500 chars)",
+        "operationId": "string?",
+        "summary": "string?",
+        "description": "string?",
+        "tags": "string[]?",
+        "isDeprecated": "bool",
+        "parameters": "ManualParameterDefinition[] (reuse from FE-03-01)",
+        "responses": "ManualResponseDefinition[] (reuse from FE-03-01)"
+      }
+    },
+    {
+      "name": "ManualParameterDefinition",
+      "note": "Reused from FE-03-01 (CreateManualSpecificationModel.cs)",
+      "fields": {
+        "name": "string (required)",
+        "location": "string (Path|Query|Header|Body|Cookie, default: Query)",
+        "dataType": "EndpointParameterDataType (enum: String=0|Integer=1|Number=2|Boolean=3|Object=4|Array=5|Uuid=6)",
+        "format": "string?",
+        "isRequired": "bool",
+        "defaultValue": "string?",
+        "schema": "string? (JSON schema)",
+        "examples": "string? (JSON)"
+      }
+    },
+    {
+      "name": "ManualResponseDefinition",
+      "note": "Reused from FE-03-01 (CreateManualSpecificationModel.cs)",
+      "fields": {
+        "statusCode": "int (required)",
+        "description": "string?",
+        "schema": "string? (JSON schema)",
+        "examples": "string? (JSON)",
+        "headers": "string? (JSON)"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "EndpointModel",
+      "fields": {
+        "id": "Guid",
+        "apiSpecId": "Guid",
+        "httpMethod": "string (GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)",
+        "path": "string",
+        "operationId": "string?",
+        "summary": "string?",
+        "description": "string?",
+        "tags": "string? (JSON array serialized as string)",
+        "isDeprecated": "bool",
+        "createdDateTime": "DateTimeOffset",
+        "updatedDateTime": "DateTimeOffset?"
+      }
+    },
+    {
+      "name": "EndpointDetailModel",
+      "extends": "EndpointModel",
+      "fields": {
+        "resolvedUrl": "string? (null khi chua the resolve tat ca path params)",
+        "parameters": "ParameterModel[]",
+        "responses": "ResponseModel[]",
+        "securityRequirements": "SecurityReqModel[]"
+      }
+    },
+    {
+      "name": "ParameterModel",
+      "fields": {
+        "id": "Guid",
+        "name": "string",
+        "location": "string (Path|Query|Header|Body|Cookie)",
+        "dataType": "string",
+        "format": "string?",
+        "isRequired": "bool",
+        "defaultValue": "string?",
+        "schema": "string?",
+        "examples": "string?"
+      }
+    },
+    {
+      "name": "ResponseModel",
+      "fields": {
+        "id": "Guid",
+        "statusCode": "int",
+        "description": "string?",
+        "schema": "string?",
+        "examples": "string?",
+        "headers": "string?"
+      }
+    },
+    {
+      "name": "SecurityReqModel",
+      "fields": {
+        "id": "Guid",
+        "securityType": "string",
+        "schemeName": "string?",
+        "scopes": "string?"
+      }
+    },
+    {
+      "name": "ResolvedUrlResult",
+      "fields": {
+        "originalTemplate": "string (path template voi {placeholders})",
+        "resolvedUrl": "string? (null khi co unresolved params)",
+        "resolvedParameters": "Dictionary<string, string>",
+        "unresolvedParameters": "string[]",
+        "isFullyResolved": "bool"
+      }
+    },
+    {
+      "name": "PathParamMutationsResult",
+      "fields": {
+        "endpointId": "Guid",
+        "templatePath": "string",
+        "totalMutations": "int",
+        "parameterMutations": "ParameterMutationGroup[]"
+      }
+    },
+    {
+      "name": "ParameterMutationGroup",
+      "fields": {
+        "parameterName": "string",
+        "dataType": "string",
+        "format": "string",
+        "originalValue": "string",
+        "mutations": "PathParameterMutationWithUrl[]"
+      }
+    },
+    {
+      "name": "PathParameterMutationWithUrl",
+      "fields": {
+        "mutationType": "string (empty|wrongType|boundary_zero|boundary_negative|sqlInjection|nonExistent)",
+        "label": "string ('{paramName} — {mutation description}')",
+        "value": "string (mutated value)",
+        "expectedStatusCode": "int (400|404)",
+        "description": "string (Vietnamese description)",
+        "resolvedUrl": "string? (URL voi mutated value)"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "AddUpdateEndpointCommand",
+        "handler": "AddUpdateEndpointCommandHandler",
+        "writes": [
+          "ApiEndpoint (create or update HttpMethod/Path/OperationId/Summary/Description/Tags/IsDeprecated)",
+          "EndpointParameter (replace-all: delete old + create new per ManualParameterDefinition)",
+          "EndpointResponse (replace-all: delete old + create new per ManualResponseDefinition)"
+        ],
+        "crossModuleReads": [
+          "ISubscriptionLimitGatewayService.TryConsumeLimitAsync (LimitType.MaxEndpointsPerProject, chi khi create)"
+        ],
+        "internalServices": [
+          "IPathParameterTemplateService.EnsurePathParameterConsistency (auto-create missing path params)"
+        ],
+        "transactionRule": "Create va update deu dung UnitOfWork.ExecuteInTransactionAsync de dam bao atomic."
+      },
+      {
+        "name": "DeleteEndpointCommand",
+        "handler": "DeleteEndpointCommandHandler",
+        "writes": [
+          "ApiEndpoint (hard delete, cascade children qua DB configuration)"
+        ],
+        "transactionRule": "Dung UnitOfWork.ExecuteInTransactionAsync de dam bao atomic."
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetEndpointsQuery",
+        "handler": "GetEndpointsQueryHandler",
+        "reads": [
+          "ApiEndpoint list by specId, order by CreatedDateTime desc"
+        ]
+      },
+      {
+        "name": "GetEndpointQuery",
+        "handler": "GetEndpointQueryHandler",
+        "reads": [
+          "ApiEndpoint by endpointId + specId",
+          "EndpointParameter list by endpointId, order by Name asc",
+          "EndpointResponse list by endpointId, order by StatusCode asc",
+          "EndpointSecurityReq list by endpointId"
+        ],
+        "internalServices": [
+          "IPathParameterTemplateService.ResolveUrl (auto-resolve using DefaultValue -> Examples fallback)"
+        ]
+      },
+      {
+        "name": "GetResolvedUrlQuery",
+        "handler": "GetResolvedUrlQueryHandler",
+        "reads": [
+          "ApiEndpoint by endpointId + specId",
+          "EndpointParameter list (Location=Path) by endpointId"
+        ],
+        "internalServices": [
+          "IPathParameterTemplateService.ResolveUrl (explicit query params > DefaultValue > Examples fallback)"
+        ]
+      },
+      {
+        "name": "GetPathParamMutationsQuery",
+        "handler": "GetPathParamMutationsQueryHandler",
+        "reads": [
+          "ApiEndpoint by endpointId + specId",
+          "EndpointParameter list (Location=Path) by endpointId"
+        ],
+        "internalServices": [
+          "IPathParameterTemplateService.GenerateMutations (sinh mutation variants theo dataType/format)",
+          "IPathParameterTemplateService.ResolveUrl (resolve URL cho tung mutation variant)"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "IPathParameterTemplateService / PathParameterTemplateService",
+        "type": "scoped",
+        "methods": [
+          "ExtractPathParameters(string pathTemplate) -> List<PathParameterInfo>",
+          "EnsurePathParameterConsistency(string path, List<ManualParameterDefinition> params) -> List<ManualParameterDefinition>",
+          "ResolveUrl(string pathTemplate, Dictionary<string, string> values) -> ResolvedUrlResult",
+          "GenerateMutations(string paramName, string dataType, string format, string originalValue) -> List<PathParameterMutation>"
+        ],
+        "notes": "Registered via DI. Su dung regex de parse path template {placeholders}. GenerateMutations sinh: empty, wrongType, boundary_zero, boundary_negative, sqlInjection, nonExistent variants tuy theo dataType."
+      },
+      {
+        "name": "IApiEndpointMetadataService / ApiEndpointMetadataService",
+        "type": "scoped",
+        "interface": "ClassifiedAds.Contracts.ApiDocumentation.Services.IApiEndpointMetadataService",
+        "methods": [
+          "GetEndpointMetadataAsync(Guid specId, IReadOnlyCollection<Guid> selectedEndpointIds?, CancellationToken) -> IReadOnlyList<ApiEndpointMetadataDto>"
+        ],
+        "notes": "Cross-module contract. Tra ve dependency analysis voi 4 rules: resource-producer (POST), schema-schema, semantic-token, auth-bootstrap. Duoc consume boi TestGeneration module (FE-04, FE-05)."
+      }
+    ]
+  },
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "HttpMethod bat buoc va phai la gia tri hop le: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS."
+    },
+    {
+      "id": "VAL-02",
+      "rule": "Path bat buoc, khong duoc rong, khong vuot qua 500 ky tu."
+    },
+    {
+      "id": "VAL-03",
+      "rule": "Project phai ton tai va thuoc ve current user (Project.OwnerId == currentUser.UserId)."
+    },
+    {
+      "id": "VAL-04",
+      "rule": "Specification phai ton tai va thuoc ve project (ApiSpecification.ProjectId == projectId)."
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Endpoint phai ton tai va thuoc ve specification (ApiEndpoint.ApiSpecId == specId) cho GET/PUT/DELETE."
+    },
+    {
+      "id": "VAL-06",
+      "rule": "Subscription limit MaxEndpointsPerProject phai duoc kiem tra truoc khi tao endpoint moi."
+    },
+    {
+      "id": "VAL-07",
+      "rule": "Path parameter consistency: tung {placeholder} trong path phai co ManualParameterDefinition tuong ung (auto-create neu thieu)."
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_HTTP_METHOD",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_PATH",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_ENDPOINT_DATA",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "SUBSCRIPTION_LIMIT_EXCEEDED",
+      "exceptionType": "ValidationException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "PROJECT_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "SPECIFICATION_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "ENDPOINT_NOT_FOUND",
+      "exceptionType": "NotFoundException"
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "apidoc",
+    "tables": [
+      "ApiEndpoints",
+      "EndpointParameters",
+      "EndpointResponses"
+    ],
+    "notes": [
+      "Tags duoc luu duoi dang JSONB column trong ApiEndpoints (JsonSerializer.Serialize(tags)).",
+      "Replace-all strategy: xoa children cu (parameters + responses) va tao lai moi trong cung transaction khi update.",
+      "Cascade delete children khi xoa endpoint (qua DB configuration, khong can manual delete).",
+      "SQL raw (neu co) phai schema-qualified: apidoc.\"ApiEndpoints\"."
+    ]
+  },
+  "securityAndAuthorization": {
+    "existingPermissions": [
+      "Permission:GetEndpoints",
+      "Permission:AddEndpoint",
+      "Permission:UpdateEndpoint",
+      "Permission:DeleteEndpoint"
+    ],
+    "requirements": [
+      "Tat ca APIs yeu cau [Authorize] tren controller.",
+      "Moi endpoint yeu cau permission policy tuong ung.",
+      "Ownership validation: Project.OwnerId == currentUser.UserId.",
+      "Resolved URL va mutations chi can GetEndpoints permission."
+    ]
+  }
+}

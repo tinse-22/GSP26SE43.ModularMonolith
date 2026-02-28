@@ -49,6 +49,17 @@ OUTPUT FORMAT (JSON array):
 ]";
 
     /// <inheritdoc />
+    /*
+    context (endpoint info)
+        ↓
+        BuildSpecBlock()
+        ↓
+        BuildObservationPrompt()
+        BuildConfirmationPromptTemplate()
+        BuildCombinedPrompt()
+        ↓
+        return ObservationConfirmationPrompt
+    */
     public ObservationConfirmationPrompt BuildForEndpoint(EndpointPromptContext context)
     {
         if (context == null)
