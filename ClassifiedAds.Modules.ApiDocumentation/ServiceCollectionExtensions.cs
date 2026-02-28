@@ -54,6 +54,12 @@ public static class ApiDocumentationServiceCollectionExtensions
             ClassifiedAds.Modules.ApiDocumentation.Services.PathParameterTemplateService>();
         services.AddScoped<IApiEndpointMetadataService, ClassifiedAds.Modules.ApiDocumentation.Services.ApiEndpointMetadataService>();
 
+        // Register specification parsers
+        services.AddScoped<ClassifiedAds.Modules.ApiDocumentation.Services.ISpecificationParser,
+            ClassifiedAds.Modules.ApiDocumentation.Services.OpenApiSpecificationParser>();
+        services.AddScoped<ClassifiedAds.Modules.ApiDocumentation.Services.ISpecificationParser,
+            ClassifiedAds.Modules.ApiDocumentation.Services.PostmanSpecificationParser>();
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 
