@@ -1,0 +1,478 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-workflow",
+  "workflow": {
+    "id": "wf-fe03-json-parsing-endpoints-v1",
+    "requirementId": "FE-03",
+    "name": "FE-03 JSON Parsing Endpoints",
+    "mode": "request-response + outbox + async-parse",
+    "description": "Workflow FE-03 gom 3 luong chinh: FE-03-01 (Specification Management voi 9 endpoints), FE-03-02 (Endpoint Management voi 7 endpoints), va FE-03-03 (Async Parser Flow - design only). Cung cap day du API CRUD cho API specifications va endpoints, dong thoi thiet ke pipeline async parser de chuyen file OpenAPI/Postman thanh normalized entities."
+  },
+  "architectureOverview": {
+    "summary": "FE-03 la synchronous CQRS APIs cho specification va endpoint management. Outbox pattern duoc dung cho spec lifecycle events (upload, activate, delete). Parser flow (FE-03-03) la async pipeline trigger boi outbox event SPEC_UPLOADED.",
+    "noDirectMessageBrokerNeeded": false,
+    "outboxRequired": true,
+    "transactionRequired": "Can cho activate/deactivate spec (update Project.ActiveSpecId + spec.IsActive), create/update endpoint (replace-all children), va async parser (replace-all children).",
+    "moduleBoundaries": [
+      "Upload file qua IStorageFileGatewayService (Storage module contract).",
+      "Kiem tra subscription limit qua ISubscriptionLimitGatewayService (Subscription module contract).",
+      "ApiEndpointMetadataService implement IApiEndpointMetadataService de cung cap dependency analysis cho TestGeneration module.",
+      "Parser flow (FE-03-03) doc file qua IStorageFileGatewayService.DownloadAsync (planned contract)."
+    ],
+    "schemas": [
+      "apidoc"
+    ]
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "feature": "FE-03-01",
+      "description": "Specification Management: Upload file, tao manual, import cURL, activate/deactivate, delete, list/get."
+    },
+    {
+      "phase": 2,
+      "feature": "FE-03-02",
+      "description": "Endpoint Management: CRUD endpoints, resolved URL, path parameter mutations."
+    },
+    {
+      "phase": 3,
+      "feature": "FE-03-03",
+      "description": "Parser Flow (design-only): Async pipeline de parse uploaded OpenAPI/Postman files thanh normalized entities."
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Upload Specification",
+      "type": "synchronous + outbox",
+      "feature": "FE-03-01",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{projectId}/specifications/upload (multipart/form-data: file, name, sourceType, version, autoActivate, uploadMethod)",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "SpecificationsController",
+          "action": "Bind request + ICurrentUser, dispatch UploadApiSpecificationCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "Validate file extension (.json/.yaml/.yml), file content (OpenAPI: openapi/swagger key; Postman: info+item). Check subscription limit qua ISubscriptionLimitGatewayService.TryConsumeLimitAsync.",
+          "output": "Input validated"
+        },
+        {
+          "step": 4,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "Upload file qua IStorageFileGatewayService.UploadAsync, lay OriginalFileId.",
+          "output": "File stored, OriginalFileId returned"
+        },
+        {
+          "step": 5,
+          "actor": "UploadApiSpecificationCommandHandler",
+          "action": "Create ApiSpecification(ParseStatus=Pending, OriginalFileId, SourceType). Create OutboxMessage(SPEC_UPLOADED).",
+          "output": "Specification + outbox message persisted"
+        },
+        {
+          "step": 6,
+          "actor": "SpecificationsController",
+          "action": "Return 201 SpecificationModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Create Manual Specification",
+      "type": "synchronous + transaction",
+      "feature": "FE-03-01",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{projectId}/specifications/manual { name, version, autoActivate, endpoints[] }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "CreateManualSpecificationCommandHandler",
+          "action": "Validate name, project ownership. Check subscription limit. EnsurePathParameterConsistency cho moi endpoint.",
+          "output": "Input validated"
+        },
+        {
+          "step": 3,
+          "actor": "CreateManualSpecificationCommandHandler",
+          "action": "Create ApiSpecification(SourceType=Manual, ParseStatus=Success). Tao ApiEndpoint + EndpointParameter + EndpointResponse cho moi endpoint definition.",
+          "output": "Spec + endpoints persisted in transaction"
+        },
+        {
+          "step": 4,
+          "actor": "SpecificationsController",
+          "action": "Return 201 SpecificationDetailModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Import cURL",
+      "type": "synchronous",
+      "feature": "FE-03-01",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/projects/{projectId}/specifications/curl-import { name, version, curlCommand, autoActivate }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ImportCurlCommandHandler",
+          "action": "Validate cURL syntax qua CurlParser.Parse(curlCommand). Extract method, URL, headers, body, auth.",
+          "output": "CurlParseResult"
+        },
+        {
+          "step": 3,
+          "actor": "ImportCurlCommandHandler",
+          "action": "Create ApiSpecification(SourceType=cURL, ParseStatus=Success). Tao ApiEndpoint tu parsed method/path. Tao EndpointParameter cho path params, query params, headers, body.",
+          "output": "Spec + endpoint persisted"
+        },
+        {
+          "step": 4,
+          "actor": "SpecificationsController",
+          "action": "Return 201 SpecificationDetailModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Activate/Deactivate Specification",
+      "type": "synchronous + transaction + outbox",
+      "feature": "FE-03-01",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/projects/{projectId}/specifications/{specId}/activate (hoac /deactivate)",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "ActivateSpecificationCommandHandler",
+          "action": "Load spec + project, verify ownership. Activate: set spec.IsActive=true, deactivate old active spec, update Project.ActiveSpecId. Deactivate: set spec.IsActive=false.",
+          "output": "Spec + project updated in transaction"
+        },
+        {
+          "step": 3,
+          "actor": "ActivateSpecificationCommandHandler",
+          "action": "Create OutboxMessage(SPEC_ACTIVATED hoac SPEC_DEACTIVATED).",
+          "output": "Outbox message persisted"
+        },
+        {
+          "step": 4,
+          "actor": "SpecificationsController",
+          "action": "Return 200 SpecificationModel.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "CRUD Endpoint",
+      "type": "synchronous + transaction",
+      "feature": "FE-03-02",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST/PUT/DELETE /api/projects/{projectId}/specifications/{specId}/endpoints[/{endpointId}]",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "EndpointsController",
+          "action": "Bind request + ICurrentUser, dispatch AddUpdateEndpointCommand hoac DeleteEndpointCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "AddUpdateEndpointCommandHandler",
+          "action": "Validate HttpMethod, Path. Verify project ownership va spec belongs to project. EnsurePathParameterConsistency. Create: check subscription limit. Update: delete old children + create new children (replace-all strategy).",
+          "output": "Endpoint + children persisted in transaction"
+        },
+        {
+          "step": 4,
+          "actor": "EndpointsController",
+          "action": "Create: return 201. Update: return 200. Delete: return 204.",
+          "output": "HTTP Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-06",
+      "name": "Get Resolved URL",
+      "type": "synchronous",
+      "feature": "FE-03-02",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET .../endpoints/{endpointId}/resolved-url?param1=value1&param2=value2",
+          "output": "HTTP Request voi dynamic query string params"
+        },
+        {
+          "step": 2,
+          "actor": "GetResolvedUrlQueryHandler",
+          "action": "Load endpoint va path parameters (Location=Path). Build parameter values: explicit query params > DefaultValue > Examples[0] fallback.",
+          "output": "Parameter values resolved"
+        },
+        {
+          "step": 3,
+          "actor": "GetResolvedUrlQueryHandler",
+          "action": "Goi IPathParameterTemplateService.ResolveUrl(path, values). Tra ve ResolvedUrlResult voi resolvedUrl, unresolvedParameters, isFullyResolved.",
+          "output": "URL resolved"
+        },
+        {
+          "step": 4,
+          "actor": "EndpointsController",
+          "action": "Return 200 ResolvedUrlResult.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-07",
+      "name": "Get Path Parameter Mutations",
+      "type": "synchronous",
+      "feature": "FE-03-02",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET .../endpoints/{endpointId}/path-param-mutations",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "GetPathParamMutationsQueryHandler",
+          "action": "Load endpoint va path parameters (Location=Path). Cho moi param: goi IPathParameterTemplateService.GenerateMutations(name, dataType, format, defaultValue).",
+          "output": "Mutation variants generated per param"
+        },
+        {
+          "step": 3,
+          "actor": "GetPathParamMutationsQueryHandler",
+          "action": "Cho moi mutation: resolve URL voi mutated value (current param) va default values (other params). Tra ve PathParamMutationsResult voi ParameterMutationGroup per param.",
+          "output": "Mutations with resolved URLs"
+        },
+        {
+          "step": 4,
+          "actor": "EndpointsController",
+          "action": "Return 200 PathParamMutationsResult.",
+          "output": "HTTP 200 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-08",
+      "name": "Parser Flow (Design Only)",
+      "type": "async (outbox-triggered)",
+      "feature": "FE-03-03",
+      "status": "design-only",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "PublishEventWorker",
+          "action": "Poll OutboxMessage(SPEC_UPLOADED), dispatch ParseUploadedSpecificationCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 2,
+          "actor": "ParseUploadedSpecificationCommandHandler",
+          "action": "Idempotency guard: check ParseStatus. Neu khong phai Pending thi exit. Download file qua IStorageFileGatewayService.DownloadAsync.",
+          "output": "File bytes loaded"
+        },
+        {
+          "step": 3,
+          "actor": "ParseUploadedSpecificationCommandHandler",
+          "action": "Dispatch to OpenApiSpecificationParser hoac PostmanSpecificationParser tuy theo SourceType. Parse -> extract endpoints, parameters, responses, security schemes.",
+          "output": "Parsed entities"
+        },
+        {
+          "step": 4,
+          "actor": "ParseUploadedSpecificationCommandHandler",
+          "action": "Success: replace-all children, set ParseStatus=Success, ParsedAt. Failure: set ParseStatus=Failed, ParseErrors.",
+          "output": "Spec updated"
+        }
+      ],
+      "designReference": "docs/features/FE-03-parser-flow/parser-flow-design.json"
+    }
+  ],
+  "transactionSummary": {
+    "implicitTransactions": [
+      "List/get queries, resolved URL va mutations chi can read operations.",
+      "Upload specification chi dung SaveChangesAsync (outbox + spec created together).",
+      "Import cURL chi dung SaveChangesAsync."
+    ],
+    "explicitTransactions": [
+      {
+        "operation": "Activate/Deactivate Specification",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "ApiSpecification (old active → IsActive=false)",
+          "ApiSpecification (new active → IsActive=true)",
+          "Project (ActiveSpecId)"
+        ]
+      },
+      {
+        "operation": "Create Manual Specification",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "ApiSpecification",
+          "ApiEndpoint (per endpoint definition)",
+          "EndpointParameter (per parameter)",
+          "EndpointResponse (per response)"
+        ]
+      },
+      {
+        "operation": "Create/Update Endpoint",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "ApiEndpoint",
+          "EndpointParameter (replace-all)",
+          "EndpointResponse (replace-all)"
+        ]
+      },
+      {
+        "operation": "Delete Endpoint",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "ApiEndpoint (cascade delete children)"
+        ]
+      },
+      {
+        "operation": "Delete Specification",
+        "method": "Cascade delete via DB",
+        "entities": [
+          "ApiSpecification",
+          "ApiEndpoint + EndpointParameter + EndpointResponse + EndpointSecurityReq + SecurityScheme (cascade)"
+        ]
+      }
+    ]
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "File extension khong hop le (.json/.yaml/.yml).",
+        "Content khong phai OpenAPI (thieu openapi/swagger key) hoac Postman (thieu info/item).",
+        "cURL command syntax khong hop le.",
+        "HTTP method khong hop le.",
+        "Path rong hoac vuot 500 ky tu.",
+        "Subscription limit exceeded."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Project khong ton tai hoac khong thuoc current user.",
+        "Specification khong ton tai.",
+        "Endpoint khong ton tai."
+      ]
+    },
+    "fileTooLargeErrors": {
+      "httpStatus": 413,
+      "exceptionType": "RequestSizeLimitExceededException",
+      "examples": [
+        "Upload file vuot qua 10MB."
+      ]
+    },
+    "forbiddenErrors": {
+      "httpStatus": 403,
+      "exceptionType": "ForbiddenException",
+      "examples": [
+        "Subscription limit da vuot han muc cho upload."
+      ]
+    }
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "File Validation Gate",
+      "rule": "Upload file phai co extension .json/.yaml/.yml va content phai phu hop voi SourceType (OpenAPI hoac Postman)."
+    },
+    {
+      "id": "QG-02",
+      "name": "File Size Gate",
+      "rule": "Upload file khong duoc vuot 10MB (enforced boi [RequestSizeLimit(10_485_760)])."
+    },
+    {
+      "id": "QG-03",
+      "name": "Subscription Limit Gate",
+      "rule": "Tao specification hoac endpoint moi phai kiem tra subscription limit truoc khi persist."
+    },
+    {
+      "id": "QG-04",
+      "name": "Authorization Gate",
+      "rule": "Tat ca 16 endpoints phai gan [Authorize] va permission policy tuong ung."
+    },
+    {
+      "id": "QG-05",
+      "name": "Ownership Gate",
+      "rule": "Moi write operation phai verify Project.OwnerId == currentUser.UserId."
+    },
+    {
+      "id": "QG-06",
+      "name": "Path Parameter Consistency Gate",
+      "rule": "Moi {placeholder} trong path phai co parameter definition tuong ung (auto-create neu thieu)."
+    }
+  ],
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "FE-03-01 Specification Management",
+      "tasks": [
+        "SpecificationsController voi 9 endpoints + permissions + rate limiting.",
+        "UploadApiSpecificationCommand: file validation, storage upload, outbox event.",
+        "CreateManualSpecificationCommand: inline endpoint creation in transaction.",
+        "ImportCurlCommand: CurlParser.Parse static service.",
+        "ActivateSpecificationCommand: Project.ActiveSpecId + deactivate old.",
+        "DeleteSpecificationCommand: cascade delete children.",
+        "GetSpecificationsQuery: list voi filter ParseStatus/SourceType.",
+        "GetSpecificationQuery: detail voi EndpointCount va ParseErrors."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "FE-03-02 Endpoint Management",
+      "tasks": [
+        "EndpointsController voi 7 endpoints + permissions + rate limiting.",
+        "AddUpdateEndpointCommand: replace-all children strategy + subscription limit.",
+        "DeleteEndpointCommand: cascade delete via DB.",
+        "GetEndpointsQuery: list endpoints by specId.",
+        "GetEndpointQuery: detail voi children + resolved URL.",
+        "GetResolvedUrlQuery: dynamic query params + fallback.",
+        "GetPathParamMutationsQuery: generate mutations per path param.",
+        "PathParameterTemplateService: URL resolution + mutation generation.",
+        "ApiEndpointMetadataService: cross-module dependency analysis."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "FE-03-03 Parser Flow (Design Only)",
+      "tasks": [
+        "ParseUploadedSpecificationCommand (planned).",
+        "OpenApiSpecificationParser (planned).",
+        "PostmanSpecificationParser (planned).",
+        "IStorageFileGatewayService.DownloadAsync extension (planned)."
+      ]
+    }
+  ]
+}
