@@ -38,6 +38,10 @@ public static class LlmAssistantServiceCollectionExtensions
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
+        // FE-06: Cross-module gateway for LLM interaction audit + caching
+        services.AddScoped<ClassifiedAds.Contracts.LlmAssistant.Services.ILlmAssistantGatewayService,
+            ClassifiedAds.Modules.LlmAssistant.Services.LlmAssistantGatewayService>();
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
         return services;
