@@ -10,15 +10,15 @@
 
 | Status | Count | % |
 |--------|-------|----|
-| ✅ Completed | 9 | 53% |
-| 🔨 In Progress | 2 | 12% |
+| ✅ Completed | 10 | 59% |
+| 🔨 In Progress | 1 | 6% |
 | 📋 Skeleton Only | 3 | 17% |
 | ❌ Not Started | 3 | 18% |
 | **Total** | **17** | |
 
 > FE-05 tách thành FE-05A + FE-05B trong bảng chi tiết nhưng tính là 1 feature trong Summary.
 
-**Overall Weighted Progress: ~63%**
+**Overall Weighted Progress: ~70%**
 
 ---
 
@@ -29,10 +29,9 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | Phase | FE | Deliverable | Trọng số | Why this order |
 |------|----|-------------|----------|----------------|
 | 1 | **FE-07 + FE-08** | Test execution engine + rule-based validation | Critical | Core value: chạy test + đánh giá pass/fail — phần nặng nhất còn lại |
-| 2 | **FE-06** | Body mutations + LLM boundary/negative scenario | Medium | Mở rộng FE-05 với mutations cho request body + LLM gợi ý scenario |
-| 3 | **FE-09** | LLM failure explanations | Medium | Cần kết quả fail từ FE-07/08 làm input |
-| 4 | **FE-10** | Reports + PDF/CSV export | Medium | Cần execution results từ FE-07/08 |
-| 5 | **FE-15 → FE-16 → FE-17** | LLM suggestion review/feedback/bulk | Low | Review loop cuối cùng, không blocking |
+| 2 | **FE-09** | LLM failure explanations | Medium | Cần kết quả fail từ FE-07/08 làm input |
+| 3 | **FE-10** | Reports + PDF/CSV export | Medium | Cần execution results từ FE-07/08 |
+| 4 | **FE-15 → FE-16 → FE-17** | LLM suggestion review/feedback/bulk | Low | Review loop cuối cùng, không blocking |
 
 ### Mandatory User Flow (End-to-End)
 
@@ -44,7 +43,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 5.  User verifies and reorders API sequence             → FE-05A ✅
 6.  System saves confirmed order snapshot               → FE-05A ✅
 7.  System generates happy-path test cases              → FE-05B ✅
-8.  System generates boundary/negative cases            → FE-06 🔨
+8.  System generates boundary/negative cases            → FE-06 ✅
 9.  System executes tests with dependency chaining      → FE-07 🔨
 10. System validates results (rule-based pass/fail)     → FE-08 📋
 11. LLM explains failures                              → FE-09 📋
@@ -81,7 +80,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 |-------|---------|-----------|--------|--------|--------|----------------|-------|
 | **FE-05A** | API test order proposal + user verify/reorder | Order workflow | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-24 | TestOrderController (6 endpoints: propose, latest, reorder, approve, reject, gate-status), 4 command handlers (Propose/Reorder/Approve/Reject), paper-based algorithms: DependencyAwareTopologicalSorter (Kahn's, KAT arXiv:2407.10227), SemanticTokenMatcher (5-tier matching, SPDG), SchemaRelationshipAnalyzer (Warshall's transitive closure), ObservationConfirmationPromptBuilder (COmbine/RBCTest arXiv:2504.17287). 7 test files |
 | **FE-05B** | Happy-path test case generation from approved order | Test case gen | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-25 | TestCasesController (3 endpoints: generate, list, detail), GenerateHappyPathTestCasesCommand (gate check → subscription limit → n8n call → entity persistence → version bump), HappyPathTestCaseGenerator orchestrator, n8n webhook integration (IN8nIntegrationService), Observation-Confirmation prompt pipeline, TestCaseRequestBuilder (HTTP method/body type parsing), TestCaseExpectationBuilder (status/schema/checks), EndpointPromptContextMapper (global+endpoint business rules merge), ForceRegenerate support, dependency chain wiring. 47 unit tests (command handler + builders + mapper). 5 test files |
-| **FE-06** | Boundary & negative test case generation (rule-based + LLM) | Mutations + LLM scenarios | TestGeneration + LlmAssistant | 🔨 Partial | — | — | Path-parameter mutations implemented via FE-12 (empty, wrongType, boundary, SQL injection, XSS, overflow — 6 mutation strategies in PathParameterTemplateService). **Missing:** request body mutations, LLM-generated boundary/negative scenario suggestions, mutation test case persistence |
+| **FE-06** | Boundary & negative test case generation (rule-based + LLM) | Mutations + LLM scenarios | TestGeneration + LlmAssistant + ApiDocumentation | ✅ Completed | `feature/FE-03-json-parsing-endpoints` | 2026-02-28 | **3-source orchestrator:** BoundaryNegativeTestCaseGenerator combines (1) path param mutations via IPathParameterMutationGatewayService, (2) rule-based body mutations via BodyMutationEngine (6 strategies: emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum), (3) LLM-suggested scenarios via LlmScenarioSuggester + n8n webhook. **CQRS pipeline:** GenerateBoundaryNegativeTestCasesCommand (gate check → subscription limit incl. MaxLlmCallsPerMonth → force-regenerate → orchestrator → transaction persistence → version bump → usage increment). TestCasesController `generate-boundary-negative` endpoint. **Cross-module contracts:** IApiEndpointParameterDetailService (structured param access), IPathParameterMutationGatewayService (path mutation bridge), ILlmAssistantGatewayService (LLM interaction audit + suggestion caching). **DI:** BodyMutationEngine (Singleton), LlmScenarioSuggester + BoundaryNegativeTestCaseGenerator (Scoped). **41 unit tests** across 4 test files (BodyMutationEngineTests 10, LlmScenarioSuggesterTests 7, BoundaryNegativeTestCaseGeneratorTests 8, CommandHandlerTests 16), all passing. 25 new files + 6 modified files |
 
 ### 5.4.1 LLM Suggestion Review
 
@@ -102,7 +101,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 
 | FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
 |-------|---------|--------|--------|--------|----------------|-------|
-| **FE-09** | LLM-assisted failure explanations | LlmAssistant | 📋 Skeleton Only | — | — | Entities defined: LlmInteraction (interaction log), LlmSuggestionCache (suggestion caching with SuggestionType enum). DbContext + repository boilerplate only. No LLM API client, no prompt execution runtime, no failure analysis logic. Note: ObservationConfirmationPromptBuilder exists in TestGeneration but targets n8n, not this module |
+| **FE-09** | LLM-assisted failure explanations | LlmAssistant | 📋 Skeleton Only | — | — | Entities defined: LlmInteraction (interaction log), LlmSuggestionCache (suggestion caching with SuggestionType enum). LlmAssistantGatewayService added for FE-06 (interaction audit + suggestion caching). DbContext + repository boilerplate. No LLM API client, no prompt execution runtime, no failure analysis logic |
 
 ### 5.7 Reporting
 
@@ -136,7 +135,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | FE-04 | Test Scope Config | 6% | 100% | 6.0% |
 | FE-05A | Test Order Proposal | 6% | 100% | 6.0% |
 | FE-05B | Happy-path Generation | 6% | 100% | 6.0% |
-| FE-06 | Boundary & Negative | 8% | 15% | 1.2% |
+| FE-06 | Boundary & Negative | 8% | 100% | 8.0% |
 | FE-07 | Test Execution | 10% | 20% | 2.0% |
 | FE-08 | Rule-based Validation | 8% | 0% | 0.0% |
 | FE-09 | LLM Failure Explanations | 5% | 5% | 0.3% |
@@ -148,7 +147,7 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | FE-15 | LLM Review Interface | 2% | 0% | 0.0% |
 | FE-16 | User Feedback on LLM | 2% | 0% | 0.0% |
 | FE-17 | Bulk Approval/Rejection | 1% | 0% | 0.0% |
-| | | **100%** | | **~63%** |
+| | | **100%** | | **~70%** |
 
 ---
 
@@ -158,17 +157,17 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 |--------|-------------|--------------|-------------|----------|---------|-------|----------------|
 | **Identity** | FE-01 | ✅ Full | 3 (30 endpoints) | 9 | 5 | 6 files | JwtTokenService, TokenBlacklist, RBAC, Rate Limiting, External IdP |
 | **ApiDocumentation** | FE-02, FE-03, FE-11, FE-12, FE-13 | ✅ Full | 3 (23 endpoints) | 12 | 10 | 10 files | CurlParser, OpenApiParser, PostmanParser, PathParameterTemplateService, ApiEndpointMetadataService, SpecOutboxPublisher |
-| **TestGeneration** | FE-04, FE-05A, FE-05B, FE-06 | 🔨 ~85% | 3 (15 endpoints) | 8 | 6 | 12 files | TopologicalSorter, SemanticTokenMatcher, SchemaRelationshipAnalyzer, PromptBuilder, HappyPathGenerator, n8n integration. FE-06 body mutations ❌ |
+| **TestGeneration** | FE-04, FE-05A, FE-05B, FE-06 | ✅ Full | 3 (16 endpoints) | 9 | 6 | 16 files | TopologicalSorter, SemanticTokenMatcher, SchemaRelationshipAnalyzer, PromptBuilder, HappyPathGenerator, BoundaryNegativeTestCaseGenerator, BodyMutationEngine, LlmScenarioSuggester, n8n integration |
 | **TestExecution** | FE-04, FE-07, FE-08 | 🔨 ~25% | 1 (5 endpoints) | 2 | 2 | 3 files | ExecutionAuthConfigService. Execution engine ❌, validation engine ❌ |
 | **Subscription** | FE-14 | ✅ Full | 3 (15 endpoints) | 15 | 11 | 16 files | PayOsService, LimitGateway, ConsumeLimitAtomically, ReconcileWorker |
-| **LlmAssistant** | FE-09, FE-15-17 | 📋 Skeleton | 0 | 0 | 0 | 0 files | Entities only: LlmInteraction, LlmSuggestionCache |
+| **LlmAssistant** | FE-06, FE-09, FE-15-17 | 🔨 Partial | 0 | 0 | 0 | 0 files | Entities: LlmInteraction, LlmSuggestionCache. LlmAssistantGatewayService (interaction audit + suggestion caching for FE-06). Missing: LLM API client, failure analysis logic |
 | **TestReporting** | FE-10 | 📋 Skeleton | 0 | 0 | 0 | 0 files | Entities only: TestReport, CoverageMetric |
 | **Storage** | (Supporting) | ✅ Full | 1 | — | — | — | FileStorageManager, StorageFileGatewayService (Upload + Download) |
 | **AuditLog** | (Supporting) | ✅ Full | — | — | — | — | Audit logging infrastructure |
 | **Notification** | (Supporting) | ✅ Full | — | — | — | — | Email + notification services |
 | **Configuration** | (Supporting) | ✅ Full | — | — | — | — | App settings management |
 
-**Total across all feature modules:** ~10 controllers, ~88 endpoints, ~46 commands, ~34 queries, ~47 test files
+**Total across all feature modules:** ~10 controllers, ~89 endpoints, ~47 commands, ~34 queries, ~51 test files
 
 ---
 
@@ -179,6 +178,9 @@ Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency c
 | `IStorageFileGatewayService` | Storage | ApiDocumentation | Upload + Download files |
 | `ISubscriptionLimitGatewayService` | Subscription | ApiDocumentation, TestGeneration | Usage limit check + consume |
 | `IApiEndpointMetadataService` | ApiDocumentation | TestGeneration | Endpoint dependency analysis, auth-first ordering |
+| `IApiEndpointParameterDetailService` | ApiDocumentation | TestGeneration | Structured parameter details for mutation generation (FE-06) |
+| `IPathParameterMutationGatewayService` | ApiDocumentation | TestGeneration | Path parameter mutation bridge for boundary tests (FE-06) |
+| `ILlmAssistantGatewayService` | LlmAssistant | TestGeneration | LLM interaction audit logging + suggestion caching (FE-06) |
 | `ICurrentUser` | Identity | All modules | Current user context |
 
 ---
@@ -210,6 +212,7 @@ When an AI Agent or developer completes a Feature (FE):
 
 | Date | FE ID(s) | Action | By |
 |------|----------|--------|----|
+| 2026-02-28 | FE-06 | FE-06 completed: boundary/negative test case generation with 3-source orchestrator (path mutations + body mutations + LLM suggestions via n8n). 25 new files, 6 modified files. 3 cross-module contracts (IApiEndpointParameterDetailService, IPathParameterMutationGatewayService, ILlmAssistantGatewayService). BodyMutationEngine (6 strategies), LlmScenarioSuggester (n8n + caching), BoundaryNegativeTestCaseGenerator orchestrator, CQRS command+handler, controller endpoint. 41 unit tests across 4 test files, all passing. Overall progress 63% → 70% | AI Agent |
 | 2026-02-28 | All | Full tracker audit: verified all modules against actual codebase. FE-03 updated with FE-03-03 Parser Flow completion (OpenAPI/Postman parsers, ParseUploadedSpecificationCommand, outbox wiring, 39 tests). FE-06 status corrected to 🔨 Partial. FE-14 bumped to 100% (audit confirmed 3 controllers, 15 commands, 11 queries, 16 test files). Added controller/command/query/test counts per module. Added cross-module contracts table. Overall progress ~63% | AI Agent |
 | 2026-02-25 | FE-05B | FE-05B completed: happy-path test case generation with n8n LLM integration, full CQRS pipeline (command/queries/controller), 47 unit tests | AI Agent |
 | 2026-02-24 | All | Full tracker refresh: FE-05 split into FE-05A (✅) + FE-05B (🔨), FE-12 marked ✅, FE-14 marked ✅, FE-07 updated to 🔨 partial, added weighted progress table, updated recommended sequence for remaining work | AI Agent |
