@@ -151,6 +151,15 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
     })
+
+    // LlmAssistant Module
+    .AddLlmAssistantModule(opt =>
+    {
+        configuration.GetSection("Modules:LlmAssistant").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+        opt.ConnectionStrings.MigrationsAssembly = Assembly.GetExecutingAssembly().GetName().Name;
+    })
     .AddApplicationServices();
 
     // Add HTML and PDF utilities (some modules might reference these in migrations)
@@ -205,6 +214,9 @@ Policy.Handle<Exception>().WaitAndRetry(
 
     // ApiDocumentation Module
     app.MigrateApiDocumentationDb();
+
+    // LlmAssistant Module
+    app.MigrateLlmAssistantDb();
 
     // Run DbUp scripts (for supplemental SQL migrations not in EF Core)
     var upgrader = DeployChanges.To
