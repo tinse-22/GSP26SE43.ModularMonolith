@@ -69,6 +69,12 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<ITestCaseExpectationBuilder, TestCaseExpectationBuilder>()
             .AddScoped<IHappyPathTestCaseGenerator, HappyPathTestCaseGenerator>();
 
+        // FE-06: Boundary/negative test case generation services
+        services
+            .AddSingleton<IBodyMutationEngine, BodyMutationEngine>()
+            .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
+            .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
+
         // n8n Integration (typed HttpClient + Options pattern, same as PayOS in Subscription module)
         services.Configure<N8nIntegrationOptions>(options =>
         {
