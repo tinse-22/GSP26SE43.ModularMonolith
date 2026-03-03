@@ -19,6 +19,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Controllers;
 /// <summary>
 /// Manages test cases for a test suite.
 /// FE-05B: Happy-path test case generation from approved API order via n8n/LLM.
+/// FE-06: Boundary/negative test case generation via rule-based mutations + LLM suggestions.
 /// </summary>
 [Authorize]
 [Produces("application/json")]
@@ -67,6 +68,43 @@ public class TestCasesController : ControllerBase
 
         _logger.LogInformation(
             "Generated happy-path test cases. TestSuiteId={TestSuiteId}, TotalGenerated={Total}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.TotalGenerated, _currentUser.UserId);
+
+        return Created(
+            $"/api/test-suites/{suiteId}/test-cases",
+            command.Result);
+    }
+
+    /// <summary>
+    /// Generate boundary/negative test cases using rule-based mutations and LLM suggestions.
+    /// Requires an approved API order to exist (FE-05A gate).
+    /// </summary>
+    [Authorize(Permissions.GenerateBoundaryNegativeTestCases)]
+    [HttpPost("generate-boundary-negative")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(GenerateBoundaryNegativeResultModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<GenerateBoundaryNegativeResultModel>> GenerateBoundaryNegative(
+        Guid suiteId,
+        [FromBody] GenerateBoundaryNegativeTestCasesRequest request)
+    {
+        var command = new GenerateBoundaryNegativeTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            SpecificationId = request.SpecificationId,
+            ForceRegenerate = request.ForceRegenerate,
+            IncludePathMutations = request.IncludePathMutations,
+            IncludeBodyMutations = request.IncludeBodyMutations,
+            IncludeLlmSuggestions = request.IncludeLlmSuggestions,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Generated boundary/negative test cases. TestSuiteId={TestSuiteId}, TotalGenerated={Total}, ActorUserId={ActorUserId}",
             suiteId, command.Result?.TotalGenerated, _currentUser.UserId);
 
         return Created(

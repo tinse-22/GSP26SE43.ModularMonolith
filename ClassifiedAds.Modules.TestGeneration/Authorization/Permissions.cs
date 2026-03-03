@@ -17,4 +17,7 @@ public static class Permissions
     // Test Case Generation (FE-05B)
     public const string GenerateTestCases = "Permission:GenerateTestCases";
     public const string GetTestCases = "Permission:GetTestCases";
+
+    // Boundary/Negative Test Case Generation (FE-06)
+    public const string GenerateBoundaryNegativeTestCases = "Permission:GenerateBoundaryNegativeTestCases";
 }
