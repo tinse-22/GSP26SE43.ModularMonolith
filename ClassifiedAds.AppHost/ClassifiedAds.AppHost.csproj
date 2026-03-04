@@ -17,12 +17,11 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference
-            Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj"
-            IsAspireProjectResource="false" />
+        <ProjectReference Include="..\ClassifiedAds.ServiceDefaults\ClassifiedAds.ServiceDefaults.csproj" IsAspireProjectResource="false" />
         <ProjectReference Include="..\ClassifiedAds.WebAPI\ClassifiedAds.WebAPI.csproj" />
         <ProjectReference Include="..\ClassifiedAds.Background\ClassifiedAds.Background.csproj" />
         <ProjectReference Include="..\ClassifiedAds.Migrator\ClassifiedAds.Migrator.csproj" />
+        <ProjectReference Include="..\ClassifiedAds.Modules.LlmAssistant\ClassifiedAds.Modules.LlmAssistant.csproj" />
     </ItemGroup>
 
 </Project>

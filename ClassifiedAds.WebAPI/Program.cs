@@ -154,6 +154,7 @@ services.AddControllers(configure =>
 .AddStorageModule()
 .AddSubscriptionModule()
 .AddApiDocumentationModule()
+.AddLlmAssistantModule()
 .AddTestGenerationModule()
 .AddTestExecutionModule();
 
@@ -260,6 +261,12 @@ services.AddAuditLogModule(opt =>
 {
     configuration.GetSection("Modules:ApiDocumentation").Bind(opt);
     opt.ConnectionStrings ??= new ClassifiedAds.Modules.ApiDocumentation.ConfigurationOptions.ConnectionStringsOptions();
+    opt.ConnectionStrings.Default = sharedConnectionString;
+})
+.AddLlmAssistantModule(opt =>
+{
+    configuration.GetSection("Modules:LlmAssistant").Bind(opt);
+    opt.ConnectionStrings ??= new ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions.ConnectionStringsOptions();
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
 .AddTestGenerationModule(opt =>
