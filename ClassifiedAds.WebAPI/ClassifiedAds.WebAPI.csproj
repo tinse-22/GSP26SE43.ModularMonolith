@@ -33,22 +33,5 @@
 		<ProjectReference Include="..\ClassifiedAds.Modules.ApiDocumentation\ClassifiedAds.Modules.ApiDocumentation.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Modules.TestGeneration\ClassifiedAds.Modules.TestGeneration.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Modules.TestExecution\ClassifiedAds.Modules.TestExecution.csproj" />
+		<ProjectReference Include="..\ClassifiedAds.Modules.TestReporting\ClassifiedAds.Modules.TestReporting.csproj" />
 		<ProjectReference Include="..\ClassifiedAds.Modules.LlmAssistant\ClassifiedAds.Modules.LlmAssistant.csproj" />
-	</ItemGroup>
-
-	<PropertyGroup>
-		<PreserveCompilationReferences>true</PreserveCompilationReferences>
-		<PreserveCompilationContext>true</PreserveCompilationContext>
-	</PropertyGroup>
-
-
-	<ItemGroup>
-		<None Update="Certs\classifiedads.identityserver.pfx">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="Certs\classifiedads.identityserver.pub.cer">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-	</ItemGroup>
-
-</Project>
