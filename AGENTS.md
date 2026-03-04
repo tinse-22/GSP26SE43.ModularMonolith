@@ -139,9 +139,32 @@ If the module exposes controllers, services, or background workers:
 | # | File | Action |
 |---|------|--------|
 | 1 | Host `.csproj` | Add `<ProjectReference>` to the module |
-| 2 | Host `Program.cs` | Add `.AddXxxModule(...)` DI registration |
-| 3 | Host `Dockerfile` | Add `COPY` line for the module's `.csproj` (see D above) |
-| 4 | `docker-compose.yml` | Add any module-specific environment variables if needed |
+| 2 | Host `Program.cs` — **IMvcBuilder chain** | Add `.AddXxxModule()` to the `AddControllers()` fluent chain (registers controllers via `ApplicationPart`) |
+| 3 | Host `Program.cs` — **IServiceCollection chain** | Add `.AddXxxModule(opt => { ... })` to the services chain (registers DbContext, repositories, message handlers) |
+| 4 | Host `appsettings.json` | Add `"Xxx": {}` under `"Modules"` section (even if empty — config binding requires the section to exist) |
+| 5 | Host `Dockerfile` | Add `COPY` line for the module's `.csproj` (see D above) |
+| 6 | `docker-compose.yml` | Add any module-specific environment variables if needed |
+
+**WebAPI DI registration pattern** (both chains are REQUIRED):
+
+```csharp
+// 1. IMvcBuilder chain — in AddControllers() fluent call
+services.AddControllers(...)
+    .AddXxxModule()   // <-- ADD THIS LINE
+    // ... other modules
+
+// 2. IServiceCollection chain — after AddControllers block
+services
+    .AddXxxModule(opt =>
+    {
+        configuration.GetSection("Modules:Xxx").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.Xxx.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    // ... other modules
+```
+
+> **CRITICAL**: A module that is referenced in `.csproj` but NOT registered in BOTH chains will compile successfully but **fail at runtime** with `Unable to resolve service` errors. Always register in BOTH the IMvcBuilder chain AND the IServiceCollection chain.
 
 ### 8) Existing Module Model Change Checklist
 
@@ -180,13 +203,31 @@ docker compose build webapi
 docker compose build background
 ```
 
+#### DI Registration Completeness Check (MANDATORY)
+
+Before committing, verify **every** module with a `ServiceCollectionExtensions.cs` is registered in all host projects that reference it:
+
+1. List all modules that have `ServiceCollectionExtensions.cs`:
+   ```bash
+   find . -path "*/ClassifiedAds.Modules.*/ServiceCollectionExtensions.cs" -type f
+   ```
+
+2. For each module found, verify it appears in **ALL THREE** locations in the host `Program.cs`:
+   - [ ] `.AddXxxModule()` in the **IMvcBuilder chain** (AddControllers fluent call)
+   - [ ] `.AddXxxModule(opt => {...})` in the **IServiceCollection chain**
+   - [ ] `"Xxx": {}` section exists in the host's **appsettings.json** under `"Modules"`
+
+3. If any module is missing from any location, **add it immediately** — do not commit with incomplete registrations.
+
 ### 10) Common Mistakes — Hard Prohibitions
 
 - **Do not** create a module with a DbContext without generating its initial migration.
 - **Do not** modify entities/DbConfigurations without generating a new migration.
 - **Do not** add a `<ProjectReference>` to a host `.csproj` without adding the matching `COPY` line in that host's `Dockerfile`.
 - **Do not** register a module in `Program.cs` without adding its `<ProjectReference>` in `.csproj`.
-- **Do not** forget `appsettings.json` — every module registered in Migrator must have a `"Modules:Xxx"` section.
+- **Do not** forget `appsettings.json` — every module registered in Migrator or WebAPI must have a `"Modules:Xxx"` section.
 - **Do not** hardcode connection strings in module options — always use `sharedConnectionString` from `ConnectionStrings:Default`.
 - **Do not** set `MigrationsAssembly` to the module project — it must always be `Assembly.GetExecutingAssembly().GetName().Name` (i.e., `ClassifiedAds.Migrator`).
+- **Do not** register a module in only ONE chain (IMvcBuilder or IServiceCollection) — BOTH chains are required. Missing IMvcBuilder = controllers not discovered. Missing IServiceCollection = services not resolved at runtime.
+- **Do not** create a module with `ServiceCollectionExtensions.cs` without immediately registering it in the host `Program.cs` — unregistered modules are silent runtime failures that compile without errors.
 
