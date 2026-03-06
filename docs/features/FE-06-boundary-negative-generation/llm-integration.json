@@ -1,0 +1,451 @@
+{
+  "$schema": "ai-agent-llm-integration-spec",
+  "version": "1.0.0",
+  "documentId": "fe-06-llm-integration",
+  "requirementId": "FE-06",
+  "title": "FE-06 LLM Integration - Boundary/Negative Scenario Suggestion via n8n Webhook",
+  "description": "Chi tiet toan bo LLM integration pipeline cho FE-06: n8n webhook communication, Observation-Confirmation prompt pattern, caching strategy, audit trail, va error handling.",
+  "implementationFiles": {
+    "llmScenarioSuggester": "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+    "llmScenarioSuggesterInterface": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+    "n8nPayload": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs",
+    "n8nResponse": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativeResponse.cs",
+    "n8nIntegrationService": "ClassifiedAds.Modules.TestGeneration/Services/IN8nIntegrationService.cs",
+    "n8nWebhookNames": "ClassifiedAds.Modules.TestGeneration/Constants/N8nWebhookNames.cs",
+    "observationConfirmationPromptBuilder": "ClassifiedAds.Modules.TestGeneration/Algorithms/IObservationConfirmationPromptBuilder.cs",
+    "endpointPromptContextMapper": "ClassifiedAds.Modules.TestGeneration/Services/EndpointPromptContextMapper.cs",
+    "llmAssistantGatewayService": "ClassifiedAds.Contracts/LlmAssistant/Services/ILlmAssistantGatewayService.cs",
+    "llmInteractionEntity": "ClassifiedAds.Modules.LlmAssistant/Entities/LlmInteraction.cs",
+    "llmSuggestionCacheEntity": "ClassifiedAds.Modules.LlmAssistant/Entities/LlmSuggestionCache.cs"
+  },
+  "n8nWebhookIntegration": {
+    "webhookName": "generate-boundary-negative-scenarios",
+    "webhookNameConstant": "N8nWebhookNames.GenerateBoundaryNegative",
+    "method": "IN8nIntegrationService.TriggerWebhookAsync<TPayload, TResponse>(webhookName, payload, ct)",
+    "payloadStructure": {
+      "name": "N8nBoundaryNegativePayload",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs",
+      "fields": {
+        "testSuiteId": {
+          "type": "Guid",
+          "description": "ID cua test suite dang generate."
+        },
+        "testSuiteName": {
+          "type": "string",
+          "description": "Ten test suite de LLM reference."
+        },
+        "globalBusinessRules": {
+          "type": "string?",
+          "description": "Business rules toan cuc tu TestSuite.GlobalBusinessRules. LLM dung de hieu domain context."
+        },
+        "endpoints": {
+          "type": "List<N8nBoundaryEndpointPayload>",
+          "description": "Danh sach endpoints can goi y boundary/negative scenarios."
+        }
+      }
+    },
+    "endpointPayloadStructure": {
+      "name": "N8nBoundaryEndpointPayload",
+      "fields": {
+        "endpointId": {
+          "type": "Guid",
+          "description": "ID cua endpoint."
+        },
+        "httpMethod": {
+          "type": "string",
+          "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)."
+        },
+        "path": {
+          "type": "string",
+          "description": "API path template (vd: /api/users/{id})."
+        },
+        "operationId": {
+          "type": "string?",
+          "description": "OpenAPI operationId."
+        },
+        "orderIndex": {
+          "type": "int",
+          "description": "Thu tu endpoint trong approved order."
+        },
+        "businessContext": {
+          "type": "string?",
+          "description": "Business context rieng cho endpoint nay tu TestSuite.EndpointBusinessContexts[endpointId]."
+        },
+        "prompt": {
+          "type": "N8nPromptPayload?",
+          "description": "Observation-Confirmation prompt cho endpoint nay.",
+          "subFields": {
+            "systemPrompt": "string — system instruction cho LLM",
+            "combinedPrompt": "string — combined observation + confirmation",
+            "observationPrompt": "string — observation step",
+            "confirmationPromptTemplate": "string — confirmation template"
+          }
+        },
+        "parameterSchemaPayloads": {
+          "type": "List<string>",
+          "description": "Raw JSON schemas cua request parameters/body."
+        },
+        "responseSchemaPayloads": {
+          "type": "List<string>",
+          "description": "Raw JSON schemas cua response body."
+        },
+        "parameterDetails": {
+          "type": "List<N8nParameterDetail>",
+          "description": "Parameter details (Name, Location, DataType, Format, IsRequired, DefaultValue)."
+        }
+      }
+    },
+    "responseStructure": {
+      "name": "N8nBoundaryNegativeResponse",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativeResponse.cs",
+      "fields": {
+        "scenarios": {
+          "type": "List<N8nSuggestedScenario>",
+          "description": "Danh sach scenarios LLM goi y."
+        },
+        "model": {
+          "type": "string?",
+          "description": "LLM model da dung (vd: gpt-4-turbo, claude-3-opus, gemini-pro)."
+        },
+        "tokensUsed": {
+          "type": "int?",
+          "description": "Tong so tokens da tieu thu."
+        }
+      }
+    },
+    "suggestedScenarioStructure": {
+      "name": "N8nSuggestedScenario",
+      "fields": {
+        "endpointId": {
+          "type": "Guid",
+          "description": "Endpoint ma scenario nay thuoc ve."
+        },
+        "scenarioName": {
+          "type": "string",
+          "description": "Ten scenario (human-readable). VD: 'Create user with duplicate email'."
+        },
+        "description": {
+          "type": "string",
+          "description": "Mo ta chi tiet ve scenario."
+        },
+        "testType": {
+          "type": "string",
+          "description": "'Boundary' hoac 'Negative'. Parsed thanh TestType enum."
+        },
+        "priority": {
+          "type": "string?",
+          "description": "'critical', 'high', 'medium', 'low'. Default: medium."
+        },
+        "tags": {
+          "type": "List<string>",
+          "description": "Tags bo sung: ['concurrency', 'race-condition', 'sql-injection', etc.]."
+        },
+        "request": {
+          "type": "N8nTestCaseRequest",
+          "description": "Reuse N8nTestCaseRequest model tu happy-path. Gom: HttpMethod, Url, Body, PathParams, QueryParams, Headers."
+        },
+        "expectation": {
+          "type": "N8nTestCaseExpectation",
+          "description": "Reuse N8nTestCaseExpectation model tu happy-path. Gom: ExpectedStatus[], BodyContains[], etc."
+        },
+        "variables": {
+          "type": "List<N8nTestCaseVariable>",
+          "description": "Variables de tham chieu giua cac test cases."
+        }
+      }
+    }
+  },
+  "observationConfirmationPromptPattern": {
+    "description": "Pattern tu academic papers (COmbine/RBCTest). Chia LLM call thanh 2 buoc: Observation (quan sat endpoint) va Confirmation (xac nhan scenarios). Giup LLM tap trung va giam hallucination.",
+    "implementationReference": {
+      "promptBuilder": "ClassifiedAds.Modules.TestGeneration/Algorithms/IObservationConfirmationPromptBuilder.cs",
+      "promptBuilderImpl": "ClassifiedAds.Modules.TestGeneration/Algorithms/ObservationConfirmationPromptBuilder.cs",
+      "contextMapper": "ClassifiedAds.Modules.TestGeneration/Services/EndpointPromptContextMapper.cs"
+    },
+    "buildProcess": [
+      {
+        "step": 1,
+        "action": "Map endpoint metadata to EndpointPromptContext",
+        "method": "EndpointPromptContextMapper.Map(orderedMetadata, suite)",
+        "includes": [
+          "Endpoint basic info (HttpMethod, Path, OperationId)",
+          "Parameters va schemas",
+          "Business context tu TestSuite.EndpointBusinessContexts",
+          "Global business rules tu TestSuite.GlobalBusinessRules"
+        ]
+      },
+      {
+        "step": 2,
+        "action": "Build Observation-Confirmation prompts for sequence",
+        "method": "IObservationConfirmationPromptBuilder.BuildForSequence(promptContexts)",
+        "output": "IReadOnlyList<ObservationConfirmationPrompt>"
+      },
+      {
+        "step": 3,
+        "action": "Map each prompt to N8nPromptPayload",
+        "fields": {
+          "systemPrompt": "System instruction cho LLM role va format",
+          "combinedPrompt": "Full prompt text",
+          "observationPrompt": "Observation phan tich endpoint",
+          "confirmationPromptTemplate": "Template xac nhan scenarios"
+        }
+      }
+    ],
+    "promptIndexMapping": "prompt[i] maps to orderedEndpoints[i]. Neu i >= prompts.Count thi promptPayload = null."
+  },
+  "cachingStrategy": {
+    "description": "Cache LLM suggestions per-endpoint de giam chi phi va tang toc do khi regenerate. All-or-nothing cache: chi tra cache khi ALL endpoints co cache hit.",
+    "storage": {
+      "entity": "LlmSuggestionCache",
+      "schema": "llmassistant",
+      "table": "llmassistant.LlmSuggestionCaches",
+      "accessVia": "ILlmAssistantGatewayService (cross-module boundary)"
+    },
+    "cacheKeyGeneration": {
+      "method": "LlmScenarioSuggester.BuildCacheKey(LlmScenarioSuggestionContext)",
+      "algorithm": [
+        "1. Build string: '{testSuiteId}:{specificationId}:{endpointId1},{endpointId2},...' (sorted by EndpointId ASC).",
+        "2. SHA256 hash the string.",
+        "3. Take first 16 hex characters (8 bytes) as cache key."
+      ],
+      "example": {
+        "input": "a1b2c3d4-...:e5f6g7h8-...:id1,id2,id3",
+        "hash": "SHA256(...)",
+        "cacheKey": "4F7A2B1C8E3D9F60"
+      },
+      "determinism": "Cung input (suiteId + specId + sorted endpointIds) -> cung cache key."
+    },
+    "cacheLookup": {
+      "method": "TryGetCachedResultAsync",
+      "logic": [
+        "1. For each endpointId in orderedEndpoints:",
+        "   - Call ILlmAssistantGatewayService.GetCachedSuggestionsAsync(endpointId, SuggestionTypeBoundaryNegative=1, cacheKey).",
+        "   - If cached.HasCache == false -> return null immediately (cache miss).",
+        "   - If cached.HasCache == true -> deserialize JSON to List<LlmSuggestedScenario>.",
+        "2. If ALL endpoints have cache hit -> assemble allCachedScenarios and return LlmScenarioSuggestionResult { Scenarios, FromCache=true }.",
+        "3. If ANY endpoint has cache miss -> return null (treat as full cache miss, call LLM for fresh results)."
+      ],
+      "errorHandling": "JsonException during cache deserialization -> log warning, return null (treat as cache miss).",
+      "strategy": "All-or-nothing: partial cache hits are NOT used. This simplifies logic va dam bao consistency."
+    },
+    "cacheSave": {
+      "method": "CacheResultsAsync",
+      "logic": [
+        "1. Group scenarios by EndpointId.",
+        "2. For each endpointId in orderedEndpoints:",
+        "   - Get scenarios for this endpoint (or empty list if none).",
+        "   - Serialize to JSON.",
+        "   - Call ILlmAssistantGatewayService.CacheSuggestionsAsync(endpointId, SuggestionTypeBoundaryNegative=1, cacheKey, json, TTL=24h)."
+      ],
+      "ttl": "TimeSpan.FromHours(24)",
+      "errorHandling": "Catch Exception -> log warning, do not throw. Cache save failure does not affect main flow.",
+      "note": "Cache luu per-endpoint (khong luu gom). Khi 1 endpoint bi invalidate thi chi endpoint do bi miss."
+    },
+    "suggestionTypeConstant": {
+      "name": "SuggestionTypeBoundaryNegative",
+      "value": 1,
+      "mappedTo": "LlmSuggestionCache.SuggestionType enum: BoundaryCase=0, NegativeCase=1, HappyPath=2, SecurityCase=3",
+      "note": "Dung value 1 (NegativeCase) cho ca boundary va negative combined scenarios."
+    },
+    "cacheInvalidation": {
+      "automatic": "ExpiresAt column tren LlmSuggestionCache. Entries cu tu dong het han sau 24h.",
+      "manual": "Hien tai khong co API de manual invalidate cache. Regenerate voi IncludeLlmSuggestions=true se dung cached results neu con han.",
+      "forceRefresh": "Chua implemented. Neu can force refresh LLM suggestions, phai doi cache het han hoac manual xoa record trong DB."
+    }
+  },
+  "auditTrail": {
+    "description": "Log moi LLM interaction vao LlmInteraction entity qua ILlmAssistantGatewayService.SaveInteractionAsync.",
+    "entity": {
+      "name": "LlmInteraction",
+      "schema": "llmassistant",
+      "table": "llmassistant.LlmInteractions",
+      "fields": {
+        "id": "Guid (auto-generated)",
+        "userId": "Guid — user triggered generation",
+        "interactionType": "int — 0 (ScenarioSuggestion)",
+        "inputContext": "string — serialized N8nBoundaryNegativePayload (full request sent to n8n)",
+        "llmResponse": "string — serialized N8nBoundaryNegativeResponse (full response from n8n)",
+        "modelUsed": "string — LLM model name (vd: gpt-4-turbo)",
+        "tokensUsed": "int — total tokens consumed",
+        "latencyMs": "int — elapsed milliseconds for n8n call (measured by Stopwatch)",
+        "createdDateTime": "DateTimeOffset — auto-set"
+      }
+    },
+    "callingPattern": {
+      "method": "LlmScenarioSuggester.SaveInteractionAsync",
+      "timing": "Sau khi n8n call hoan tat, TRUOC khi parse response.",
+      "serialization": "JsonSerializer.Serialize voi JsonNamingPolicy.CamelCase, WriteIndented=false.",
+      "errorHandling": "Wrap trong try-catch. Catch Exception -> log warning ('Failed to save LLM interaction for audit'), do NOT throw. Main flow continues normally."
+    },
+    "interactionTypeMapping": {
+      "ScenarioSuggestion": 0,
+      "FailureExplanation": 1,
+      "DocumentationParsing": 2
+    }
+  },
+  "responseParsing": {
+    "method": "LlmScenarioSuggester.ParseScenarios(N8nBoundaryNegativeResponse response)",
+    "logic": [
+      "1. If response == null OR response.Scenarios == null OR empty -> return empty list.",
+      "2. Map each N8nSuggestedScenario to LlmSuggestedScenario:",
+      "   - endpointId = s.EndpointId",
+      "   - scenarioName = s.ScenarioName",
+      "   - description = s.Description",
+      "   - suggestedTestType = ParseTestType(s.TestType) -> 'boundary' => Boundary, else => Negative",
+      "   - suggestedBody = s.Request?.Body",
+      "   - suggestedPathParams = s.Request?.PathParams",
+      "   - suggestedQueryParams = s.Request?.QueryParams",
+      "   - suggestedHeaders = s.Request?.Headers",
+      "   - expectedStatusCode = s.Expectation?.ExpectedStatus?.FirstOrDefault() ?? 400",
+      "   - expectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault()",
+      "   - priority = s.Priority",
+      "   - tags = s.Tags ?? new List<string>()"
+    ],
+    "testTypeParsing": {
+      "method": "ParseTestType(string testType)",
+      "rules": {
+        "null_or_empty": "Negative (default)",
+        "boundary": "Boundary",
+        "negative": "Negative",
+        "anything_else": "Negative (default)"
+      },
+      "caseInsensitive": true
+    }
+  },
+  "testCaseBuilding": {
+    "method": "BoundaryNegativeTestCaseGenerator.BuildLlmSuggestionTestCase",
+    "description": "Tao TestCase entity tu LlmSuggestedScenario. Reuse ITestCaseRequestBuilder va ITestCaseExpectationBuilder tu FE-05B.",
+    "steps": [
+      {
+        "step": 1,
+        "action": "Create TestCase shell",
+        "values": {
+          "id": "Guid.NewGuid()",
+          "testSuiteId": "From suite",
+          "endpointId": "scenario.EndpointId",
+          "name": "SanitizeName(scenario.ScenarioName, orderItem) — max 200 chars",
+          "description": "scenario.Description",
+          "testType": "scenario.SuggestedTestType",
+          "priority": "ParsePriority(scenario.Priority) — default Medium",
+          "isEnabled": true,
+          "tags": "SerializeTags(testType, 'llm-suggested', ...scenario.Tags)",
+          "version": 1
+        }
+      },
+      {
+        "step": 2,
+        "action": "Build TestCaseRequest via ITestCaseRequestBuilder.Build",
+        "input": "N8nTestCaseRequest { HttpMethod=orderItem.HttpMethod, Url=orderItem.Path, Body=scenario.SuggestedBody, PathParams, QueryParams, Headers }",
+        "note": "Reuse cung builder voi FE-05B happy-path. Builder xu ly null fields va fallback."
+      },
+      {
+        "step": 3,
+        "action": "Build TestCaseExpectation via ITestCaseExpectationBuilder.Build",
+        "input": "N8nTestCaseExpectation { ExpectedStatus=[scenario.ExpectedStatusCode], BodyContains=[scenario.ExpectedBehavior] (if not empty) }",
+        "note": "Reuse cung builder voi FE-05B happy-path."
+      }
+    ]
+  },
+  "crossModuleCommunication": {
+    "description": "FE-06 LLM pipeline giao tiep voi LlmAssistant module qua contract interface. Khong truy cap truc tiep entity/repository.",
+    "interface": "ILlmAssistantGatewayService",
+    "contractFile": "ClassifiedAds.Contracts/LlmAssistant/Services/ILlmAssistantGatewayService.cs",
+    "implementationFile": "ClassifiedAds.Modules.LlmAssistant/Services/LlmAssistantGatewayService.cs",
+    "methods": [
+      {
+        "name": "SaveInteractionAsync",
+        "signature": "Task SaveInteractionAsync(SaveLlmInteractionRequest request, CancellationToken ct)",
+        "description": "Luu 1 LlmInteraction record cho audit trail.",
+        "requestModel": {
+          "userId": "Guid",
+          "interactionType": "int (0=ScenarioSuggestion)",
+          "inputContext": "string (serialized payload)",
+          "llmResponse": "string (serialized response)",
+          "modelUsed": "string?",
+          "tokensUsed": "int",
+          "latencyMs": "int"
+        }
+      },
+      {
+        "name": "GetCachedSuggestionsAsync",
+        "signature": "Task<CachedSuggestionsDto> GetCachedSuggestionsAsync(Guid endpointId, int suggestionType, string cacheKey, CancellationToken ct)",
+        "description": "Check cache cho 1 endpoint. Tra HasCache=true neu co record chua het han.",
+        "responseModel": {
+          "hasCache": "bool",
+          "suggestionsJson": "string? (raw JSON cua List<LlmSuggestedScenario>)"
+        }
+      },
+      {
+        "name": "CacheSuggestionsAsync",
+        "signature": "Task CacheSuggestionsAsync(Guid endpointId, int suggestionType, string cacheKey, string suggestionsJson, TimeSpan ttl, CancellationToken ct)",
+        "description": "Luu hoac update cache cho 1 endpoint. Set ExpiresAt = now + ttl."
+      }
+    ],
+    "principle": "TestGeneration module chi biet interface ILlmAssistantGatewayService. Khong import LlmAssistant namespace truc tiep. DI container resolve implementation."
+  },
+  "errorHandling": {
+    "gracefulDegradation": {
+      "principle": "LLM-related failures KHONG duoc lam fail main generation flow. Audit va cache la best-effort.",
+      "scenarios": [
+        {
+          "failure": "LLM audit save fails",
+          "handling": "Catch Exception, log warning, continue. Test cases van duoc tao va persist.",
+          "code": "try { await SaveInteractionAsync(...); } catch (Exception ex) { _logger.LogWarning(ex, 'Failed to save LLM interaction...'); }"
+        },
+        {
+          "failure": "LLM cache save fails",
+          "handling": "Catch Exception, log warning, continue. Lan sau se goi LLM lai (vi khong co cache).",
+          "code": "try { await CacheResultsAsync(...); } catch (Exception ex) { _logger.LogWarning(ex, 'Failed to cache LLM suggestions...'); }"
+        },
+        {
+          "failure": "LLM cache deserialization fails",
+          "handling": "Catch JsonException, log warning, return null (treat as cache miss). Goi LLM fresh.",
+          "code": "catch (JsonException ex) { _logger.LogWarning(ex, 'Failed to deserialize cached suggestions...'); return null; }"
+        }
+      ]
+    },
+    "criticalFailures": {
+      "description": "Cac failure NAM TRONG main flow se throw exception va tra HTTP error cho client.",
+      "scenarios": [
+        {
+          "failure": "n8n webhook call fails (network, timeout, 5xx)",
+          "handling": "Exception propagate len CommandHandler -> GlobalExceptionHandler -> HTTP 500.",
+          "note": "n8n call failure la critical vi khong co fallback. Khong co retry built-in hien tai."
+        },
+        {
+          "failure": "n8n response parse fails (invalid JSON, unexpected structure)",
+          "handling": "Null/empty scenarios list returned. TotalGenerated co the = 0 neu chi dung LLM pipeline.",
+          "note": "ParseScenarios handle null response gracefully — return empty list."
+        }
+      ]
+    }
+  },
+  "performanceConsiderations": {
+    "n8nCallLatency": {
+      "typical": "2000-10000ms (depends on LLM model, endpoint count, prompt complexity)",
+      "timeout": "30000ms (configured in n8n or HTTP client)",
+      "measurement": "Stopwatch in LlmScenarioSuggester, logged as LatencyMs"
+    },
+    "cacheHitBenefit": {
+      "description": "Cache hit skip toan bo: prompt building, n8n call, response parsing. Chi can deserialize cached JSON.",
+      "expectedSpeedup": "10-100x (ms instead of seconds)"
+    },
+    "memoryConsideration": {
+      "payloadSerialization": "Full payload va response duoc serialize cho audit log. Co the lon (100KB+) voi nhieu endpoints.",
+      "suggestion": "Monitor LlmInteraction table size. Consider archival strategy for old records."
+    }
+  },
+  "jsonSerializationConfig": {
+    "options": {
+      "propertyNamingPolicy": "JsonNamingPolicy.CamelCase",
+      "propertyNameCaseInsensitive": true,
+      "writeIndented": false
+    },
+    "usage": [
+      "Serialize N8nBoundaryNegativePayload cho n8n call",
+      "Serialize payload/response cho audit log (InputContext, LlmResponse)",
+      "Serialize/Deserialize List<LlmSuggestedScenario> cho cache",
+      "Serialize tags cho TestCase.Tags"
+    ]
+  }
+}
