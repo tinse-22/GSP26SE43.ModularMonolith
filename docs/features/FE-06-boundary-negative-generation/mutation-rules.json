@@ -1,0 +1,355 @@
+{
+  "$schema": "ai-agent-mutation-spec",
+  "version": "1.0.0",
+  "documentId": "fe-06-mutation-rules",
+  "requirementId": "FE-06",
+  "title": "FE-06 Mutation Rules - Boundary & Negative Test Case Generation",
+  "description": "Chi tiet toan bo mutation rules cho 2 pipeline rule-based: path parameter mutations va body mutations. Moi mutation tao 1 TestCase entity voi TestType = Boundary hoac Negative.",
+  "implementationFiles": {
+    "bodyMutationEngine": "ClassifiedAds.Modules.TestGeneration/Services/BodyMutationEngine.cs",
+    "bodyMutationEngineInterface": "ClassifiedAds.Modules.TestGeneration/Services/IBodyMutationEngine.cs",
+    "bodyMutationModel": "ClassifiedAds.Modules.TestGeneration/Models/BodyMutation.cs",
+    "pathMutationGateway": "ClassifiedAds.Contracts/ApiDocumentation/Services/IPathParameterMutationGatewayService.cs",
+    "orchestrator": "ClassifiedAds.Modules.TestGeneration/Services/BoundaryNegativeTestCaseGenerator.cs"
+  },
+  "classificationRules": {
+    "description": "Quy tac phan loai mutation thanh Boundary hoac Negative TestType.",
+    "boundaryConditions": [
+      "Mutation type chua keyword: 'boundary', 'zero', 'max', 'overflow'.",
+      "Overflow mutations (Int32.MaxValue+1, Int64.MaxValue, very large string, very large number).",
+      "Gia tri o ranh gioi range (min/max of data type)."
+    ],
+    "negativeConditions": [
+      "Tat ca mutation khong phai Boundary.",
+      "Empty body, malformed JSON, plain text.",
+      "Missing required fields.",
+      "Type mismatch (wrong data type).",
+      "Invalid enum values.",
+      "Injection payloads, special characters, non-existent IDs.",
+      "Wrong type mutations for path parameters."
+    ],
+    "classifyPathMutationType": {
+      "method": "BoundaryNegativeTestCaseGenerator.ClassifyPathMutationType(string mutationType)",
+      "logic": "if mutationType contains 'boundary' or 'zero' or 'max' or 'overflow' => Boundary. else => Negative.",
+      "defaultFallback": "Negative (khi mutationType null hoac empty)"
+    }
+  },
+  "bodyMutations": {
+    "engine": "BodyMutationEngine",
+    "entryPoint": "IReadOnlyList<BodyMutation> GenerateMutations(BodyMutationContext context)",
+    "applicableHttpMethods": ["POST", "PUT", "PATCH"],
+    "note": "GET, DELETE, HEAD, OPTIONS endpoints KHONG sinh body mutations (empty body va malformed JSON chi apply cho POST/PUT/PATCH).",
+    "mutationTypes": [
+      {
+        "type": "emptyBody",
+        "category": "whole-body",
+        "suggestedTestType": "Negative",
+        "expectedStatusCode": 400,
+        "applicableHttpMethods": ["POST", "PUT", "PATCH"],
+        "requiresBodyParameters": false,
+        "variants": [
+          {
+            "label": "empty body (null)",
+            "mutatedBody": null,
+            "description": "{HttpMethod} {Path} - gui body null."
+          },
+          {
+            "label": "empty body (empty string)",
+            "mutatedBody": "",
+            "description": "{HttpMethod} {Path} - gui body rong."
+          },
+          {
+            "label": "empty JSON object",
+            "mutatedBody": "{}",
+            "description": "{HttpMethod} {Path} - gui JSON object rong."
+          }
+        ],
+        "totalVariants": 3
+      },
+      {
+        "type": "malformedJson",
+        "category": "whole-body",
+        "suggestedTestType": "Negative",
+        "expectedStatusCode": 400,
+        "applicableHttpMethods": ["POST", "PUT", "PATCH"],
+        "requiresBodyParameters": false,
+        "variants": [
+          {
+            "label": "malformed JSON (missing closing brace)",
+            "mutatedBody": "{\"field\": \"value\"",
+            "description": "{HttpMethod} {Path} - gui JSON thieu dau dong ngoac."
+          },
+          {
+            "label": "malformed JSON (truncated value)",
+            "mutatedBody": "{\"field\": }",
+            "description": "{HttpMethod} {Path} - gui JSON bi cat gia tri."
+          },
+          {
+            "label": "malformed JSON (plain text)",
+            "mutatedBody": "this is not json",
+            "description": "{HttpMethod} {Path} - gui plain text thay vi JSON."
+          }
+        ],
+        "totalVariants": 3
+      },
+      {
+        "type": "missingRequired",
+        "category": "per-field",
+        "suggestedTestType": "Negative",
+        "expectedStatusCode": 400,
+        "requiresBodyParameters": true,
+        "fieldSelection": "Chi cac field co IsRequired=true va Name khong rong.",
+        "mutationLogic": "Tao base body voi tat ca fields, sau do remove tung required field mot. Moi field bi remove = 1 mutation.",
+        "example": {
+          "baseBody": {"name": "sample_value", "email": "sample_value", "age": 1},
+          "requiredFields": ["name", "email"],
+          "mutations": [
+            {
+              "label": "name field omitted",
+              "mutatedBody": {"email": "sample_value", "age": 1},
+              "targetFieldName": "name",
+              "description": "{HttpMethod} {Path} - thieu truong bat buoc 'name'."
+            },
+            {
+              "label": "email field omitted",
+              "mutatedBody": {"name": "sample_value", "age": 1},
+              "targetFieldName": "email",
+              "description": "{HttpMethod} {Path} - thieu truong bat buoc 'email'."
+            }
+          ]
+        },
+        "totalVariants": "N (= so luong required fields)"
+      },
+      {
+        "type": "typeMismatch",
+        "category": "per-field",
+        "suggestedTestType": "Negative",
+        "expectedStatusCode": 400,
+        "requiresBodyParameters": true,
+        "fieldSelection": "Tat ca fields co Name khong rong.",
+        "mutationLogic": "Tao base body voi tat ca fields, thay gia tri field bang wrong type. Moi field = 1 mutation.",
+        "wrongTypeMapping": {
+          "integer|int|long|number|float|double|decimal": {
+            "wrongValue": "not_a_number",
+            "wrongType": "String"
+          },
+          "boolean|bool": {
+            "wrongValue": "not_a_boolean",
+            "wrongType": "String"
+          },
+          "string": {
+            "wrongValue": 12345,
+            "wrongType": "Int32"
+          },
+          "array": {
+            "wrongValue": "not_an_array",
+            "wrongType": "String"
+          },
+          "object": {
+            "wrongValue": "not_an_object",
+            "wrongType": "String"
+          },
+          "default": {
+            "wrongValue": 12345,
+            "wrongType": "Int32"
+          }
+        },
+        "example": {
+          "field": {"name": "age", "dataType": "integer"},
+          "label": "age - wrong type (String instead of integer)",
+          "mutatedBody": {"name": "sample_value", "age": "not_a_number"},
+          "description": "{HttpMethod} {Path} - truong 'age' gui kieu du lieu sai (expected: integer)."
+        },
+        "totalVariants": "N (= so luong fields)"
+      },
+      {
+        "type": "overflow",
+        "category": "per-field",
+        "suggestedTestType": "Boundary",
+        "expectedStatusCode": 400,
+        "requiresBodyParameters": true,
+        "fieldSelection": "Fields co DataType la integer, int, long, number, float, double, decimal, string.",
+        "mutationLogic": "Tao base body voi tat ca fields, thay gia tri field bang overflow value. Chi applicable cho numeric va string types.",
+        "overflowValueMapping": {
+          "integer|int (format: int32)": {
+            "overflowValue": 2147483648,
+            "description": "Int32.MaxValue + 1 (overflow int32)"
+          },
+          "integer|int|long (no format or format != int32)": {
+            "overflowValue": 9223372036854775807,
+            "description": "Int64.MaxValue (boundary)"
+          },
+          "number|float|double|decimal": {
+            "overflowValue": 999999999999.999,
+            "description": "very large number (overflow)"
+          },
+          "string": {
+            "overflowValue": "aaaa...a (10000 chars)",
+            "description": "10000-char string (overflow)",
+            "generatedBy": "new string('a', 10000)"
+          }
+        },
+        "note": "Boolean, array, object fields KHONG co overflow mutation.",
+        "totalVariants": "N (= so luong applicable numeric/string fields)"
+      },
+      {
+        "type": "invalidEnum",
+        "category": "per-field",
+        "suggestedTestType": "Negative",
+        "expectedStatusCode": 400,
+        "requiresBodyParameters": true,
+        "fieldSelection": "Fields co Schema chua property 'enum' dang JSON array.",
+        "mutationLogic": "Extract enum values tu field schema. Generate invalid value = 'INVALID_ENUM_VALUE_' + random 8-char hex. Replace field value voi invalid enum.",
+        "enumExtractionMethod": "BodyMutationEngine.ExtractEnumValues(string schema): Parse JSON schema, read 'enum' property, extract string values.",
+        "example": {
+          "fieldSchema": "{\"enum\": [\"ACTIVE\", \"INACTIVE\", \"SUSPENDED\"]}",
+          "extractedValues": ["ACTIVE", "INACTIVE", "SUSPENDED"],
+          "invalidValue": "INVALID_ENUM_VALUE_a1b2c3d4",
+          "label": "status - invalid enum value",
+          "description": "{HttpMethod} {Path} - truong 'status' gui gia tri ngoai enum (valid: [ACTIVE, INACTIVE, SUSPENDED])."
+        },
+        "totalVariants": "N (= so luong fields co enum schema, thường ít)"
+      }
+    ],
+    "schemaBasedMutations": {
+      "description": "Bo sung missing required field mutations tu raw JSON schema khi BodyParameters khong cover het.",
+      "trigger": "context.RequestBodySchema != null AND valid JSON",
+      "logic": [
+        "1. Parse RequestBodySchema as JSON.",
+        "2. Extract 'properties' object va 'required' array.",
+        "3. Tim cac property co trong 'required' nhung KHONG co trong BodyParameters (by name, case-insensitive).",
+        "4. Tao missingRequired mutation cho moi property tim duoc.",
+        "5. MutatedBody = '{}' (empty object, vi khong co base body cho schema-only fields)."
+      ],
+      "suggestedTestType": "Negative",
+      "expectedStatusCode": 400,
+      "errorHandling": "Catch JsonException -> skip schema-based mutations (schema is not valid JSON)."
+    },
+    "baseBodyConstruction": {
+      "method": "BodyMutationEngine.BuildBaseBody(IReadOnlyList<ParameterDetailDto> bodyParameters)",
+      "description": "Xay dung base body object tu tat ca body parameters. Dung lam nen de moi mutation chi thay doi 1 field.",
+      "defaultValueStrategy": [
+        "1. Neu param co DefaultValue (khong empty) -> dung DefaultValue (parse JSON neu can).",
+        "2. Neu param co Examples (khong empty) -> dung Examples (parse JSON neu can).",
+        "3. Fallback theo DataType:",
+        "   - integer/int/long -> 1",
+        "   - number/float/double/decimal -> 1.0",
+        "   - boolean/bool -> true",
+        "   - array -> [] (empty array)",
+        "   - object -> {} (empty object)",
+        "   - string/default -> 'sample_value'"
+      ],
+      "jsonValueParser": "TryParseJsonValue(string value, string dataType): try parse as JSON document, extract typed value. Catch JsonException -> return raw string."
+    }
+  },
+  "pathParameterMutations": {
+    "source": "IPathParameterMutationGatewayService (ClassifiedAds.Contracts/ApiDocumentation)",
+    "entryPoint": "GenerateMutations(string name, string dataType, string format, string defaultValue)",
+    "description": "Generate mutation variants cho tung path parameter cua tung endpoint. Service nay nam trong ApiDocumentation module boundary.",
+    "applicableCondition": "Parameter co Location='Path' (case-insensitive)",
+    "mutationTypes": [
+      {
+        "type": "null",
+        "description": "Gui null/empty string cho path parameter.",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Negative"
+      },
+      {
+        "type": "empty",
+        "description": "Gui empty string cho path parameter.",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Negative"
+      },
+      {
+        "type": "boundary",
+        "description": "Gui gia tri o ranh gioi: 0, 1, -1, max cua data type.",
+        "expectedStatusCode": "400 hoac 404",
+        "suggestedTestType": "Boundary"
+      },
+      {
+        "type": "overflow",
+        "description": "Gui gia tri vuot max cua data type (vd: Int32.MaxValue + 1 cho int32 parameter).",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Boundary"
+      },
+      {
+        "type": "wrongType",
+        "description": "Gui sai kieu du lieu (vd: 'abc' cho integer parameter, 'not-a-uuid' cho GUID parameter).",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Negative"
+      },
+      {
+        "type": "injection",
+        "description": "Gui payload injection (SQL injection patterns, script tags, special sequences).",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Negative"
+      },
+      {
+        "type": "specialChars",
+        "description": "Gui ky tu dac biet: unicode, emoji, whitespace, control characters.",
+        "expectedStatusCode": 400,
+        "suggestedTestType": "Negative"
+      },
+      {
+        "type": "nonExistent",
+        "description": "Gui ID khong ton tai (random GUID cho UUID parameters, 999999 cho integer parameters).",
+        "expectedStatusCode": 404,
+        "suggestedTestType": "Negative"
+      }
+    ],
+    "testCaseBuilding": {
+      "nameFormat": "{HttpMethod} {Path} - {mutation.Label}",
+      "request": {
+        "httpMethod": "From orderItem.HttpMethod",
+        "url": "From orderItem.Path",
+        "pathParams": "JSON object { paramName: mutation.Value }",
+        "bodyType": "None (path mutation chi thay doi path, khong gui body)",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "JSON array [mutation.ExpectedStatusCode]"
+      },
+      "tags": "['boundary|negative', 'auto-generated', 'rule-based', 'path-mutation']",
+      "priority": "High"
+    }
+  },
+  "bodyMutationTestCaseBuilding": {
+    "nameFormat": "{HttpMethod} {Path} - {mutation.Label}",
+    "request": {
+      "httpMethod": "From orderItem.HttpMethod",
+      "url": "From orderItem.Path",
+      "bodyType": "JSON",
+      "body": "mutation.MutatedBody (null for emptyBody null variant, empty string for empty variant, JSON for per-field variants)",
+      "timeout": 30000
+    },
+    "expectation": {
+      "expectedStatus": "JSON array [mutation.ExpectedStatusCode] (usually [400])"
+    },
+    "tags": "['boundary|negative', 'auto-generated', 'rule-based', 'body-mutation']",
+    "priority": "High"
+  },
+  "mutationSummaryTable": {
+    "description": "Tong hop so luong mutations duoc sinh ra cho 1 endpoint voi N required fields, M total fields, K enum fields.",
+    "wholeBodies": {
+      "emptyBody": "3 variants (null, empty string, empty object)",
+      "malformedJson": "3 variants (missing brace, truncated, plain text)"
+    },
+    "perField": {
+      "missingRequired": "N variants (1 per required field)",
+      "typeMismatch": "M variants (1 per field)",
+      "overflow": "≤ M variants (chi applicable cho numeric/string fields)",
+      "invalidEnum": "≤ K variants (chi applicable cho fields co enum schema)"
+    },
+    "formula": "Total per endpoint (POST/PUT/PATCH) = 6 (whole-body) + N + M + ≤M + ≤K",
+    "exampleForEndpoint": {
+      "description": "POST /api/users voi 5 fields (3 required, 2 optional, 1 enum, 2 string, 2 integer)",
+      "emptyBody": 3,
+      "malformedJson": 3,
+      "missingRequired": 3,
+      "typeMismatch": 5,
+      "overflow": 4,
+      "invalidEnum": 1,
+      "total": 19
+    }
+  }
+}
