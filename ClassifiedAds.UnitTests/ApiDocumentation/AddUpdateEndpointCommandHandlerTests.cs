@@ -298,7 +298,7 @@ public class AddUpdateEndpointCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_NotOwner_Should_ThrowValidationException()
+    public async Task HandleAsync_NotOwner_Should_ThrowNotFoundException()
     {
         // Arrange
         var project = new Project { Id = _projectId, OwnerId = Guid.NewGuid() }; // Different owner
@@ -317,7 +317,7 @@ public class AddUpdateEndpointCommandHandlerTests
         var act = () => _handler.HandleAsync(command);
 
         // Assert
-        await act.Should().ThrowAsync<ValidationException>();
+        await act.Should().ThrowAsync<NotFoundException>();
     }
 
     [Fact]

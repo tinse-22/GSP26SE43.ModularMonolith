@@ -104,7 +104,7 @@ public class DeleteEndpointCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_NotOwner_Should_ThrowValidationException()
+    public async Task HandleAsync_NotOwner_Should_ThrowNotFoundException()
     {
         // Arrange
         var project = new Project { Id = _projectId, OwnerId = Guid.NewGuid() };
@@ -123,7 +123,7 @@ public class DeleteEndpointCommandHandlerTests
         var act = () => _handler.HandleAsync(command);
 
         // Assert
-        await act.Should().ThrowAsync<ValidationException>();
+        await act.Should().ThrowAsync<NotFoundException>();
     }
 
     [Fact]

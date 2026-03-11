@@ -122,7 +122,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
 
         if (project.OwnerId != command.CurrentUserId)
         {
-            throw new ValidationException("Project không tồn tại hoặc bạn không có quyền.");
+            throw new NotFoundException($"Không tìm thấy project với mã '{command.ProjectId}'.");
         }
 
         // 3. Load spec, verify belongs to project
