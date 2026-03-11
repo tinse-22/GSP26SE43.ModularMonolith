@@ -114,7 +114,7 @@ public class LlmScenarioSuggesterTests
         result.FromCache.Should().BeFalse();
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-                "generate-boundary-negative",
+                "generate-boundary-negative-scenarios",
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -258,6 +258,224 @@ public class LlmScenarioSuggesterTests
         _llmGatewayServiceMock.Verify(
             x => x.SaveInteractionAsync(It.IsAny<SaveLlmInteractionRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_NotThrow_WhenAuditLogFails()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        // Make audit log throw
+        _llmGatewayServiceMock
+            .Setup(x => x.SaveInteractionAsync(It.IsAny<SaveLlmInteractionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Database connection lost"));
+
+        // Act
+        var act = () => _sut.SuggestScenariosAsync(context);
+
+        // Assert — should NOT throw, graceful degradation
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.Scenarios.Should().NotBeEmpty();
+        result.Subject.FromCache.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_NotThrow_WhenCacheSaveFails()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        // Make cache save throw
+        _llmGatewayServiceMock
+            .Setup(x => x.CacheSuggestionsAsync(
+                It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Cache service unavailable"));
+
+        // Act
+        var act = () => _sut.SuggestScenariosAsync(context);
+
+        // Assert — should NOT throw, graceful degradation
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.Scenarios.Should().NotBeEmpty();
+        result.Subject.FromCache.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_ProduceDeterministicCacheKey()
+    {
+        // Arrange — two identical contexts should produce the same cache key
+        var context1 = CreateDefaultContext();
+        var context2 = CreateDefaultContext();
+
+        // Capture all cache keys across both calls
+        var capturedKeys = new List<string>();
+        _llmGatewayServiceMock
+            .Setup(x => x.GetCachedSuggestionsAsync(
+                It.IsAny<Guid>(), 1, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, int, string, CancellationToken>((_, _, key, _) =>
+            {
+                capturedKeys.Add(key);
+            })
+            .ReturnsAsync(new CachedSuggestionsDto { HasCache = false });
+
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        // Act
+        await _sut.SuggestScenariosAsync(context1);
+        await _sut.SuggestScenariosAsync(context2);
+
+        // Assert — all captured keys should be identical (deterministic)
+        capturedKeys.Should().HaveCountGreaterThanOrEqualTo(2);
+        capturedKeys.Distinct().Should().ContainSingle("all cache keys should be identical");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_IncludeParameterDetails_InN8nPayload()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        context.EndpointParameterDetails = new Dictionary<Guid, EndpointParameterDetailDto>
+        {
+            {
+                EndpointId1, new EndpointParameterDetailDto
+                {
+                    EndpointId = EndpointId1,
+                    EndpointPath = "/api/auth/login",
+                    EndpointHttpMethod = "POST",
+                    Parameters = new List<ParameterDetailDto>
+                    {
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "email",
+                            Location = "Body",
+                            DataType = "string",
+                            Format = "email",
+                            IsRequired = true,
+                            DefaultValue = "user@example.com",
+                        },
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "password",
+                            Location = "Body",
+                            DataType = "string",
+                            IsRequired = true,
+                        },
+                    },
+                }
+            },
+        };
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) =>
+            {
+                capturedPayload = payload;
+            })
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert — endpoint1 should have ParameterDetails populated
+        capturedPayload.Should().NotBeNull();
+        var ep1Payload = capturedPayload.Endpoints.First(e => e.EndpointId == EndpointId1);
+        ep1Payload.ParameterDetails.Should().HaveCount(2);
+        ep1Payload.ParameterDetails[0].Name.Should().Be("email");
+        ep1Payload.ParameterDetails[0].DataType.Should().Be("string");
+        ep1Payload.ParameterDetails[0].Format.Should().Be("email");
+        ep1Payload.ParameterDetails[0].IsRequired.Should().BeTrue();
+        ep1Payload.ParameterDetails[0].DefaultValue.Should().Be("user@example.com");
+        ep1Payload.ParameterDetails[1].Name.Should().Be("password");
+
+        // endpoint2 has no parameter details, should have empty list
+        var ep2Payload = capturedPayload.Endpoints.First(e => e.EndpointId == EndpointId2);
+        ep2Payload.ParameterDetails.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_PreserveVariables_FromN8nResponse()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Model = "gpt-4o",
+            TokensUsed = 800,
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = EndpointId1,
+                    ScenarioName = "Login with extraction",
+                    Description = "Login and extract token",
+                    TestType = "Negative",
+                    Priority = "High",
+                    Tags = new List<string> { "auth" },
+                    Variables = new List<N8nTestCaseVariable>
+                    {
+                        new()
+                        {
+                            VariableName = "authToken",
+                            ExtractFrom = "ResponseBody",
+                            JsonPath = "$.token",
+                            DefaultValue = "fallback-token",
+                        },
+                        new()
+                        {
+                            VariableName = "sessionId",
+                            ExtractFrom = "ResponseHeader",
+                            HeaderName = "X-Session-Id",
+                        },
+                    },
+                },
+            },
+        };
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert — variables should be preserved in the parsed scenarios
+        result.Scenarios.Should().HaveCount(1);
+        var scenario = result.Scenarios[0];
+        scenario.Variables.Should().HaveCount(2);
+
+        scenario.Variables[0].VariableName.Should().Be("authToken");
+        scenario.Variables[0].ExtractFrom.Should().Be("ResponseBody");
+        scenario.Variables[0].JsonPath.Should().Be("$.token");
+        scenario.Variables[0].DefaultValue.Should().Be("fallback-token");
+
+        scenario.Variables[1].VariableName.Should().Be("sessionId");
+        scenario.Variables[1].ExtractFrom.Should().Be("ResponseHeader");
+        scenario.Variables[1].HeaderName.Should().Be("X-Session-Id");
     }
 
     #region Helpers
@@ -414,7 +632,7 @@ public class LlmScenarioSuggesterTests
 
         _n8nServiceMock
             .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-                "generate-boundary-negative",
+                "generate-boundary-negative-scenarios",
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);

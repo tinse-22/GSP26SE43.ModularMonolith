@@ -326,6 +326,74 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_ThrowConflict_WhenGateFails()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+
+        _gateServiceMock.Setup(x => x.RequireApprovedOrderAsync(suite.Id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ConflictException("ORDER_CONFIRMATION_REQUIRED"));
+
+        var command = CreateValidCommand(suite.CreatedById);
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("*ORDER_CONFIRMATION_REQUIRED*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenLlmCallLimitExceeded()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved(suite.Id);
+        SetupNoExistingTestCases();
+
+        // Allow MaxTestCasesPerSuite but deny MaxLlmCallsPerMonth
+        _subscriptionMock.Setup(x => x.CheckLimitAsync(
+                It.IsAny<Guid>(), LimitType.MaxTestCasesPerSuite, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LimitCheckResultDTO { IsAllowed = true });
+        _subscriptionMock.Setup(x => x.CheckLimitAsync(
+                It.IsAny<Guid>(), LimitType.MaxLlmCallsPerMonth, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LimitCheckResultDTO { IsAllowed = false, DenialReason = "LLM monthly limit exceeded" });
+
+        var command = CreateValidCommand(suite.CreatedById);
+        command.IncludeLlmSuggestions = true;
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*LLM*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_SkipTransaction_WhenGeneratorReturnsEmpty()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved(suite.Id);
+        SetupNoExistingTestCases();
+        SetupSubscriptionAllowed();
+        SetupGeneratorReturnsEmpty();
+
+        var command = CreateValidCommand(suite.CreatedById);
+        await _handler.HandleAsync(command);
+
+        // Transaction should not be called
+        _unitOfWorkMock.Verify(x => x.ExecuteInTransactionAsync(
+            It.IsAny<Func<CancellationToken, Task>>(),
+            It.IsAny<IsolationLevel>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        // No entities should be persisted
+        _testCaseRepoMock.Verify(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()), Times.Never);
+        _versionRepoMock.Verify(x => x.AddAsync(It.IsAny<TestSuiteVersion>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Result should still be set with zeros
+        command.Result.Should().NotBeNull();
+        command.Result.TotalGenerated.Should().Be(0);
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_CreateSuiteVersion()
     {
         var suite = CreateSuite();

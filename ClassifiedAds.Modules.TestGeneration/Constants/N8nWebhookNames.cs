@@ -15,5 +15,5 @@ public static class N8nWebhookNames
     /// Webhook that orchestrates LLM calls to generate boundary/negative test scenarios
     /// from approved API order + endpoint metadata + parameter details.
     /// </summary>
-    public const string GenerateBoundaryNegative = "generate-boundary-negative";
+    public const string GenerateBoundaryNegative = "generate-boundary-negative-scenarios";
 }
