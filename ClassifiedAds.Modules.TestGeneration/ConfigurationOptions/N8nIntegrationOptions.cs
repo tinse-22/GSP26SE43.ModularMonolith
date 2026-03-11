@@ -26,4 +26,16 @@ public class N8nIntegrationOptions
     /// This allows adding new n8n workflows without code changes.
     /// </summary>
     public Dictionary<string, string> Webhooks { get; set; } = new();
+
+    /// <summary>
+    /// Base URL of this BE instance used to build callback URLs that n8n will POST results back to.
+    /// Example: "http://localhost:44312"
+    /// </summary>
+    public string BeBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Shared secret that BE includes in payloads to n8n and validates on incoming n8n callbacks
+    /// via the "x-callback-api-key" request header.
+    /// </summary>
+    public string CallbackApiKey { get; set; } = string.Empty;
 }
