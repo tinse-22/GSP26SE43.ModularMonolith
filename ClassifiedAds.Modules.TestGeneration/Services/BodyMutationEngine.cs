@@ -23,15 +23,18 @@ public class BodyMutationEngine : IBodyMutationEngine
 
     public IReadOnlyList<BodyMutation> GenerateMutations(BodyMutationContext context)
     {
+        // Only applies to POST/PUT/PATCH. For GET/DELETE/HEAD/OPTIONS → return empty list.
+        var method = (context.HttpMethod ?? string.Empty).ToUpperInvariant();
+        if (method is not ("POST" or "PUT" or "PATCH"))
+        {
+            return Array.Empty<BodyMutation>();
+        }
+
         var mutations = new List<BodyMutation>();
 
-        // Whole-body mutations (always apply for POST/PUT/PATCH)
-        var method = (context.HttpMethod ?? string.Empty).ToUpperInvariant();
-        if (method is "POST" or "PUT" or "PATCH")
-        {
-            AddEmptyBodyMutations(mutations, context);
-            AddMalformedJsonMutations(mutations, context);
-        }
+        // Whole-body mutations
+        AddEmptyBodyMutations(mutations, context);
+        AddMalformedJsonMutations(mutations, context);
 
         // Per-field mutations from parameters
         if (context.BodyParameters != null && context.BodyParameters.Count > 0)
@@ -388,19 +391,27 @@ public class BodyMutationEngine : IBodyMutationEngine
             using var doc = JsonDocument.Parse(value);
             var element = doc.RootElement;
 
-            return element.ValueKind switch
-            {
-                JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
-                JsonValueKind.String => element.GetString(),
-                _ => value,
-            };
+            return ConvertJsonElement(element);
         }
         catch (JsonException)
         {
             return value;
         }
+    }
+
+    private static object ConvertJsonElement(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Array => element.EnumerateArray().Select(ConvertJsonElement).ToList(),
+            JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value)),
+            JsonValueKind.Null => null,
+            _ => element.GetRawText(),
+        };
     }
 
     private static List<string> ExtractEnumValues(string schema)
