@@ -1,0 +1,177 @@
+{
+  "name": "API Test Order - dotnet-integration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dotnet-integration",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "dotnet-integration"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Đọc payload từ BE ──\nconst body = $input.first().json.body ?? $input.first().json;\nconst endpoints = body.endpoints;\n\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload thiếu mảng endpoints hoặc rỗng.');\n}\n\n// ── Xây dựng danh sách endpoint cho prompt ──\nconst lines = endpoints.map((ep, i) => {\n  const deps = ep.dependsOnEndpointIds?.length > 0\n    ? ` | DependsOn: [${ep.dependsOnEndpointIds.join(', ')}]`\n    : '';\n  const auth = ep.isAuthRelated ? ' [AUTH]' : '';\n  const paramRefs = ep.parameterSchemaRefs?.length > 0\n    ? ` | ParamSchemas: ${ep.parameterSchemaRefs.join(', ')}`\n    : '';\n  const respRefs = ep.responseSchemaRefs?.length > 0\n    ? ` | ResponseSchemas: ${ep.responseSchemaRefs.join(', ')}`\n    : '';\n  return `${i + 1}. [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}${auth}${deps}${paramRefs}${respRefs}`;\n}).join('\\n');\n\n// ── System prompt ──\nconst systemPrompt = `You are an expert REST API testing engineer specializing in test execution order design.\nYour goal is to determine the optimal sequential order for testing a list of REST API endpoints,\nminimizing test failures caused by wrong execution order.`;\n\n// ── User prompt ──\nconst userPrompt = `Analyze and order the following API endpoints for sequential automated testing.\n\n=== ORDERING RULES (apply in priority order) ===\n1. [AUTH] endpoints (login, token, authenticate, register) must run FIRST (lowest orderIndex)\n2. Resource CREATION (POST) must come before READ (GET), UPDATE (PUT/PATCH), and DELETE for the same resource\n3. Respect explicit DependsOn relationships — if endpoint A depends on endpoint B, B must have a lower orderIndex\n4. DELETE operations must run LAST for each resource\n5. Consider resource hierarchy from path: /users before /users/{id}/posts\n6. Schema relationships: if endpoint B uses a schema produced by endpoint A, A runs before B\n\n=== ENDPOINTS TO ORDER ===\n${lines}\n\n=== RESPONSE FORMAT ===\nRespond with ONLY a raw JSON object. No markdown, no code fences, no explanation outside JSON.\n\n{\n  \"orderedEndpoints\": [\n    {\n      \"endpointId\": \"<exact UUID from input>\",\n      \"httpMethod\": \"<exact HTTP method from input>\",\n      \"path\": \"<exact path from input>\",\n      \"orderIndex\": <0-based integer, 0 = first to run>,\n      \"dependsOnEndpointIds\": [\"<UUID of endpoints that must run before this>\"],\n      \"reasonCodes\": [\"<one or more of: AUTH_FIRST, CREATE_BEFORE_READ, CREATE_BEFORE_UPDATE, CREATE_BEFORE_DELETE, DEPENDENCY, CRUD_ORDER, SCHEMA_DEPENDENCY, HIERARCHY>\"],\n      \"isAuthRelated\": <true or false>\n    }\n  ],\n  \"reasoning\": \"<one paragraph summarizing the overall ordering strategy>\",\n  \"llmModel\": \"gpt-4o\"\n}\n\nEnsure every endpoint from the input appears exactly once in orderedEndpoints. OrderIndex values must be unique integers starting from 0.`;\n\n// ── Build OpenAI request body ──\nconst openAiBody = {\n  model: 'gpt-4o',\n  temperature: 0.1,\n  max_tokens: 4096,\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{\n  json: {\n    openAiBody,\n    originalBody: body\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.openAiBody) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Call OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Đọc response từ OpenAI ──\nconst response = $input.first().json;\n\nif (response.error) {\n  throw new Error(`OpenAI API error: ${response.error.message ?? JSON.stringify(response.error)}`);\n}\n\nconst rawContent = response.choices?.[0]?.message?.content;\nif (!rawContent) {\n  throw new Error('OpenAI trả về response rỗng hoặc không đúng format.');\n}\n\n// ── Loại bỏ markdown code block nếu có ──\nlet cleaned = rawContent.trim();\nif (cleaned.startsWith('```')) {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*\\n?/, '').replace(/\\n?```\\s*$/, '').trim();\n}\n\n// ── Parse JSON ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error(`Không parse được JSON từ LLM. Error: ${e.message}\\nRaw (500 chars): ${cleaned.substring(0, 500)}`);\n}\n\nconst ordered = parsed.orderedEndpoints;\nif (!Array.isArray(ordered) || ordered.length === 0) {\n  throw new Error('LLM response thiếu mảng orderedEndpoints hoặc rỗng.');\n}\n\n// ── Chuẩn hóa orderIndex thành 0-based liên tiếp ──\nordered.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));\nordered.forEach((ep, i) => { ep.orderIndex = i; });\n\n// ── Đảm bảo các field bắt buộc tồn tại ──\nordered.forEach(ep => {\n  if (!ep.endpointId) throw new Error('Endpoint thiếu endpointId trong LLM response.');\n  ep.dependsOnEndpointIds = ep.dependsOnEndpointIds ?? [];\n  ep.reasonCodes = ep.reasonCodes ?? [];\n  ep.isAuthRelated = ep.isAuthRelated ?? false;\n});\n\nreturn [{\n  json: {\n    orderedEndpoints: ordered,\n    reasoning: parsed.reasoning ?? '',\n    llmModel: parsed.llmModel ?? 'gpt-4o'\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.message ?? 'Internal workflow error' }) }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 500]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2026-03-09T00:00:00.000Z",
+      "updatedAt": "2026-03-09T00:00:00.000Z",
+      "id": "tag-test-generation",
+      "name": "test-generation"
+    }
+  ],
+  "triggerCount": 0,
+  "versionId": "a1b2c3d4-ffff-ffff-ffff-000000000000"
+}

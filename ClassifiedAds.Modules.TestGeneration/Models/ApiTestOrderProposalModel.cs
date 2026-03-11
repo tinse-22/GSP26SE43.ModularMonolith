@@ -1,6 +1,7 @@
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
 
@@ -12,8 +13,10 @@ public class ApiTestOrderProposalModel
 
     public int ProposalNumber { get; set; }
 
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public ProposalStatus Status { get; set; }
 
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public ProposalSource Source { get; set; }
 
     public List<ApiOrderItemModel> ProposedOrder { get; set; } = new();

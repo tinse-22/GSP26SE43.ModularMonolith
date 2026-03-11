@@ -13,4 +13,7 @@ public static class Permissions
     public const string GetTestOrderProposal = "Permission:GetTestOrderProposal";
     public const string ReorderTestOrder = "Permission:ReorderTestOrder";
     public const string ApproveTestOrder = "Permission:ApproveTestOrder";
+
+    // Test Generation (FE-05B)
+    public const string GenerateTestCases = "Permission:GenerateTestCases";
 }

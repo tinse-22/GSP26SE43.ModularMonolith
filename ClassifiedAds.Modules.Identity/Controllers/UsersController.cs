@@ -183,7 +183,8 @@ public class UsersController : ControllerBase
         if (!isAdmin)
         {
             var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-            var confirmationUrl = $"{_moduleOptions.IdentityServer.Authority}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
+            var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
+            var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
             var displayName = user.UserName ?? user.Email.Split('@')[0];
             await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
@@ -329,7 +330,8 @@ public class UsersController : ControllerBase
         }
 
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-        var confirmationUrl = $"{_moduleOptions.IdentityServer?.Authority ?? "https://localhost:44367"}/Account/ConfirmEmailAddress?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
+        var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
+        var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
         var displayNameConfirm = user.UserName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO

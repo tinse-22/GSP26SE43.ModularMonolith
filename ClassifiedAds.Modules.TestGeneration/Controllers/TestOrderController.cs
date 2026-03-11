@@ -170,4 +170,24 @@ public class TestOrderController : ControllerBase
 
         return Ok(status);
     }
+
+    [Authorize(Permissions.GenerateTestCases)]
+    [HttpPost("generate-tests")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GenerateTests(Guid suiteId)
+    {
+        await _dispatcher.DispatchAsync(new GenerateTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+        });
+
+        _logger.LogInformation(
+            "Triggered test generation. TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
+            suiteId, _currentUser.UserId);
+
+        return Accepted();
+    }
 }

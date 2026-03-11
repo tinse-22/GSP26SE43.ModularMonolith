@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
 
 namespace ClassifiedAds.Modules.TestGeneration.DbConfigurations;
 
@@ -45,10 +48,16 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
         builder.HasIndex(x => x.ApiSpecId);
 
         builder.Property(x => x.SelectedEndpointIds)
-            .HasColumnType("jsonb");
+            .HasColumnType("jsonb")
+            .HasConversion(
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions)null),
+                v => JsonSerializer.Deserialize<List<Guid>>(v, (JsonSerializerOptions)null) ?? new List<Guid>());
 
         builder.Property(x => x.EndpointBusinessContexts)
-            .HasColumnType("jsonb");
+            .HasColumnType("jsonb")
+            .HasConversion(
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions)null),
+                v => JsonSerializer.Deserialize<Dictionary<Guid, string>>(v, (JsonSerializerOptions)null) ?? new Dictionary<Guid, string>());
 
         builder.Property(x => x.GlobalBusinessRules)
             .HasColumnType("text");
