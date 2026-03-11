@@ -1,0 +1,322 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-07+FE-08 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-07+FE-08 vao codebase Modular Monolith hien tai. Muc tieu la implement dung boundary, khong them migration, khong vo query-performance gate.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "cache": "IDistributedCache (Redis/InMemory/SQL provider theo host config)",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation, cross-module contracts)"
+  },
+  "currentCodebaseSnapshot": {
+    "testExecution": {
+      "exists": [
+        "Entities/ExecutionEnvironment.cs",
+        "Entities/TestRun.cs",
+        "Controllers/ExecutionEnvironmentsController.cs",
+        "Commands/AddUpdateExecutionEnvironmentCommand.cs",
+        "Commands/DeleteExecutionEnvironmentCommand.cs",
+        "Queries/GetExecutionEnvironmentQuery.cs",
+        "Queries/GetExecutionEnvironmentsQuery.cs",
+        "Services/IExecutionAuthConfigService.cs",
+        "Services/ExecutionAuthConfigService.cs",
+        "ServiceCollectionExtensions.cs",
+        "Authorization/Permissions.cs"
+      ],
+      "missingForFe07Fe08": [
+        "TestRunsController",
+        "StartTestRun command/query surface",
+        "Execution orchestrator",
+        "Runtime auth/environment resolver",
+        "HTTP executor",
+        "Variable resolver/extractor",
+        "Rule-based validator",
+        "Result collector + cache payload",
+        "Run history/result query handlers"
+      ]
+    },
+    "testGeneration": {
+      "exists": [
+        "Entities/TestSuite.cs",
+        "Entities/TestCase.cs",
+        "Entities/TestCaseRequest.cs",
+        "Entities/TestCaseExpectation.cs",
+        "Entities/TestCaseVariable.cs",
+        "Entities/TestCaseDependency.cs",
+        "Services/IApiTestOrderGateService.cs",
+        "Services/ApiTestOrderGateService.cs"
+      ],
+      "missingForFe07Fe08": [
+        "Contracts-based execution read gateway for TestExecution module"
+      ]
+    },
+    "contracts": {
+      "exists": [
+        "ApiDocumentation contracts",
+        "Subscription contracts",
+        "Identity current-user contract",
+        "LlmAssistant contracts"
+      ],
+      "missingForFe07Fe08": [
+        "TestGeneration execution read DTOs + service contract"
+      ]
+    }
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. Khong can sua host registration chain. Chi bo sung contract gateway trong Contracts/TestGeneration va implementation trong TestGeneration, sau do implement execution surface trong TestExecution.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Contracts/TestGeneration/DTOs/TestSuiteAccessContextDto.cs",
+        "description": "Suite access context DTO."
+      },
+      {
+        "path": "ClassifiedAds.Contracts/TestGeneration/DTOs/TestSuiteExecutionContextDto.cs",
+        "description": "Execution-ready suite DTO."
+      },
+      {
+        "path": "ClassifiedAds.Contracts/TestGeneration/DTOs/ExecutionTestCaseDto.cs",
+        "description": "Ordered test case graph DTO, co request/expectation/variables/dependencies."
+      },
+      {
+        "path": "ClassifiedAds.Contracts/TestGeneration/Services/ITestExecutionReadGatewayService.cs",
+        "description": "Cross-module read gateway contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/TestExecutionReadGatewayService.cs",
+        "description": "Gateway implementation bang batch queries, gate check, selection validation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Controllers/TestRunsController.cs",
+        "description": "POST start run + GET run history/detail/results."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Commands/StartTestRunCommand.cs",
+        "description": "CQRS command + handler bat dau test run."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunsQuery.cs",
+        "description": "Paged run history query."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunQuery.cs",
+        "description": "Single run summary query."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunResultsQuery.cs",
+        "description": "Cache-backed detailed result query."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/Requests/StartTestRunRequest.cs",
+        "description": "API request model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/TestRunModel.cs",
+        "description": "Run summary model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/TestRunResultModel.cs",
+        "description": "Detailed run result model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/TestCaseRunResultModel.cs",
+        "description": "Per-case execution result model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/ValidationFailureModel.cs",
+        "description": "Validation failure detail."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/ResolvedExecutionEnvironment.cs",
+        "description": "Runtime environment model sau auth resolve."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/ResolvedTestCaseRequest.cs",
+        "description": "Resolved HTTP request ready to send."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/HttpTestResponse.cs",
+        "description": "Raw HTTP execution result."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/TestCaseExecutionResult.cs",
+        "description": "Internal aggregate of execution + validation result."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Models/TestCaseValidationResult.cs",
+        "description": "Internal deterministic validation result."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/ITestExecutionOrchestrator.cs",
+        "description": "Top-level execution orchestration contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/TestExecutionOrchestrator.cs",
+        "description": "Sequential execution engine implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IExecutionEnvironmentRuntimeResolver.cs",
+        "description": "Runtime auth/environment resolver contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/ExecutionEnvironmentRuntimeResolver.cs",
+        "description": "Resolve headers/query/auth one lan moi run."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IVariableResolver.cs",
+        "description": "Placeholder resolver contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/VariableResolver.cs",
+        "description": "Resolve URL/path/query/header/body placeholders."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IHttpTestExecutor.cs",
+        "description": "HTTP executor contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/HttpTestExecutor.cs",
+        "description": "HttpClient-based executor."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IVariableExtractor.cs",
+        "description": "Variable extraction contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/VariableExtractor.cs",
+        "description": "Body/header/status extraction implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/IRuleBasedValidator.cs",
+        "description": "Deterministic validator contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/RuleBasedValidator.cs",
+        "description": "Status/schema/header/body/jsonpath/latency validator."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/ITestResultCollector.cs",
+        "description": "Result collector contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/TestResultCollector.cs",
+        "description": "Persist cache payload + update TestRun summary."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "change": "Register ITestExecutionReadGatewayService implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Authorization/Permissions.cs",
+        "change": "Add StartTestRun and GetTestRuns permissions."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+        "change": "Register orchestrator/runtime resolver/executor/validator/collector + AddHttpClient."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/ClassifiedAds.Modules.TestExecution.csproj",
+        "change": "Add single JSON schema validation package if absent (preferred: Json.Schema) for FE-08 schema validation."
+      }
+    ],
+    "unchangedFiles": [
+      "Entities/TestRun.cs - reuse existing summary columns and RedisKey/ResultsExpireAt.",
+      "Persistence/TestExecutionDbContext.cs - no new DbSet required.",
+      "ClassifiedAds.Migrator/ - no migration new files.",
+      "Host Program.cs/Dockerfile/appsettings.json - module registration da co san."
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "noNewMigrationsRequired": true,
+    "noNewTablesRequired": true,
+    "schemasUsed": [
+      "testexecution.TestRuns",
+      "testexecution.ExecutionEnvironments",
+      "testgen.TestSuites",
+      "testgen.TestCases",
+      "testgen.TestCaseRequests",
+      "testgen.TestCaseExpectations",
+      "testgen.TestCaseVariables",
+      "testgen.TestCaseDependencies",
+      "testgen.TestOrderProposals"
+    ],
+    "notes": [
+      "TestExecution doc TestGeneration qua gateway implementation, khong doc truc tiep schema testgen trong module TestExecution.",
+      "Chi tiet ket qua luu vao distributed cache, khong luu PostgreSQL."
+    ]
+  },
+  "queryOptimization": {
+    "mandatory": [
+      "Gateway phai doc execution graph bang batch queries va in-memory maps.",
+      "GetTestRuns list phai paging + projection, khong materialize full entity list khong can thiet.",
+      "Khong duoc parse response schema payload trong loop neu endpoint metadata trung lap; phai cache per endpoint trong scope mot run.",
+      "OAuth2 token phai resolve 1 lan moi run.",
+      "Khong duoc tao HttpClient moi request; phai dung IHttpClientFactory."
+    ],
+    "forbidden": [
+      "Repository.FirstOrDefaultAsync trong loop testCaseIds.",
+      "Direct LINQ query moi test case de doc request/expectation/dependency.",
+      "Load run history roi filter/page trong memory."
+    ]
+  },
+  "flows": [
+    {
+      "name": "Execution Surface",
+      "steps": [
+        "1. Controller dispatch StartTestRunCommand.",
+        "2. Handler validate suite/environment/limits and create Pending TestRun.",
+        "3. Orchestrator load execution graph + endpoint metadata + runtime environment.",
+        "4. Sequentially resolve request -> execute HTTP -> extract vars -> validate -> accumulate result.",
+        "5. Collector save cache payload and update TestRun summary."
+      ]
+    },
+    {
+      "name": "Read Surface",
+      "steps": [
+        "1. GetTestRunsQuery tra summary co paging.",
+        "2. GetTestRunQuery tra mot summary.",
+        "3. GetTestRunResultsQuery tra detailed payload tu cache."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Khong them migration, entity, hoac DbSet moi.",
+    "Khong direct reference TestGeneration entities trong TestExecution.",
+    "Khong N+1 query trong gateway.",
+    "Khong cho auth injection override request-level negative auth cases.",
+    "Khong luu response body khong gioi han vao cache."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "TestExecutionReadGatewayServiceTests (selection, dependency closure, ordering, gate fail).",
+      "ExecutionEnvironmentRuntimeResolverTests (Bearer/Basic/ApiKey/OAuth2/default headers precedence).",
+      "VariableResolverTests (URL/path/query/header/body placeholder resolution, unresolved variable fail).",
+      "HttpTestExecutorTests (baseUrl join, timeout clamp, header/query merge, transport error handling).",
+      "VariableExtractorTests (JSONPath/header/status extraction + default value fallback).",
+      "RuleBasedValidatorTests (status/schema/header/body/jsonpath/response time).",
+      "TestResultCollectorTests (cache payload save, summary counters, expiry handling).",
+      "StartTestRunCommandHandlerTests (suite/env/limit validation, run number allocation, orchestration call)."
+    ],
+    "integrationTests": [
+      "Start run happy path end-to-end voi TestServer/handler stub, verify TestRun summary update + cache payload.",
+      "Dependency fail -> dependents skipped.",
+      "EnvironmentId null -> project default environment duoc dung.",
+      "GetTestRunResults after expiry -> RUN_RESULTS_EXPIRED.",
+      "Gateway + validator with generated happy-path/boundary suite data."
+    ]
+  },
+  "implementationSequence": [
+    "1. Contracts/TestGeneration gateway DTOs + interface",
+    "2. TestGeneration gateway implementation + DI",
+    "3. TestExecution API surface (permissions, models, controller, command/queries)",
+    "4. Runtime environment/auth resolver + variable resolver + HTTP executor",
+    "5. Rule-based validator + result collector + cache payload",
+    "6. Command/query handlers",
+    "7. Unit tests",
+    "8. Integration tests"
+  ]
+}

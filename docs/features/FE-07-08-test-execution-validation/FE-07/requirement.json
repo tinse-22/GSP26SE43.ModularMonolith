@@ -1,0 +1,48 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-07-requirement",
+  "requirement": {
+    "id": "FE-07",
+    "title": "Dependency-Aware Test Execution With Variable Extraction",
+    "goal": "Cho phep nguoi dung chay test suite hoac mot subset test case tren execution environment cu the, co ho tro dependency chaining, variable extraction, auth runtime va environment fallback.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "Test cases da co request/variable/dependency shape tu FE-05/FE-06 nhung chua co runtime engine.",
+      "ExecutionEnvironment da co baseUrl, headers, variables va authConfig nen co the tro thanh runtime profile.",
+      "Can ho tro workflow login -> lay token -> goi API duoc bao ve trong cung mot test run."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Start test run theo suite + environmentId? (nullable de fallback project default).",
+      "Load ordered test cases qua contract gateway va validate selectedTestCaseIds.",
+      "Resolve request placeholders tu environment variables va extracted variables.",
+      "Apply auth runtime tu ExecutionEnvironment truoc khi goi HTTP.",
+      "Extract variables tu response body/header/status va merge vao variable bag.",
+      "Skip dependent cases neu dependency fail."
+    ],
+    "outOfScope": [
+      "Validation logic chi tiet ngoai viec goi IRuleBasedValidator.",
+      "SignalR progress streaming.",
+      "Manual step/pause/resume/cancel run."
+    ]
+  },
+  "acceptanceCriteria": [
+    "AC-01: Co the start run bang environmentId cu the hoac project default environment neu request khong truyen environmentId.",
+    "AC-02: selectedTestCaseIds null/empty thi chay toan bo enabled test cases trong suite.",
+    "AC-03: selectedTestCaseIds co test case khong thuoc suite hoac bi disable thi tra 400.",
+    "AC-04: selectedTestCaseIds thieu transitive dependency thi tra 400 MISSING_DEPENDENCY_SELECTION.",
+    "AC-05: Placeholder {{var}} duoc resolve dung tren URL/path/query/header/body.",
+    "AC-06: Variable extract tu login response co the duoc dung cho request tiep theo trong cung run.",
+    "AC-07: Auth runtime khong de request-level negative auth case bi auth injection override."
+  ],
+  "implementationOrder": [
+    "1. Contract gateway doc execution graph tu TestGeneration.",
+    "2. StartTestRun command + run number allocation + environment load/fallback.",
+    "3. Runtime environment/auth resolver.",
+    "4. Variable resolver + HTTP executor + variable extractor.",
+    "5. Query APIs xem run history va run result."
+  ]
+}

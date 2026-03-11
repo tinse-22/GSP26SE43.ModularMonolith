@@ -1,0 +1,557 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-07-08-contracts",
+  "requirementId": "FE-07+FE-08",
+  "title": "FE-07+FE-08 Contracts - Test Execution And Validation",
+  "apiContracts": [
+    {
+      "name": "StartTestRun",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/test-runs",
+      "permission": "Permission:StartTestRun",
+      "requestBody": "StartTestRunRequest",
+      "responseBody": "TestRunResultModel",
+      "successStatus": 201,
+      "description": "Bat dau mot test run moi, thuc thi ngay trong request, va tra ve summary + per-case results."
+    },
+    {
+      "name": "GetTestRuns",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs",
+      "permission": "Permission:GetTestRuns",
+      "queryParams": {
+        "pageNumber": "int (default: 1, min: 1)",
+        "pageSize": "int (default: 20, min: 1, max: 100)",
+        "status": "string? (Pending|Running|Completed|Failed|Cancelled)"
+      },
+      "responseBody": "PagedResult<TestRunModel>",
+      "successStatus": 200,
+      "description": "Run history cho mot test suite. Chi doc summary tu PostgreSQL."
+    },
+    {
+      "name": "GetTestRun",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "TestRunModel",
+      "successStatus": 200,
+      "description": "Summary chi tiet cua 1 test run."
+    },
+    {
+      "name": "GetTestRunResults",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "TestRunResultModel",
+      "successStatus": 200,
+      "description": "Chi tiet tung test case trong run. Doc payload tu distributed cache bang RedisKey."
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "StartTestRunRequest",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/Requests/StartTestRunRequest.cs",
+      "fields": {
+        "environmentId": {
+          "type": "Guid?",
+          "required": false,
+          "description": "Execution environment can use. Neu null thi fallback project default environment."
+        },
+        "selectedTestCaseIds": {
+          "type": "List<Guid>?",
+          "required": false,
+          "description": "Subset test cases can run. Neu null/empty thi run tat ca enabled cases trong suite."
+        }
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "TestRunModel",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/TestRunModel.cs",
+      "fields": {
+        "id": "Guid",
+        "testSuiteId": "Guid",
+        "environmentId": "Guid",
+        "runNumber": "int",
+        "status": "string (Pending|Running|Completed|Failed|Cancelled)",
+        "startedAt": "DateTimeOffset?",
+        "completedAt": "DateTimeOffset?",
+        "totalTests": "int",
+        "passedCount": "int",
+        "failedCount": "int",
+        "skippedCount": "int",
+        "durationMs": "long",
+        "resultsExpireAt": "DateTimeOffset?",
+        "hasDetailedResults": "bool",
+        "createdDateTime": "DateTimeOffset",
+        "updatedDateTime": "DateTimeOffset?"
+      }
+    },
+    {
+      "name": "TestRunResultModel",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/TestRunResultModel.cs",
+      "fields": {
+        "run": "TestRunModel",
+        "resultsSource": "string (cache)",
+        "executedAt": "DateTimeOffset",
+        "resolvedEnvironmentName": "string",
+        "cases": "List<TestCaseRunResultModel>"
+      }
+    },
+    {
+      "name": "TestCaseRunResultModel",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/TestCaseRunResultModel.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "orderIndex": "int",
+        "status": "string (Passed|Failed|Skipped)",
+        "httpStatusCode": "int?",
+        "durationMs": "long",
+        "resolvedUrl": "string?",
+        "requestHeaders": "Dictionary<string,string>",
+        "responseHeaders": "Dictionary<string,string>",
+        "responseBodyPreview": "string?",
+        "failureReasons": "List<ValidationFailureModel>",
+        "extractedVariables": "Dictionary<string,string>",
+        "dependencyIds": "List<Guid>",
+        "skippedBecauseDependencyIds": "List<Guid>"
+      }
+    },
+    {
+      "name": "ValidationFailureModel",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/ValidationFailureModel.cs",
+      "fields": {
+        "code": "string",
+        "message": "string",
+        "target": "string?",
+        "expected": "string?",
+        "actual": "string?"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "StartTestRunCommand",
+        "file": "ClassifiedAds.Modules.TestExecution/Commands/StartTestRunCommand.cs",
+        "handler": "StartTestRunCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "currentUserId": "Guid",
+          "environmentId": "Guid?",
+          "selectedTestCaseIds": "IReadOnlyList<Guid>?"
+        },
+        "outputField": "Result: TestRunResultModel",
+        "reads": [
+          "TestRun (max RunNumber for suite, running count for user, summary reload)",
+          "ExecutionEnvironment (by id or default project environment)"
+        ],
+        "crossModuleReads": [
+          "ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(testSuiteId)",
+          "ITestExecutionReadGatewayService.GetExecutionContextAsync(testSuiteId, selectedTestCaseIds)",
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync(specId, endpointIds)",
+          "ISubscriptionLimitGatewayService.CheckLimitAsync(MaxConcurrentRuns, runningCount + 1)",
+          "ISubscriptionLimitGatewayService.CheckLimitAsync(RetentionDays, 0)",
+          "ISubscriptionLimitGatewayService.TryConsumeLimitAsync(MaxTestRunsPerMonth, 1)"
+        ],
+        "writes": [
+          "TestRun insert (Pending)",
+          "TestRun update (Running -> Completed/Failed, counters, duration, RedisKey, ResultsExpireAt)"
+        ],
+        "transactionRequired": true,
+        "transactionScope": "Serializable chi cho cap RunNumber va insert Pending run. Execution loop khong nam trong DB transaction."
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetTestRunsQuery",
+        "file": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunsQuery.cs",
+        "handler": "GetTestRunsQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "currentUserId": "Guid",
+          "pageNumber": "int",
+          "pageSize": "int",
+          "status": "TestRunStatus?"
+        },
+        "reads": [
+          "TestRun projection with paging only"
+        ]
+      },
+      {
+        "name": "GetTestRunQuery",
+        "file": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunQuery.cs",
+        "handler": "GetTestRunQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "Single TestRun summary"
+        ]
+      },
+      {
+        "name": "GetTestRunResultsQuery",
+        "file": "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunResultsQuery.cs",
+        "handler": "GetTestRunResultsQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "Single TestRun summary",
+          "1 distributed cache entry via RedisKey"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "ITestExecutionReadGatewayService",
+        "project": "ClassifiedAds.Contracts",
+        "file": "ClassifiedAds.Contracts/TestGeneration/Services/ITestExecutionReadGatewayService.cs",
+        "implementation": "TestExecutionReadGatewayService",
+        "implementationFile": "ClassifiedAds.Modules.TestGeneration/Services/TestExecutionReadGatewayService.cs",
+        "methods": [
+          {
+            "name": "GetSuiteAccessContextAsync",
+            "signature": "Task<TestSuiteAccessContextDto> GetSuiteAccessContextAsync(Guid testSuiteId, CancellationToken ct)",
+            "description": "Tra ve suite ownership/project/spec/status context toi gian."
+          },
+          {
+            "name": "GetExecutionContextAsync",
+            "signature": "Task<TestSuiteExecutionContextDto> GetExecutionContextAsync(Guid testSuiteId, IReadOnlyCollection<Guid> selectedTestCaseIds, CancellationToken ct)",
+            "description": "Tra ve ordered enabled test case graph, enforce FE-05A gate, selection validity, dependency completeness."
+          }
+        ]
+      },
+      {
+        "name": "ITestExecutionOrchestrator",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/ITestExecutionOrchestrator.cs",
+        "implementation": "TestExecutionOrchestrator",
+        "methods": [
+          {
+            "name": "ExecuteAsync",
+            "signature": "Task<TestRunResultModel> ExecuteAsync(Guid testRunId, Guid currentUserId, IReadOnlyCollection<Guid> selectedTestCaseIds, CancellationToken ct)",
+            "description": "Main orchestration: load execution context, run sequentially, validate, collect results."
+          }
+        ]
+      },
+      {
+        "name": "IExecutionEnvironmentRuntimeResolver",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/IExecutionEnvironmentRuntimeResolver.cs",
+        "implementation": "ExecutionEnvironmentRuntimeResolver",
+        "methods": [
+          {
+            "name": "ResolveAsync",
+            "signature": "Task<ResolvedExecutionEnvironment> ResolveAsync(ExecutionEnvironment environment, CancellationToken ct)",
+            "description": "Build runtime headers/query params/auth material once per run. OAuth2 token resolution lives here, not in HttpTestExecutor."
+          }
+        ]
+      },
+      {
+        "name": "IVariableResolver",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/IVariableResolver.cs",
+        "implementation": "VariableResolver",
+        "methods": [
+          {
+            "name": "Resolve",
+            "signature": "ResolvedTestCaseRequest Resolve(ExecutionTestCaseDto testCase, IReadOnlyDictionary<string,string> variables, ResolvedExecutionEnvironment environment)",
+            "description": "Resolve placeholders va path template, merge environment defaults, clamp timeout."
+          }
+        ]
+      },
+      {
+        "name": "IHttpTestExecutor",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/IHttpTestExecutor.cs",
+        "implementation": "HttpTestExecutor",
+        "methods": [
+          {
+            "name": "ExecuteAsync",
+            "signature": "Task<HttpTestResponse> ExecuteAsync(ResolvedTestCaseRequest request, CancellationToken ct)",
+            "description": "Gui HTTP request that su va thu thap response body/header/status/latency."
+          }
+        ]
+      },
+      {
+        "name": "IVariableExtractor",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/IVariableExtractor.cs",
+        "implementation": "VariableExtractor",
+        "methods": [
+          {
+            "name": "Extract",
+            "signature": "IReadOnlyDictionary<string,string> Extract(HttpTestResponse response, IReadOnlyList<ExecutionVariableRuleDto> variables)",
+            "description": "Extract values tu response body/header/status voi fallback DefaultValue."
+          }
+        ]
+      },
+      {
+        "name": "IRuleBasedValidator",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/IRuleBasedValidator.cs",
+        "implementation": "RuleBasedValidator",
+        "methods": [
+          {
+            "name": "Validate",
+            "signature": "TestCaseValidationResult Validate(HttpTestResponse response, ExecutionTestCaseDto testCase, ApiEndpointMetadataDto endpointMetadata = null)",
+            "description": "Deterministic pass/fail evaluation."
+          }
+        ]
+      },
+      {
+        "name": "ITestResultCollector",
+        "file": "ClassifiedAds.Modules.TestExecution/Services/ITestResultCollector.cs",
+        "implementation": "TestResultCollector",
+        "methods": [
+          {
+            "name": "CollectAsync",
+            "signature": "Task<TestRunResultModel> CollectAsync(TestRun run, IReadOnlyList<TestCaseExecutionResult> caseResults, int retentionDays, string environmentName, CancellationToken ct)",
+            "description": "Save cache payload, update TestRun summary, return API model."
+          }
+        ]
+      }
+    ]
+  },
+  "domainModels": [
+    {
+      "name": "TestSuiteAccessContextDto",
+      "file": "ClassifiedAds.Contracts/TestGeneration/DTOs/TestSuiteAccessContextDto.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "projectId": "Guid",
+        "apiSpecId": "Guid?",
+        "createdById": "Guid",
+        "status": "string",
+        "name": "string"
+      }
+    },
+    {
+      "name": "TestSuiteExecutionContextDto",
+      "file": "ClassifiedAds.Contracts/TestGeneration/DTOs/TestSuiteExecutionContextDto.cs",
+      "fields": {
+        "suite": "TestSuiteAccessContextDto",
+        "orderedTestCases": "IReadOnlyList<ExecutionTestCaseDto>",
+        "orderedEndpointIds": "IReadOnlyList<Guid>"
+      }
+    },
+    {
+      "name": "ExecutionTestCaseDto",
+      "file": "ClassifiedAds.Contracts/TestGeneration/DTOs/ExecutionTestCaseDto.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "description": "string?",
+        "testType": "string",
+        "orderIndex": "int",
+        "dependencyIds": "IReadOnlyList<Guid>",
+        "request": "ExecutionTestCaseRequestDto",
+        "expectation": "ExecutionTestCaseExpectationDto",
+        "variables": "IReadOnlyList<ExecutionVariableRuleDto>"
+      }
+    },
+    {
+      "name": "ResolvedExecutionEnvironment",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/ResolvedExecutionEnvironment.cs",
+      "fields": {
+        "environmentId": "Guid",
+        "name": "string",
+        "baseUrl": "string",
+        "variables": "Dictionary<string,string>",
+        "defaultHeaders": "Dictionary<string,string>",
+        "defaultQueryParams": "Dictionary<string,string>"
+      }
+    },
+    {
+      "name": "ResolvedTestCaseRequest",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/ResolvedTestCaseRequest.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "name": "string",
+        "httpMethod": "string",
+        "resolvedUrl": "string",
+        "headers": "Dictionary<string,string>",
+        "body": "string?",
+        "bodyType": "string",
+        "timeoutMs": "int",
+        "dependencyIds": "IReadOnlyList<Guid>"
+      }
+    },
+    {
+      "name": "HttpTestResponse",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/HttpTestResponse.cs",
+      "fields": {
+        "statusCode": "int?",
+        "headers": "Dictionary<string,string>",
+        "body": "string?",
+        "latencyMs": "long",
+        "transportError": "string?",
+        "contentType": "string?"
+      }
+    },
+    {
+      "name": "TestCaseValidationResult",
+      "file": "ClassifiedAds.Modules.TestExecution/Models/TestCaseValidationResult.cs",
+      "fields": {
+        "isPassed": "bool",
+        "statusCodeMatched": "bool",
+        "schemaMatched": "bool?",
+        "headerChecksPassed": "bool?",
+        "bodyContainsPassed": "bool?",
+        "bodyNotContainsPassed": "bool?",
+        "jsonPathChecksPassed": "bool?",
+        "responseTimePassed": "bool?",
+        "failures": "List<ValidationFailureModel>"
+      }
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "TestSuiteId bat buoc va khong duoc Guid.Empty.",
+      "httpStatus": 400,
+      "reasonCode": "INVALID_INPUT"
+    },
+    {
+      "id": "VAL-02",
+      "rule": "Suite phai ton tai va CreatedById == CurrentUserId.",
+      "httpStatus": 400,
+      "reasonCode": "OWNERSHIP_DENIED"
+    },
+    {
+      "id": "VAL-03",
+      "rule": "Suite phai co Status=Ready.",
+      "httpStatus": 400,
+      "reasonCode": "SUITE_NOT_READY"
+    },
+    {
+      "id": "VAL-04",
+      "rule": "Execution environment phai ton tai, thuoc cung project. Neu request khong co environmentId thi project phai co default environment.",
+      "httpStatus": 404,
+      "reasonCode": "ENVIRONMENT_NOT_FOUND"
+    },
+    {
+      "id": "VAL-05",
+      "rule": "FE-05A gate phai pass truoc khi doc execution graph.",
+      "httpStatus": 409,
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED"
+    },
+    {
+      "id": "VAL-06",
+      "rule": "selectedTestCaseIds phai thuoc suite, enabled, va khong duoc bo sot dependency.",
+      "httpStatus": 400,
+      "reasonCode": "INVALID_TEST_CASE_SELECTION"
+    },
+    {
+      "id": "VAL-07",
+      "rule": "MaxConcurrentRuns phai con du.",
+      "httpStatus": 400,
+      "reasonCode": "CONCURRENT_RUN_LIMIT_EXCEEDED"
+    },
+    {
+      "id": "VAL-08",
+      "rule": "MaxTestRunsPerMonth phai con du.",
+      "httpStatus": 400,
+      "reasonCode": "RUN_LIMIT_EXCEEDED"
+    },
+    {
+      "id": "VAL-09",
+      "rule": "GetTestRunResults bi chan neu payload da het han cache.",
+      "httpStatus": 409,
+      "reasonCode": "RUN_RESULTS_EXPIRED"
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_INPUT",
+      "exceptionType": "ValidationException",
+      "description": "Input khong hop le."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "OWNERSHIP_DENIED",
+      "exceptionType": "ValidationException",
+      "description": "Current user khong duoc quyen thao tac suite nay."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "SUITE_NOT_READY",
+      "exceptionType": "ValidationException",
+      "description": "Suite chua Ready nen chua the chay."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_TEST_CASE_SELECTION",
+      "exceptionType": "ValidationException",
+      "description": "selectedTestCaseIds co loi hoac thieu dependency."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "CONCURRENT_RUN_LIMIT_EXCEEDED",
+      "exceptionType": "ValidationException",
+      "description": "Vuot gioi han run dang chay dong thoi."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "RUN_LIMIT_EXCEEDED",
+      "exceptionType": "ValidationException",
+      "description": "Vuot gioi han so lan chay test trong thang."
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "ENVIRONMENT_NOT_FOUND",
+      "exceptionType": "NotFoundException",
+      "description": "Khong tim thay execution environment yeu cau."
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "TEST_RUN_NOT_FOUND",
+      "exceptionType": "NotFoundException",
+      "description": "Khong tim thay test run."
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED",
+      "exceptionType": "ConflictException",
+      "description": "Chua co approved/applied API order."
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "RUN_RESULTS_EXPIRED",
+      "exceptionType": "ConflictException",
+      "description": "Chi tiet ket qua da het han luu tru trong cache."
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "testexecution",
+    "tables": [
+      "TestRuns"
+    ],
+    "cacheKeys": [
+      "testrun:{TestRunId}:results"
+    ],
+    "transactionBoundary": "Chi dung transaction de allocate RunNumber va insert Pending TestRun. Save result detail vao cache va update summary sau execution.",
+    "notes": [
+      "Khong tao bang TestCaseResults moi trong PostgreSQL.",
+      "RedisKey duoc dat ngay khi tao run record.",
+      "ResultsExpireAt phai bang UtcNow + retentionDays.",
+      "Neu cache write fail thi van update run final status = Failed va log loi."
+    ]
+  },
+  "securityAndAuthorization": {
+    "permissionsToAdd": [
+      "Permission:StartTestRun",
+      "Permission:GetTestRuns"
+    ],
+    "requirements": [
+      "POST /test-runs yeu cau [Authorize(Permissions.StartTestRun)].",
+      "GET endpoints yeu cau [Authorize(Permissions.GetTestRuns)].",
+      "Query/command handlers phai verify current user co the doc/thuc thi suite thong qua ownership context."
+    ]
+  }
+}

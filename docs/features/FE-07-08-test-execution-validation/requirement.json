@@ -1,0 +1,251 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-07-08-requirement",
+  "requirement": {
+    "id": "FE-07+FE-08",
+    "title": "Dependency-Aware Test Execution And Deterministic Validation",
+    "goal": "Thuc thi test cases theo dependency chain, resolve variable chaining, goi HTTP that su vao execution environment da chon, va danh gia pass/fail bang rule-based validator. LLM khong duoc tham gia quyet dinh pass/fail.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "TestGeneration da co TestSuite, TestCase, TestCaseRequest, TestCaseExpectation, TestCaseVariable, TestCaseDependency va API order gate; nhung chua co engine thuc thi.",
+      "TestExecution da co ExecutionEnvironment va TestRun summary entity; co the reuse ngay ma khong can mo rong DB schema.",
+      "FE-09 va FE-10 phu thuoc truc tiep vao execution result cua FE-07+FE-08.",
+      "Can giu pass/fail deterministic de ket qua bao cao, so sanh regression va LLM failure explanation co dau vao on dinh."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-07",
+      "title": "Dependency-aware test execution with variable extraction",
+      "file": "FE-07/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-08",
+      "title": "Deterministic rule-based validation",
+      "file": "FE-08/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "POST bat dau test run theo test suite va execution environment (hoac project default environment).",
+      "Load execution context tu TestGeneration qua contract boundary, bao gom ordered test cases, request, expectation, variables, dependencies.",
+      "Resolve runtime variables theo precedence: extracted run variables > execution environment variables > literal values trong test case.",
+      "Resolve path template, query params, headers, request body placeholders truoc khi goi HTTP.",
+      "Ho tro auth runtime cho environment: None, BearerToken, Basic, ApiKey, OAuth2 Client Credentials.",
+      "Thuc thi HTTP tuan tu theo dependency graph de bao toan deterministic chaining.",
+      "Variable extraction tu response body/header/status theo TestCaseVariable.",
+      "Rule-based validation: status code, response schema, header exact-match, body contains/not contains, JSONPath equality, max response time.",
+      "Skip dependent test cases neu dependency khong pass.",
+      "Luu summary vao testexecution.TestRuns va luu chi tiet ket qua vao distributed cache/Redis bang RedisKey cua TestRun.",
+      "Expose APIs de xem run history, run summary, run results chi tiet."
+    ],
+    "outOfScope": [
+      "Parallel execution giua cac test case trong cung 1 run.",
+      "Background worker, queue-based execution, SignalR real-time progress, webhook trigger, cancellation API.",
+      "LLM failure explanation (FE-09).",
+      "Report export va coverage metrics (FE-10).",
+      "Performance/load/stress testing.",
+      "Deep assertion DSL ngoai shape hien co cua TestCaseExpectation."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-04",
+        "reason": "Reuse ExecutionEnvironment CRUD, default environment, auth config serialization."
+      },
+      {
+        "id": "FE-05A",
+        "reason": "Execution chi duoc bat dau khi API order da duoc review/approve/applied."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Reuse happy-path test case entities, request/expectation/variable/dependency shape."
+      },
+      {
+        "id": "FE-06",
+        "reason": "Boundary/negative cases cung duoc thuc thi va validate bang mot engine chung."
+      },
+      {
+        "id": "FE-12",
+        "reason": "Path template placeholders phai duoc resolve dung quy tac da dat ra cho test generation va execution."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestExecution",
+        "status": "partial",
+        "schema": "testexecution",
+        "reusedEntities": [
+          "ExecutionEnvironment",
+          "TestRun"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "schema": "testgen",
+        "consumptionPattern": "Khong truy cap truc tiep DbContext/Repository tu TestExecution. Phai di qua contract gateway moi trong ClassifiedAds.Contracts."
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "consumptionPattern": "Dung IApiEndpointMetadataService de lay response schema payloads khi expectation khong co ResponseSchema."
+      },
+      {
+        "name": "ClassifiedAds.Modules.Subscription",
+        "status": "implemented",
+        "consumptionPattern": "Dung ISubscriptionLimitGatewayService de check MaxTestRunsPerMonth, MaxConcurrentRuns, RetentionDays."
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "usage": "ICurrentUser de lay user id cho ownership va audit."
+      }
+    ],
+    "newCrossModuleContracts": [
+      {
+        "name": "ITestExecutionReadGatewayService",
+        "project": "ClassifiedAds.Contracts",
+        "purpose": "Expose execution-ready TestSuite/TestCase graph tu TestGeneration sang TestExecution ma khong vo modular boundary."
+      }
+    ],
+    "database": {
+      "testExecutionSchema": "testexecution",
+      "testGenerationSchema": "testgen",
+      "noNewTablesRequired": true,
+      "noNewMigrationsRequired": true,
+      "reason": "TestRun da co summary columns va RedisKey/ResultsExpireAt cho chi tiet. ExecutionEnvironment da co du baseUrl, headers, variables, authConfig."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.TestExecution",
+    "secondaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "executionMode": "Synchronous request-response, sequential, deterministic.",
+    "resultStorage": {
+      "summary": "PostgreSQL table testexecution.TestRuns",
+      "details": "IDistributedCache/Redis payload keyed by TestRun.RedisKey",
+      "ttlSource": "Subscription limit RetentionDays, fallback 7 days neu limit khong tra ve gia tri hop le",
+      "noPerCaseDbTable": true
+    },
+    "queryStrategy": [
+      "Khong N+1 queries khi doc execution context tu TestGeneration. Gateway phai load suite + test cases + requests + expectations + variables + dependencies bang cac batch query co filter theo testSuiteId/testCaseIds.",
+      "GetTestRuns list API phai paging va projection thang tu TestRun, khong doc payload ket qua tu cache.",
+      "Endpoint metadata tu ApiDocumentation phai fetch 1 lan cho tat ca endpoint ids trong run, khong fetch moi test case.",
+      "Auth runtime cho OAuth2 phai resolve 1 lan moi run, khong xin access token moi request."
+    ],
+    "designPrinciples": [
+      "TestExecution khong reference truc tiep TestGeneration DbContext hay entities.",
+      "Validation engine va execution engine tach service rieng de de test va de mo rong.",
+      "Rule-based validator khong duoc goi LLM, khong duoc phu thuoc vao prompt output.",
+      "Dependent test case chi duoc chay khi tat ca dependencies da Passed.",
+      "Explicit request headers/query params co quyen override auth injection de negative test auth khong bi pha."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "determinism": {
+      "required": true,
+      "description": "Cung execution context, cung environment variables va cung API response thi ket qua pass/fail phai giong nhau."
+    },
+    "performance": {
+      "dbRoundTripsPerRunTarget": "<= 8 before HTTP loop, excluding cache set/get",
+      "executorOverheadPerCaseP95Ms": 150,
+      "singleRunExecutionStyle": "Sequential by dependency order, no intra-run parallelism",
+      "responseBodyPreviewLimitChars": 65536
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:StartTestRun",
+        "Permission:GetTestRuns"
+      ],
+      "sensitiveDataRules": [
+        "Khong expose raw environment auth secrets.",
+        "Result payload luu response body preview bi truncate; khong luu binary body day du.",
+        "Extracted variables co ten chua token/secret/password/apiKey phai bi mask trong response model."
+      ]
+    },
+    "reliability": {
+      "transactionForRunNumber": "Can Serializable transaction de cap RunNumber khong bi trung tren unique index (TestSuiteId, RunNumber).",
+      "gracefulDegradation": [
+        "Neu response body khong phai JSON thi schema/jsonpath checks fail co kiem soat, khong crash run.",
+        "Neu cache details save fail thi run van phai update summary sang Failed va log critical.",
+        "Neu endpoint metadata khong co schema payload thi validator bo qua contract schema fallback, khong fail ca run."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testRunId",
+        "testSuiteId",
+        "environmentId",
+        "userId",
+        "runNumber",
+        "totalTests",
+        "passedCount",
+        "failedCount",
+        "skippedCount",
+        "durationMs"
+      ],
+      "metrics": [
+        "test_run_started_total",
+        "test_run_completed_total",
+        "test_run_failed_total",
+        "test_case_execution_duration_ms",
+        "test_case_validation_failed_total",
+        "test_run_cache_write_failures_total"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST start test run tao duoc TestRun moi voi RunNumber tang dan theo tung TestSuite va status cuoi la Completed hoac Failed.",
+    "AC-02: Neu TestSuite chua Ready hoac FE-05A gate chua pass thi API bi chan truoc khi goi HTTP.",
+    "AC-03: He thong co the chay toan bo suite hoac subset selectedTestCaseIds; neu subset thieu dependency thi tra 400.",
+    "AC-04: Runtime variables duoc resolve cho URL, path params, query params, headers, body theo precedence da quy dinh.",
+    "AC-05: Test case co variable extraction thanh cong se cap nhat variable bag cho cac test case phu thuoc phia sau.",
+    "AC-06: Neu test case fail hoac unresolved variable thi tat ca dependents cua no bi mark Skipped.",
+    "AC-07: Rule-based validator danh gia dung 6 nhom check: status, schema, headers, body contains, body not contains, JSONPath, max response time.",
+    "AC-08: Validation pass/fail khong duoc phu thuoc LLM va khong duoc phu thuoc text explanation.",
+    "AC-09: Summary run duoc luu vao testexecution.TestRuns, chi tiet duoc luu vao distributed cache bang RedisKey va ResultsExpireAt.",
+    "AC-10: GET test-runs list phan trang duoc va khong doc payload ket qua chi tiet tu cache.",
+    "AC-11: GET test-run results tra du thong tin tung test case (resolved request, response preview, validation failures, extracted variables masked) khi cache con han.",
+    "AC-12: Neu ket qua da het han cache thi GET results tra 410 RUN_RESULTS_EXPIRED va summary van con trong PostgreSQL.",
+    "AC-13: Subscription limits MaxTestRunsPerMonth va MaxConcurrentRuns duoc check truoc khi thuc thi run.",
+    "AC-14: Auth runtime cho OAuth2 client credentials chi xin token 1 lan moi run.",
+    "AC-15: Khong co migration moi, khong co direct DbContext access xuyen module."
+  ],
+  "implementationOrder": [
+    "1. Tao contract gateway moi trong ClassifiedAds.Contracts va implementation doc execution context trong TestGeneration.",
+    "2. Them request/response models, permissions, controller, command/query surface cho TestExecution.",
+    "3. Implement runtime environment/auth resolver + variable resolver + HTTP executor.",
+    "4. Implement rule-based validator + result collector + distributed cache payload.",
+    "5. Hoan thien StartTestRun command handler, query handlers, DI registration, package references neu can.",
+    "6. Them unit tests va integration tests cho gateway, resolver, executor, validator, collector, command/query."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testRunId",
+        "testCaseId",
+        "status",
+        "httpStatusCode",
+        "latencyMs",
+        "validationFailureCodes"
+      ]
+    }
+  }
+}

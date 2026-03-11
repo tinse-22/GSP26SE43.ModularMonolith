@@ -1,0 +1,334 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-07-08-workflow",
+  "workflow": {
+    "id": "wf-fe07-08-test-execution-validation-v1",
+    "requirementId": "FE-07+FE-08",
+    "name": "Dependency-Aware Test Execution And Validation Workflow",
+    "mode": "request-response + sequential-execution + cache-backed-results",
+    "description": "Flow FE-07+FE-08 bat dau tu POST start test run, doc execution graph tu TestGeneration gateway, resolve runtime environment/auth, chay HTTP sequentially theo dependency order, validate response, luu summary vao PostgreSQL va luu chi tiet vao distributed cache."
+  },
+  "architectureOverview": {
+    "summary": "Command handler chi lo preflight, limit check, allocate run number va tao TestRun record. Orchestrator phu trach toan bo execution loop va delegate validation sang RuleBasedValidator, result persistence sang TestResultCollector. Query side tach rieng summary (DB) va result detail (cache).",
+    "outboxRequired": false,
+    "newEntitiesRequired": false,
+    "newMigrationsRequired": false,
+    "schemas": [
+      "testexecution",
+      "testgen"
+    ],
+    "keyPrinciples": [
+      "Khong thuc thi truoc khi suite Ready va FE-05A gate pass.",
+      "Khong N+1 query khi doc execution graph tu TestGeneration.",
+      "Khong parallel test cases trong mot run vi dependency/variable chaining.",
+      "Rule-based validator la nguon duy nhat quyet dinh pass/fail.",
+      "TestRun summary va detail tach storage: DB cho history, cache cho payload debug."
+    ]
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-04",
+      "FE-05A",
+      "FE-05B",
+      "FE-06",
+      "FE-12"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestExecution (primary)",
+      "ClassifiedAds.Modules.TestGeneration (execution read gateway implementation)",
+      "ClassifiedAds.Modules.ApiDocumentation (response schema fallback)",
+      "ClassifiedAds.Modules.Subscription (limits + retention)",
+      "ClassifiedAds.Contracts.Identity (ICurrentUser)"
+    ],
+    "crossModuleConsumption": {
+      "TestGeneration": {
+        "service": "ITestExecutionReadGatewayService",
+        "rules": [
+          "Tra ve suite access context va execution-ready ordered test case graph.",
+          "Tu check FE-05A gate, selected ids, dependency subset, enabled cases.",
+          "Khong expose entities, chi expose DTOs."
+        ]
+      },
+      "ApiDocumentation": {
+        "service": "IApiEndpointMetadataService",
+        "usage": "Lay response schema payload fallback khi expectation.ResponseSchema trong test case bi null/empty."
+      },
+      "Subscription": {
+        "service": "ISubscriptionLimitGatewayService",
+        "usage": [
+          "CheckLimitAsync(userId, MaxConcurrentRuns, runningCount + 1)",
+          "CheckLimitAsync(userId, RetentionDays, 0)",
+          "TryConsumeLimitAsync(userId, MaxTestRunsPerMonth, 1)"
+        ]
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Start Test Run Request Entry",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/test-runs { environmentId?, selectedTestCaseIds? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "TestRunsController",
+          "action": "Bind request, lay CurrentUserId, dispatch StartTestRunCommand.",
+          "output": "Command dispatched"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Preflight, Limits, And Run Record Creation",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "StartTestRunCommandHandler",
+          "action": "Validate TestSuiteId != Empty. selectedTestCaseIds neu co thi loai bo duplicate/Guid.Empty.",
+          "output": "Input sanitized"
+        },
+        {
+          "step": 2,
+          "actor": "ITestExecutionReadGatewayService",
+          "action": "GetSuiteAccessContextAsync(testSuiteId). Verify suite ton tai, owner = current user, status = Ready, ApiSpecId co gia tri.",
+          "output": "Suite access context"
+        },
+        {
+          "step": 3,
+          "actor": "StartTestRunCommandHandler",
+          "action": "Load ExecutionEnvironment theo environmentId neu co, neu null thi load default environment theo project. Validate environment thuoc cung project.",
+          "output": "ExecutionEnvironment loaded"
+        },
+        {
+          "step": 4,
+          "actor": "StartTestRunCommandHandler",
+          "action": "Check current running run count cua user trong testexecution.TestRuns (Status in Pending, Running) va call CheckLimitAsync(MaxConcurrentRuns, runningCount + 1).",
+          "output": "Concurrent run limit passed"
+        },
+        {
+          "step": 5,
+          "actor": "ISubscriptionLimitGatewayService",
+          "action": "TryConsumeLimitAsync(userId, MaxTestRunsPerMonth, 1).",
+          "output": "Monthly run quota reserved"
+        },
+        {
+          "step": 6,
+          "actor": "StartTestRunCommandHandler",
+          "action": "Allocate RunNumber trong Serializable transaction: max(runNumber) + 1 theo suite, insert TestRun(Status=Pending, StartedAt=null, RedisKey='testrun:{id}:results').",
+          "output": "TestRun persisted"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Load Execution Graph And Resolve Runtime Environment",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "TestExecutionOrchestrator",
+          "action": "GetExecutionContextAsync(testSuiteId, selectedTestCaseIds). Gateway enforce FE-05A gate, selection validity, dependency completeness, deterministic ordering.",
+          "output": "TestSuiteExecutionContextDto"
+        },
+        {
+          "step": 2,
+          "actor": "ExecutionEnvironmentRuntimeResolver",
+          "action": "Deserialize environment auth config, resolve runtime auth one lan cho ca run, build ResolvedExecutionEnvironment { BaseUrl, DefaultHeaders, DefaultQueryParams, Variables }.",
+          "output": "ResolvedExecutionEnvironment"
+        },
+        {
+          "step": 3,
+          "actor": "ISubscriptionLimitGatewayService",
+          "action": "CheckLimitAsync(userId, RetentionDays, 0) de suy ra TTL cho cache payload.",
+          "output": "RetentionDays"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Sequential Execution Loop",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "TestExecutionOrchestrator",
+          "action": "Update TestRun -> Status=Running, StartedAt=UtcNow, TotalTests=context.OrderedTestCases.Count.",
+          "output": "Run marked running"
+        },
+        {
+          "step": 2,
+          "actor": "TestExecutionOrchestrator",
+          "action": "Khoi tao variable bag bang environment variables.",
+          "output": "Runtime variable bag"
+        },
+        {
+          "step": 3,
+          "actor": "TestExecutionOrchestrator",
+          "action": "Loop tung test case theo deterministic order. Neu bat ky dependency status != Passed thi mark current case Skipped va bo qua HTTP call.",
+          "output": "Per-case branch"
+        },
+        {
+          "step": 4,
+          "actor": "VariableResolver",
+          "action": "Resolve {{variable}} placeholders trong URL/path params/query params/headers/body. Resolve path template bang PathParams da duoc materialize. Neu con placeholder chua resolve -> fail case voi UNRESOLVED_VARIABLE.",
+          "output": "ResolvedTestCaseRequest"
+        },
+        {
+          "step": 5,
+          "actor": "HttpTestExecutor",
+          "action": "Build HttpRequestMessage tu resolved request + resolved environment, merge headers/query params, goi HttpClient voi timeout clamp ve [1000, 60000] ms.",
+          "output": "HttpTestResponse { StatusCode, Headers, Body, LatencyMs, IsSuccessTransport }"
+        },
+        {
+          "step": 6,
+          "actor": "VariableExtractor",
+          "action": "Extract response variables theo TestCaseVariable rules (JSONPath, Header, Status). Merge vao variable bag neu extract thanh cong, fallback sang DefaultValue neu co.",
+          "output": "Extracted variable map"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Validation And Result Collection",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "RuleBasedValidator",
+          "action": "Validate status code, response schema, header checks, body contains/not contains, JSONPath checks, max response time. Neu expectation schema null thi co the fallback endpoint metadata success schema.",
+          "output": "TestCaseValidationResult"
+        },
+        {
+          "step": 2,
+          "actor": "TestExecutionOrchestrator",
+          "action": "Build TestCaseExecutionResult cho tung test case: Passed, Failed, hoac Skipped; gan failure codes/messages, response preview, extracted variables masked.",
+          "output": "All case results"
+        },
+        {
+          "step": 3,
+          "actor": "TestResultCollector",
+          "action": "Serialize result document -> distributed cache bang RedisKey va TTL. Update TestRun counters, status final, duration, completedAt, resultsExpireAt, save vao PostgreSQL.",
+          "output": "TestRunResultModel"
+        },
+        {
+          "step": 4,
+          "actor": "TestRunsController",
+          "action": "Return 201 Created + TestRunResultModel.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    },
+    {
+      "id": "flow-06",
+      "name": "Query Run History And Detailed Results",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs?pageNumber=1&pageSize=20",
+          "output": "Paged TestRunModel list from PostgreSQL only"
+        },
+        {
+          "step": 2,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs/{runId}",
+          "output": "Summary detail from PostgreSQL"
+        },
+        {
+          "step": 3,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs/{runId}/results",
+          "output": "Detailed result payload from cache"
+        },
+        {
+          "step": 4,
+          "actor": "GetTestRunResultsQueryHandler",
+          "action": "Neu cache miss nhung ResultsExpireAt < UtcNow thi tra Conflict/Gone voi reason RUN_RESULTS_EXPIRED. Neu run khong ton tai thi 404.",
+          "output": "Detailed result or controlled error"
+        }
+      ]
+    }
+  ],
+  "queryStrategy": {
+    "testGenerationGateway": {
+      "roundTrips": [
+        "1 query suite summary",
+        "1 query selected enabled test cases projection",
+        "1 query requests by testCaseIds",
+        "1 query expectations by testCaseIds",
+        "1 query variables by testCaseIds",
+        "1 query dependencies by testCaseIds"
+      ],
+      "rules": [
+        "Khong .FirstOrDefaultAsync trong loop test case ids.",
+        "Khong load full entity graph bang lazy loading.",
+        "Sort in-memory sau khi da co projection map thay vi issue query per endpoint."
+      ]
+    },
+    "testExecutionQueries": {
+      "listRuns": "Projection va paging tren TestRun query; order by CreatedDateTime desc, Id desc.",
+      "getRunResults": "Doc 1 row TestRun de verify access + RedisKey, sau do doc 1 cache entry."
+    }
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "Ban khong co quyen thao tac test suite nay.",
+        "Test suite chua san sang de chay test.",
+        "Khong tim thay execution environment mac dinh cho project nay.",
+        "selectedTestCaseIds thieu test case dependency can thiet.",
+        "Da dat gioi han so luong run dang chay dong thoi."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test suite voi ma '{id}'.",
+        "Khong tim thay execution environment voi ma '{id}'.",
+        "Khong tim thay test run voi ma '{id}'."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "ORDER_CONFIRMATION_REQUIRED: Chua co API order duoc xac nhan.",
+        "RUN_RESULTS_EXPIRED: Chi tiet ket qua da het han luu tru."
+      ]
+    }
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "No Cross-Module DbContext Access",
+      "rule": "TestExecution chi consume TestGeneration qua ITestExecutionReadGatewayService."
+    },
+    {
+      "id": "QG-02",
+      "name": "Deterministic Ordering",
+      "rule": "Execution order phai on dinh theo approved endpoint order + custom/order index, khong phu thuoc order ngau nhien cua database."
+    },
+    {
+      "id": "QG-03",
+      "name": "No N+1 Data Fetch",
+      "rule": "Gateway doc execution graph bang batch queries va in-memory map/group."
+    },
+    {
+      "id": "QG-04",
+      "name": "Result Storage Split",
+      "rule": "Summary chi o PostgreSQL, payload chi tiet chi o cache."
+    }
+  ]
+}
