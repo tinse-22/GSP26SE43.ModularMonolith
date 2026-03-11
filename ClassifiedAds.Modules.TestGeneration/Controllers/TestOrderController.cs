@@ -177,6 +177,19 @@ public class TestOrderController : ControllerBase
         return Ok(status);
     }
 
+    [Authorize(Permissions.GetTestSuites)]
+    [HttpGet("test-cases")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<TestCaseModel>>> GetTestCases(Guid suiteId)
+    {
+        var result = await _dispatcher.DispatchAsync(new GetTestCasesByTestSuiteQuery
+        {
+            TestSuiteId = suiteId,
+        });
+
+        return Ok(result);
+    }
+
     [Authorize(Permissions.GenerateTestCases)]
     [HttpPost("generate-tests")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
