@@ -71,7 +71,7 @@ public static class TestGenerationServiceCollectionExtensions
 
         // FE-06: Boundary/negative test case generation services
         services
-            .AddSingleton<IBodyMutationEngine, BodyMutationEngine>()
+            .AddScoped<IBodyMutationEngine, BodyMutationEngine>()
             .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
 

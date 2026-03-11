@@ -344,6 +344,132 @@ public class BodyMutationEngineTests
         strOverflow.Label.Should().Contain("10000-char string");
     }
 
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("DELETE")]
+    [InlineData("HEAD")]
+    [InlineData("OPTIONS")]
+    public void GenerateMutations_Should_ReturnEmptyList_ForNonBodyMethods(string httpMethod)
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = httpMethod,
+            Path = "/api/items/{id}",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "name",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert
+        mutations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GenerateMutations_Should_SkipOverflow_ForBooleanArrayObjectFields()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/data",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "isActive",
+                    Location = "Body",
+                    DataType = "boolean",
+                    IsRequired = false,
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "tags",
+                    Location = "Body",
+                    DataType = "array",
+                    IsRequired = false,
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "metadata",
+                    Location = "Body",
+                    DataType = "object",
+                    IsRequired = false,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert — overflow mutations should NOT include boolean, array, or object fields
+        var overflowMutations = mutations.Where(m => m.MutationType == "overflow").ToList();
+        overflowMutations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GenerateMutations_Should_UseDefaultValueFromParameter_InBaseBody()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/items",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "quantity",
+                    Location = "Body",
+                    DataType = "integer",
+                    IsRequired = true,
+                    DefaultValue = "42",
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "label",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert — missingRequired for "quantity" should produce body that includes "label" with default "sample_value"
+        var missingQuantity = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "quantity");
+        missingQuantity.MutatedBody.Should().Contain("sample_value");
+        missingQuantity.MutatedBody.Should().NotContain("quantity");
+
+        // missingRequired for "label" should produce body that includes "quantity" with its default "42"
+        var missingLabel = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "label");
+        missingLabel.MutatedBody.Should().Contain("42");
+        missingLabel.MutatedBody.Should().NotContain("label");
+    }
+
     [Fact]
     public void GenerateMutations_Should_SetExpectedStatusCode400_ForAllMutations()
     {
@@ -400,5 +526,133 @@ public class BodyMutationEngineTests
         types.Should().Contain("typeMismatch");
         types.Should().Contain("overflow");
         types.Should().Contain("invalidEnum");
+    }
+
+    [Fact]
+    public void GenerateMutations_Should_UseJsonObjectDefault_InBaseBody()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/configs",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "settings",
+                    Location = "Body",
+                    DataType = "object",
+                    IsRequired = true,
+                    DefaultValue = "{\"mode\":\"strict\",\"retries\":3}",
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "name",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert — missingRequired for "name" should produce body containing settings as a real JSON object
+        var missingName = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "name");
+        missingName.MutatedBody.Should().Contain("\"mode\"");
+        missingName.MutatedBody.Should().Contain("\"strict\"");
+        missingName.MutatedBody.Should().Contain("\"retries\"");
+        missingName.MutatedBody.Should().Contain("3");
+        // Should NOT be a raw string like "\"settings\":\"{\\\"mode\\\":\\\"strict\\\"\""
+        missingName.MutatedBody.Should().NotContain("\\\"");
+    }
+
+    [Fact]
+    public void GenerateMutations_Should_UseJsonArrayDefault_InBaseBody()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/bulk",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "ids",
+                    Location = "Body",
+                    DataType = "array",
+                    IsRequired = true,
+                    DefaultValue = "[1,2,3]",
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "label",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert — missingRequired for "label" should produce body containing ids as a real JSON array
+        var missingLabel = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "label");
+        missingLabel.MutatedBody.Should().Contain("[1,2,3]");
+        // Should NOT be a raw string like "\"ids\":\"[1,2,3]\""
+        missingLabel.MutatedBody.Should().NotContain("\"[1,2,3]\"");
+    }
+
+    [Fact]
+    public void GenerateMutations_Should_UseJsonArrayExample_InBaseBody()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/tags",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "tags",
+                    Location = "Body",
+                    DataType = "array",
+                    IsRequired = true,
+                    Examples = "[\"alpha\",\"beta\"]",
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "title",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert — missingRequired for "title" should produce body containing tags as a real JSON array
+        var missingTitle = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "title");
+        missingTitle.MutatedBody.Should().Contain("\"alpha\"");
+        missingTitle.MutatedBody.Should().Contain("\"beta\"");
     }
 }
