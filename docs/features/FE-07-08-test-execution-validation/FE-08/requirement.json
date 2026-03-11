@@ -1,0 +1,47 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-08-requirement",
+  "requirement": {
+    "id": "FE-08",
+    "title": "Deterministic Rule-Based Validation",
+    "goal": "Danh gia ket qua thuc thi bang bo validator co quy tac ro rang, tai lap duoc, khong su dung LLM de quyet dinh pass/fail.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "Bao cao, regression diff va failure explanation deu can execution result co pass/fail on dinh.",
+      "TestCaseExpectation hien co da luu expected status, response schema, header checks, body checks, JSONPath checks va max response time.",
+      "Can tach ro execution khoi validation de de test va de mo rong sau nay."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Status code check tu ExpectedStatus json array.",
+      "Response schema validation tu TestCaseExpectation.ResponseSchema; fallback sang ApiEndpointMetadata.ResponseSchemaPayloads neu expectation khong co schema.",
+      "Header exact-match validation tu HeaderChecks dictionary.",
+      "BodyContains va BodyNotContains substring checks.",
+      "JSONPath equality checks tu JsonPathChecks dictionary.",
+      "Max response time validation tu MaxResponseTime."
+    ],
+    "outOfScope": [
+      "LLM-generated failure explanation.",
+      "Complex assertion DSL voi operator >, <, regex, anyOf, custom scripts.",
+      "Contract diff report va coverage calculation."
+    ]
+  },
+  "acceptanceCriteria": [
+    "AC-01: Neu actual status code khong nam trong ExpectedStatus thi test case Failed voi failure code STATUS_CODE_MISMATCH.",
+    "AC-02: Neu ResponseSchema ton tai va response body khong hop schema thi test case Failed voi failure code RESPONSE_SCHEMA_MISMATCH.",
+    "AC-03: HeaderChecks validate theo key khong phan biet hoa thuong, value compare exact sau khi trim.",
+    "AC-04: BodyContains va BodyNotContains su dung substring check deterministic, khong phu thuoc LLM.",
+    "AC-05: JSONPath checks support it nhat root, property, nested property, array index va so sanh scalar value.",
+    "AC-06: MaxResponseTime vuot nguong thi test case Failed voi failure code RESPONSE_TIME_EXCEEDED.",
+    "AC-07: Validation result chi ra tung rule pass/fail va danh sach failure reasons de FE-09 consume ve sau."
+  ],
+  "implementationOrder": [
+    "1. TestCaseValidationResult model + failure detail codes.",
+    "2. RuleBasedValidator voi schema validator + simple JSONPath selector.",
+    "3. Ket noi validator vao orchestrator va result collector.",
+    "4. Query result models de expose validation details."
+  ]
+}
