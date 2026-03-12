@@ -1,6 +1,7 @@
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
 
@@ -36,6 +37,8 @@ public class TestSuiteScopeModel
 
     public int SelectedEndpointCount { get; set; }
 
+    public int TestCaseCount { get; set; }
+
     public Guid CreatedById { get; set; }
 
     public DateTimeOffset CreatedDateTime { get; set; }
@@ -44,7 +47,7 @@ public class TestSuiteScopeModel
 
     public string RowVersion { get; set; }
 
-    public static TestSuiteScopeModel FromEntity(TestSuite suite)
+    public static TestSuiteScopeModel FromEntity(TestSuite suite, int? testCaseCount = null)
     {
         return new TestSuiteScopeModel
         {
@@ -60,6 +63,7 @@ public class TestSuiteScopeModel
             EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new Dictionary<Guid, string>(),
             GlobalBusinessRules = suite.GlobalBusinessRules,
             SelectedEndpointCount = suite.SelectedEndpointIds?.Count ?? 0,
+            TestCaseCount = testCaseCount ?? 0,
             CreatedById = suite.CreatedById,
             CreatedDateTime = suite.CreatedDateTime,
             UpdatedDateTime = suite.UpdatedDateTime,
