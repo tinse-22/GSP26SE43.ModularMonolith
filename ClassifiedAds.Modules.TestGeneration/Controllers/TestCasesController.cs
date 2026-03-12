@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.TestGeneration.Controllers;
@@ -157,5 +158,210 @@ public class TestCasesController : ControllerBase
         });
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Manually create a new test case with request, expectation, and variables.
+    /// </summary>
+    [Authorize(Permissions.AddTestCase)]
+    [HttpPost]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(TestCaseModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TestCaseModel>> Add(
+        Guid suiteId,
+        [FromBody] AddTestCaseRequest request)
+    {
+        var command = new AddTestCaseCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            EndpointId = request.EndpointId,
+            Name = request.Name,
+            Description = request.Description,
+            TestType = request.TestType,
+            Priority = request.Priority,
+            IsEnabled = request.IsEnabled,
+            Tags = request.Tags,
+            RequestHttpMethod = request.Request?.HttpMethod,
+            RequestUrl = request.Request?.Url,
+            RequestHeaders = request.Request?.Headers,
+            RequestPathParams = request.Request?.PathParams,
+            RequestQueryParams = request.Request?.QueryParams,
+            RequestBodyType = request.Request?.BodyType ?? Entities.BodyType.None,
+            RequestBody = request.Request?.Body,
+            RequestTimeout = request.Request?.Timeout ?? 30000,
+            ExpectedStatus = request.Expectation?.ExpectedStatus,
+            ResponseSchema = request.Expectation?.ResponseSchema,
+            HeaderChecks = request.Expectation?.HeaderChecks,
+            BodyContains = request.Expectation?.BodyContains,
+            BodyNotContains = request.Expectation?.BodyNotContains,
+            JsonPathChecks = request.Expectation?.JsonPathChecks,
+            MaxResponseTime = request.Expectation?.MaxResponseTime,
+            Variables = request.Variables?.Select(v => new VariableInput
+            {
+                VariableName = v.VariableName,
+                ExtractFrom = v.ExtractFrom,
+                JsonPath = v.JsonPath,
+                HeaderName = v.HeaderName,
+                Regex = v.Regex,
+                DefaultValue = v.DefaultValue,
+            }).ToList() ?? new List<VariableInput>(),
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Created test case manually. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.Id, _currentUser.UserId);
+
+        return Created(
+            $"/api/test-suites/{suiteId}/test-cases/{command.Result?.Id}",
+            command.Result);
+    }
+
+    /// <summary>
+    /// Update an existing test case with request, expectation, and variables.
+    /// </summary>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPut("{testCaseId:guid}")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(TestCaseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TestCaseModel>> Update(
+        Guid suiteId,
+        Guid testCaseId,
+        [FromBody] UpdateTestCaseRequest request)
+    {
+        var command = new UpdateTestCaseCommand
+        {
+            TestSuiteId = suiteId,
+            TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
+            EndpointId = request.EndpointId,
+            Name = request.Name,
+            Description = request.Description,
+            TestType = request.TestType,
+            Priority = request.Priority,
+            IsEnabled = request.IsEnabled,
+            Tags = request.Tags,
+            RequestHttpMethod = request.Request?.HttpMethod,
+            RequestUrl = request.Request?.Url,
+            RequestHeaders = request.Request?.Headers,
+            RequestPathParams = request.Request?.PathParams,
+            RequestQueryParams = request.Request?.QueryParams,
+            RequestBodyType = request.Request?.BodyType ?? Entities.BodyType.None,
+            RequestBody = request.Request?.Body,
+            RequestTimeout = request.Request?.Timeout ?? 30000,
+            ExpectedStatus = request.Expectation?.ExpectedStatus,
+            ResponseSchema = request.Expectation?.ResponseSchema,
+            HeaderChecks = request.Expectation?.HeaderChecks,
+            BodyContains = request.Expectation?.BodyContains,
+            BodyNotContains = request.Expectation?.BodyNotContains,
+            JsonPathChecks = request.Expectation?.JsonPathChecks,
+            MaxResponseTime = request.Expectation?.MaxResponseTime,
+            Variables = request.Variables?.Select(v => new VariableInput
+            {
+                VariableName = v.VariableName,
+                ExtractFrom = v.ExtractFrom,
+                JsonPath = v.JsonPath,
+                HeaderName = v.HeaderName,
+                Regex = v.Regex,
+                DefaultValue = v.DefaultValue,
+            }).ToList() ?? new List<VariableInput>(),
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Updated test case. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, ActorUserId={ActorUserId}",
+            suiteId, testCaseId, _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
+
+    /// <summary>
+    /// Delete a test case and recalculate order for remaining cases.
+    /// </summary>
+    [Authorize(Permissions.DeleteTestCase)]
+    [HttpDelete("{testCaseId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(Guid suiteId, Guid testCaseId)
+    {
+        var command = new DeleteTestCaseCommand
+        {
+            TestSuiteId = suiteId,
+            TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Deleted test case. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, ActorUserId={ActorUserId}",
+            suiteId, testCaseId, _currentUser.UserId);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Toggle a test case enabled/disabled status.
+    /// </summary>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPatch("{testCaseId:guid}/toggle")]
+    [Consumes("application/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Toggle(
+        Guid suiteId,
+        Guid testCaseId,
+        [FromBody] ToggleTestCaseRequest request)
+    {
+        var command = new ToggleTestCaseCommand
+        {
+            TestSuiteId = suiteId,
+            TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
+            IsEnabled = request.IsEnabled,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Toggled test case. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, IsEnabled={IsEnabled}, ActorUserId={ActorUserId}",
+            suiteId, testCaseId, request.IsEnabled, _currentUser.UserId);
+
+        return Ok();
+    }
+
+    /// <summary>
+    /// Reorder test cases by providing an ordered list of test case IDs.
+    /// </summary>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPatch("reorder")]
+    [Consumes("application/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Reorder(
+        Guid suiteId,
+        [FromBody] ReorderTestCasesRequest request)
+    {
+        var command = new ReorderTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            TestCaseIds = request.TestCaseIds,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Reordered test cases. TestSuiteId={TestSuiteId}, Count={Count}, ActorUserId={ActorUserId}",
+            suiteId, request.TestCaseIds?.Count, _currentUser.UserId);
+
+        return Ok();
     }
 }

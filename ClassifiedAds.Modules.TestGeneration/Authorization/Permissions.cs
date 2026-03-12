@@ -20,4 +20,9 @@ public static class Permissions
 
     // Boundary/Negative Test Case Generation (FE-06)
     public const string GenerateBoundaryNegativeTestCases = "Permission:GenerateBoundaryNegativeTestCases";
+
+    // Test Case CRUD (FE-06 CRUD)
+    public const string AddTestCase = "Permission:AddTestCase";
+    public const string UpdateTestCase = "Permission:UpdateTestCase";
+    public const string DeleteTestCase = "Permission:DeleteTestCase";
 }
