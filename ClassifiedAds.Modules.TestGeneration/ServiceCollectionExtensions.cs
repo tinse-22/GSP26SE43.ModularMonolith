@@ -83,6 +83,8 @@ public static class TestGenerationServiceCollectionExtensions
             options.ApiKey = n8n.ApiKey ?? string.Empty;
             options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 30 : n8n.TimeoutSeconds;
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
+            options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
+            options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
         });
 
         services.AddHttpClient<IN8nIntegrationService, N8nIntegrationService>((sp, client) =>
