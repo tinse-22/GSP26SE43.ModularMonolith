@@ -1,0 +1,335 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-06-requirement",
+  "requirement": {
+    "id": "FE-06",
+    "title": "Boundary & Negative Test Case Generation",
+    "goal": "Mo rong FE-05 (happy-path generation) them kha nang tu dong tao boundary va negative test cases bang 3 pipeline: rule-based path mutations, rule-based body mutations, va LLM-suggested scenarios qua n8n webhook. Bat buoc phai qua FE-05A gate (approved API order) truoc khi generate.",
+    "priority": "P0",
+    "status": "implemented",
+    "rationale": [
+      "FE-05B chi cover happy-path, can them boundary/negative de dam bao API duoc test day du cac truong hop loi.",
+      "Rule-based mutations dam bao deterministic va khong can goi LLM cho cac case co ban (empty body, malformed JSON, missing required fields).",
+      "LLM suggestions bo sung cac scenario phuc tap ma rule-based khong cover duoc (business logic edge cases, semantic errors).",
+      "Cache LLM results 24h de giam chi phi va tang toc do khi regenerate.",
+      "Reuse toan bo entity model TestCase/TestCaseRequest/TestCaseExpectation tu FE-05B, chi khac TestType = Boundary|Negative."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Gate check FE-05A (approved/applied API order) truoc khi generate.",
+      "Rule-based path parameter mutations: null, empty, boundary values, overflow, invalid enum, wrong type, special characters, injection.",
+      "Rule-based body mutations: empty body, malformed JSON, missing required fields, type mismatch, overflow, invalid enum.",
+      "Schema-based mutations tu JSON schema (phat hien required fields chua co trong BodyParameters).",
+      "LLM scenario suggestions qua n8n webhook 'generate-boundary-negative-scenarios'.",
+      "LLM suggestion caching per-endpoint voi TTL 24h qua ILlmAssistantGatewayService.",
+      "LLM interaction audit logging qua LlmAssistant module.",
+      "Persist test cases trong transaction voi change log va suite version.",
+      "Subscription limit check (MaxTestCasesPerSuite, MaxLlmCallsPerMonth).",
+      "Force regenerate option de xoa va tao lai boundary/negative test cases.",
+      "User co the bat/tat tung pipeline rieng le (IncludePathMutations, IncludeBodyMutations, IncludeLlmSuggestions)."
+    ],
+    "outOfScope": [
+      "Happy-path test case generation (FE-05B).",
+      "API order proposal va review gate (FE-05A).",
+      "LLM failure explanation (FE-09).",
+      "Performance/Security test type generation.",
+      "UI review bulk operations cho LLM suggestion (FE-15..FE-17).",
+      "Test case execution (FE-07)."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-05A",
+        "reason": "Mandatory gate: phai co approved/applied API order truoc khi generate boundary/negative."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Reuse entity model TestCase/TestCaseRequest/TestCaseExpectation, request/expectation builders."
+      },
+      {
+        "id": "FE-04",
+        "reason": "Test suite scope configuration (SelectedEndpointIds, ApiSpecId)."
+      },
+      {
+        "id": "FE-03",
+        "reason": "Endpoint metadata va parameter details (parsed tu OpenAPI/Postman spec)."
+      },
+      {
+        "id": "FE-12",
+        "reason": "Path parameter templating va mutation gateway service."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "schema": "testgen",
+        "reusedEntities": [
+          "TestSuite",
+          "TestCase",
+          "TestCaseRequest",
+          "TestCaseExpectation",
+          "TestCaseVariable",
+          "TestCaseDependency",
+          "TestCaseChangeLog",
+          "TestSuiteVersion",
+          "TestOrderProposal"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "consumptionPattern": "Cross-module boundary via IApiEndpointMetadataService va IApiEndpointParameterDetailService. Khong truy cap truc tiep entity/repository."
+      },
+      {
+        "name": "ClassifiedAds.Modules.LlmAssistant",
+        "status": "implemented",
+        "consumptionPattern": "Cross-module boundary via ILlmAssistantGatewayService. Dung de save interaction audit va cache suggestions."
+      },
+      {
+        "name": "ClassifiedAds.Modules.Subscription",
+        "status": "implemented",
+        "consumptionPattern": "Cross-module boundary via ISubscriptionLimitGatewayService. Check va increment usage limits."
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "usage": "ICurrentUser de lay UserId cho ownership check va audit trail."
+      }
+    ],
+    "database": {
+      "schema": "testgen",
+      "noNewTablesRequired": true,
+      "noNewMigrationsRequired": true,
+      "note": "FE-06 reuse toan bo entity va table da tao tu FE-04/FE-05. TestCase.TestType = Boundary|Negative la diem khac biet duy nhat."
+    }
+  },
+  "threePipelineArchitecture": {
+    "description": "FE-06 chia generation thanh 3 pipeline doc lap, user co the bat/tat tung pipeline.",
+    "pipelines": [
+      {
+        "id": "PIPE-01",
+        "name": "Path Parameter Mutations",
+        "type": "rule-based",
+        "source": "IPathParameterMutationGatewayService (ApiDocumentation module)",
+        "trigger": "IncludePathMutations=true",
+        "description": "Generate test cases cho moi path parameter cua moi endpoint. Moi parameter tao nhieu mutations (null, empty, boundary, overflow, injection, wrongType).",
+        "inputRequired": "EndpointParameterDetailDto voi Location=Path"
+      },
+      {
+        "id": "PIPE-02",
+        "name": "Body Mutations",
+        "type": "rule-based",
+        "source": "IBodyMutationEngine (internal TestGeneration service)",
+        "trigger": "IncludeBodyMutations=true",
+        "description": "Generate test cases cho request body cua POST/PUT/PATCH endpoints. Gom 6 loai mutation: emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum. Them schema-based mutations neu co raw JSON schema.",
+        "inputRequired": "EndpointParameterDetailDto voi Location=Body + RequestBodySchema"
+      },
+      {
+        "id": "PIPE-03",
+        "name": "LLM Scenario Suggestions",
+        "type": "llm-assisted",
+        "source": "ILlmScenarioSuggester (internal TestGeneration service) -> n8n webhook",
+        "trigger": "IncludeLlmSuggestions=true",
+        "description": "Goi n8n webhook de nhan goi y boundary/negative scenarios tu LLM. Su dung Observation-Confirmation prompt pattern. Cache ket qua 24h per-endpoint. Log interaction cho audit.",
+        "inputRequired": "ApiEndpointMetadataDto, TestSuite context, GlobalBusinessRules"
+      }
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "generationP95Ms": 5000,
+      "llmCallTimeoutMs": 30000,
+      "cacheHitSpeedupTarget": "10x faster than LLM call"
+    },
+    "caching": {
+      "llmSuggestionCacheTtl": "24 hours",
+      "cacheKeyStrategy": "SHA256(testSuiteId:specificationId:sortedEndpointIds)",
+      "cacheScope": "per-endpoint (LlmSuggestionCache table)",
+      "cacheInvalidation": "Automatic expiry via ExpiresAt column"
+    },
+    "auditTrail": {
+      "llmInteractionLogging": true,
+      "changeLogPerTestCase": true,
+      "suiteVersionSnapshot": true,
+      "requiredFields": [
+        "TestSuiteId",
+        "UserId",
+        "LlmModel",
+        "TokensUsed",
+        "LatencyMs",
+        "GeneratedAt"
+      ]
+    },
+    "reliability": {
+      "llmFailureGraceful": true,
+      "llmFailureNote": "Neu LLM audit save fail, khong lam fail main flow. Log warning va tiep tuc.",
+      "transactionRequired": true,
+      "concurrencySafe": true
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permission": "Permission:GenerateBoundaryNegativeTestCases"
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: FE-06 bi chan (HTTP 409 ORDER_CONFIRMATION_REQUIRED) neu test suite chua co approved/applied API order tu FE-05A.",
+    "AC-02: Generate boundary/negative test cases thanh cong khi FE-05A gate pass va it nhat 1 pipeline duoc bat.",
+    "AC-03: Path mutation pipeline tao test cases cho moi path parameter cua moi endpoint voi cac loai mutation (null, empty, boundary, overflow, injection, wrongType, specialChars).",
+    "AC-04: Body mutation pipeline tao 6 loai mutations cho POST/PUT/PATCH endpoints: emptyBody (3 variants), malformedJson (3 variants), missingRequired (per field), typeMismatch (per field), overflow (per numeric/string field), invalidEnum (per enum field).",
+    "AC-05: Schema-based mutations bo sung missing required field mutations tu JSON schema khi BodyParameters khong cover het.",
+    "AC-06: LLM suggestion pipeline goi n8n webhook 'generate-boundary-negative-scenarios' va parse response thanh LlmSuggestedScenario.",
+    "AC-07: LLM suggestions duoc cache per-endpoint voi TTL 24h. Cache hit tra ket qua ngay lap tuc khong goi LLM.",
+    "AC-08: LLM interaction duoc log vao LlmAssistant module (LlmInteraction entity) cho audit trail.",
+    "AC-09: Tat ca test cases duoc persist trong 1 transaction voi TestCaseChangeLog va TestSuiteVersion entries.",
+    "AC-10: ForceRegenerate=true xoa tat ca boundary/negative test cases hien co truoc khi generate moi.",
+    "AC-11: ForceRegenerate=false tra loi 400 neu da co boundary/negative test cases.",
+    "AC-12: Subscription limits duoc check truoc khi generate (MaxTestCasesPerSuite, MaxLlmCallsPerMonth).",
+    "AC-13: Subscription usage duoc increment sau khi generate thanh cong.",
+    "AC-14: Test cases duoc tag dung loai: 'boundary'|'negative', 'auto-generated', 'rule-based'|'llm-suggested', mutation-type-specific tags.",
+    "AC-15: Validation tra 400 neu khong bat it nhat 1 pipeline (IncludePathMutations=false AND IncludeBodyMutations=false AND IncludeLlmSuggestions=false).",
+    "AC-16: Suite duoc cap nhat Version++, Status=Ready, LastModifiedById sau khi generate."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Gate fail blocks generation",
+      "given": "Test suite chua co approved API order (FE-05A)",
+      "when": "POST generate-boundary-negative",
+      "then": "HTTP 409 ORDER_CONFIRMATION_REQUIRED"
+    },
+    {
+      "id": "TS-02",
+      "name": "Full pipeline generation",
+      "given": "Test suite co approved order, endpoints co path params va body params",
+      "when": "POST generate-boundary-negative { IncludePathMutations: true, IncludeBodyMutations: true, IncludeLlmSuggestions: true }",
+      "then": "Generate test cases tu ca 3 pipeline, persist tat ca, tra result voi counts"
+    },
+    {
+      "id": "TS-03",
+      "name": "Path mutations only",
+      "given": "Test suite co approved order, endpoints co path params",
+      "when": "POST generate-boundary-negative { IncludePathMutations: true, IncludeBodyMutations: false, IncludeLlmSuggestions: false }",
+      "then": "Chi tao test cases tu path mutations, BodyMutationCount=0, LlmSuggestionCount=0"
+    },
+    {
+      "id": "TS-04",
+      "name": "Body mutations only",
+      "given": "Test suite co approved order, POST endpoint co body params",
+      "when": "POST generate-boundary-negative { IncludePathMutations: false, IncludeBodyMutations: true, IncludeLlmSuggestions: false }",
+      "then": "Chi tao test cases tu body mutations, PathMutationCount=0, LlmSuggestionCount=0"
+    },
+    {
+      "id": "TS-05",
+      "name": "LLM suggestions only",
+      "given": "Test suite co approved order, LLM available va khong co cache",
+      "when": "POST generate-boundary-negative { IncludePathMutations: false, IncludeBodyMutations: false, IncludeLlmSuggestions: true }",
+      "then": "Goi n8n webhook, parse scenarios, cache results, log interaction"
+    },
+    {
+      "id": "TS-06",
+      "name": "LLM cache hit",
+      "given": "Test suite co approved order, LLM suggestions da cached (< 24h)",
+      "when": "POST generate-boundary-negative voi IncludeLlmSuggestions: true",
+      "then": "Khong goi n8n webhook, dung cached results, FromCache=true"
+    },
+    {
+      "id": "TS-07",
+      "name": "Force regenerate replaces existing",
+      "given": "Test suite da co 10 boundary/negative test cases",
+      "when": "POST generate-boundary-negative { ForceRegenerate: true }",
+      "then": "Xoa 10 test cases cu, generate moi, persist moi, Version++"
+    },
+    {
+      "id": "TS-08",
+      "name": "Existing cases block without force",
+      "given": "Test suite da co boundary/negative test cases",
+      "when": "POST generate-boundary-negative { ForceRegenerate: false }",
+      "then": "HTTP 400: 'Test suite da co N boundary/negative test case(s). Su dung ForceRegenerate=true de tao lai.'"
+    },
+    {
+      "id": "TS-09",
+      "name": "No pipelines enabled",
+      "given": "Test suite co approved order",
+      "when": "POST generate-boundary-negative { IncludePathMutations: false, IncludeBodyMutations: false, IncludeLlmSuggestions: false }",
+      "then": "HTTP 400: 'It nhat mot nguon tao test case phai duoc bat.'"
+    },
+    {
+      "id": "TS-10",
+      "name": "Subscription limit exceeded",
+      "given": "Test suite co approved order, user da vuot han muc subscription",
+      "when": "POST generate-boundary-negative",
+      "then": "HTTP 400: 'Da vuot qua gioi han test case cho goi subscription.'"
+    },
+    {
+      "id": "TS-11",
+      "name": "LLM call limit exceeded",
+      "given": "Test suite co approved order, user da vuot han muc LLM calls per month",
+      "when": "POST generate-boundary-negative { IncludeLlmSuggestions: true }",
+      "then": "HTTP 400: 'Da vuot qua gioi han LLM calls cho goi subscription.'"
+    },
+    {
+      "id": "TS-12",
+      "name": "Archived suite blocks generation",
+      "given": "Test suite co Status=Archived",
+      "when": "POST generate-boundary-negative",
+      "then": "HTTP 400: 'Khong the generate test cases cho test suite da archived.'"
+    },
+    {
+      "id": "TS-13",
+      "name": "Non-owner blocks generation",
+      "given": "Test suite owned by user A, current user is B",
+      "when": "POST generate-boundary-negative",
+      "then": "HTTP 400: 'Ban khong co quyen thao tac test suite nay.'"
+    },
+    {
+      "id": "TS-14",
+      "name": "Empty generation result",
+      "given": "Test suite co approved order, endpoints khong co path params va khong phai POST/PUT/PATCH, LLM tra empty",
+      "when": "POST generate-boundary-negative",
+      "then": "TotalGenerated=0, khong tao transaction, tra result rong"
+    }
+  ],
+  "implementationOrder": [
+    "1. Models/BodyMutation.cs: BodyMutation model voi 6 mutation types.",
+    "2. Services/IBodyMutationEngine.cs + BodyMutationEngine.cs: Rule-based body mutation generator.",
+    "3. Services/ILlmScenarioSuggester.cs + LlmScenarioSuggester.cs: LLM scenario suggestion via n8n.",
+    "4. Services/IBoundaryNegativeTestCaseGenerator.cs + BoundaryNegativeTestCaseGenerator.cs: Orchestrator pipeline.",
+    "5. Models/N8nBoundaryNegativePayload.cs + N8nBoundaryNegativeResponse.cs: n8n payload/response models.",
+    "6. Models/GenerateBoundaryNegativeResultModel.cs: Result model for API response.",
+    "7. Models/Requests/GenerateBoundaryNegativeTestCasesRequest.cs: API request model.",
+    "8. Commands/GenerateBoundaryNegativeTestCasesCommand.cs: CQRS command + handler.",
+    "9. Authorization/Permissions.cs: Them GenerateBoundaryNegativeTestCases permission.",
+    "10. Controllers/TestCasesController.cs: Them generate-boundary-negative endpoint.",
+    "11. ServiceCollectionExtensions.cs: Register services (BodyMutationEngine, LlmScenarioSuggester, BoundaryNegativeTestCaseGenerator).",
+    "12. Unit tests: BodyMutationEngineTests, BoundaryNegativeTestCaseGeneratorTests, LlmScenarioSuggesterTests.",
+    "13. Integration tests: Full pipeline test voi mock n8n, gate fail/pass test."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testSuiteId",
+        "userId",
+        "pathMutationCount",
+        "bodyMutationCount",
+        "llmSuggestionCount",
+        "totalGenerated",
+        "endpointsCovered",
+        "llmModel",
+        "llmTokensUsed",
+        "latencyMs"
+      ]
+    }
+  }
+}

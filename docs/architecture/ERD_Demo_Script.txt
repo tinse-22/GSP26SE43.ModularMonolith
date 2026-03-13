@@ -1,0 +1,892 @@
+================================================================================
+           GIẢI THÍCH CHI TIẾT ERD - DỰ ÁN GSP26SE43.ModularMonolith
+              (API Testing Automation Platform - Kiến trúc SaaS)
+================================================================================
+
+Database: PostgreSQL | ORM: Entity Framework Core
+Tổng: 69 bảng | 11 module | 11 schema riêng biệt
+Kiến trúc: Modular Monolith (Domain-Driven Design)
+
+================================================================================
+                        LUỒNG NGHIỆP VỤ CHÍNH
+================================================================================
+
+User đăng ký/đăng nhập (Identity)
+    -> Tạo Project, upload file Swagger/OpenAPI (ApiDoc)
+        -> Parse ra danh sách Endpoints + Parameters + Responses (ApiDoc)
+            -> AI sinh Test Cases tự động hoặc tạo thủ công (TestGen)
+                -> Chạy Test trên môi trường cụ thể (TestExec)
+                    -> Xuất báo cáo + thống kê coverage (TestReport)
+
+================================================================================
+                     CHI TIẾT TỪNG MODULE
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 1: IDENTITY (schema "identity") - 9 bảng
+Chức năng: Quản lý xác thực và phân quyền
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - Users              : Thông tin tài khoản (email, password hash, lockout...)
+  - Roles              : Vai trò (Admin, User)
+  - UserRoles          : Bảng trung gian N-N giữa Users và Roles
+  - UserClaims         : Quyền hạn gắn trực tiếp cho user
+  - RoleClaims         : Quyền hạn gắn cho role (17 permission claims cho Admin)
+  - UserLogins         : Đăng nhập bên ngoài (Auth0, Azure AD B2C)
+  - UserTokens         : Token của user (refresh token, 2FA...)
+  - UserProfiles       : Thông tin hiển thị (avatar, timezone) - tách khỏi auth
+  - DataProtectionKeys : Key mã hóa của ASP.NET Data Protection
+
+Mối quan hệ:
+  Users ──1:N──> UserRoles <──N:1── Roles     (Quan hệ N-N qua bảng trung gian)
+  Users ──1:1──> UserProfiles                  (Tách thông tin hiển thị)
+  Users ──1:N──> UserClaims
+  Users ──1:N──> UserLogins
+  Users ──1:N──> UserTokens
+  Roles ──1:N──> RoleClaims
+
+Dữ liệu mẫu (Seed):
+  - 2 Users: admin (tinvtse@gmail.com), user (user@example.com)
+  - 2 Roles: Admin, User
+  - 17 RoleClaims cho Admin role (các permission cụ thể)
+
+Điểm nhấn khi demo:
+  - Dùng ASP.NET Identity nhưng CUSTOM tên bảng (không dùng AspNet* mặc định)
+  - Claims-based authorization: phân quyền linh hoạt theo permission,
+    không phải chỉ theo role
+  - Hỗ trợ đăng nhập bên thứ 3 (Auth0, Azure AD B2C)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 2: API DOCUMENTATION (schema "apidoc") - 10 bảng
+Chức năng: Parse và lưu trữ cấu trúc API được import vào
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - Projects                : Dự án (Name, BaseUrl, OwnerId)
+  - ApiSpecifications       : Phiên bản tài liệu API (file Swagger/OpenAPI)
+  - ApiEndpoints            : Danh sách endpoint được parse ra
+  - EndpointParameters      : Tham số của endpoint (query, path, header, cookie)
+  - EndpointResponses       : Response definition theo HTTP status code
+  - EndpointSecurityReqs    : Yêu cầu bảo mật của endpoint
+  - SecuritySchemes         : Định nghĩa scheme bảo mật (JWT, API Key, OAuth2)
+  - AuditLogEntries         : Nhật ký thao tác trong module
+  - OutboxMessages          : Event chưa publish
+  - ArchivedOutboxMessages  : Event đã publish (lưu trữ)
+EndpointParameters - Lấy ví dụ endpoint GET /api/v1/products/{productId}?lang=vi&fields=name,price, mỗi tham số là 1 row: productId (Path, UUID, required), lang (Query, optional, default "en"), fields (Query, optional).
+
+EndpointResponses - 3 rows cho 3 trường hợp: 200 (thành công, kèm JSON Schema đầy đủ), 404 (không tìm thấy), 500 (lỗi server). Mỗi row có schema jsonb để TestGen tự động assert.
+
+EndpointSecurityReqs - 3 ví dụ: endpoint cần Bearer token, endpoint cần OAuth2 với scopes cụ thể, và endpoint public (không có row = ai cũng gọi được).
+
+SecuritySchemes - 3 loại scheme: JWT Bearer (Authorization: Bearer eyJ...), API Key (X-API-Key: sk-abc... truyền qua header), OAuth2 (kèm cấu hình flows, tokenUrl, scopes trong cột Configuration jsonb).
+Mối quan hệ:
+  Projects ──1:N──> ApiSpecifications         (1 project có nhiều phiên bản spec)
+  Projects ──1:1──> ApiSpecifications          (ActiveSpecId - spec đang active)
+  ApiSpecifications ──1:N──> ApiEndpoints      (Parse spec ra endpoints)
+  ApiSpecifications ──1:N──> SecuritySchemes   (Các scheme auth trong spec)
+  ApiEndpoints ──1:N──> EndpointParameters     (Tham số của endpoint)
+  ApiEndpoints ──1:N──> EndpointResponses      (Responses theo status code)
+  ApiEndpoints ──1:N──> EndpointSecurityReqs   (Yêu cầu auth của endpoint)
+
+............................................................................
+CHI TIẾT 4 BẢNG CON CỦA ENDPOINT (CÓ VÍ DỤ CỤ THỂ)
+............................................................................
+
+Giả sử hệ thống đã parse file Swagger của một ứng dụng E-Commerce và lưu
+được endpoint sau vào bảng ApiEndpoints:
+
+  ApiEndpoints:
+    Id         = "aaa-111"
+    HttpMethod = "GET"
+    Path       = "/api/v1/products/{productId}"
+    Summary    = "Lấy thông tin chi tiết sản phẩm theo ID"
+
+Bây giờ, 4 bảng con phía dưới sẽ mô tả CHI TIẾT endpoint này:
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  BẢNG 1: EndpointParameters                                                ║
+║  Chức năng: Lưu CHI TIẾT TỪNG THAM SỐ mà endpoint yêu cầu khi gọi API    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Bảng này trả lời câu hỏi: "Khi gọi API này, client cần truyền những gì?"
+
+Các cột quan trọng:
+  - Name       : Tên tham số (vd: "productId", "lang", "x-api-key")
+  - Location   : Tham số nằm Ở ĐÂU trong HTTP request
+                  + Path   = trên URL path     (vd: /products/{productId})
+                  + Query  = trên query string  (vd: /products?lang=vi)
+                  + Header = trong HTTP header   (vd: x-api-key: abc123)
+                  + Body   = trong request body  (vd: JSON payload)
+                  + Cookie = trong cookie
+  - DataType   : Kiểu dữ liệu (string, integer, boolean, array, object)
+  - Format     : Định dạng chi tiết (uuid, date-time, email, int64)
+  - IsRequired : Bắt buộc truyền hay không
+  - DefaultValue : Giá trị mặc định nếu client không truyền
+  - Schema (jsonb) : JSON Schema nếu tham số là object phức tạp
+  - Examples (jsonb) : Giá trị ví dụ
+
+VÍ DỤ CỤ THỂ - Endpoint GET /api/v1/products/{productId}?lang=vi&fields=name,price
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Row 1:                                                                   │
+  │   EndpointId = "aaa-111"                                                 │
+  │   Name       = "productId"                                               │
+  │   Location   = "Path"          <-- Nằm trên URL path                     │
+  │   DataType   = "string"                                                  │
+  │   Format     = "uuid"          <-- Phải là UUID                          │
+  │   IsRequired = true            <-- BẮT BUỘC phải truyền                  │
+  │   DefaultValue = null                                                    │
+  │   Schema     = null            <-- Kiểu đơn giản, không cần schema      │
+  │   Examples   = ["550e8400-e29b-41d4-a716-446655440000"]                  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 2:                                                                   │
+  │   EndpointId = "aaa-111"                                                 │
+  │   Name       = "lang"                                                    │
+  │   Location   = "Query"         <-- Nằm trên query string (?lang=vi)      │
+  │   DataType   = "string"                                                  │
+  │   Format     = null                                                      │
+  │   IsRequired = false           <-- KHÔNG bắt buộc                        │
+  │   DefaultValue = "en"          <-- Mặc định tiếng Anh nếu không truyền  │
+  │   Schema     = null                                                      │
+  │   Examples   = ["vi", "en", "ja"]                                        │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 3:                                                                   │
+  │   EndpointId = "aaa-111"                                                 │
+  │   Name       = "fields"                                                  │
+  │   Location   = "Query"         <-- Nằm trên query string (?fields=...)   │
+  │   DataType   = "string"                                                  │
+  │   Format     = null                                                      │
+  │   IsRequired = false                                                     │
+  │   DefaultValue = null                                                    │
+  │   Schema     = null                                                      │
+  │   Examples   = ["name,price", "name,price,description"]                  │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+TẠI SAO CẦN BẢNG NÀY?
+  -> Module TestGen đọc bảng này để biết chính xác cần sinh dữ liệu gì
+     và nhúng vào ĐÂU khi tạo request giả lập.
+  -> VD: Biết "productId" nằm ở Path + format UUID -> tự sinh UUID hợp lệ
+         Biết "lang" là optional + default "en" -> có thể test với/không truyền
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  BẢNG 2: EndpointResponses                                                  ║
+║  Chức năng: Định nghĩa CẤU TRÚC DỮ LIỆU TRẢ VỀ cho từng mã HTTP          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Bảng này trả lời câu hỏi: "API này trả về dữ liệu gì? Cấu trúc ra sao?"
+
+Các cột quan trọng:
+  - StatusCode    : Mã HTTP (200, 400, 401, 404, 500)
+  - Description   : Mô tả ý nghĩa response
+  - Schema (jsonb): JSON Schema đầy đủ của response body
+                    -> Đây là CƠ SỞ để module TestGen tự động ASSERT
+                       (đối chiếu) xem API có trả về đúng cấu trúc không
+  - Examples (jsonb) : Ví dụ response body
+  - Headers (jsonb)  : Response headers đặc biệt (vd: X-RateLimit-Remaining)
+
+VÍ DỤ CỤ THỂ - Cùng endpoint GET /api/v1/products/{productId}
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Row 1 - Trường hợp THÀNH CÔNG:                                          │
+  │   EndpointId  = "aaa-111"                                                │
+  │   StatusCode  = 200                                                      │
+  │   Description = "Trả về thông tin sản phẩm thành công"                   │
+  │   Schema      = {                                                        │
+  │     "type": "object",                                                    │
+  │     "properties": {                                                      │
+  │       "id":          { "type": "string", "format": "uuid" },             │
+  │       "name":        { "type": "string" },                               │
+  │       "price":       { "type": "number" },                               │
+  │       "category":    { "type": "string" },                               │
+  │       "inStock":     { "type": "boolean" },                              │
+  │       "createdAt":   { "type": "string", "format": "date-time" }         │
+  │     },                                                                   │
+  │     "required": ["id", "name", "price"]                                  │
+  │   }                                                                      │
+  │   Examples    = {                                                        │
+  │     "example1": {                                                        │
+  │       "id": "550e8400-...",                                              │
+  │       "name": "iPhone 15",                                               │
+  │       "price": 25990000,                                                 │
+  │       "category": "Electronics",                                         │
+  │       "inStock": true                                                    │
+  │     }                                                                    │
+  │   }                                                                      │
+  │   Headers     = {                                                        │
+  │     "X-RateLimit-Remaining": { "type": "integer", "description": "..." } │
+  │   }                                                                      │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 2 - Trường hợp KHÔNG TÌM THẤY:                                      │
+  │   EndpointId  = "aaa-111"                                                │
+  │   StatusCode  = 404                                                      │
+  │   Description = "Không tìm thấy sản phẩm với ID này"                     │
+  │   Schema      = {                                                        │
+  │     "type": "object",                                                    │
+  │     "properties": {                                                      │
+  │       "error":   { "type": "string" },                                   │
+  │       "message": { "type": "string" }                                    │
+  │     }                                                                    │
+  │   }                                                                      │
+  │   Examples    = { "error": "NotFound", "message": "Product not found" }  │
+  │   Headers     = null                                                     │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 3 - Trường hợp LỖI SERVER:                                          │
+  │   EndpointId  = "aaa-111"                                                │
+  │   StatusCode  = 500                                                      │
+  │   Description = "Lỗi server nội bộ"                                      │
+  │   Schema      = {                                                        │
+  │     "type": "object",                                                    │
+  │     "properties": {                                                      │
+  │       "error":     { "type": "string" },                                 │
+  │       "traceId":   { "type": "string" }                                  │
+  │     }                                                                    │
+  │   }                                                                      │
+  │   Examples    = null                                                     │
+  │   Headers     = null                                                     │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+TẠI SAO CẦN BẢNG NÀY?
+  -> Module TestGen đọc Schema 200 để tự động tạo ASSERTION:
+     "Response phải có field 'id' kiểu uuid, 'price' kiểu number..."
+  -> TestGen cũng sinh NEGATIVE TEST: Gửi productId không tồn tại,
+     kỳ vọng nhận đúng status 404 + đúng schema lỗi.
+  -> Composite index (EndpointId, StatusCode) giúp query nhanh khi
+     cần lấy schema cho 1 status code cụ thể.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  BẢNG 3: EndpointSecurityReqs (Security Requirements)                       ║
+║  Chức năng: Xác định YÊU CẦU BẢO MẬT RIÊNG cho từng endpoint              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Bảng này trả lời câu hỏi: "API này cần xác thực kiểu gì? Cần quyền gì?"
+
+Các cột quan trọng:
+  - SecurityType  : Loại xác thực (enum)
+                    + Bearer       = JWT Token (phổ biến nhất)
+                    + ApiKey       = API Key truyền qua header/query
+                    + OAuth2       = OAuth 2.0 (Google, Facebook login)
+                    + Basic        = Username:Password encode Base64
+                    + OpenIdConnect = OpenID Connect
+  - SchemeName    : Tên scheme tham chiếu đến bảng SecuritySchemes
+                    (vd: "BearerAuth", "ApiKeyAuth")
+  - Scopes (jsonb): Danh sách quyền OAuth2 cần có
+                    (vd: ["read:products", "write:products"])
+
+VÍ DỤ CỤ THỂ - Cùng endpoint GET /api/v1/products/{productId}
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Row 1:                                                                   │
+  │   EndpointId   = "aaa-111"                                               │
+  │   SecurityType = "Bearer"      <-- Cần JWT Token                         │
+  │   SchemeName   = "BearerAuth"  <-- Tham chiếu scheme "BearerAuth"        │
+  │   Scopes       = null          <-- GET không cần scope đặc biệt          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+VÍ DỤ KHÁC - Endpoint POST /api/v1/products (Tạo sản phẩm mới)
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Row 1:                                                                   │
+  │   EndpointId   = "bbb-222"                                               │
+  │   SecurityType = "OAuth2"      <-- Cần OAuth2                            │
+  │   SchemeName   = "OAuth2Auth"  <-- Tham chiếu scheme OAuth2              │
+  │   Scopes       = ["write:products", "admin:catalog"]                     │
+  │                    ^^ Phải có ĐÚNG 2 quyền này mới được gọi API ^^       │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+VÍ DỤ KHÁC - Endpoint GET /api/v1/products (Public, không cần auth)
+
+  -> KHÔNG CÓ ROW nào trong bảng này cho endpoint đó
+  -> Nghĩa là endpoint này là PUBLIC, ai cũng gọi được
+
+TẠI SAO CẦN BẢNG NÀY?
+  -> Module TestGen đọc bảng này để biết cần GẮN GÌ vào request header
+     trước khi gửi test:
+     + Bearer -> Gắn header "Authorization: Bearer <token>"
+     + ApiKey -> Gắn header "x-api-key: <key>"
+     + OAuth2 -> Gắn token OAuth2 với đúng scopes
+  -> Nếu endpoint không có row -> test như public API (không gắn auth)
+  -> Sinh NEGATIVE TEST: Gọi API mà KHÔNG gắn token -> kỳ vọng 401
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  BẢNG 4: SecuritySchemes                                                    ║
+║  Chức năng: Định nghĩa CHI TIẾT CÁC PHƯƠNG THỨC XÁC THỰC của toàn bộ API  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Bảng này trả lời câu hỏi: "Hệ thống API hỗ trợ những cách xác thực nào?
+                            Cấu hình chi tiết ra sao?"
+
+Khác biệt với EndpointSecurityReqs:
+  - SecuritySchemes = ĐỊNH NGHĨA chung (vd: "hệ thống dùng JWT, format Bearer")
+  - EndpointSecurityReqs = ÁP DỤNG scheme nào cho endpoint cụ thể nào
+
+  Quan hệ:  SecuritySchemes ──thuộc về──> ApiSpecification (cấp file spec)
+            EndpointSecurityReqs ──thuộc về──> ApiEndpoint (cấp từng endpoint)
+            EndpointSecurityReqs.SchemeName ──tham chiếu──> SecuritySchemes.Name
+
+Các cột quan trọng:
+  - Name           : Tên scheme (vd: "BearerAuth", "ApiKeyAuth")
+  - Type           : Loại scheme (enum)
+                     + Http          = HTTP Authentication (Bearer, Basic)
+                     + ApiKey        = API Key
+                     + OAuth2        = OAuth 2.0
+                     + OpenIdConnect = OIDC
+  - Scheme         : Sub-type của HTTP Auth (vd: "bearer", "basic")
+  - BearerFormat   : Định dạng token (vd: "JWT")
+  - In             : API Key nằm ở đâu (Header/Query/Cookie)
+  - ParameterName  : Tên parameter của API Key (vd: "x-api-key", "api_key")
+  - Configuration (jsonb) : Cấu hình phức tạp (OAuth2 flows, token URLs...)
+
+VÍ DỤ CỤ THỂ - Một file Swagger định nghĩa 3 scheme:
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Row 1 - JWT Bearer Token:                                                │
+  │   ApiSpecId     = "spec-001"                                             │
+  │   Name          = "BearerAuth"                                           │
+  │   Type          = "Http"           <-- HTTP Authentication               │
+  │   Scheme        = "bearer"         <-- Dùng scheme Bearer                │
+  │   BearerFormat  = "JWT"            <-- Token là JWT                      │
+  │   In            = null             <-- Không áp dụng (chỉ cho ApiKey)    │
+  │   ParameterName = null             <-- Không áp dụng                     │
+  │   Configuration = null             <-- Đơn giản, không cần config thêm   │
+  │                                                                          │
+  │   -> Nghĩa là: Client gửi header "Authorization: Bearer eyJhbGciOi..."  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 2 - API Key:                                                         │
+  │   ApiSpecId     = "spec-001"                                             │
+  │   Name          = "ApiKeyAuth"                                           │
+  │   Type          = "ApiKey"         <-- Dùng API Key                      │
+  │   Scheme        = null             <-- Không áp dụng (chỉ cho Http)      │
+  │   BearerFormat  = null                                                   │
+  │   In            = "Header"         <-- API Key truyền qua HEADER         │
+  │   ParameterName = "X-API-Key"      <-- Tên header phải là "X-API-Key"    │
+  │   Configuration = null                                                   │
+  │                                                                          │
+  │   -> Nghĩa là: Client gửi header "X-API-Key: sk-abc123xyz..."           │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Row 3 - OAuth2:                                                          │
+  │   ApiSpecId     = "spec-001"                                             │
+  │   Name          = "OAuth2Auth"                                           │
+  │   Type          = "OAuth2"         <-- Dùng OAuth 2.0                    │
+  │   Scheme        = null                                                   │
+  │   BearerFormat  = null                                                   │
+  │   In            = null                                                   │
+  │   ParameterName = null                                                   │
+  │   Configuration = {                <-- Chi tiết OAuth2 flows             │
+  │     "flows": {                                                           │
+  │       "authorizationCode": {                                             │
+  │         "authorizationUrl": "https://auth.example.com/authorize",        │
+  │         "tokenUrl": "https://auth.example.com/token",                    │
+  │         "scopes": {                                                      │
+  │           "read:products": "Đọc danh sách sản phẩm",                     │
+  │           "write:products": "Tạo/sửa sản phẩm",                         │
+  │           "admin:catalog": "Quản trị danh mục"                            │
+  │         }                                                                │
+  │       }                                                                  │
+  │     }                                                                    │
+  │   }                                                                      │
+  │                                                                          │
+  │   -> Nghĩa là: Client phải đi qua flow OAuth2, lấy token từ tokenUrl    │
+  │                với đúng scopes yêu cầu                                   │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+TẠI SAO CẦN BẢNG NÀY?
+  -> Khi TestGen sinh test cho 1 endpoint, nó đọc EndpointSecurityReqs
+     để biết endpoint cần scheme nào (vd: "BearerAuth").
+  -> Rồi đọc SecuritySchemes (theo SchemeName) để biết CHI TIẾT:
+     + Bearer -> Cần gắn header "Authorization: Bearer <token>"
+     + ApiKey -> Cần gắn header đúng tên (X-API-Key) đúng vị trí (Header)
+     + OAuth2 -> Cần gọi tokenUrl lấy token trước, kèm đúng scopes
+  -> Kết hợp với ExecutionEnvironments.AuthConfig (module TestExec)
+     để lấy credentials thực tế (username/password test) cho từng môi trường.
+
+............................................................................
+TÓM TẮT MỐI QUAN HỆ 4 BẢNG (Để trình bày gọn)
+............................................................................
+
+  SecuritySchemes      = "Hệ thống này hỗ trợ auth kiểu gì?" (cấp spec)
+       │
+       │  được tham chiếu bởi SchemeName
+       ▼
+  EndpointSecurityReqs = "Endpoint này dùng auth kiểu nào?" (cấp endpoint)
+       │
+       │  cùng thuộc về
+       ▼
+  ApiEndpoints
+       │
+       ├──> EndpointParameters = "Gọi endpoint này cần truyền tham số gì?"
+       │
+       └──> EndpointResponses  = "Endpoint này trả về cấu trúc gì?"
+
+  Flow khi TestGen sinh test tự động:
+    1. Đọc EndpointParameters   -> Biết cần truyền gì (URL, query, header)
+    2. Đọc EndpointSecurityReqs -> Biết cần auth kiểu gì
+    3. Đọc SecuritySchemes      -> Biết cách cấu hình auth chi tiết
+    4. Đọc EndpointResponses    -> Biết kỳ vọng response ra sao để assert
+
+............................................................................
+
+Điểm nhấn khi demo:
+  - Dùng kiểu jsonb (PostgreSQL) cho các cột có cấu trúc KHÔNG CỐ ĐỊNH
+    (Schema, Examples, Scopes, Configuration) - giải quyết bài toán
+    lưu dữ liệu API có cấu trúc đa dạng, không thể đoán trước
+  - Versioning: Mỗi lần upload Swagger mới = 1 spec mới, có ActiveSpecId
+    trỏ về spec đang dùng
+  - Tách SecuritySchemes (định nghĩa chung) và EndpointSecurityReqs
+    (áp dụng cụ thể) theo đúng chuẩn OpenAPI 3.0 Specification
+  - Composite index (EndpointId, StatusCode) trên EndpointResponses
+    giúp tối ưu query khi cần lấy schema cho 1 status code cụ thể
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 3: TEST GENERATION (schema "testgen") - 11 bảng
+Chức năng: Module nghiệp vụ LÕI - sinh kịch bản kiểm thử
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - TestSuites             : Bộ test (nhóm test cases lại)
+  - TestCases              : Kịch bản kiểm thử cụ thể
+  - TestCaseRequests       : Chi tiết request gửi đi (URL, Body, Headers)
+  - TestCaseExpectations   : Kết quả mong đợi (status, schema, jsonpath checks)
+  - TestCaseVariables      : Trích xuất dữ liệu từ response (data extraction)
+  - TestDataSets           : Tập dữ liệu mẫu (data-driven testing)
+  - TestCaseChangeLogs     : Lịch sử thay đổi field-level của test case
+  - TestOrderProposals     : AI đề xuất thứ tự chạy test
+  - TestSuiteVersions      : Lịch sử phiên bản của test suite
+  - AuditLogEntries        : Nhật ký thao tác
+  - OutboxMessages         : Event chưa publish
+
+Mối quan hệ:
+  TestSuites ──1:N──> TestCases                (1 bộ test chứa nhiều test case)
+  TestSuites ──1:N──> TestOrderProposals       (AI đề xuất thứ tự)
+  TestSuites ──1:N──> TestSuiteVersions        (Lịch sử phiên bản)
+  TestCases  ──1:1──> TestCaseRequests         (Chi tiết request)
+  TestCases  ──1:1──> TestCaseExpectations     (Kết quả mong đợi)
+  TestCases  ──1:N──> TestCaseVariables        (Trích xuất biến)
+  TestCases  ──1:N──> TestDataSets             (Dữ liệu test)
+  TestCases  ──1:N──> TestCaseChangeLogs       (Lịch sử thay đổi)
+  TestCases  ──0..1─> TestCases (self-ref)     (DependsOnId - phụ thuộc)
+
+Các cột quan trọng cần giải thích:
+
+  TestSuites:
+    - GenerationType      : Tự động (AI) hay thủ công
+    - ApprovalStatus      : Workflow duyệt test (Pending/Approved/Rejected)
+    - Version             : Số phiên bản, tăng mỗi khi thay đổi
+    - SelectedEndpointIds : Danh sách endpoint được chọn để sinh test (jsonb)
+
+  TestCases:
+    - DependsOnId (self-referencing FK): Test B phụ thuộc Test A
+      VD: Phải login (Test A) lấy token rồi mới gọi API cần auth (Test B)
+    - Priority            : Mức ưu tiên (Critical/High/Medium/Low)
+    - IsEnabled           : Bật/tắt test case
+    - OrderIndex          : Thứ tự chạy mặc định
+    - IsOrderCustomized   : User đã tùy chỉnh thứ tự hay chưa
+
+  TestCaseRequests:
+    - HttpMethod, Url     : GET/POST/PUT/DELETE + URL
+    - Headers (jsonb)     : Custom headers
+    - PathParams (jsonb)  : Tham số trên path (vd: /users/{id})
+    - QueryParams (jsonb) : Tham số query string
+    - Body                : Request body
+    - Timeout             : Thời gian chờ tối đa (ms)
+
+  TestCaseExpectations:
+    - ExpectedStatus (jsonb)   : Mã HTTP mong đợi (200, 201...)
+    - ResponseSchema (jsonb)   : JSON Schema để validate cấu trúc response
+    - JsonPathChecks (jsonb)   : Check giá trị cụ thể bằng JSONPath
+    - HeaderChecks (jsonb)     : Check response headers
+    - BodyContains (jsonb)     : Response body phải chứa chuỗi X
+    - BodyNotContains (jsonb)  : Response body KHÔNG được chứa chuỗi Y
+    - MaxResponseTime          : Thời gian phản hồi tối đa (ms) - performance test
+
+  TestCaseVariables:
+    - VariableName    : Tên biến (vd: "access_token")
+    - ExtractFrom     : Nguồn trích xuất (Body/Header/Cookie)
+    - JsonPath        : JSONPath expression (vd: "$.data.token")
+    - HeaderName      : Tên header nếu extract từ header
+    - Regex           : Regex pattern nếu cần
+    - DefaultValue    : Giá trị mặc định nếu extract thất bại
+
+  TestOrderProposals:
+    - ProposedOrder (jsonb)      : Thứ tự AI đề xuất
+    - AppliedOrder (jsonb)       : Thứ tự đã áp dụng
+    - UserModifiedOrder (jsonb)  : Thứ tự user tùy chỉnh
+    - AiReasoning                : Lý do AI đề xuất thứ tự này
+    - LlmModel                  : Model AI đã dùng (GPT-4, Gemini...)
+    - TokensUsed                 : Số token đã dùng
+
+Điểm nhấn khi demo:
+  - Self-referencing relationship: TestCases.DependsOnId tự liên kết với
+    chính bảng TestCases -> xây dựng chuỗi phụ thuộc (dependency chain)
+  - Tách Request và Expectation thành 2 bảng 1:1 riêng biệt -> Single
+    Responsibility, dễ maintain, dễ query
+  - AI-assisted: TestOrderProposals lưu đề xuất AI + lý do, cho phép
+    human review trước khi áp dụng (Human-in-the-loop)
+  - Data-driven testing: 1 TestCase + N TestDataSets = chạy N lần với
+    dữ liệu khác nhau, không cần tạo N test cases
+  - Variable extraction: Cho phép chain test cases (extract token từ
+    login response -> inject vào test case tiếp theo)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 4: TEST EXECUTION (schema "testexecution") - 5 bảng
+Chức năng: Quản lý quá trình thực thi kiểm thử
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - ExecutionEnvironments    : Cấu hình môi trường chạy test
+  - TestRuns                 : Mỗi lần chạy test = 1 record
+  - AuditLogEntries          : Nhật ký thao tác
+  - OutboxMessages           : Event chưa publish
+  - ArchivedOutboxMessages   : Event đã publish
+
+Mối quan hệ:
+  (Không có FK liên module - tham chiếu TestSuiteId, EnvironmentId bằng Guid)
+
+Các cột quan trọng:
+
+  ExecutionEnvironments:
+    - BaseUrl          : URL gốc của môi trường (vd: https://staging.api.com)
+    - Variables (jsonb) : Biến môi trường (vd: {"base_url": "...", "api_key": "..."})
+    - Headers (jsonb)   : Headers mặc định
+    - AuthConfig (jsonb): Cấu hình auth mặc định (username/password test)
+    - IsDefault         : Môi trường mặc định
+
+  TestRuns:
+    - Status            : Queued -> Running -> Completed
+    - PassedCount, FailedCount, SkippedCount : Thống kê kết quả
+    - DurationMs        : Tổng thời gian chạy
+    - RedisKey          : Key trên Redis chứa log chi tiết
+    - ResultsExpireAt   : Thời gian hết hạn kết quả trên Redis
+
+Điểm nhấn khi demo:
+  - TÁCH module TestExecution ra khỏi TestGeneration để tối ưu performance
+    khi chạy test hàng loạt
+  - RedisKey + ResultsExpireAt: Log request/response chi tiết rất KHỔNG LỒ,
+    không nhét vào PostgreSQL mà đẩy vào Redis (có TTL 5-10 ngày).
+    Đây là thiết kế HYBRID STORAGE rất thực tế.
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 5: TEST REPORTING (schema "testreporting") - 5 bảng
+Chức năng: Báo cáo và thống kê sau kiểm thử
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - CoverageMetrics          : Thống kê độ bao phủ test
+  - TestReports              : Metadata file báo cáo
+  - AuditLogEntries          : Nhật ký thao tác
+  - OutboxMessages           : Event chưa publish
+  - ArchivedOutboxMessages   : Event đã publish
+
+Các cột quan trọng:
+
+  CoverageMetrics:
+    - TotalEndpoints     : Tổng số endpoints trong spec
+    - TestedEndpoints    : Số endpoints đã được test
+    - CoveragePercent    : Phần trăm bao phủ (= Tested/Total * 100)
+    - ByMethod (jsonb)   : Thống kê theo HTTP method (GET: 80%, POST: 60%...)
+    - ByTag (jsonb)      : Thống kê theo tag/nhóm API
+    - UncoveredPaths (jsonb) : Danh sách endpoints chưa được test
+
+  TestReports:
+    - ReportType         : Loại báo cáo (Summary, Detailed...)
+    - Format             : Định dạng (PDF, HTML)
+    - FileId             : Liên kết đến storage_FileEntries (file thực tế)
+    - ExpiresAt          : Thời gian hết hạn báo cáo
+
+Điểm nhấn khi demo:
+  - Coverage metrics dạng jsonb cho phép breakdown linh hoạt, dễ vẽ chart
+  - Cross-module reference: FileId tham chiếu sang module Storage nhưng
+    KHÔNG có FK constraint ở DB level (Modular Monolith pattern)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 6: SUBSCRIPTION (schema "subscription") - 10 bảng
+Chức năng: Quản lý gói cước, thanh toán, hạn mức (SaaS billing)
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - SubscriptionPlans      : Danh mục gói cước (Free/Starter/Pro/Enterprise)
+  - PlanLimits             : Giới hạn của từng gói
+  - UserSubscriptions      : User đang thuê gói nào
+  - PaymentIntents         : Ý định thanh toán (checkout session)
+  - PaymentTransactions    : Giao dịch thanh toán thực tế
+  - SubscriptionHistories  : Lịch sử upgrade/downgrade
+  - UsageTrackings         : Theo dõi mức sử dụng tài nguyên
+  - AuditLogEntries        : Nhật ký thao tác
+  - OutboxMessages         : Event chưa publish
+  - ArchivedOutboxMessages : Event đã publish
+
+Mối quan hệ:
+  SubscriptionPlans ──1:N──> PlanLimits          (1 gói có N giới hạn)
+  SubscriptionPlans ──1:N──> UserSubscriptions   (1 gói có N subscribers)
+  UserSubscriptions ──1:N──> SubscriptionHistories (Lịch sử thay đổi)
+  SubscriptionPlans ──1:N──> SubscriptionHistories (NewPlanId, OldPlanId)
+  SubscriptionPlans ──1:N──> PaymentIntents      (Thanh toán cho gói nào)
+  UserSubscriptions ──1:N──> PaymentIntents      (Thanh toán cho sub nào)
+  PaymentIntents    ──1:N──> PaymentTransactions  (1 intent -> N transactions)
+  UserSubscriptions ──1:N──> PaymentTransactions  (Transactions của sub)
+
+Các cột quan trọng:
+
+  SubscriptionPlans:
+    - PriceMonthly, PriceYearly : Giá theo tháng/năm
+    - Currency                   : Đơn vị tiền tệ
+    - IsActive                   : Gói còn hoạt động không
+    - SortOrder                  : Thứ tự hiển thị trên UI
+
+  PlanLimits:
+    - LimitType     : Loại giới hạn (ProjectCount, TestCaseCount, LlmCallCount...)
+    - LimitValue    : Giá trị giới hạn (vd: 5 projects, 100 test cases)
+    - IsUnlimited   : Không giới hạn (cho gói Enterprise)
+
+  UserSubscriptions:
+    - BillingCycle             : Monthly/Yearly
+    - StartDate, EndDate       : Thời hạn thuê
+    - TrialEndsAt              : Ngày hết trial
+    - AutoRenew                : Tự động gia hạn
+    - ExternalSubId            : ID trên payment gateway (Stripe, VNPay)
+    - SnapshotPlanName         : Tên gói LÚC MUA (snapshot)
+    - SnapshotPriceMonthly     : Giá LÚC MUA (không đổi dù admin chỉnh giá sau)
+    - SnapshotPriceYearly      : Giá năm LÚC MUA
+
+  PaymentIntents:
+    - Amount, Currency  : Số tiền + đơn vị tiền
+    - Purpose           : Mục đích (NewSubscription, Renewal, Upgrade)
+    - CheckoutUrl       : URL checkout cho user nhấn vào
+    - OrderCode         : Mã đơn hàng
+    - ExpiresAt         : Hết hạn thanh toán
+
+  PaymentTransactions:
+    - Status            : Success/Failed/Pending
+    - Provider          : Nhà cung cấp (VNPay, Stripe)
+    - ProviderRef       : Mã tham chiếu bên provider
+    - FailureReason     : Lý do thất bại (nếu có)
+    - InvoiceUrl        : URL hóa đơn
+
+  UsageTrackings:
+    - PeriodStart, PeriodEnd : Chu kỳ tháng
+    - ProjectCount, EndpointCount, TestSuiteCount, TestCaseCount,
+      TestRunCount, LlmCallCount, StorageUsedMB
+      -> So sánh với PlanLimits để kiểm tra quota
+
+Điểm nhấn khi demo:
+  - SNAPSHOT PATTERN: Lưu giá lúc mua vào UserSubscriptions. Admin đổi giá
+    gói Pro sau này -> user cũ vẫn giữ giá cũ. Rất hợp lý trong SaaS thực tế.
+  - CHECKOUT 2 BƯỚC: PaymentIntent (tạo session) -> PaymentTransaction
+    (ghi nhận kết quả). Đây là pattern chuẩn của Stripe/VNPay.
+  - QUOTA SYSTEM: PlanLimits + UsageTrackings = hệ thống kiểm soát hạn mức
+    hoàn chỉnh (vượt quota -> chặn tạo thêm)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 7: LLM ASSISTANT (schema "llmassistant") - 5 bảng
+Chức năng: Quản lý tương tác với AI (OpenAI, Gemini, Anthropic)
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - LlmInteractions        : Log mọi tương tác với AI
+  - LlmSuggestionCaches    : Cache kết quả AI
+  - AuditLogEntries        : Nhật ký thao tác
+  - OutboxMessages         : Event chưa publish
+  - ArchivedOutboxMessages : Event đã publish
+
+Các cột quan trọng:
+
+  LlmInteractions:
+    - UserId            : User nào gọi AI
+    - InteractionType   : Loại tương tác (sinh test case, phân tích API...)
+    - InputContext       : Prompt/Input gửi cho AI
+    - LlmResponse       : Response từ AI
+    - ModelUsed          : Model nào (GPT-4, GPT-3.5, Gemini Pro...)
+    - TokensUsed         : Số token đã dùng (TOKEN = TIỀN)
+    - LatencyMs          : Độ trễ phản hồi
+
+  LlmSuggestionCaches:
+    - EndpointId        : Cache cho endpoint nào
+    - SuggestionType    : Loại suggestion
+    - CacheKey          : Hash của input (để lookup nhanh)
+    - Suggestions (jsonb): Kết quả cache
+    - ExpiresAt          : Thời gian hết hạn cache
+
+Điểm nhấn khi demo:
+  - AUDIT CHI PHÍ AI: Mỗi lần gọi AI đều ghi TokensUsed + ModelUsed
+    -> Biết chính xác user nào dùng bao nhiêu token, tốn bao nhiêu tiền
+  - AI CACHING: Hash input thành CacheKey, nếu cache chưa hết hạn thì
+    trả luôn kết quả cache mà KHÔNG GỌI AI -> tiết kiệm chi phí API
+    rất đáng kể. Đây là tư duy kỹ sư thực tế (commercial mindset).
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 8: STORAGE (schema "storage") - 5 bảng
+Chức năng: Quản lý file upload
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - FileEntries            : Metadata file
+  - DeletedFileEntries     : File đã xóa (soft delete tracking)
+  - AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
+
+Các cột quan trọng:
+  - FileCategory    : Phân loại file (Swagger spec, report, attachment...)
+  - Encrypted       : File có mã hóa không
+  - EncryptionKey, EncryptionIV : Key mã hóa (AES)
+  - Deleted, DeletedDate        : Soft delete (không xóa vật lý)
+  - Archived, ArchivedDate      : Archive (lưu trữ lâu dài)
+  - ExpiresAt                   : Tự động hết hạn (TTL)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 9: NOTIFICATION (schema "notification") - 5 bảng
+Chức năng: Gửi thông báo Email + SMS
+────────────────────────────────────────────────────────────────────────────────
+
+Các bảng:
+  - EmailMessages, EmailMessageAttachments
+  - SmsMessages
+  - ArchivedEmailMessages, ArchivedSmsMessages
+
+Cơ chế RETRY:
+  - AttemptCount         : Số lần đã thử gửi
+  - MaxAttemptCount      : Số lần thử tối đa
+  - NextAttemptDateTime  : Thời gian thử lại tiếp theo
+  - SentDateTime         : Thời gian gửi thành công
+  - ExpiredDateTime      : Hết hạn gửi
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 10: CONFIGURATION (schema "configuration") - 2 bảng
+Chức năng: Cấu hình hệ thống + đa ngôn ngữ
+────────────────────────────────────────────────────────────────────────────────
+
+  - ConfigurationEntries : Key-Value config thay đổi runtime (không cần deploy)
+    - IsSensitive: Che giá trị nhạy cảm (API Key) trong log/UI
+  - LocalizationEntries  : Đa ngôn ngữ (i18n)
+    - Culture: "vi-VN", "en-US"...
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 11: AUDIT LOG (schema "auditlog") - 2 bảng
+Chức năng: Nhật ký kiểm toán chung + chống trùng lặp
+────────────────────────────────────────────────────────────────────────────────
+
+  - AuditLogEntries     : Log chung cross-module
+  - IdempotentRequests  : Chống xử lý request trùng lặp
+    - RequestType + RequestId: Đảm bảo 1 request chỉ xử lý 1 lần
+
+================================================================================
+               3 DESIGN PATTERNS QUAN TRỌNG (PHẢI NÊU KHI DEMO)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+PATTERN 1: OUTBOX PATTERN (Event-Driven Architecture)
+────────────────────────────────────────────────────────────────────────────────
+
+Vấn đề: Khi user thanh toán xong Subscription, cần cộng quota sử dụng.
+         Nếu gửi event rồi hệ thống crash -> mất event -> dữ liệu không nhất quán.
+
+Giải pháp: Mỗi module có bảng OutboxMessages + ArchivedOutboxMessages.
+  1. Lưu dữ liệu nghiệp vụ + event vào OutboxMessages CÙNG 1 TRANSACTION
+  2. Background worker đọc OutboxMessages và publish event
+  3. Sau khi publish thành công -> chuyển vào ArchivedOutboxMessages
+
+Kết quả: Đảm bảo EVENTUAL CONSISTENCY - không bao giờ mất event dù hệ thống
+         crash giữa chừng.
+
+Các module có Outbox: ApiDoc, TestGen, TestExec, TestReport, Subscription,
+                      Storage, LlmAssistant (7/11 module)
+
+────────────────────────────────────────────────────────────────────────────────
+PATTERN 2: CROSS-MODULE REFERENCE (Không FK liên schema)
+────────────────────────────────────────────────────────────────────────────────
+
+Vấn đề: Trong Modular Monolith, nếu đặt FK constraint giữa các schema
+         thì không thể tách module ra thành microservice sau này.
+
+Giải pháp: Các module tham chiếu nhau qua GUID COLUMN + INDEX (không có FK).
+  VD: testgen_TestSuites.ApiSpecId là Guid trỏ về apidoc_ApiSpecifications
+      nhưng KHÔNG CÓ FK CONSTRAINT ở DB level.
+
+Module boundary được enforce ở APPLICATION LAYER (code), không ở DB layer.
+-> Dễ tách thành microservice sau này nếu cần scale.
+
+────────────────────────────────────────────────────────────────────────────────
+PATTERN 3: OPTIMISTIC CONCURRENCY CONTROL
+────────────────────────────────────────────────────────────────────────────────
+
+Vấn đề: 2 user cùng edit 1 test case cùng lúc -> user save sau sẽ ghi đè
+         thay đổi của user save trước (Lost Update Problem).
+
+Giải pháp: Mọi bảng chính đều có cột RowVersion (bytea/binary).
+  1. Khi đọc record, đọc luôn RowVersion
+  2. Khi update, EF Core kiểm tra RowVersion có đổi không
+  3. Nếu RowVersion đã thay đổi (có người khác edit trước) -> throw exception
+  4. Application xử lý conflict (thông báo user, merge, retry...)
+
+Kết quả: Không cần LOCK database, vẫn đảm bảo data integrity.
+
+================================================================================
+              THỐNG KÊ TỔNG HỢP (SỐ LIỆU ĐỂ DEMO)
+================================================================================
+
+Tổng số bảng nghiệp vụ   : 49 bảng
+Tổng số bảng hạ tầng     : 20 bảng (OutboxMessages, AuditLogEntries lặp/module)
+Tổng cộng                : 69 bảng
+
+Số lượng bảng theo module:
+  Identity         :  9 bảng
+  ApiDocumentation : 10 bảng
+  TestGeneration   : 11 bảng (nhiều nhất - module lõi)
+  TestExecution    :  5 bảng
+  TestReporting    :  5 bảng
+  Subscription     : 10 bảng
+  Storage          :  5 bảng
+  Notification     :  5 bảng
+  Configuration    :  2 bảng
+  AuditLog         :  2 bảng
+  LlmAssistant     :  5 bảng
+
+Kiểu dữ liệu đặc biệt:
+  - UUID (Primary Key)    : Tất cả bảng dùng UUID thay vì Auto-Increment
+                            -> Tránh xung đột ID khi merge data từ nhiều nguồn
+  - jsonb (PostgreSQL)    : Lưu cấu trúc động (Schema, Config, Suggestions...)
+                            -> Linh hoạt, query được, index được
+  - bytea (RowVersion)    : Optimistic Concurrency Control
+  - timestamptz           : Timestamp có timezone
+
+================================================================================
+           GỢI Ý CÂU HỎI THẦY CÓ THỂ HỎI VÀ CÁCH TRẢ LỜI
+================================================================================
+
+Câu hỏi 1: "Tại sao không dùng 1 database chung mà chia ra nhiều schema?"
+Trả lời: Kiến trúc Modular Monolith theo DDD. Mỗi module = 1 Bounded Context
+         có schema riêng, DbContext riêng. Lợi ích:
+         - Module độc lập, không ảnh hưởng lẫn nhau
+         - Dễ tách thành microservice khi cần scale
+         - Team khác nhau có thể làm việc trên module khác nhau
+
+Câu hỏi 2: "Tại sao không có FK giữa các module?"
+Trả lời: Trong Modular Monolith, FK liên module tạo COUPLING ở DB level.
+         Nếu có FK, không thể tách module ra database riêng sau này.
+         Thay vào đó, validate ở application layer bằng service calls.
+
+Câu hỏi 3: "Tại sao dùng UUID thay vì auto-increment?"
+Trả lời: UUID có thể generate ở application layer mà không cần query DB.
+         Phù hợp distributed system, tránh xung đột ID, không lộ số lượng
+         record.
+
+Câu hỏi 4: "Chi phí dùng AI như thế nào?"
+Trả lời: Module LlmAssistant track từng lần gọi AI (ModelUsed, TokensUsed).
+         Có cache layer (LlmSuggestionCaches) để giảm số lần gọi API.
+         Module Subscription có UsageTrackings đếm LlmCallCount theo tháng
+         và PlanLimits để giới hạn quota.
+
+Câu hỏi 5: "Outbox Pattern là gì, tại sao cần?"
+Trả lời: Đảm bảo event không bị mất khi gửi giữa các module.
+         Lưu event vào DB cùng transaction với data -> background worker
+         đọc và publish -> nếu crash thì retry từ DB.
+         Pattern chuẩn trong Event-Driven Architecture.
+
+================================================================================
+          FILE THAM KHẢO TRONG DỰ ÁN (CÓ THỂ MỞ DEMO TRỰC TIẾP)
+================================================================================
+
+docs/architecture/erDiagram.txt        -> Mermaid ERD (paste vào mermaid.live)
+docs/architecture/ERD_Explanation_VN.md -> Giải thích tiếng Việt
+docs/architecture/ERD_ANALYSIS.md      -> Phân tích chi tiết từng bảng
+docs/architecture/ENTITIES.md          -> Entity documentation đầy đủ
+
+================================================================================

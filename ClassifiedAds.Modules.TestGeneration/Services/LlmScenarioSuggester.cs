@@ -204,6 +204,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Prompt = promptPayload,
                 ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
                 ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
             });
         }
 
@@ -237,6 +238,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
             Priority = s.Priority,
             Tags = s.Tags ?? new List<string>(),
+            Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
         }).ToList();
     }
 
@@ -306,6 +308,27 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             _logger.LogWarning(ex, "Failed to cache LLM suggestions. TestSuiteId={TestSuiteId}", context.TestSuiteId);
         }
+    }
+
+    private static List<N8nParameterDetail> BuildParameterDetails(
+        LlmScenarioSuggestionContext context, Guid endpointId)
+    {
+        if (context.EndpointParameterDetails == null ||
+            !context.EndpointParameterDetails.TryGetValue(endpointId, out var detail) ||
+            detail.Parameters == null)
+        {
+            return new List<N8nParameterDetail>();
+        }
+
+        return detail.Parameters.Select(p => new N8nParameterDetail
+        {
+            Name = p.Name,
+            Location = p.Location,
+            DataType = p.DataType,
+            Format = p.Format,
+            IsRequired = p.IsRequired,
+            DefaultValue = p.DefaultValue,
+        }).ToList();
     }
 
     private static string BuildCacheKey(LlmScenarioSuggestionContext context)

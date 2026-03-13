@@ -53,7 +53,7 @@ public class DeleteEndpointCommandHandler : ICommandHandler<DeleteEndpointComman
 
         if (project.OwnerId != command.CurrentUserId)
         {
-            throw new ValidationException("Bạn không có quyền thao tác project này.");
+            throw new NotFoundException($"Không tìm thấy project với mã '{command.ProjectId}'.");
         }
 
         // 2. Verify spec belongs to project

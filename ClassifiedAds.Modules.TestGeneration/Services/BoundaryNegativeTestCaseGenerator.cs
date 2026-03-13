@@ -158,6 +158,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
                 EndpointMetadata = endpointMetadata,
                 OrderedEndpoints = orderedEndpoints,
                 SpecificationId = specificationId,
+                EndpointParameterDetails = parameterMap,
             };
 
             var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
@@ -338,6 +339,25 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         };
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
 
+        // Build variables from LLM suggestion (reuse FE-05B pattern)
+        if (scenario.Variables != null)
+        {
+            foreach (var v in scenario.Variables)
+            {
+                testCase.Variables.Add(new TestCaseVariable
+                {
+                    Id = Guid.NewGuid(),
+                    TestCaseId = testCaseId,
+                    VariableName = v.VariableName,
+                    ExtractFrom = ParseExtractFrom(v.ExtractFrom),
+                    JsonPath = v.JsonPath,
+                    HeaderName = v.HeaderName,
+                    Regex = v.Regex,
+                    DefaultValue = v.DefaultValue,
+                });
+            }
+        }
+
         return testCase;
     }
 
@@ -401,6 +421,19 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             "HEAD" => Entities.HttpMethod.HEAD,
             "OPTIONS" => Entities.HttpMethod.OPTIONS,
             _ => Entities.HttpMethod.GET,
+        };
+    }
+
+    private static ExtractFrom ParseExtractFrom(string extractFrom)
+    {
+        if (string.IsNullOrWhiteSpace(extractFrom)) return ExtractFrom.ResponseBody;
+
+        return extractFrom.Trim().ToLowerInvariant() switch
+        {
+            "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
+            "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
+            "status" => ExtractFrom.Status,
+            _ => ExtractFrom.ResponseBody,
         };
     }
 

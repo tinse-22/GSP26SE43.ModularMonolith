@@ -2,6 +2,7 @@ using ClassifiedAds.Modules.TestGeneration.Entities;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models.Requests;
 
@@ -20,6 +21,7 @@ public class UpdateTestSuiteScopeRequest
     [Required]
     public Guid ApiSpecId { get; set; }
 
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public GenerationType GenerationType { get; set; } = GenerationType.Auto;
 
     [Required]

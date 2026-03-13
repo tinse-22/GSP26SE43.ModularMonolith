@@ -1,0 +1,552 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-06-contracts",
+  "requirementId": "FE-06",
+  "title": "FE-06 Contracts - Boundary & Negative Test Case Generation",
+  "apiContracts": [
+    {
+      "name": "GenerateBoundaryNegativeTestCases",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/test-cases/generate-boundary-negative",
+      "permission": "Permission:GenerateBoundaryNegativeTestCases",
+      "requestBody": "GenerateBoundaryNegativeTestCasesRequest",
+      "responseBody": "GenerateBoundaryNegativeResultModel",
+      "successStatus": 201,
+      "description": "Trigger boundary/negative test case generation. Ba pipeline song song: path mutations, body mutations, LLM suggestions. Bat buoc phai co approved API order (FE-05A gate)."
+    },
+    {
+      "name": "GetTestCasesByTestSuite",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-cases",
+      "permission": "Permission:GetTestCases",
+      "queryParams": {
+        "testType": "string? (HappyPath|Boundary|Negative|Performance|Security) — filter by test type",
+        "includeDisabled": "bool (default: false) — include disabled test cases"
+      },
+      "responseBody": "List<TestCaseModel>",
+      "successStatus": 200,
+      "description": "Danh sach test cases cho 1 suite. Filter theo testType=Boundary|Negative de xem FE-06 results."
+    },
+    {
+      "name": "GetTestCaseDetail",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "permission": "Permission:GetTestCases",
+      "responseBody": "TestCaseModel",
+      "successStatus": 200,
+      "description": "Chi tiet 1 test case voi request, expectation, variables, dependencies."
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "GenerateBoundaryNegativeTestCasesRequest",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/Requests/GenerateBoundaryNegativeTestCasesRequest.cs",
+      "fields": {
+        "specificationId": {
+          "type": "Guid",
+          "required": true,
+          "description": "API specification ID de fetch endpoint metadata. Phai match spec da dung trong approved proposal."
+        },
+        "forceRegenerate": {
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "description": "Neu true, xoa va tao lai boundary/negative test cases. Neu false, block khi da co test cases."
+        },
+        "includePathMutations": {
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "description": "Bat pipeline rule-based path parameter mutations (empty, wrongType, boundary, injection)."
+        },
+        "includeBodyMutations": {
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "description": "Bat pipeline rule-based body mutations (missingRequired, typeMismatch, overflow, malformedJson)."
+        },
+        "includeLlmSuggestions": {
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "description": "Bat pipeline LLM-suggested boundary/negative scenarios qua n8n webhook."
+        }
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "GenerateBoundaryNegativeResultModel",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/GenerateBoundaryNegativeResultModel.cs",
+      "fields": {
+        "testSuiteId": {
+          "type": "Guid",
+          "description": "ID cua test suite da generate."
+        },
+        "totalGenerated": {
+          "type": "int",
+          "description": "Tong so test cases da tao (path + body + llm)."
+        },
+        "pathMutationCount": {
+          "type": "int",
+          "description": "So test cases tao tu path parameter mutations."
+        },
+        "bodyMutationCount": {
+          "type": "int",
+          "description": "So test cases tao tu body mutations."
+        },
+        "llmSuggestionCount": {
+          "type": "int",
+          "description": "So test cases tao tu LLM suggestions."
+        },
+        "endpointsCovered": {
+          "type": "int",
+          "description": "So endpoints het bao phu (distinct EndpointId)."
+        },
+        "llmModel": {
+          "type": "string?",
+          "description": "LLM model da su dung (vd: gpt-4, claude-3). Null neu khong su dung LLM."
+        },
+        "llmTokensUsed": {
+          "type": "int?",
+          "description": "So tokens da tieu thu. Null neu khong su dung LLM."
+        },
+        "generatedAt": {
+          "type": "DateTimeOffset",
+          "description": "Thoi diem generation hoan tat."
+        },
+        "testCases": {
+          "type": "List<GeneratedTestCaseSummary>",
+          "description": "Danh sach tom tat test cases da tao."
+        }
+      }
+    },
+    {
+      "name": "GeneratedTestCaseSummary",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "httpMethod": "string?",
+        "path": "string?",
+        "orderIndex": "int",
+        "variableCount": "int"
+      }
+    },
+    {
+      "name": "TestCaseModel",
+      "description": "Full test case model voi nested request, expectation, variables, dependencies. Dung cho GET queries.",
+      "fields": {
+        "id": "Guid",
+        "testSuiteId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "description": "string?",
+        "testType": "TestType (HappyPath|Boundary|Negative)",
+        "priority": "TestPriority (Critical|High|Medium|Low)",
+        "isEnabled": "bool",
+        "orderIndex": "int",
+        "tags": "string[] (deserialized from JSON)",
+        "version": "int",
+        "request": "TestCaseRequestModel",
+        "expectation": "TestCaseExpectationModel",
+        "variables": "TestCaseVariableModel[]",
+        "dependencies": "TestCaseDependencyModel[]",
+        "rowVersion": "string (base64)"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "GenerateBoundaryNegativeTestCasesCommand",
+        "file": "ClassifiedAds.Modules.TestGeneration/Commands/GenerateBoundaryNegativeTestCasesCommand.cs",
+        "handler": "GenerateBoundaryNegativeTestCasesCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "currentUserId": "Guid",
+          "specificationId": "Guid",
+          "forceRegenerate": "bool",
+          "includePathMutations": "bool (default: true)",
+          "includeBodyMutations": "bool (default: true)",
+          "includeLlmSuggestions": "bool (default: true)"
+        },
+        "outputField": "Result: GenerateBoundaryNegativeResultModel",
+        "writes": [
+          "TestCase (N records — Boundary and Negative types)",
+          "TestCaseRequest (N records — 1:1 with TestCase)",
+          "TestCaseExpectation (N records — 1:1 with TestCase)",
+          "TestCaseVariable (M records — per test case)",
+          "TestCaseDependency (K records — per test case)",
+          "TestCaseChangeLog (N records — ChangeType=Created)",
+          "TestSuiteVersion (1 record — version snapshot)",
+          "TestSuite (update Version++, Status=Ready, LastModifiedById)"
+        ],
+        "reads": [
+          "TestSuite (load by ID, ownership check)",
+          "TestCase (check existing boundary/negative cases)"
+        ],
+        "crossModuleReads": [
+          "IApiTestOrderGateService.RequireApprovedOrderAsync(testSuiteId) — FE-05A gate",
+          "ISubscriptionLimitGatewayService.CheckLimitAsync(userId, LimitType, count) — subscription check"
+        ],
+        "crossModuleWrites": [
+          "ISubscriptionLimitGatewayService.IncrementUsageAsync(userId, LimitType, incrementValue) — subscription usage"
+        ],
+        "transactionRequired": true,
+        "transactionScope": "Toan bo test case + change log + suite version + suite update trong 1 ExecuteInTransactionAsync call."
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetTestCasesByTestSuiteQuery",
+        "file": "ClassifiedAds.Modules.TestGeneration/Queries/GetTestCasesByTestSuiteQuery.cs",
+        "handler": "GetTestCasesByTestSuiteQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "filterByTestType": "TestType? (optional, dung Boundary|Negative de filter FE-06)",
+          "includeDisabled": "bool"
+        },
+        "reads": [
+          "TestCase (filter by TestSuiteId, TestType, IsEnabled)"
+        ]
+      },
+      {
+        "name": "GetTestCaseDetailQuery",
+        "file": "ClassifiedAds.Modules.TestGeneration/Queries/GetTestCaseDetailQuery.cs",
+        "handler": "GetTestCaseDetailQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "testCaseId": "Guid"
+        },
+        "reads": [
+          "TestCase with Request, Expectation, Variables, Dependencies"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "IBoundaryNegativeTestCaseGenerator",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/IBoundaryNegativeTestCaseGenerator.cs",
+        "implementation": "BoundaryNegativeTestCaseGenerator",
+        "implementationFile": "ClassifiedAds.Modules.TestGeneration/Services/BoundaryNegativeTestCaseGenerator.cs",
+        "methods": [
+          {
+            "name": "GenerateAsync",
+            "signature": "Task<BoundaryNegativeGenerationResult> GenerateAsync(TestSuite suite, IReadOnlyList<ApiOrderItemModel> orderedEndpoints, Guid specificationId, BoundaryNegativeOptions options, CancellationToken ct)",
+            "description": "Orchestrator pipeline: (1) fetch metadata, (2) fetch parameter details, (3) path mutations per endpoint, (4) body mutations per endpoint, (5) LLM suggestions, (6) assign OrderIndex."
+          }
+        ],
+        "dependencies": [
+          "IApiEndpointMetadataService (ApiDocumentation module boundary)",
+          "IApiEndpointParameterDetailService (ApiDocumentation module boundary)",
+          "IPathParameterMutationGatewayService (ApiDocumentation module boundary)",
+          "IBodyMutationEngine (internal)",
+          "ILlmScenarioSuggester (internal)",
+          "ITestCaseRequestBuilder (shared with FE-05B)",
+          "ITestCaseExpectationBuilder (shared with FE-05B)"
+        ]
+      },
+      {
+        "name": "IBodyMutationEngine",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/IBodyMutationEngine.cs",
+        "implementation": "BodyMutationEngine",
+        "implementationFile": "ClassifiedAds.Modules.TestGeneration/Services/BodyMutationEngine.cs",
+        "methods": [
+          {
+            "name": "GenerateMutations",
+            "signature": "IReadOnlyList<BodyMutation> GenerateMutations(BodyMutationContext context)",
+            "description": "Tao danh sach body mutation variants tu parameter details va JSON schema. 6 loai: emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum. Them schema-based mutations."
+          }
+        ],
+        "noDependencies": true
+      },
+      {
+        "name": "ILlmScenarioSuggester",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+        "implementation": "LlmScenarioSuggester",
+        "implementationFile": "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+        "methods": [
+          {
+            "name": "SuggestScenariosAsync",
+            "signature": "Task<LlmScenarioSuggestionResult> SuggestScenariosAsync(LlmScenarioSuggestionContext context, CancellationToken ct)",
+            "description": "6-step pipeline: (1) check cache, (2) build prompts, (3) build n8n payload, (4) call n8n webhook, (5) log interaction, (6) parse & cache results."
+          }
+        ],
+        "dependencies": [
+          "IObservationConfirmationPromptBuilder (Algorithms)",
+          "IN8nIntegrationService (n8n webhook caller)",
+          "ILlmAssistantGatewayService (LlmAssistant module boundary)"
+        ]
+      },
+      {
+        "name": "IApiTestOrderGateService",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/IApiTestOrderGateService.cs",
+        "description": "Shared with FE-05B. Gate service dam bao co approved/applied order truoc khi generation.",
+        "methods": [
+          {
+            "name": "RequireApprovedOrderAsync",
+            "signature": "Task<IReadOnlyList<ApiOrderItemModel>> RequireApprovedOrderAsync(Guid testSuiteId, CancellationToken ct)",
+            "description": "Throw ConflictException('ORDER_CONFIRMATION_REQUIRED') neu gate fail. Tra ordered endpoint list neu gate pass."
+          }
+        ]
+      }
+    ]
+  },
+  "domainModels": [
+    {
+      "name": "BoundaryNegativeOptions",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/IBoundaryNegativeTestCaseGenerator.cs",
+      "fields": {
+        "includePathMutations": "bool (default: true)",
+        "includeBodyMutations": "bool (default: true)",
+        "includeLlmSuggestions": "bool (default: true)",
+        "userId": "Guid"
+      }
+    },
+    {
+      "name": "BoundaryNegativeGenerationResult",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/IBoundaryNegativeTestCaseGenerator.cs",
+      "fields": {
+        "testCases": "IReadOnlyList<TestCase>",
+        "pathMutationCount": "int",
+        "bodyMutationCount": "int",
+        "llmSuggestionCount": "int",
+        "llmModel": "string?",
+        "llmTokensUsed": "int?",
+        "endpointsCovered": "int"
+      }
+    },
+    {
+      "name": "BodyMutation",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/BodyMutation.cs",
+      "fields": {
+        "mutationType": "string (emptyBody|malformedJson|missingRequired|typeMismatch|overflow|invalidEnum)",
+        "label": "string (human-readable mutation description)",
+        "mutatedBody": "string? (null for emptyBody null variant)",
+        "targetFieldName": "string? (null for whole-body mutations)",
+        "expectedStatusCode": "int (default: 400)",
+        "description": "string",
+        "suggestedTestType": "TestType (Boundary|Negative)"
+      }
+    },
+    {
+      "name": "BodyMutationContext",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/IBodyMutationEngine.cs",
+      "fields": {
+        "endpointId": "Guid",
+        "httpMethod": "string (POST|PUT|PATCH)",
+        "path": "string",
+        "bodyParameters": "IReadOnlyList<ParameterDetailDto> (from ApiDocumentation boundary)",
+        "requestBodySchema": "string? (raw JSON schema)"
+      }
+    },
+    {
+      "name": "LlmScenarioSuggestionContext",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "userId": "Guid",
+        "suite": "TestSuite",
+        "endpointMetadata": "IReadOnlyList<ApiEndpointMetadataDto>",
+        "orderedEndpoints": "IReadOnlyList<ApiOrderItemModel>",
+        "specificationId": "Guid"
+      }
+    },
+    {
+      "name": "LlmScenarioSuggestionResult",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+      "fields": {
+        "scenarios": "IReadOnlyList<LlmSuggestedScenario>",
+        "llmModel": "string?",
+        "tokensUsed": "int?",
+        "latencyMs": "int?",
+        "fromCache": "bool"
+      }
+    },
+    {
+      "name": "LlmSuggestedScenario",
+      "file": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+      "fields": {
+        "endpointId": "Guid",
+        "scenarioName": "string (max 200 chars after sanitize)",
+        "description": "string",
+        "suggestedTestType": "TestType (Boundary|Negative, default: Negative)",
+        "suggestedBody": "string?",
+        "suggestedPathParams": "Dictionary<string, string>?",
+        "suggestedQueryParams": "Dictionary<string, string>?",
+        "suggestedHeaders": "Dictionary<string, string>?",
+        "expectedStatusCode": "int (default: 400)",
+        "expectedBehavior": "string?",
+        "priority": "string? (critical|high|medium|low)",
+        "tags": "List<string>"
+      }
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "TestSuiteId bat buoc va khong duoc Guid.Empty.",
+      "httpStatus": 400,
+      "reasonCode": "INVALID_INPUT"
+    },
+    {
+      "id": "VAL-02",
+      "rule": "SpecificationId bat buoc va khong duoc Guid.Empty.",
+      "httpStatus": 400,
+      "reasonCode": "INVALID_INPUT"
+    },
+    {
+      "id": "VAL-03",
+      "rule": "It nhat 1 pipeline phai duoc bat (IncludePathMutations OR IncludeBodyMutations OR IncludeLlmSuggestions).",
+      "httpStatus": 400,
+      "reasonCode": "NO_PIPELINE_ENABLED"
+    },
+    {
+      "id": "VAL-04",
+      "rule": "Test suite phai ton tai (not null).",
+      "httpStatus": 404,
+      "reasonCode": "TEST_SUITE_NOT_FOUND"
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Chi suite owner (CreatedById == CurrentUserId) moi co quyen generate.",
+      "httpStatus": 400,
+      "reasonCode": "OWNERSHIP_DENIED"
+    },
+    {
+      "id": "VAL-06",
+      "rule": "Suite khong duoc la Archived.",
+      "httpStatus": 400,
+      "reasonCode": "SUITE_ARCHIVED"
+    },
+    {
+      "id": "VAL-07",
+      "rule": "FE-05A gate phai pass (co approved/applied order).",
+      "httpStatus": 409,
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED"
+    },
+    {
+      "id": "VAL-08",
+      "rule": "Neu da co boundary/negative test cases va ForceRegenerate=false thi block.",
+      "httpStatus": 400,
+      "reasonCode": "EXISTING_CASES_FOUND"
+    },
+    {
+      "id": "VAL-09",
+      "rule": "Subscription limit MaxTestCasesPerSuite phai con du.",
+      "httpStatus": 400,
+      "reasonCode": "SUBSCRIPTION_LIMIT_EXCEEDED"
+    },
+    {
+      "id": "VAL-10",
+      "rule": "Subscription limit MaxLlmCallsPerMonth phai con du (chi check khi IncludeLlmSuggestions=true).",
+      "httpStatus": 400,
+      "reasonCode": "LLM_CALL_LIMIT_EXCEEDED"
+    }
+  ],
+  "errorMap": [
+    {
+      "httpStatus": 400,
+      "reasonCode": "INVALID_INPUT",
+      "exceptionType": "ValidationException",
+      "description": "TestSuiteId hoac SpecificationId khong hop le."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "NO_PIPELINE_ENABLED",
+      "exceptionType": "ValidationException",
+      "description": "Tat ca 3 pipeline deu bi tat."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "OWNERSHIP_DENIED",
+      "exceptionType": "ValidationException",
+      "description": "User khong phai owner cua test suite."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "SUITE_ARCHIVED",
+      "exceptionType": "ValidationException",
+      "description": "Test suite da bi archived."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "EXISTING_CASES_FOUND",
+      "exceptionType": "ValidationException",
+      "description": "Da co boundary/negative test cases va ForceRegenerate=false."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "SUBSCRIPTION_LIMIT_EXCEEDED",
+      "exceptionType": "ValidationException",
+      "description": "Vuot han muc test case subscription."
+    },
+    {
+      "httpStatus": 400,
+      "reasonCode": "LLM_CALL_LIMIT_EXCEEDED",
+      "exceptionType": "ValidationException",
+      "description": "Vuot han muc LLM calls per month."
+    },
+    {
+      "httpStatus": 401,
+      "reasonCode": "UNAUTHORIZED",
+      "exceptionType": "UnauthorizedAccessException",
+      "description": "Chua dang nhap."
+    },
+    {
+      "httpStatus": 403,
+      "reasonCode": "FORBIDDEN",
+      "exceptionType": "ForbiddenException",
+      "description": "Khong co permission GenerateBoundaryNegativeTestCases."
+    },
+    {
+      "httpStatus": 404,
+      "reasonCode": "TEST_SUITE_NOT_FOUND",
+      "exceptionType": "NotFoundException",
+      "description": "Khong tim thay test suite."
+    },
+    {
+      "httpStatus": 409,
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED",
+      "exceptionType": "ConflictException",
+      "description": "Chua co approved API order (FE-05A gate fail)."
+    }
+  ],
+  "dbWriteRules": {
+    "schema": "testgen",
+    "tables": [
+      "TestCases",
+      "TestCaseRequests",
+      "TestCaseExpectations",
+      "TestCaseVariables",
+      "TestCaseDependencies",
+      "TestCaseChangeLogs",
+      "TestSuiteVersions",
+      "TestSuites"
+    ],
+    "transactionBoundary": "Tat ca writes trong 1 ExecuteInTransactionAsync call. SaveChanges 1 lan cuoi.",
+    "notes": [
+      "TestCase.TestType = Boundary hoac Negative (phan loai boi mutation type hoac LLM suggestion).",
+      "TestCase.Tags luu dang JSON array: ['boundary', 'auto-generated', 'rule-based', 'body-mutation'].",
+      "TestCaseChangeLog.ChangeType = Created, ChangeReason ghi ro pipeline source (rule-based hoac llm-model).",
+      "TestSuiteVersion.ChangeType = TestCasesModified, ChangeDescription ghi so luong per pipeline.",
+      "Subscription usage increment AFTER transaction (khong nam trong transaction chinh).",
+      "Delete existing boundary/negative cases BEFORE main transaction neu ForceRegenerate=true."
+    ]
+  },
+  "securityAndAuthorization": {
+    "permissionsToAdd": [
+      "Permission:GenerateBoundaryNegativeTestCases"
+    ],
+    "existingPermissionsUsed": [
+      "Permission:GetTestCases"
+    ],
+    "requirements": [
+      "Endpoint /generate-boundary-negative yeu cau [Authorize] + [Authorize(Permissions.GenerateBoundaryNegativeTestCases)].",
+      "Ownership check: CreatedById == CurrentUserId (check trong command handler, khong phai middleware).",
+      "GET endpoints dung Permission:GetTestCases (shared voi happy-path)."
+    ]
+  }
+}

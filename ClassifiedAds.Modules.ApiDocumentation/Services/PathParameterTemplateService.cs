@@ -281,6 +281,9 @@ public class PathParameterTemplateService : IPathParameterTemplateService
             case "bool":
                 AddBooleanMutations(mutations, parameterName);
                 break;
+            case "uuid":
+                AddStringMutations(mutations, parameterName, "uuid");
+                break;
             case "string":
             default:
                 AddStringMutations(mutations, parameterName, normalizedFormat);
@@ -532,7 +535,8 @@ public class PathParameterTemplateService : IPathParameterTemplateService
         {
             ("integer" or "int" or "long", _) => "999999999",
             ("number" or "float" or "double" or "decimal", _) => "999999999.99",
-            ("string", "uuid") => "00000000-0000-0000-0000-000000000000",
+            ("uuid", _) => "ffffffff-ffff-ffff-ffff-ffffffffffff",
+            ("string", "uuid") => "ffffffff-ffff-ffff-ffff-ffffffffffff",
             _ => "nonexistent-resource-id-99999",
         };
     }
