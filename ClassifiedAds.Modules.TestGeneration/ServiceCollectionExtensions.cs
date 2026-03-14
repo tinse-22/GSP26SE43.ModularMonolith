@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Algorithms;
@@ -62,6 +63,10 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
             .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
+
+        // FE-07/08: Cross-module execution read gateway
+        services
+            .AddScoped<ITestExecutionReadGatewayService, TestExecutionReadGatewayService>();
 
         // FE-05B: Happy-path test case generation services
         services
