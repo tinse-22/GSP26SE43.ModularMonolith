@@ -41,6 +41,16 @@ public static class TestExecutionServiceCollectionExtensions
 
         services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>();
 
+        // FE-07/08: Test Execution Engine + Rule-Based Validation
+        services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
+        services.AddScoped<IExecutionEnvironmentRuntimeResolver, ExecutionEnvironmentRuntimeResolver>();
+        services.AddScoped<IVariableResolver, VariableResolver>();
+        services.AddScoped<IHttpTestExecutor, HttpTestExecutor>();
+        services.AddScoped<IVariableExtractor, VariableExtractor>();
+        services.AddScoped<IRuleBasedValidator, RuleBasedValidator>();
+        services.AddScoped<ITestResultCollector, TestResultCollector>();
+        services.AddHttpClient("TestExecution");
+
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());
 

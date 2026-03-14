@@ -6,4 +6,7 @@ public static class Permissions
     public const string AddExecutionEnvironment = "Permission:AddExecutionEnvironment";
     public const string UpdateExecutionEnvironment = "Permission:UpdateExecutionEnvironment";
     public const string DeleteExecutionEnvironment = "Permission:DeleteExecutionEnvironment";
+
+    public const string StartTestRun = "Permission:StartTestRun";
+    public const string GetTestRuns = "Permission:GetTestRuns";
 }
