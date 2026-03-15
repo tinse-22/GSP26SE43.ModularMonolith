@@ -173,8 +173,6 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         // 9. Execute via orchestrator (outside transaction)
         command.Result = await _orchestrator.ExecuteAsync(
             run.Id,
-            command.TestSuiteId,
-            environment.Id,
             command.CurrentUserId,
             selectedIds.Count > 0 ? selectedIds : null,
             cancellationToken);

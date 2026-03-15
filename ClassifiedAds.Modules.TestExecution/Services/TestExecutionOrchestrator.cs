@@ -61,8 +61,6 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
     public async Task<TestRunResultModel> ExecuteAsync(
         Guid testRunId,
-        Guid testSuiteId,
-        Guid environmentId,
         Guid currentUserId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default)
@@ -73,13 +71,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Load execution context from gateway
         var executionContext = await _gatewayService.GetExecutionContextAsync(
-            testSuiteId,
+            run.TestSuiteId,
             selectedTestCaseIds,
             ct);
 
         // Load environment
         var environment = await _envRepository.FirstOrDefaultAsync(
-            _envRepository.GetQueryableSet().Where(x => x.Id == environmentId));
+            _envRepository.GetQueryableSet().Where(x => x.Id == run.EnvironmentId));
 
         // Resolve runtime environment (auth, headers, etc.) - once per run
         var resolvedEnv = await _envResolver.ResolveAsync(environment, ct);
