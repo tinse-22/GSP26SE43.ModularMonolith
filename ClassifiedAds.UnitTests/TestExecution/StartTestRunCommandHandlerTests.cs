@@ -141,7 +141,7 @@ public class StartTestRunCommandHandlerTests
         // Assert
         command.Result.Should().NotBeNull();
         _orchestratorMock.Verify(
-            x => x.ExecuteAsync(It.IsAny<Guid>(), _suiteId, _envId, _userId, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()),
+            x => x.ExecuteAsync(It.IsAny<Guid>(), _userId, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -348,7 +348,7 @@ public class StartTestRunCommandHandlerTests
     private void SetupOrchestrator()
     {
         _orchestratorMock
-            .Setup(x => x.ExecuteAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.ExecuteAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestRunResultModel
             {
                 Run = new TestRunModel(),

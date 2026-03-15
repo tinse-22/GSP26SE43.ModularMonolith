@@ -105,11 +105,7 @@ public class TestExecutionOrchestratorTests
             .ReturnsAsync(() => capturedResult);
 
         // Act
-<<<<<<< HEAD
-        var result = await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         var result = await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert
         result.Cases.Should().HaveCount(2);
@@ -132,11 +128,7 @@ public class TestExecutionOrchestratorTests
         SetupResultCollector();
 
         // Act
-<<<<<<< HEAD
-        await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert — endpoint metadata fetched exactly once
         _endpointMetadataMock.Verify(
@@ -157,11 +149,7 @@ public class TestExecutionOrchestratorTests
         SetupResultCollector();
 
         // Act
-<<<<<<< HEAD
-        await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert — environment resolved exactly once
         _envResolverMock.Verify(
@@ -191,11 +179,7 @@ public class TestExecutionOrchestratorTests
             .Returns(Task.CompletedTask);
 
         // Act
-<<<<<<< HEAD
-        await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert
         updatedRun.Should().NotBeNull();
@@ -267,11 +251,7 @@ public class TestExecutionOrchestratorTests
         SetupResultCollector();
 
         // Act
-<<<<<<< HEAD
-        await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert — variables extracted from case 1 are available to case 2
         case2Variables.Should().NotBeNull();
@@ -304,11 +284,7 @@ public class TestExecutionOrchestratorTests
             .ReturnsAsync(new TestRunResultModel());
 
         // Act
-<<<<<<< HEAD
-        await _orchestrator.ExecuteAsync(_runId, _suiteId, _envId, _userId, Array.Empty<Guid>());
-=======
         await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
->>>>>>> origin/master
 
         // Assert
         capturedFailedCase.Should().NotBeNull();
