@@ -34,4 +34,18 @@ public class TestCaseRunResultModel
     public List<Guid> DependencyIds { get; set; } = new();
 
     public List<Guid> SkippedBecauseDependencyIds { get; set; } = new();
+
+    public bool StatusCodeMatched { get; set; }
+
+    public bool? SchemaMatched { get; set; }
+
+    public bool? HeaderChecksPassed { get; set; }
+
+    public bool? BodyContainsPassed { get; set; }
+
+    public bool? BodyNotContainsPassed { get; set; }
+
+    public bool? JsonPathChecksPassed { get; set; }
+
+    public bool? ResponseTimePassed { get; set; }
 }

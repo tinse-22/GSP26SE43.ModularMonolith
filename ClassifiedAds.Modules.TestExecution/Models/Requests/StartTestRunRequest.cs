@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ClassifiedAds.Modules.TestExecution.Models;
+namespace ClassifiedAds.Modules.TestExecution.Models.Requests;
 
 public class StartTestRunRequest
 {

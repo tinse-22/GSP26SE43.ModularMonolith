@@ -1,3 +1,4 @@
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
@@ -67,6 +68,13 @@ public class TestResultCollector : ITestResultCollector
             ExtractedVariables = MaskSensitiveVariables(r.ExtractedVariables),
             DependencyIds = r.DependencyIds?.ToList() ?? new List<Guid>(),
             SkippedBecauseDependencyIds = r.SkippedBecauseDependencyIds ?? new List<Guid>(),
+            StatusCodeMatched = r.StatusCodeMatched,
+            SchemaMatched = r.SchemaMatched,
+            HeaderChecksPassed = r.HeaderChecksPassed,
+            BodyContainsPassed = r.BodyContainsPassed,
+            BodyNotContainsPassed = r.BodyNotContainsPassed,
+            JsonPathChecksPassed = r.JsonPathChecksPassed,
+            ResponseTimePassed = r.ResponseTimePassed,
         }).ToList();
 
         var resultModel = new TestRunResultModel
@@ -89,6 +97,7 @@ public class TestResultCollector : ITestResultCollector
 
         // Try to save cache payload
         bool cacheSaved = false;
+        Exception cacheException = null;
         try
         {
             var payload = JsonSerializer.Serialize(resultModel, JsonOptions);
@@ -102,6 +111,7 @@ public class TestResultCollector : ITestResultCollector
         }
         catch (Exception ex)
         {
+            cacheException = ex;
             _logger.LogCritical(ex, "Failed to save test run results to cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
             run.Status = TestRunStatus.Failed;
         }
@@ -121,7 +131,10 @@ public class TestResultCollector : ITestResultCollector
         // If cache failed after summary is saved, propagate
         if (!cacheSaved)
         {
-            _logger.LogWarning("Test run summary saved but cache write failed. RunId={RunId}", run.Id);
+            _logger.LogWarning("Test run {RunId}: summary saved but cache write failed", run.Id);
+            throw new ConflictException(
+                "CACHE_WRITE_FAILED",
+                $"Ket qua chi tiet khong the luu vao cache. RunId={run.Id}");
         }
 
         resultModel.Run = TestRunModel.FromEntity(run);

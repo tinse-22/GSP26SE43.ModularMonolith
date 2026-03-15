@@ -1,3 +1,5 @@
+using ClassifiedAds.Contracts.TestGeneration.DTOs;
+using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
@@ -23,29 +25,36 @@ public class GetTestRunResultsQueryHandlerTests
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
     private readonly Mock<IDistributedCache> _cacheMock;
+    private readonly Mock<ITestExecutionReadGatewayService> _gatewayMock;
     private readonly GetTestRunResultsQueryHandler _handler;
+
+    private readonly Guid _ownerId = Guid.NewGuid();
 
     public GetTestRunResultsQueryHandlerTests()
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
+        _gatewayMock = new Mock<ITestExecutionReadGatewayService>();
 
         _handler = new GetTestRunResultsQueryHandler(
             _runRepoMock.Object,
-            _cacheMock.Object);
+            _cacheMock.Object,
+            _gatewayMock.Object);
     }
 
     [Fact]
     public async Task HandleAsync_RunNotFound_ShouldThrowNotFoundException()
     {
         // Arrange
+        var suiteId = Guid.NewGuid();
         var query = new GetTestRunResultsQuery
         {
-            TestSuiteId = Guid.NewGuid(),
+            TestSuiteId = suiteId,
             RunId = Guid.NewGuid(),
-            CurrentUserId = Guid.NewGuid(),
+            CurrentUserId = _ownerId,
         };
 
+        SetupGateway(suiteId, _ownerId);
         SetupRunRepository(null);
 
         // Act
@@ -53,6 +62,27 @@ public class GetTestRunResultsQueryHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_WrongOwner_ShouldThrowValidationException()
+    {
+        // Arrange
+        var suiteId = Guid.NewGuid();
+        var query = new GetTestRunResultsQuery
+        {
+            TestSuiteId = suiteId,
+            RunId = Guid.NewGuid(),
+            CurrentUserId = Guid.NewGuid(),
+        };
+
+        SetupGateway(suiteId, _ownerId);
+
+        // Act
+        var act = () => _handler.HandleAsync(query);
+
+        // Assert
+        await act.Should().ThrowAsync<ValidationException>();
     }
 
     [Fact]
@@ -68,9 +98,10 @@ public class GetTestRunResultsQueryHandlerTests
         {
             TestSuiteId = suiteId,
             RunId = runId,
-            CurrentUserId = Guid.NewGuid(),
+            CurrentUserId = _ownerId,
         };
 
+        SetupGateway(suiteId, _ownerId);
         SetupRunRepository(run);
 
         // Act
@@ -92,9 +123,10 @@ public class GetTestRunResultsQueryHandlerTests
         {
             TestSuiteId = suiteId,
             RunId = runId,
-            CurrentUserId = Guid.NewGuid(),
+            CurrentUserId = _ownerId,
         };
 
+        SetupGateway(suiteId, _ownerId);
         SetupRunRepository(run);
 
         // Act
@@ -116,9 +148,10 @@ public class GetTestRunResultsQueryHandlerTests
         {
             TestSuiteId = suiteId,
             RunId = runId,
-            CurrentUserId = Guid.NewGuid(),
+            CurrentUserId = _ownerId,
         };
 
+        SetupGateway(suiteId, _ownerId);
         SetupRunRepository(run);
 
         // Cache returns null
@@ -144,9 +177,10 @@ public class GetTestRunResultsQueryHandlerTests
         {
             TestSuiteId = suiteId,
             RunId = runId,
-            CurrentUserId = Guid.NewGuid(),
+            CurrentUserId = _ownerId,
         };
 
+        SetupGateway(suiteId, _ownerId);
         SetupRunRepository(run);
 
         var cachedResult = new TestRunResultModel
@@ -184,6 +218,18 @@ public class GetTestRunResultsQueryHandlerTests
     }
 
     #region Helpers
+
+    private void SetupGateway(Guid suiteId, Guid ownerId)
+    {
+        _gatewayMock.Setup(x => x.GetSuiteAccessContextAsync(suiteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestSuiteAccessContextDto
+            {
+                TestSuiteId = suiteId,
+                CreatedById = ownerId,
+                Status = "Ready",
+                Name = "Test Suite",
+            });
+    }
 
     private void SetupRunRepository(TestRun run)
     {

@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ClassifiedAds.Modules.TestExecution.Services;
 
@@ -154,11 +155,11 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         try
         {
-            // Basic structural schema validation using System.Text.Json
             using var responseDoc = JsonDocument.Parse(response.Body);
-            using var schemaDoc = JsonDocument.Parse(schemaJson);
-
-            var isValid = ValidateJsonAgainstSchema(responseDoc.RootElement, schemaDoc.RootElement);
+            var normalizedSchemaJson = NormalizeSchemaForEvaluation(schemaJson);
+            var schema = Json.Schema.JsonSchema.FromText(normalizedSchemaJson);
+            var evaluation = schema.Evaluate(responseDoc.RootElement);
+            var isValid = evaluation.IsValid;
             result.SchemaMatched = isValid;
 
             if (!isValid)
@@ -181,89 +182,129 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
     }
 
-    private static bool ValidateJsonAgainstSchema(JsonElement data, JsonElement schema)
+    private static string NormalizeSchemaForEvaluation(string schemaJson)
     {
-        if (schema.ValueKind != JsonValueKind.Object)
+        var schemaNode = JsonNode.Parse(schemaJson);
+        if (schemaNode == null)
         {
-            return true;
+            return schemaJson;
         }
 
-        // Check "type" constraint
-        if (schema.TryGetProperty("type", out var typeElement))
-        {
-            var expectedType = typeElement.GetString();
-            if (!MatchesJsonType(data, expectedType))
-            {
-                return false;
-            }
-        }
+        NormalizeNullableKeywords(schemaNode);
+        return schemaNode.ToJsonString();
+    }
 
-        // Check "required" fields
-        if (schema.TryGetProperty("required", out var requiredElement) && requiredElement.ValueKind == JsonValueKind.Array)
+    private static void NormalizeNullableKeywords(JsonNode node)
+    {
+        switch (node)
         {
-            foreach (var req in requiredElement.EnumerateArray())
-            {
-                var fieldName = req.GetString();
-                if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty(fieldName, out _))
+            case JsonObject schemaObject:
+                foreach (var property in schemaObject.ToList())
                 {
-                    return false;
-                }
-            }
-        }
-
-        // Check "properties" recursively
-        if (schema.TryGetProperty("properties", out var propertiesElement) && propertiesElement.ValueKind == JsonValueKind.Object)
-        {
-            if (data.ValueKind != JsonValueKind.Object)
-            {
-                return false;
-            }
-
-            foreach (var prop in propertiesElement.EnumerateObject())
-            {
-                if (data.TryGetProperty(prop.Name, out var dataValue))
-                {
-                    if (!ValidateJsonAgainstSchema(dataValue, prop.Value))
+                    if (property.Value != null)
                     {
-                        return false;
+                        NormalizeNullableKeywords(property.Value);
                     }
                 }
-            }
+
+                ApplyNullableKeyword(schemaObject);
+                break;
+
+            case JsonArray schemaArray:
+                foreach (var item in schemaArray)
+                {
+                    if (item != null)
+                    {
+                        NormalizeNullableKeywords(item);
+                    }
+                }
+
+                break;
+        }
+    }
+
+    private static void ApplyNullableKeyword(JsonObject schemaObject)
+    {
+        if (!schemaObject.TryGetPropertyValue("nullable", out var nullableNode)
+            || nullableNode is not JsonValue nullableValue
+            || !nullableValue.TryGetValue<bool>(out var isNullable)
+            || !isNullable)
+        {
+            return;
         }
 
-        // Check "items" for arrays
-        if (schema.TryGetProperty("items", out var itemsElement) && data.ValueKind == JsonValueKind.Array)
+        schemaObject.Remove("nullable");
+        var enumUpdated = TryAddNullToEnum(schemaObject);
+
+        if (TryAddNullToType(schemaObject) || enumUpdated)
         {
-            foreach (var item in data.EnumerateArray())
+            return;
+        }
+
+        // OpenAPI 3.0 uses nullable=true; convert unknown shapes to JSON Schema union form.
+        var currentSchema = schemaObject.DeepClone();
+        schemaObject.Clear();
+
+        var anyOf = new JsonArray
+        {
+            currentSchema,
+            new JsonObject
             {
-                if (!ValidateJsonAgainstSchema(item, itemsElement))
+                ["type"] = "null",
+            },
+        };
+
+        schemaObject["anyOf"] = anyOf;
+    }
+
+    private static bool TryAddNullToType(JsonObject schemaObject)
+    {
+        if (!schemaObject.TryGetPropertyValue("type", out var typeNode) || typeNode == null)
+        {
+            return false;
+        }
+
+        switch (typeNode)
+        {
+            case JsonValue typeValue when typeValue.TryGetValue<string>(out var typeName):
+                if (string.Equals(typeName, "null", StringComparison.Ordinal))
                 {
-                    return false;
+                    return true;
                 }
-            }
+
+                schemaObject["type"] = new JsonArray
+                {
+                    typeName,
+                    "null",
+                };
+                return true;
+
+            case JsonArray typeArray:
+                if (!typeArray.Any(item => string.Equals(item?.GetValue<string>(), "null", StringComparison.Ordinal)))
+                {
+                    typeArray.Add("null");
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryAddNullToEnum(JsonObject schemaObject)
+    {
+        if (!schemaObject.TryGetPropertyValue("enum", out var enumNode) || enumNode is not JsonArray enumArray)
+        {
+            return false;
+        }
+
+        if (!enumArray.Any(item => item == null))
+        {
+            enumArray.Add((JsonNode)null);
         }
 
         return true;
-    }
-
-    private static bool MatchesJsonType(JsonElement element, string expectedType)
-    {
-        return expectedType switch
-        {
-            "object" => element.ValueKind == JsonValueKind.Object,
-            "array" => element.ValueKind == JsonValueKind.Array,
-            "string" => element.ValueKind == JsonValueKind.String,
-            "number" => element.ValueKind == JsonValueKind.Number,
-            "integer" => element.ValueKind == JsonValueKind.Number && IsInteger(element),
-            "boolean" => element.ValueKind is JsonValueKind.True or JsonValueKind.False,
-            "null" => element.ValueKind == JsonValueKind.Null,
-            _ => true,
-        };
-    }
-
-    private static bool IsInteger(JsonElement element)
-    {
-        return element.TryGetInt64(out _);
     }
 
     private static void ValidateHeaders(

@@ -219,6 +219,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             FailureReasons = validation.Failures,
             ExtractedVariables = extracted.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             DependencyIds = testCase.DependencyIds,
+            StatusCodeMatched = validation.StatusCodeMatched,
+            SchemaMatched = validation.SchemaMatched,
+            HeaderChecksPassed = validation.HeaderChecksPassed,
+            BodyContainsPassed = validation.BodyContainsPassed,
+            BodyNotContainsPassed = validation.BodyNotContainsPassed,
+            JsonPathChecksPassed = validation.JsonPathChecksPassed,
+            ResponseTimePassed = validation.ResponseTimePassed,
         };
     }
 }

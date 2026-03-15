@@ -31,7 +31,7 @@ public class HttpTestExecutor : IHttpTestExecutor
         var sw = Stopwatch.StartNew();
         try
         {
-            using var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient("TestExecution");
             client.Timeout = TimeSpan.FromMilliseconds(request.TimeoutMs);
 
             var httpMethod = new System.Net.Http.HttpMethod(request.HttpMethod);

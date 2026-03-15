@@ -116,6 +116,39 @@ public class RuleBasedValidatorTests
     }
 
     [Fact]
+    public void Validate_SchemaWithEnum_ShouldFailWhenValueNotInEnum()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"status": "archived"}""");
+        var schema = """{"type": "object", "required": ["status"], "properties": {"status": {"type": "string", "enum": ["active", "inactive"]}}}""";
+        var testCase = CreateTestCase(responseSchema: schema);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.SchemaMatched.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+    }
+
+    [Fact]
+    public void Validate_SchemaWithNullable_ShouldPassWhenNull()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"middleName": null}""");
+        var schema = """{"type": "object", "required": ["middleName"], "properties": {"middleName": {"type": "string", "nullable": true}}}""";
+        var testCase = CreateTestCase(responseSchema: schema);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.SchemaMatched.Should().BeTrue();
+    }
+
+    [Fact]
     public void Validate_SchemaFallbackFromEndpointMetadata_Should_BeUsed()
     {
         // Arrange

@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
@@ -30,17 +31,26 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
 
     private readonly IRepository<TestRun, Guid> _runRepository;
     private readonly IDistributedCache _cache;
+    private readonly ITestExecutionReadGatewayService _gatewayService;
 
     public GetTestRunResultsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
-        IDistributedCache cache)
+        IDistributedCache cache,
+        ITestExecutionReadGatewayService gatewayService)
     {
         _runRepository = runRepository;
         _cache = cache;
+        _gatewayService = gatewayService;
     }
 
     public async Task<TestRunResultModel> HandleAsync(GetTestRunResultsQuery query, CancellationToken cancellationToken = default)
     {
+        var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
+        if (suiteContext.CreatedById != query.CurrentUserId)
+        {
+            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+        }
+
         var run = await _runRepository.FirstOrDefaultAsync(
             _runRepository.GetQueryableSet()
                 .Where(x => x.Id == query.RunId && x.TestSuiteId == query.TestSuiteId));
