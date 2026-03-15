@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.TestExecution.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.ConfigurationOptions;
 using ClassifiedAds.Modules.TestExecution.Entities;
@@ -40,6 +41,7 @@ public static class TestExecutionServiceCollectionExtensions
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
         services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>();
+        services.AddScoped<ITestFailureReadGatewayService, TestFailureReadGatewayService>();
 
         // FE-07/08: Test Execution Engine + Rule-Based Validation
         services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
