@@ -1,0 +1,262 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-workflow",
+  "workflow": {
+    "id": "wf-fe09-failure-explanation-v1",
+    "requirementId": "FE-09",
+    "name": "On-Demand Failure Explanation Workflow",
+    "mode": "request-response + cache-backed-query",
+    "description": "Flow FE-09 v1 bat dau tu GET/POST explanation API. TestExecution gateway assemble deterministic failed-case context, LlmAssistant kiem tra cache, build prompt, goi provider, luu audit, cache explanation, va tra ket qua ngay trong request."
+  },
+  "architectureOverview": {
+    "summary": "GET chi doc cache explanation da ton tai. POST co the reuse cache hoac generate live. LlmAssistant la primary module, nhung moi data tu TestExecution phai di qua contract gateway. Async queue workflow duoc tri hoan sau v1.",
+    "outboxRequired": false,
+    "newEntitiesRequired": false,
+    "newMigrationsRequired": false,
+    "schemas": [
+      "testexecution",
+      "llmassistant"
+    ],
+    "futureExtension": "Neu can async worker sau nay, co the project future implementation tu docs/features/FE-09-acceptance-criteria/FE-09-01 sau khi v1 API da on dinh."
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-07",
+      "FE-08",
+      "FE-05B",
+      "FE-06"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.LlmAssistant (primary)",
+      "ClassifiedAds.Modules.TestExecution (failure context gateway implementation)",
+      "ClassifiedAds.Modules.ApiDocumentation (endpoint metadata)",
+      "ClassifiedAds.Contracts.Identity (ICurrentUser)"
+    ],
+    "crossModuleConsumption": {
+      "TestExecution": {
+        "service": "ITestFailureReadGatewayService",
+        "rules": [
+          "Tra ve ownership + suite/run access context.",
+          "Doc detailed run results tu cache cua TestExecution va bubble RUN_RESULTS_EXPIRED neu can.",
+          "Assemble test case definition goc bang ITestExecutionReadGatewayService.GetExecutionContextAsync(testSuiteId, null)."
+        ]
+      },
+      "ApiDocumentation": {
+        "service": "IApiEndpointMetadataService",
+        "usage": "Lay endpoint metadata va response schema payload fallback cho 1 endpoint neu endpointId co gia tri."
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Get Cached Explanation",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "FailureExplanationsController",
+          "action": "Lay CurrentUserId va dispatch GetFailureExplanationQuery.",
+          "output": "Query dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GetFailureExplanationQueryHandler",
+          "action": "Goi ITestFailureReadGatewayService.GetFailureExplanationContextAsync(...), validate owner = current user, build fingerprint, chi doc cache.",
+          "output": "Cached explanation hoac not found"
+        },
+        {
+          "step": 4,
+          "actor": "Client",
+          "action": "Nhan 200 neu co cache; nhan 404 FAILURE_EXPLANATION_NOT_FOUND neu chua generate.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Generate Explanation On Demand",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "FailureExplanationsController",
+          "action": "Dispatch ExplainTestFailureCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "ExplainTestFailureCommandHandler",
+          "action": "Load failed-case context qua ITestFailureReadGatewayService, validate owner, load endpoint metadata neu endpointId + apiSpecId co gia tri.",
+          "output": "Normalized explanation context"
+        },
+        {
+          "step": 4,
+          "actor": "LlmFailureExplainer",
+          "action": "Sanitize context, build fingerprint, check llmassistant.LlmSuggestionCaches theo endpointId + FailureExplanation suggestion type + cacheKey.",
+          "output": "Cache hit hoac miss"
+        },
+        {
+          "step": 5,
+          "actor": "LlmFailureExplainer",
+          "action": "Neu miss: build prompt, call provider client, parse structured response, save LlmInteraction, cache serialized explanation, return FailureExplanationModel(source=live).",
+          "output": "FailureExplanationModel"
+        },
+        {
+          "step": 6,
+          "actor": "FailureExplanationsController",
+          "action": "Return 200 OK voi cached hoac live explanation.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Assemble Failed Test Context",
+      "type": "cross-module synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "ITestFailureReadGatewayService",
+          "action": "Load suite access context de lay owner/project/specification info.",
+          "output": "Suite access context"
+        },
+        {
+          "step": 2,
+          "actor": "ITestFailureReadGatewayService",
+          "action": "Load TestRun theo suiteId + runId, validate RedisKey va ResultsExpireAt.",
+          "output": "Run summary"
+        },
+        {
+          "step": 3,
+          "actor": "ITestFailureReadGatewayService",
+          "action": "Deserialize TestRunResultModel tu distributed cache. Tim testCaseId va ensure Status == Failed.",
+          "output": "Failed case actual result"
+        },
+        {
+          "step": 4,
+          "actor": "ITestFailureReadGatewayService",
+          "action": "Call existing ITestExecutionReadGatewayService.GetExecutionContextAsync(testSuiteId, null) mot lan, sau do filter matching test case definition trong memory.",
+          "output": "Original test case definition"
+        },
+        {
+          "step": 5,
+          "actor": "ITestFailureReadGatewayService",
+          "action": "Return TestFailureExplanationContextDto gom suite/run/access data + test case definition + actual failed result.",
+          "output": "Failure explanation context dto"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Provider Error And Fallback Handling",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "LlmFailureExplainer",
+          "action": "Neu audit save fail thi log warning va tiep tuc tra explanation.",
+          "output": "Graceful warning"
+        },
+        {
+          "step": 2,
+          "actor": "LlmFailureExplainer",
+          "action": "Neu cache save fail thi log warning va van tra explanation live.",
+          "output": "Graceful warning"
+        },
+        {
+          "step": 3,
+          "actor": "LlmFailureExplainer",
+          "action": "Neu provider tra invalid payload hoac HTTP failure thi khong ghi cache va bubble controlled application error.",
+          "output": "Controlled failure"
+        }
+      ]
+    }
+  ],
+  "queryStrategy": {
+    "failureContextRead": {
+      "rules": [
+        "Khong query-per-failure-reason loops.",
+        "Chi duoc deserialize 1 TestRunResultModel cache payload cho mot request explanation.",
+        "Cho v1, duoc phep load full execution context mot lan roi filter testCaseId, vi endpoint la on-demand va khong nam trong hot execution loop.",
+        "Chi goi IApiEndpointMetadataService mot lan cho endpointId duoc yeu cau."
+      ]
+    },
+    "cacheUsage": {
+      "rules": [
+        "GET explanation khong duoc goi live provider.",
+        "POST explanation phai check cache truoc khi build prompt.",
+        "Cache key phai dua tren sanitized deterministic input."
+      ]
+    }
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "Ban khong co quyen thao tac test suite nay.",
+        "Khong tim thay test case can giai thich trong test run.",
+        "Khong tim thay test case definition trong test suite."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "TEST_CASE_NOT_FAILED: Chi co the giai thich test case that bai.",
+        "RUN_RESULTS_EXPIRED: Chi tiet ket qua da het han luu tru trong cache."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test run voi ma '{runId}'.",
+        "FAILURE_EXPLANATION_NOT_FOUND: Chua co cached explanation cho test case nay."
+      ]
+    },
+    "upstreamErrors": {
+      "httpStatus": 502,
+      "exceptionType": "ApplicationException or equivalent controlled exception",
+      "examples": [
+        "FAILURE_EXPLANATION_UNAVAILABLE: Khong the tao giai thich loi tu provider hien tai."
+      ]
+    }
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "No Cross-Module DbContext Access",
+      "rule": "LlmAssistant chi duoc read TestExecution qua ITestFailureReadGatewayService."
+    },
+    {
+      "id": "QG-02",
+      "name": "No New Migrations",
+      "rule": "FE-09 v1 khong duoc them entity moi, table moi, hoac EF migration moi."
+    },
+    {
+      "id": "QG-03",
+      "name": "No Verdict Mutation",
+      "rule": "Explanation khong duoc sua FailureReasons, pass/fail, hoac TestRun counters."
+    },
+    {
+      "id": "QG-04",
+      "name": "Sanitized Prompt Only",
+      "rule": "Headers/body/variables co chua secrets phai duoc mask truoc khi build prompt, save audit, va cache."
+    }
+  ]
+}
