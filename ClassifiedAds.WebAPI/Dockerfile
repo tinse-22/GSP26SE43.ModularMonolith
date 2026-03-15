@@ -19,6 +19,8 @@ COPY ./ClassifiedAds.Modules.Subscription/*.csproj ./ClassifiedAds.Modules.Subsc
 COPY ./ClassifiedAds.Modules.ApiDocumentation/*.csproj ./ClassifiedAds.Modules.ApiDocumentation/
 COPY ./ClassifiedAds.Modules.TestGeneration/*.csproj ./ClassifiedAds.Modules.TestGeneration/
 COPY ./ClassifiedAds.Modules.TestExecution/*.csproj ./ClassifiedAds.Modules.TestExecution/
+COPY ./ClassifiedAds.Modules.TestReporting/*.csproj ./ClassifiedAds.Modules.TestReporting/
+COPY ./ClassifiedAds.Modules.LlmAssistant/*.csproj ./ClassifiedAds.Modules.LlmAssistant/
 
 COPY ./ClassifiedAds.WebAPI/*.csproj ./ClassifiedAds.WebAPI/
 
