@@ -61,6 +61,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
     public async Task<TestRunResultModel> ExecuteAsync(
         Guid testRunId,
+        Guid testSuiteId,
+        Guid environmentId,
         Guid currentUserId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default)
@@ -71,13 +73,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Load execution context from gateway
         var executionContext = await _gatewayService.GetExecutionContextAsync(
-            run.TestSuiteId,
+            testSuiteId,
             selectedTestCaseIds,
             ct);
 
         // Load environment
         var environment = await _envRepository.FirstOrDefaultAsync(
-            _envRepository.GetQueryableSet().Where(x => x.Id == run.EnvironmentId));
+            _envRepository.GetQueryableSet().Where(x => x.Id == environmentId));
 
         // Resolve runtime environment (auth, headers, etc.) - once per run
         var resolvedEnv = await _envResolver.ResolveAsync(environment, ct);
@@ -219,6 +221,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             FailureReasons = validation.Failures,
             ExtractedVariables = extracted.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             DependencyIds = testCase.DependencyIds,
+            StatusCodeMatched = validation.StatusCodeMatched,
+            SchemaMatched = validation.SchemaMatched,
+            HeaderChecksPassed = validation.HeaderChecksPassed,
+            BodyContainsPassed = validation.BodyContainsPassed,
+            BodyNotContainsPassed = validation.BodyNotContainsPassed,
+            JsonPathChecksPassed = validation.JsonPathChecksPassed,
+            ResponseTimePassed = validation.ResponseTimePassed,
         };
     }
 }

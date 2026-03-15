@@ -120,7 +120,7 @@ public class ExecutionEnvironmentRuntimeResolver : IExecutionEnvironmentRuntimeR
 
     private async Task<string> ResolveOAuth2TokenAsync(ExecutionAuthConfigModel authConfig, CancellationToken ct)
     {
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("TestExecution");
         var form = new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",

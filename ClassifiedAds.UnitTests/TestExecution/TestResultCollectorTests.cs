@@ -1,3 +1,4 @@
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
@@ -253,7 +254,7 @@ public class TestResultCollectorTests
     }
 
     [Fact]
-    public async Task CollectAsync_CacheFail_ShouldStillPersistSummary()
+    public async Task CollectAsync_CacheFail_ShouldPersistSummaryThenThrow()
     {
         // Arrange
         var run = CreateTestRun();
@@ -270,9 +271,10 @@ public class TestResultCollectorTests
             .ThrowsAsync(new Exception("Redis unavailable"));
 
         // Act
-        var result = await _collector.CollectAsync(run, caseResults, 7, "Dev");
+        var act = () => _collector.CollectAsync(run, caseResults, 7, "Dev");
 
         // Assert
+        await act.Should().ThrowAsync<ConflictException>();
         run.Status.Should().Be(TestRunStatus.Failed);
         _runRepoMock.Verify(x => x.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
         _runRepoMock.Verify(x => x.UnitOfWork.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);

@@ -34,4 +34,18 @@ public class TestCaseExecutionResult
     public IReadOnlyList<Guid> DependencyIds { get; set; } = Array.Empty<Guid>();
 
     public List<Guid> SkippedBecauseDependencyIds { get; set; } = new();
+
+    public bool StatusCodeMatched { get; set; }
+
+    public bool? SchemaMatched { get; set; }
+
+    public bool? HeaderChecksPassed { get; set; }
+
+    public bool? BodyContainsPassed { get; set; }
+
+    public bool? BodyNotContainsPassed { get; set; }
+
+    public bool? JsonPathChecksPassed { get; set; }
+
+    public bool? ResponseTimePassed { get; set; }
 }

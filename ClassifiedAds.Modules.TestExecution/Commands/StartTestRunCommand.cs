@@ -150,14 +150,16 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
                     .OrderByDescending(x => x.RunNumber)
                     .Select(x => (int?)x.RunNumber));
 
+            var runId = Guid.NewGuid();
             run = new TestRun
             {
+                Id = runId,
                 TestSuiteId = command.TestSuiteId,
                 EnvironmentId = environment.Id,
                 TriggeredById = command.CurrentUserId,
                 RunNumber = (maxRunNumber ?? 0) + 1,
                 Status = TestRunStatus.Pending,
-                RedisKey = $"testrun:{Guid.NewGuid()}:results",
+                RedisKey = $"testrun:{runId}:results",
             };
 
             await _runRepository.AddAsync(run, ct);
@@ -171,6 +173,8 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         // 9. Execute via orchestrator (outside transaction)
         command.Result = await _orchestrator.ExecuteAsync(
             run.Id,
+            command.TestSuiteId,
+            environment.Id,
             command.CurrentUserId,
             selectedIds.Count > 0 ? selectedIds : null,
             cancellationToken);
