@@ -1,4 +1,5 @@
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
@@ -255,6 +256,7 @@ public class TestResultCollectorTests
 
     [Fact]
     public async Task CollectAsync_CacheFail_ShouldPersistSummaryThenThrow()
+    public async Task CollectAsync_CacheFail_ShouldPersistSummaryThenThrow()
     {
         // Arrange
         var run = CreateTestRun();
@@ -271,6 +273,10 @@ public class TestResultCollectorTests
             .ThrowsAsync(new Exception("Redis unavailable"));
 
         // Act
+        var act = () => _collector.CollectAsync(run, caseResults, 7, "Dev");
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>();
         var act = () => _collector.CollectAsync(run, caseResults, 7, "Dev");
 
         // Assert
