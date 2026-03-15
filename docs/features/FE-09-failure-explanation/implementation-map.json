@@ -1,0 +1,254 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-09 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-09 vao codebase Modular Monolith hien tai. Muc tieu la build mot API synchronous, cache-backed, khong them migration, va khong pha boundary giua LlmAssistant va TestExecution.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "cache": "LlmSuggestionCache trong PostgreSQL cho explanation cache; IDistributedCache cua TestExecution da ton tai cho run results",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation, cross-module contracts)"
+  },
+  "currentCodebaseSnapshot": {
+    "llmAssistant": {
+      "exists": [
+        "Entities/LlmInteraction.cs",
+        "Entities/LlmSuggestionCache.cs",
+        "Persistence/LlmAssistantDbContext.cs",
+        "Services/LlmAssistantGatewayService.cs",
+        "ServiceCollectionExtensions.cs"
+      ],
+      "missingForFe09": [
+        "Controller cho explanation API",
+        "Command/query surface cho GET/POST explanation",
+        "Failure explanation runtime service",
+        "Prompt builder va sanitizer",
+        "Provider client/http integration",
+        "Failure explanation-specific cache key strategy"
+      ]
+    },
+    "testExecution": {
+      "exists": [
+        "Entities/TestRun.cs",
+        "Controllers/TestRunsController.cs",
+        "Queries/GetTestRunResultsQuery.cs",
+        "Models/TestRunResultModel.cs",
+        "Models/TestCaseRunResultModel.cs",
+        "Services/TestExecutionOrchestrator.cs",
+        "Services/TestResultCollector.cs"
+      ],
+      "missingForFe09": [
+        "Cross-module failure read gateway de assemble failed case explanation context"
+      ]
+    },
+    "apiDocumentation": {
+      "exists": [
+        "Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+        "Services/ApiEndpointMetadataService.cs"
+      ],
+      "usageForFe09": [
+        "Lay endpoint metadata va response schema payload fallback cho prompt"
+      ]
+    }
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. Khong dung Background host cho FE-09 v1. Chi them contract gateway o Contracts/TestExecution, implementation o TestExecution, va API/runtime surface trong LlmAssistant.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Contracts/TestExecution/DTOs/TestFailureExplanationContextDto.cs",
+        "description": "Cross-module DTO gom access context, original test case definition, actual failed result."
+      },
+      {
+        "path": "ClassifiedAds.Contracts/TestExecution/Services/ITestFailureReadGatewayService.cs",
+        "description": "Read gateway contract tu TestExecution sang LlmAssistant."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/TestFailureReadGatewayService.cs",
+        "description": "Gateway implementation doc TestRun + cache payload + test case definition."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Controllers/FailureExplanationsController.cs",
+        "description": "GET cached explanation + POST generate explanation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Commands/ExplainTestFailureCommand.cs",
+        "description": "CQRS command + handler tao explanation on demand."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Queries/GetFailureExplanationQuery.cs",
+        "description": "CQRS query tra cached explanation neu da ton tai."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Models/FailureExplanationModel.cs",
+        "description": "API response model cho FE-09."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Models/FailureExplanationPrompt.cs",
+        "description": "Internal prompt contract cho provider request."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Models/FailureExplanationProviderResponse.cs",
+        "description": "Internal parsed provider response contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/ConfigurationOptions/FailureExplanationOptions.cs",
+        "description": "Provider/model/cache/webhook config cho FE-09."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/ILlmFailureExplainer.cs",
+        "description": "Top-level explainer contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/LlmFailureExplainer.cs",
+        "description": "Pipeline: sanitize -> fingerprint -> cache -> prompt -> provider -> audit -> cache."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationFingerprintBuilder.cs",
+        "description": "Deterministic cache-key builder."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/FailureExplanationFingerprintBuilder.cs",
+        "description": "SHA256-based fingerprint implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationSanitizer.cs",
+        "description": "Sensitive-data masking contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/FailureExplanationSanitizer.cs",
+        "description": "Mask headers/body/variables before prompt/audit/cache."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationPromptBuilder.cs",
+        "description": "Prompt builder contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/FailureExplanationPromptBuilder.cs",
+        "description": "Map deterministic context thanh structured prompt."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/ILlmFailureExplanationClient.cs",
+        "description": "Provider client contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Services/N8nFailureExplanationClient.cs",
+        "description": "HttpClient-based provider or n8n caller cho FE-09."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+        "change": "Register ITestFailureReadGatewayService implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/ConfigurationOptions/LlmAssistantModuleOptions.cs",
+        "change": "Add FailureExplanation options subtree."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/Entities/LlmSuggestionCache.cs",
+        "change": "Add enum value SuggestionType.FailureExplanation = 4."
+      },
+      {
+        "path": "ClassifiedAds.Modules.LlmAssistant/ServiceCollectionExtensions.cs",
+        "change": "Register FE-09 services and named HttpClient."
+      },
+      {
+        "path": "ClassifiedAds.WebAPI/appsettings.json",
+        "change": "Add Modules:LlmAssistant section with FailureExplanation config."
+      },
+      {
+        "path": "ClassifiedAds.WebAPI/appsettings.Development.json",
+        "change": "Add dev webhook/model config if project keeps local overrides there."
+      }
+    ],
+    "unchangedFiles": [
+      "ClassifiedAds.Migrator/ - no new migration files for FE-09 v1.",
+      "ClassifiedAds.Background/ - no host registration changes in synchronous v1.",
+      "Entities/LlmInteraction.cs - reuse existing FailureExplanation enum value.",
+      "Entities/TestRun.cs - reuse existing run summary and RedisKey."
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "noNewMigrationsRequired": true,
+    "schemasUsed": [
+      "testexecution.TestRuns",
+      "llmassistant.LlmInteractions",
+      "llmassistant.LlmSuggestionCaches"
+    ],
+    "notes": [
+      "Chi tiet run van nam trong distributed cache cua FE-07/08; FE-09 khong duoc can thiep storage pattern do.",
+      "Explanation cache la serialized JSON trong llmassistant.LlmSuggestionCaches, khong can bang moi."
+    ]
+  },
+  "queryOptimization": {
+    "mandatory": [
+      "TestFailureReadGatewayService chi duoc deserialize 1 cache payload moi request explanation.",
+      "Khong duoc query per failure reason hoac per response header.",
+      "Cho v1, duoc phep goi GetExecutionContextAsync(testSuiteId, null) mot lan va filter testCaseId trong memory.",
+      "Khong duoc goi live provider neu cache hit."
+    ],
+    "forbidden": [
+      "LlmAssistant doc TestExecutionDbContext truc tiep.",
+      "LlmAssistant doc IDistributedCache truc tiep bang RedisKey cua TestRun.",
+      "Them retry queue hoac Background worker vao FE-09 v1 prompt nay.",
+      "Them migration chi de luu explanation."
+    ]
+  },
+  "flows": [
+    {
+      "name": "Explain Failure",
+      "steps": [
+        "1. Controller dispatch ExplainTestFailureCommand.",
+        "2. Handler load failed-context qua ITestFailureReadGatewayService va validate owner.",
+        "3. Handler load endpoint metadata neu endpointId co gia tri.",
+        "4. LlmFailureExplainer sanitize -> build fingerprint -> cache lookup.",
+        "5. Neu cache miss: build prompt -> provider call -> save interaction -> cache explanation.",
+        "6. Return FailureExplanationModel."
+      ]
+    },
+    {
+      "name": "Get Cached Explanation",
+      "steps": [
+        "1. Controller dispatch GetFailureExplanationQuery.",
+        "2. Query handler load same failed-context de xac nhan owner va compute cache key.",
+        "3. Query handler doc cached explanation va tra 404 neu chua co."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Khong them migration, entity, hoac DbSet moi.",
+    "Khong direct reference TestExecution repositories or cache tu LlmAssistant.",
+    "Khong de provider response override deterministic verdict.",
+    "Khong ghi raw secrets vao prompt, cache, hoac interaction log.",
+    "Khong implement async queue worker trong pass nay."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "TestFailureReadGatewayServiceTests (expired results, passed case conflict, missing case, successful mapping).",
+      "FailureExplanationFingerprintBuilderTests (deterministic key, ignores masked-secret variations where expected).",
+      "FailureExplanationSanitizerTests (Authorization/Cookie/token masking).",
+      "FailureExplanationPromptBuilderTests (includes deterministic sections, excludes raw secrets).",
+      "LlmFailureExplainerTests (cache hit, cache miss, provider failure, audit failure graceful, cache save failure graceful).",
+      "ExplainTestFailureCommandHandlerTests (owner validation, metadata optional path, service invocation).",
+      "GetFailureExplanationQueryHandlerTests (cache hit returns model, cache miss returns not found)."
+    ],
+    "integrationTests": [
+      "Optional thin controller tests for GET/POST route binding and permission attribute if repo already keeps controller auth tests.",
+      "Optional module wiring test for DI registration if needed."
+    ]
+  },
+  "knownTradeoffs": [
+    "V1 prompt context se dung original test case request definition + actual resolved URL/result payload. No khong luu full resolved request body snapshot tu FE-07/08.",
+    "Neu explanation quality can body snapshot thuc te cao hon, co the mo rong cache payload cua TestExecution o mot follow-up nho sau FE-09."
+  ],
+  "implementationSequence": [
+    "1. Contracts/TestExecution failure-read DTOs + interface",
+    "2. TestExecution failure-read gateway implementation + DI",
+    "3. LlmAssistant runtime services (sanitizer, fingerprint, prompt, client, explainer)",
+    "4. LlmAssistant command/query/controller surface + config",
+    "5. Unit tests",
+    "6. Targeted verification"
+  ]
+}

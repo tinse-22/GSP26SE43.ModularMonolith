@@ -1,0 +1,291 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-contracts",
+  "requirementId": "FE-09",
+  "title": "FE-09 Contracts - On-Demand Failure Explanation",
+  "apiContracts": [
+    {
+      "name": "GetFailureExplanation",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "FailureExplanationModel",
+      "successStatus": 200,
+      "description": "Tra cached explanation da ton tai cho failed test case. Khong goi live provider."
+    },
+    {
+      "name": "ExplainTestFailure",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+      "permission": "Permission:GetTestRuns",
+      "requestBody": null,
+      "responseBody": "FailureExplanationModel",
+      "successStatus": 200,
+      "description": "Tra cached explanation neu co, nguoc lai tao explanation moi bang provider va cache lai."
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "FailureExplanationModel",
+      "file": "ClassifiedAds.Modules.LlmAssistant/Models/FailureExplanationModel.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "testRunId": "Guid",
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "summaryVi": "string",
+        "possibleCauses": "List<string>",
+        "suggestedNextActions": "List<string>",
+        "confidence": "string (Low|Medium|High)",
+        "source": "string (cache|live)",
+        "provider": "string",
+        "model": "string",
+        "tokensUsed": "int",
+        "latencyMs": "int",
+        "generatedAt": "DateTimeOffset",
+        "failureCodes": "List<string>"
+      }
+    }
+  ],
+  "crossModuleContracts": [
+    {
+      "name": "ITestFailureReadGatewayService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/TestExecution/Services/ITestFailureReadGatewayService.cs",
+      "implementation": "TestFailureReadGatewayService",
+      "implementationFile": "ClassifiedAds.Modules.TestExecution/Services/TestFailureReadGatewayService.cs",
+      "methods": [
+        {
+          "name": "GetFailureExplanationContextAsync",
+          "signature": "Task<TestFailureExplanationContextDto> GetFailureExplanationContextAsync(Guid testSuiteId, Guid runId, Guid testCaseId, CancellationToken ct = default)",
+          "description": "Lay full deterministic context can cho FE-09: access info + run info + test definition + actual failed result."
+        }
+      ],
+      "rules": [
+        "Gateway phai bubble RUN_RESULTS_EXPIRED neu chi tiet test run da het han cache.",
+        "Gateway phai bubble TEST_CASE_NOT_FAILED neu current case khong co Status=Failed.",
+        "Gateway phai return DTO only, khong expose TestRun entity hay cache implementation details."
+      ]
+    },
+    {
+      "name": "IApiEndpointMetadataService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+      "usage": "Lay endpoint metadata cho 1 endpoint de bo sung prompt context."
+    }
+  ],
+  "dtoContracts": [
+    {
+      "name": "TestFailureExplanationContextDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestFailureExplanationContextDto.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "projectId": "Guid",
+        "apiSpecId": "Guid?",
+        "createdById": "Guid",
+        "testRunId": "Guid",
+        "runNumber": "int",
+        "triggeredById": "Guid",
+        "resolvedEnvironmentName": "string",
+        "executedAt": "DateTimeOffset",
+        "definition": "FailureExplanationDefinitionDto",
+        "actualResult": "FailureExplanationActualResultDto"
+      }
+    },
+    {
+      "name": "FailureExplanationDefinitionDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestFailureExplanationContextDto.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "description": "string",
+        "testType": "string",
+        "orderIndex": "int",
+        "dependencyIds": "List<Guid>",
+        "request": "ExecutionTestCaseRequestDto",
+        "expectation": "ExecutionTestCaseExpectationDto"
+      }
+    },
+    {
+      "name": "FailureExplanationActualResultDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestFailureExplanationContextDto.cs",
+      "fields": {
+        "status": "string",
+        "httpStatusCode": "int?",
+        "durationMs": "long",
+        "resolvedUrl": "string",
+        "requestHeaders": "Dictionary<string,string>",
+        "responseHeaders": "Dictionary<string,string>",
+        "responseBodyPreview": "string",
+        "failureReasons": "List<FailureExplanationFailureReasonDto>",
+        "extractedVariables": "Dictionary<string,string>",
+        "dependencyIds": "List<Guid>",
+        "skippedBecauseDependencyIds": "List<Guid>",
+        "statusCodeMatched": "bool",
+        "schemaMatched": "bool?",
+        "headerChecksPassed": "bool?",
+        "bodyContainsPassed": "bool?",
+        "bodyNotContainsPassed": "bool?",
+        "jsonPathChecksPassed": "bool?",
+        "responseTimePassed": "bool?"
+      }
+    },
+    {
+      "name": "FailureExplanationFailureReasonDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestFailureExplanationContextDto.cs",
+      "fields": {
+        "code": "string",
+        "message": "string",
+        "target": "string?",
+        "expected": "string?",
+        "actual": "string?"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "ExplainTestFailureCommand",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Commands/ExplainTestFailureCommand.cs",
+        "handler": "ExplainTestFailureCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "testCaseId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "outputField": "Result: FailureExplanationModel",
+        "reads": [
+          "ITestFailureReadGatewayService.GetFailureExplanationContextAsync(...)",
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync(specId, [endpointId]) when available"
+        ],
+        "writes": [
+          "Optional new LlmInteraction row for live generation",
+          "Optional update or insert LlmSuggestionCache row for cache entry"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetFailureExplanationQuery",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Queries/GetFailureExplanationQuery.cs",
+        "handler": "GetFailureExplanationQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "testCaseId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "ITestFailureReadGatewayService.GetFailureExplanationContextAsync(...)",
+          "LlmSuggestionCache by endpointId + cacheKey + SuggestionType=FailureExplanation"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "ILlmFailureExplainer",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Services/ILlmFailureExplainer.cs",
+        "methods": [
+          "Task<FailureExplanationModel> ExplainAsync(TestFailureExplanationContextDto context, ApiEndpointMetadataDto endpointMetadata, CancellationToken ct)",
+          "Task<FailureExplanationModel> GetCachedAsync(TestFailureExplanationContextDto context, CancellationToken ct)"
+        ]
+      },
+      {
+        "name": "IFailureExplanationFingerprintBuilder",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationFingerprintBuilder.cs",
+        "responsibility": "Tao deterministic cache key tu sanitized failure context."
+      },
+      {
+        "name": "IFailureExplanationSanitizer",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationSanitizer.cs",
+        "responsibility": "Mask secrets trong headers, body previews, extracted variables, va expectation payloads."
+      },
+      {
+        "name": "IFailureExplanationPromptBuilder",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Services/IFailureExplanationPromptBuilder.cs",
+        "responsibility": "Build system prompt + user prompt + structured payload cho provider."
+      },
+      {
+        "name": "ILlmFailureExplanationClient",
+        "file": "ClassifiedAds.Modules.LlmAssistant/Services/ILlmFailureExplanationClient.cs",
+        "responsibility": "Goi provider or n8n webhook va parse structured explanation response."
+      }
+    ]
+  },
+  "cacheContracts": {
+    "storage": "llmassistant.LlmSuggestionCaches",
+    "entityReuse": true,
+    "suggestionTypeValue": {
+      "enumName": "SuggestionType.FailureExplanation",
+      "intValue": 4
+    },
+    "cacheKeyFormula": "hash(endpointId + resolvedUrl + httpStatus + failureReasons + expectation + responseBodyPreview after sanitization)",
+    "ttlHours": 24,
+    "payloadFields": [
+      "summaryVi",
+      "possibleCauses",
+      "suggestedNextActions",
+      "confidence",
+      "provider",
+      "model",
+      "tokensUsed",
+      "generatedAt",
+      "failureCodes"
+    ]
+  },
+  "auditContracts": {
+    "storage": "llmassistant.LlmInteractions",
+    "entityReuse": true,
+    "interactionType": {
+      "enumName": "InteractionType.FailureExplanation",
+      "intValue": 1
+    },
+    "fields": {
+      "inputContext": "Serialized sanitized prompt payload or provider request payload",
+      "llmResponse": "Serialized provider response payload",
+      "modelUsed": "Provider model name",
+      "tokensUsed": "Returned token count or 0 if unavailable",
+      "latencyMs": "Measured provider call latency"
+    }
+  },
+  "providerResponseContract": {
+    "name": "FailureExplanationProviderResponse",
+    "fields": {
+      "summaryVi": "string",
+      "possibleCauses": "List<string>",
+      "suggestedNextActions": "List<string>",
+      "confidence": "string (Low|Medium|High)",
+      "model": "string",
+      "tokensUsed": "int"
+    },
+    "rules": [
+      "Provider response phai la structured JSON, khong phai free-form markdown.",
+      "Neu payload parse fail, xem do la provider error va khong ghi cache."
+    ]
+  },
+  "errorContracts": [
+    {
+      "code": "TEST_CASE_NOT_FAILED",
+      "httpStatus": 409,
+      "meaning": "Chi co the giai thich test case da Failed."
+    },
+    {
+      "code": "RUN_RESULTS_EXPIRED",
+      "httpStatus": 409,
+      "meaning": "Chi tiet test run trong cache da het han."
+    },
+    {
+      "code": "FAILURE_EXPLANATION_NOT_FOUND",
+      "httpStatus": 404,
+      "meaning": "GET duoc goi truoc khi POST tao explanation. Trong codebase hien tai, dung NotFoundException voi message prefixed bang reason code nay."
+    },
+    {
+      "code": "FAILURE_EXPLANATION_UNAVAILABLE",
+      "httpStatus": 502,
+      "meaning": "Provider khong the tao explanation hop le."
+    }
+  ]
+}
