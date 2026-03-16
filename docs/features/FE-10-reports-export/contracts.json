@@ -1,0 +1,386 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-10-contracts",
+  "requirementId": "FE-10",
+  "title": "FE-10 Contracts - On-Demand Test Reporting And Export",
+  "apiContracts": [
+    {
+      "name": "GenerateTestRunReport",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/reports",
+      "permission": "Permission:GetTestRuns",
+      "requestBody": "GenerateTestReportRequest",
+      "responseBody": "TestReportModel",
+      "successStatus": 201,
+      "description": "Tao report moi cho mot completed/failed run, upload file, persist metadata, va tra ve report metadata."
+    },
+    {
+      "name": "GetTestRunReports",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/reports",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "List<TestReportModel>",
+      "successStatus": 200,
+      "description": "Tra danh sach report metadata da generate cho mot run."
+    },
+    {
+      "name": "GetTestRunReport",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "TestReportModel",
+      "successStatus": 200,
+      "description": "Tra metadata chi tiet cho mot report cu the."
+    },
+    {
+      "name": "DownloadTestRunReport",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download",
+      "permission": "Permission:GetTestRuns",
+      "responseBody": "FileContentResult",
+      "successStatus": 200,
+      "description": "Download binary file cua report da tao thong qua TestReporting controller."
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "GenerateTestReportRequest",
+      "file": "ClassifiedAds.Modules.TestReporting/Models/Requests/GenerateTestReportRequest.cs",
+      "fields": {
+        "reportType": "string (Summary|Detailed|Coverage)",
+        "format": "string (PDF|CSV|JSON|HTML)",
+        "recentHistoryLimit": "int? (default 5, clamp 1..20)"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "TestReportModel",
+      "file": "ClassifiedAds.Modules.TestReporting/Models/TestReportModel.cs",
+      "fields": {
+        "id": "Guid",
+        "testSuiteId": "Guid",
+        "testRunId": "Guid",
+        "reportType": "string",
+        "format": "string",
+        "downloadUrl": "string",
+        "generatedAt": "DateTimeOffset",
+        "expiresAt": "DateTimeOffset?",
+        "coverage": "CoverageMetricModel"
+      }
+    },
+    {
+      "name": "CoverageMetricModel",
+      "file": "ClassifiedAds.Modules.TestReporting/Models/CoverageMetricModel.cs",
+      "fields": {
+        "testRunId": "Guid",
+        "totalEndpoints": "int",
+        "testedEndpoints": "int",
+        "coveragePercent": "decimal",
+        "byMethod": "Dictionary<string, decimal>",
+        "byTag": "Dictionary<string, decimal>",
+        "uncoveredPaths": "List<string>",
+        "calculatedAt": "DateTimeOffset"
+      }
+    }
+  ],
+  "crossModuleContracts": [
+    {
+      "name": "ITestRunReportReadGatewayService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/TestExecution/Services/ITestRunReportReadGatewayService.cs",
+      "implementation": "TestRunReportReadGatewayService",
+      "implementationFile": "ClassifiedAds.Modules.TestExecution/Services/TestRunReportReadGatewayService.cs",
+      "methods": [
+        {
+          "name": "GetReportContextAsync",
+          "signature": "Task<TestRunReportContextDto> GetReportContextAsync(Guid testSuiteId, Guid runId, int recentHistoryLimit = 5, CancellationToken ct = default)",
+          "description": "Lay full deterministic context can cho FE-10: suite ownership, run summary, detailed case results, ordered definitions, ordered endpoint ids, va recent run history."
+        }
+      ],
+      "rules": [
+        "Gateway phai bubble `RUN_RESULTS_EXPIRED` neu chi tiet test run da het han cache.",
+        "Gateway phai bubble `REPORT_RUN_NOT_READY` neu current run khong co Status = Completed hoac Failed.",
+        "Gateway phai return DTO only, khong expose `TestRun` entity hay cache implementation details."
+      ]
+    },
+    {
+      "name": "ITestExecutionReadGatewayService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/TestGeneration/Services/ITestExecutionReadGatewayService.cs",
+      "usage": "Validate suite ownership trong report list/get/download handlers ma khong can doc TestExecutionDbContext."
+    },
+    {
+      "name": "IApiEndpointMetadataService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+      "usage": "Lay endpoint metadata cho ordered endpoint scope de tinh coverage breakdown."
+    },
+    {
+      "name": "IStorageFileGatewayService",
+      "project": "ClassifiedAds.Contracts",
+      "file": "ClassifiedAds.Contracts/Storage/Services/IStorageFileGatewayService.cs",
+      "usage": "Upload rendered report file va download binary file."
+    }
+  ],
+  "dtoContracts": [
+    {
+      "name": "TestRunReportContextDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "projectId": "Guid",
+        "apiSpecId": "Guid?",
+        "createdById": "Guid",
+        "suiteName": "string",
+        "run": "TestRunReportRunDto",
+        "recentRuns": "List<TestRunHistoryItemDto>",
+        "orderedEndpointIds": "List<Guid>",
+        "definitions": "List<ReportTestCaseDefinitionDto>",
+        "results": "List<ReportTestCaseResultDto>"
+      }
+    },
+    {
+      "name": "TestRunReportRunDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "testRunId": "Guid",
+        "runNumber": "int",
+        "environmentId": "Guid",
+        "triggeredById": "Guid",
+        "status": "string",
+        "startedAt": "DateTimeOffset?",
+        "completedAt": "DateTimeOffset?",
+        "durationMs": "long",
+        "totalTests": "int",
+        "passedCount": "int",
+        "failedCount": "int",
+        "skippedCount": "int",
+        "resolvedEnvironmentName": "string",
+        "executedAt": "DateTimeOffset"
+      }
+    },
+    {
+      "name": "TestRunHistoryItemDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "testRunId": "Guid",
+        "runNumber": "int",
+        "status": "string",
+        "completedAt": "DateTimeOffset?",
+        "durationMs": "long",
+        "passedCount": "int",
+        "failedCount": "int",
+        "skippedCount": "int"
+      }
+    },
+    {
+      "name": "ReportTestCaseDefinitionDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "description": "string",
+        "testType": "string",
+        "orderIndex": "int",
+        "dependencyIds": "List<Guid>",
+        "request": "ExecutionTestCaseRequestDto",
+        "expectation": "ExecutionTestCaseExpectationDto"
+      }
+    },
+    {
+      "name": "ReportTestCaseResultDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "testCaseId": "Guid",
+        "endpointId": "Guid?",
+        "name": "string",
+        "orderIndex": "int",
+        "status": "string",
+        "httpStatusCode": "int?",
+        "durationMs": "long",
+        "resolvedUrl": "string",
+        "requestHeaders": "Dictionary<string,string>",
+        "responseHeaders": "Dictionary<string,string>",
+        "responseBodyPreview": "string",
+        "failureReasons": "List<ReportValidationFailureDto>",
+        "extractedVariables": "Dictionary<string,string>",
+        "dependencyIds": "List<Guid>",
+        "skippedBecauseDependencyIds": "List<Guid>",
+        "statusCodeMatched": "bool",
+        "schemaMatched": "bool?",
+        "headerChecksPassed": "bool?",
+        "bodyContainsPassed": "bool?",
+        "bodyNotContainsPassed": "bool?",
+        "jsonPathChecksPassed": "bool?",
+        "responseTimePassed": "bool?"
+      }
+    },
+    {
+      "name": "ReportValidationFailureDto",
+      "file": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+      "fields": {
+        "code": "string",
+        "message": "string",
+        "target": "string?",
+        "expected": "string?",
+        "actual": "string?"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "GenerateTestReportCommand",
+        "file": "ClassifiedAds.Modules.TestReporting/Commands/GenerateTestReportCommand.cs",
+        "handler": "GenerateTestReportCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "reportType": "ReportType",
+          "format": "ReportFormat",
+          "recentHistoryLimit": "int",
+          "currentUserId": "Guid"
+        },
+        "outputField": "Result: TestReportModel",
+        "reads": [
+          "ITestRunReportReadGatewayService.GetReportContextAsync(...)",
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync(specId, orderedEndpointIds) when available"
+        ],
+        "writes": [
+          "Upsert CoverageMetric row for current run",
+          "New TestReport row for generated file",
+          "Storage upload via IStorageFileGatewayService"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetTestRunReportsQuery",
+        "file": "ClassifiedAds.Modules.TestReporting/Queries/GetTestRunReportsQuery.cs",
+        "handler": "GetTestRunReportsQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(...)",
+          "TestReport metadata by TestRunId"
+        ]
+      },
+      {
+        "name": "GetTestRunReportQuery",
+        "file": "ClassifiedAds.Modules.TestReporting/Queries/GetTestRunReportQuery.cs",
+        "handler": "GetTestRunReportQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "reportId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(...)",
+          "TestReport metadata by Id + TestRunId"
+        ]
+      },
+      {
+        "name": "DownloadTestRunReportQuery",
+        "file": "ClassifiedAds.Modules.TestReporting/Queries/DownloadTestRunReportQuery.cs",
+        "handler": "DownloadTestRunReportQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "runId": "Guid",
+          "reportId": "Guid",
+          "currentUserId": "Guid"
+        },
+        "reads": [
+          "ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(...)",
+          "TestReport metadata by Id + TestRunId",
+          "IStorageFileGatewayService.DownloadAsync(fileId)"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "ITestReportGenerator",
+        "file": "ClassifiedAds.Modules.TestReporting/Services/ITestReportGenerator.cs",
+        "methods": [
+          "Task<TestReportModel> GenerateAsync(TestRunReportContextDto context, ReportType reportType, ReportFormat format, Guid generatedById, CancellationToken ct)"
+        ]
+      },
+      {
+        "name": "ICoverageCalculator",
+        "file": "ClassifiedAds.Modules.TestReporting/Services/ICoverageCalculator.cs",
+        "responsibility": "Tinh coverage summary tu ordered endpoint scope va actual case results."
+      },
+      {
+        "name": "IReportDataSanitizer",
+        "file": "ClassifiedAds.Modules.TestReporting/Services/IReportDataSanitizer.cs",
+        "responsibility": "Mask secrets trong headers, variables, va response body previews truoc khi render/export."
+      },
+      {
+        "name": "IReportRenderer",
+        "file": "ClassifiedAds.Modules.TestReporting/Services/IReportRenderer.cs",
+        "responsibility": "Render `TestRunReportDocumentModel` thanh binary file cho mot `ReportFormat` cu the."
+      }
+    ]
+  },
+  "persistenceContracts": {
+    "testReport": {
+      "storage": "testreporting.TestReports",
+      "entityReuse": true,
+      "rules": [
+        "Moi lan generate thanh cong tao mot `TestReport` row moi.",
+        "Route download phai duoc suy ra tu `reportId`, khong expose direct storage internals trong route contract."
+      ]
+    },
+    "coverageMetric": {
+      "storage": "testreporting.CoverageMetrics",
+      "entityReuse": true,
+      "rules": [
+        "Coverage snapshot duoc upsert theo `TestRunId` trong FE-10 v1.",
+        "ByMethod, ByTag, va UncoveredPaths duoc serialize thanh JSON strings trong entity."
+      ]
+    },
+    "fileStorage": {
+      "storage": "storage.FileEntries",
+      "contract": "IStorageFileGatewayService",
+      "fileCategoryRules": [
+        "PDF -> Report",
+        "HTML -> Report",
+        "CSV -> Export",
+        "JSON -> Export"
+      ]
+    }
+  },
+  "errorContracts": [
+    {
+      "code": "RUN_RESULTS_EXPIRED",
+      "httpStatus": 409,
+      "meaning": "Chi tiet test run trong cache da het han."
+    },
+    {
+      "code": "REPORT_RUN_NOT_READY",
+      "httpStatus": 409,
+      "meaning": "Chi co the tao report sau khi test run da Completed hoac Failed."
+    },
+    {
+      "code": "REPORT_NOT_FOUND",
+      "httpStatus": 404,
+      "meaning": "Khong tim thay report metadata cho run hien tai."
+    },
+    {
+      "code": "REPORT_FILE_NOT_FOUND",
+      "httpStatus": 404,
+      "meaning": "Khong tim thay file report trong storage."
+    },
+    {
+      "code": "REPORT_FORMAT_NOT_SUPPORTED",
+      "httpStatus": 400,
+      "meaning": "Format yeu cau khong duoc ho tro boi renderer nao."
+    }
+  ]
+}
