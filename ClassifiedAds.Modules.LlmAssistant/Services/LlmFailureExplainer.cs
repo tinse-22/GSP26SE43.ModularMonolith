@@ -22,7 +22,7 @@ public class LlmFailureExplainer : ILlmFailureExplainer
     private const int FailureExplanationSuggestionType = 4;
     private const int FailureExplanationInteractionType = 1;
 
-    private static readonly JsonSerializerOptions JsonOptions = new ()
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
@@ -34,6 +34,7 @@ public class LlmFailureExplainer : ILlmFailureExplainer
     private readonly ILlmAssistantGatewayService _gatewayService;
     private readonly FailureExplanationOptions _options;
     private readonly ILogger<LlmFailureExplainer> _logger;
+    private readonly FailureExplanationMetrics _metrics;
 
     public LlmFailureExplainer(
         IFailureExplanationSanitizer sanitizer,
@@ -42,7 +43,8 @@ public class LlmFailureExplainer : ILlmFailureExplainer
         ILlmFailureExplanationClient client,
         ILlmAssistantGatewayService gatewayService,
         IOptions<LlmAssistantModuleOptions> options,
-        ILogger<LlmFailureExplainer> logger)
+        ILogger<LlmFailureExplainer> logger,
+        FailureExplanationMetrics metrics)
     {
         _sanitizer = sanitizer;
         _fingerprintBuilder = fingerprintBuilder;
@@ -51,12 +53,15 @@ public class LlmFailureExplainer : ILlmFailureExplainer
         _gatewayService = gatewayService;
         _options = options?.Value?.FailureExplanation ?? new FailureExplanationOptions();
         _logger = logger;
+        _metrics = metrics;
     }
 
     public async Task<FailureExplanationModel> GetCachedAsync(
         TestFailureExplanationContextDto context,
         CancellationToken ct = default)
     {
+        _metrics.RecordRequest();
+
         var sanitizedContext = _sanitizer.Sanitize(context);
         var fingerprint = _fingerprintBuilder.Build(sanitizedContext);
         var endpointId = ResolveCacheEndpointId(sanitizedContext);
@@ -69,6 +74,7 @@ public class LlmFailureExplainer : ILlmFailureExplainer
 
         if (!cached.HasCache || string.IsNullOrWhiteSpace(cached.SuggestionsJson))
         {
+            _metrics.RecordCacheMiss();
             return null;
         }
 
@@ -77,13 +83,29 @@ public class LlmFailureExplainer : ILlmFailureExplainer
             var payload = JsonSerializer.Deserialize<FailureExplanationCachePayload>(cached.SuggestionsJson, JsonOptions);
             if (payload == null)
             {
+                _metrics.RecordCacheMiss();
                 return null;
             }
+
+            _metrics.RecordCacheHit();
+
+            _logger.LogInformation(
+                "FE-09 cache hit. TraceId={TraceId}, TestRunId={TestRunId}, TestCaseId={TestCaseId}, EndpointId={EndpointId}, CacheKey={CacheKey}, Provider={Provider}, Model={Model}, LatencyMs={LatencyMs}",
+                Activity.Current?.TraceId.ToString(),
+                context?.TestRunId,
+                context?.Definition?.TestCaseId,
+                endpointId,
+                fingerprint,
+                payload.Provider,
+                payload.Model,
+                0);
 
             return MapToModel(sanitizedContext, payload, "cache", 0);
         }
         catch (JsonException ex)
         {
+            _metrics.RecordCacheMiss();
+
             _logger.LogWarning(
                 ex,
                 "Invalid failure explanation cache payload. EndpointId={EndpointId}, TestCaseId={TestCaseId}",
@@ -99,6 +121,8 @@ public class LlmFailureExplainer : ILlmFailureExplainer
         ApiEndpointMetadataDto endpointMetadata,
         CancellationToken ct = default)
     {
+        _metrics.RecordRequest();
+
         var sanitizedContext = _sanitizer.Sanitize(context);
         var fingerprint = _fingerprintBuilder.Build(sanitizedContext);
         var endpointId = ResolveCacheEndpointId(sanitizedContext);
@@ -109,17 +133,48 @@ public class LlmFailureExplainer : ILlmFailureExplainer
             return cachedModel;
         }
 
+        _metrics.RecordCacheMiss();
+
         var prompt = _promptBuilder.Build(sanitizedContext, endpointMetadata);
         var stopwatch = Stopwatch.StartNew();
-        var providerResponse = await _client.ExplainAsync(prompt, ct);
+
+        FailureExplanationProviderResponse providerResponse;
+        try
+        {
+            providerResponse = await _client.ExplainAsync(prompt, ct);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _metrics.RecordFailure();
+            _metrics.RecordLatency(stopwatch.ElapsedMilliseconds);
+
+            _logger.LogWarning(
+                ex,
+                "FE-09 provider call failed. TraceId={TraceId}, TestRunId={TestRunId}, TestCaseId={TestCaseId}, Provider={Provider}, Model={Model}, LatencyMs={LatencyMs}",
+                Activity.Current?.TraceId.ToString(),
+                context?.TestRunId,
+                context?.Definition?.TestCaseId,
+                prompt.Provider,
+                prompt.Model,
+                (int)stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+
         stopwatch.Stop();
+        _metrics.RecordLatency(stopwatch.ElapsedMilliseconds);
 
         if (providerResponse == null || string.IsNullOrWhiteSpace(providerResponse.SummaryVi))
         {
+            _metrics.RecordFailure();
             throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thieu summaryVi.");
         }
 
         var generatedAt = DateTimeOffset.UtcNow;
+        var failureCodes = ExtractFailureCodes(sanitizedContext);
+        var resolvedModel = string.IsNullOrWhiteSpace(providerResponse.Model) ? prompt.Model : providerResponse.Model;
+
         var cachePayload = new FailureExplanationCachePayload
         {
             SummaryVi = providerResponse.SummaryVi,
@@ -127,14 +182,26 @@ public class LlmFailureExplainer : ILlmFailureExplainer
             SuggestedNextActions = providerResponse.SuggestedNextActions?.ToArray() ?? Array.Empty<string>(),
             Confidence = providerResponse.Confidence,
             Provider = prompt.Provider,
-            Model = string.IsNullOrWhiteSpace(providerResponse.Model) ? prompt.Model : providerResponse.Model,
+            Model = resolvedModel,
             TokensUsed = providerResponse.TokensUsed,
             GeneratedAt = generatedAt,
-            FailureCodes = ExtractFailureCodes(sanitizedContext),
+            FailureCodes = failureCodes,
         };
 
         await TrySaveAuditAsync(prompt, providerResponse, context?.CreatedById ?? Guid.Empty, (int)stopwatch.ElapsedMilliseconds, ct);
         await TrySaveCacheAsync(endpointId, fingerprint, cachePayload, ct);
+
+        _logger.LogInformation(
+            "FE-09 live explanation generated. TraceId={TraceId}, TestRunId={TestRunId}, TestCaseId={TestCaseId}, EndpointId={EndpointId}, CacheKey={CacheKey}, FailureCodes={FailureCodes}, Provider={Provider}, Model={Model}, LatencyMs={LatencyMs}",
+            Activity.Current?.TraceId.ToString(),
+            context?.TestRunId,
+            context?.Definition?.TestCaseId,
+            endpointId,
+            fingerprint,
+            string.Join(",", failureCodes),
+            prompt.Provider,
+            resolvedModel,
+            (int)stopwatch.ElapsedMilliseconds);
 
         return MapToModel(sanitizedContext, cachePayload, "live", (int)stopwatch.ElapsedMilliseconds);
     }

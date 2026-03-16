@@ -43,6 +43,7 @@ public static class LlmAssistantServiceCollectionExtensions
 
         // FE-06: Cross-module gateway for LLM interaction audit + caching
         services.AddScoped<ILlmAssistantGatewayService, LlmAssistantGatewayService>();
+        services.AddSingleton<FailureExplanationMetrics>();
         services.AddScoped<ILlmFailureExplainer, LlmFailureExplainer>();
         services.AddScoped<IFailureExplanationFingerprintBuilder, FailureExplanationFingerprintBuilder>();
         services.AddScoped<IFailureExplanationSanitizer, FailureExplanationSanitizer>();
