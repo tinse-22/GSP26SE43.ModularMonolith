@@ -1,0 +1,220 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-10-requirement",
+  "requirement": {
+    "id": "FE-10",
+    "title": "On-Demand Test Reporting And Export",
+    "goal": "Cho phep user tao bao cao test run theo yeu cau, xem danh sach bao cao da tao, download file export, va tinh coverage summary dua tren output deterministic cua FE-07 va FE-08.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "FE-07 va FE-08 da cung cap du lieu dau vao on dinh: test run summary trong PostgreSQL va detailed per-case results trong distributed cache.",
+      "ClassifiedAds.Modules.TestReporting da ton tai, da duoc wire vao WebAPI va Migrator, va da co san `TestReport` cung `CoverageMetric` de luu metadata ma khong can tao bang moi.",
+      "ClassifiedAds.Contracts.Storage da co `IStorageFileGatewayService`, cho phep upload/download file bao cao ma khong vo boundary cua module Storage.",
+      "Infrastructure da san co `CsvHelper`, `RazorLight`, `DinkToPdf`, va host da dang ky HTML/PDF utilities, nen FE-10 co the tan dung thay vi them dependency moi."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Them API de POST tao report/export cho mot test run hoan tat, GET danh sach reports theo run, GET metadata theo reportId, va GET file download qua TestReporting controller.",
+      "Them cross-module read gateway tu TestExecution sang TestReporting de lay suite ownership, run summary, detailed run results, execution definitions, va recent run history ma khong access TestExecutionDbContext hoac distributed cache truc tiep.",
+      "Tinh coverage summary cho mot test run dua tren ordered endpoint scope cua suite va actual executed case results.",
+      "Reuse `CoverageMetric` de luu coverage snapshot theo `TestRunId` va reuse `TestReport` de luu metadata file da generate.",
+      "Render report theo `ReportType` (Summary, Detailed, Coverage) va `ReportFormat` (PDF, CSV, JSON, HTML).",
+      "Upload file da render qua `IStorageFileGatewayService` va map `FileCategory.Report` cho PDF/HTML, `FileCategory.Export` cho CSV/JSON.",
+      "Mask sensitive request/response data truoc khi render va export.",
+      "Them unit tests cho gateway, coverage calculator, sanitizer, renderers, generator, command/query handlers."
+    ],
+    "outOfScope": [
+      "Background worker, queue-based batch report generation, email delivery, webhook fan-out, hay async export orchestration cho FE-10 v1.",
+      "Them bang moi, entity moi, hoac EF migration moi cho FE-10 v1.",
+      "Chart image rendering, browser screenshot pipeline, hoac rich BI dashboard embedding.",
+      "Cross-run regression comparison, flaky detection, hoac trend analytics sau nhieu run (post-FE-10 scope).",
+      "Cong khai public download links khong qua authorization cua TestReporting.",
+      "LLM-generated report summaries; FE-10 chi consume deterministic execution data."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-07",
+        "reason": "Can test run summary va cache-backed detailed execution results."
+      },
+      {
+        "id": "FE-08",
+        "reason": "Can deterministic validation outputs, failure reasons, va sanitized response previews."
+      },
+      {
+        "id": "FE-04",
+        "reason": "Can execution environment context va suite ownership."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Can ordered test case definitions va selected endpoint scope de tinh coverage dung theo suite."
+      },
+      {
+        "id": "FE-02",
+        "reason": "Can endpoint metadata tu ApiDocumentation de tinh by-method, by-tag, va uncovered paths."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestReporting",
+        "status": "skeleton",
+        "schema": "testreporting",
+        "reusedEntities": [
+          "TestReport",
+          "CoverageMetric"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Modules.TestExecution",
+        "status": "implemented",
+        "schema": "testexecution",
+        "consumptionPattern": "TestReporting khong doc TestExecutionDbContext, TestRun repository, hoac distributed cache truc tiep. Phai di qua contract gateway trong ClassifiedAds.Contracts."
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "consumptionPattern": "Dung `IApiEndpointMetadataService` de lay metadata cho endpoint coverage breakdown."
+      },
+      {
+        "name": "ClassifiedAds.Modules.Storage",
+        "status": "implemented",
+        "schema": "storage",
+        "consumptionPattern": "Dung `IStorageFileGatewayService` de upload/download file report, khong access StorageDbContext truc tiep."
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "usage": "ICurrentUser de validate ownership tren report APIs."
+      }
+    ],
+    "newCrossModuleContracts": [
+      {
+        "name": "ITestRunReportReadGatewayService",
+        "project": "ClassifiedAds.Contracts",
+        "purpose": "Expose full deterministic report context tu TestExecution sang TestReporting ma khong vo modular boundary."
+      }
+    ],
+    "database": {
+      "testReportingSchema": "testreporting",
+      "testExecutionSchema": "testexecution",
+      "storageSchema": "storage",
+      "noNewTablesRequired": true,
+      "noNewMigrationsRequired": true,
+      "reason": "Report metadata va coverage da co schema rieng trong TestReporting; file binary da co Storage module; run detail van nam trong distributed cache cua FE-07/08."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.TestReporting",
+    "secondaryModules": [
+      "ClassifiedAds.Modules.TestExecution",
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Modules.Storage"
+    ],
+    "executionMode": "Synchronous request-response, on-demand per run, file upload on success.",
+    "resultStorage": {
+      "summary": "Structured report document duoc tao trong memory roi render ra file. API tra ve metadata va download route.",
+      "reportMetadata": "testreporting.TestReports",
+      "coverageSnapshot": "testreporting.CoverageMetrics",
+      "fileStorage": "storage.FileEntries via IStorageFileGatewayService",
+      "noNewMigrationsRequired": true
+    },
+    "designPrinciples": [
+      "TestReporting khong reference TestExecution DbContext, TestRun repository, hoac distributed cache implementation.",
+      "Coverage phai tinh tu deterministic inputs: ordered endpoint scope + actual case results cua FE-07/08.",
+      "Sensitive headers, variables, va response previews phai duoc sanitize truoc khi render file.",
+      "PDF phai duoc tao bang cach render HTML truoc roi convert qua existing `IConverter`; khong them PDF stack moi.",
+      "CSV va JSON la export formats, nhung van duoc quan ly metadata thong qua `TestReport` de UI co 1 inventory thong nhat.",
+      "V1 cho phep recent run history lay tu `TestRun` table theo cung suite voi limit nho, vi endpoint la on-demand va khong nam trong hot execution loop.",
+      "V1 khong can chart image generation; report tap trung vao summary, coverage, failure details, va run history."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "jsonOrCsvResponseP95Ms": 1500,
+      "htmlResponseP95Ms": 2500,
+      "pdfResponseP95Ms": 7000,
+      "pdfResponseMaxMs": 15000
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:GetTestRuns"
+      ],
+      "sensitiveDataRules": [
+        "Mask Authorization, Cookie, Set-Cookie, X-Api-Key va cac key chua token, secret, password, apiKey truoc khi render file.",
+        "Chi export response body preview da duoc truncate; khong doc them raw body lon hon tu storage hay external source.",
+        "Download file phai di qua TestReporting controller de owner validation van duoc ap dung."
+      ]
+    },
+    "reliability": {
+      "gracefulDegradation": [
+        "Neu recent run history rong, report van duoc tao dua tren current run.",
+        "Neu suite khong co `ApiSpecId`, report van tao summary/detailed sections nhung coverage by-method/by-tag se theo endpoint info co san trong run context.",
+        "Neu persistence fail sau khi upload file, request bubble loi co kiem soat; khong them cleanup destructive khi Storage contract chua co delete API.",
+        "Neu run results da het han cache, API bubble `RUN_RESULTS_EXPIRED` va khong tao report nua."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testSuiteId",
+        "testRunId",
+        "reportType",
+        "format",
+        "fileCategory",
+        "reportId",
+        "fileId",
+        "latencyMs"
+      ],
+      "metrics": [
+        "test_report_requests_total",
+        "test_report_generation_latency_ms",
+        "test_report_generation_failures_total",
+        "test_report_downloads_total",
+        "test_report_render_latency_ms"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST /api/test-suites/{suiteId}/test-runs/{runId}/reports tra 201 voi `TestReportModel` cho mot run co Status = Completed hoac Failed.",
+    "AC-02: GET /api/test-suites/{suiteId}/test-runs/{runId}/reports tra danh sach report metadata da generate cho run do.",
+    "AC-03: GET /api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId} tra metadata mot report da ton tai va thuoc run do.",
+    "AC-04: GET /api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download tra file bytes voi `Content-Type` va `FileDownloadName` dung theo format da tao.",
+    "AC-05: Report generation phai bubble `RUN_RESULTS_EXPIRED` neu detailed run payload cua FE-07/08 da het han cache.",
+    "AC-06: Report generation phai bubble `REPORT_RUN_NOT_READY` neu run van dang Pending hoac Running.",
+    "AC-07: Coverage snapshot phai duoc tinh tu ordered endpoint scope cua suite va persisted bang `CoverageMetric` theo `TestRunId`.",
+    "AC-08: PDF/HTML phai duoc luu voi `FileCategory.Report`; CSV/JSON phai duoc luu voi `FileCategory.Export`.",
+    "AC-09: Report payload va export file khong duoc chua raw secrets trong headers, extracted variables, hay body preview.",
+    "AC-10: Khong co migration moi, khong co direct TestExecution/Storage DbContext access xuyen module.",
+    "AC-11: Targeted unit tests moi cho `TestReporting` va `TestExecution` deu green."
+  ],
+  "implementationOrder": [
+    "1. Tao contract gateway moi trong ClassifiedAds.Contracts/TestExecution va implementation doc report context trong TestExecution.",
+    "2. Implement runtime layer trong TestReporting: sanitizer, coverage calculator, renderers, va generator.",
+    "3. Them command/query/controller surface va bind config cho WebAPI.",
+    "4. Them unit tests va targeted verification commands."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testRunId",
+        "reportType",
+        "format",
+        "fileId",
+        "latencyMs"
+      ]
+    }
+  }
+}

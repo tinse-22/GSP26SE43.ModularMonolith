@@ -1,0 +1,313 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-10-workflow",
+  "workflow": {
+    "id": "wf-fe10-reporting-export-v1",
+    "requirementId": "FE-10",
+    "name": "On-Demand Test Reporting And Export Workflow",
+    "mode": "request-response + persisted-file-metadata",
+    "description": "Flow FE-10 v1 bat dau tu report API. TestExecution gateway assemble deterministic report context, TestReporting sanitize du lieu, tinh coverage, render file, upload qua Storage, persist metadata, va tra download route ngay trong request."
+  },
+  "architectureOverview": {
+    "summary": "POST generate report la luong tao file duy nhat. GET list/get/download chi doc report metadata va storage binary da ton tai. TestReporting la primary module, nhung moi run data tu TestExecution phai di qua contract gateway. Async queue workflow duoc tri hoan sau v1.",
+    "outboxRequired": false,
+    "newEntitiesRequired": false,
+    "newMigrationsRequired": false,
+    "schemas": [
+      "testreporting",
+      "testexecution",
+      "storage"
+    ],
+    "futureExtension": "Neu can async export queue, email delivery, hay compare-regression reports sau nay, co the mo rong tren nen v1 sau khi API file generation da on dinh."
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-07",
+      "FE-08",
+      "FE-04",
+      "FE-05B"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestReporting (primary)",
+      "ClassifiedAds.Modules.TestExecution (report context gateway implementation)",
+      "ClassifiedAds.Modules.ApiDocumentation (endpoint metadata)",
+      "ClassifiedAds.Modules.Storage (file upload/download)",
+      "ClassifiedAds.Contracts.Identity (ICurrentUser)"
+    ],
+    "crossModuleConsumption": {
+      "TestExecution": {
+        "service": "ITestRunReportReadGatewayService",
+        "rules": [
+          "Tra ve ownership + suite/run access context.",
+          "Doc detailed run results tu cache cua TestExecution va bubble `RUN_RESULTS_EXPIRED` neu can.",
+          "Assemble ordered test definitions va recent run history trong 1 gateway call."
+        ]
+      },
+      "ApiDocumentation": {
+        "service": "IApiEndpointMetadataService",
+        "usage": "Lay endpoint metadata cho ordered endpoint scope de tinh by-method, by-tag, va uncovered paths."
+      },
+      "Storage": {
+        "service": "IStorageFileGatewayService",
+        "usage": "Upload rendered file va download file binary cho report route."
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Generate Report On Demand",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/test-runs/{runId}/reports",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "TestReportsController",
+          "action": "Lay CurrentUserId va dispatch GenerateTestReportCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GenerateTestReportCommandHandler",
+          "action": "Goi ITestRunReportReadGatewayService.GetReportContextAsync(...), validate owner, validate request format/type, va call generator.",
+          "output": "Normalized report context"
+        },
+        {
+          "step": 4,
+          "actor": "TestReportGenerator",
+          "action": "Sanitize data, load endpoint metadata neu co ApiSpecId, tinh coverage, build structured document model, chon renderer theo format.",
+          "output": "Rendered file payload"
+        },
+        {
+          "step": 5,
+          "actor": "TestReportGenerator",
+          "action": "Upload file qua IStorageFileGatewayService, upsert CoverageMetric, create TestReport metadata row, return TestReportModel.",
+          "output": "TestReportModel"
+        },
+        {
+          "step": 6,
+          "actor": "TestReportsController",
+          "action": "Return 201 Created voi metadata va download route.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "List Reports For Run",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs/{runId}/reports",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "TestReportsController",
+          "action": "Dispatch GetTestRunReportsQuery.",
+          "output": "Query dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GetTestRunReportsQueryHandler",
+          "action": "Validate suite ownership qua `ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(...)`, query TestReport metadata by runId, map to models.",
+          "output": "List<TestReportModel>"
+        },
+        {
+          "step": 4,
+          "actor": "Client",
+          "action": "Nhan 200 OK voi report inventory cho run.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Download Generated Report",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "TestReportsController",
+          "action": "Dispatch DownloadTestRunReportQuery.",
+          "output": "Query dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "DownloadTestRunReportQueryHandler",
+          "action": "Validate owner, load TestReport row, call IStorageFileGatewayService.DownloadAsync(fileId).",
+          "output": "StorageDownloadResult"
+        },
+        {
+          "step": 4,
+          "actor": "TestReportsController",
+          "action": "Return File(content, contentType, fileName).",
+          "output": "HTTP file response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Assemble Report Context",
+      "type": "cross-module synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Load suite access context de lay owner/project/specification info.",
+          "output": "Suite access context"
+        },
+        {
+          "step": 2,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Load TestRun theo suiteId + runId va validate `Status in (Completed, Failed)`.",
+          "output": "Run summary"
+        },
+        {
+          "step": 3,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Validate `RedisKey`, `ResultsExpireAt`, va deserialize `TestRunResultModel` tu distributed cache.",
+          "output": "Detailed run results"
+        },
+        {
+          "step": 4,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Call existing `ITestExecutionReadGatewayService.GetExecutionContextAsync(testSuiteId, null)` mot lan va filter mapping trong memory.",
+          "output": "Ordered test definitions + ordered endpoint ids"
+        },
+        {
+          "step": 5,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Load recent run history tu cung suite theo `RunNumber DESC`, gioi han boi `recentHistoryLimit`.",
+          "output": "Recent run history"
+        },
+        {
+          "step": 6,
+          "actor": "ITestRunReportReadGatewayService",
+          "action": "Return `TestRunReportContextDto` gom suite/run/history/definitions/results.",
+          "output": "Report context dto"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Coverage Calculation And Rendering",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "CoverageCalculator",
+          "action": "Lay endpoint metadata cho ordered endpoint scope, tinh TotalEndpoints, TestedEndpoints, CoveragePercent, ByMethod, ByTag, UncoveredPaths.",
+          "output": "CoverageMetricResult"
+        },
+        {
+          "step": 2,
+          "actor": "ReportDataSanitizer",
+          "action": "Mask headers, variables, va response previews truoc khi document model duoc render.",
+          "output": "Sanitized report document"
+        },
+        {
+          "step": 3,
+          "actor": "IReportRenderer",
+          "action": "Render document model thanh file content phu hop voi ReportFormat.",
+          "output": "RenderedReportFile"
+        },
+        {
+          "step": 4,
+          "actor": "TestReportGenerator",
+          "action": "Upload file, persist coverage, persist report metadata.",
+          "output": "Stored report"
+        }
+      ]
+    }
+  ],
+  "queryStrategy": {
+    "reportContextRead": {
+      "rules": [
+        "Khong query per-case metadata loops.",
+        "Chi duoc deserialize 1 `TestRunResultModel` cache payload cho mot request generate report.",
+        "Cho v1, duoc phep load full execution context mot lan roi map testCaseId trong memory.",
+        "Recent run history phai co gioi han ro rang (default 5, max 20)."
+      ]
+    },
+    "coverageRead": {
+      "rules": [
+        "Chi goi `IApiEndpointMetadataService` mot lan cho toan bo ordered endpoint ids.",
+        "Khong goi metadata service per endpoint.",
+        "Khong doc Storage de tai lai file vua tao trong cung request."
+      ]
+    }
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "ReportType khong hop le.",
+        "ReportFormat khong duoc ho tro.",
+        "Ban khong co quyen thao tac test suite nay."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "REPORT_RUN_NOT_READY: Chi co the tao report sau khi test run da Completed hoac Failed.",
+        "RUN_RESULTS_EXPIRED: Chi tiet ket qua da het han luu tru trong cache."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test run voi ma '{runId}'.",
+        "REPORT_NOT_FOUND: Khong tim thay report metadata voi ma '{reportId}'.",
+        "REPORT_FILE_NOT_FOUND: Khong tim thay file report trong storage."
+      ]
+    },
+    "upstreamErrors": {
+      "httpStatus": 500,
+      "exceptionType": "ApplicationException or equivalent controlled exception",
+      "examples": [
+        "REPORT_RENDER_FAILED: Khong the render report voi format hien tai.",
+        "REPORT_UPLOAD_FAILED: Khong the upload file report vao storage."
+      ]
+    }
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "No Cross-Module DbContext Access",
+      "rule": "TestReporting chi duoc read TestExecution qua contract gateway va chi duoc ghi file qua `IStorageFileGatewayService`."
+    },
+    {
+      "id": "QG-02",
+      "name": "No New Migrations",
+      "rule": "FE-10 v1 khong duoc them entity moi, table moi, hoac EF migration moi."
+    },
+    {
+      "id": "QG-03",
+      "name": "Sanitized Export Only",
+      "rule": "Headers, variables, va response previews co secrets phai duoc mask truoc khi render file."
+    },
+    {
+      "id": "QG-04",
+      "name": "Deterministic Coverage",
+      "rule": "Coverage chi duoc tinh tu ordered suite scope va actual run results cua FE-07/08."
+    }
+  ]
+}
