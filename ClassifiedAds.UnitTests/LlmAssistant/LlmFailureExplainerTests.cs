@@ -5,8 +5,10 @@ using ClassifiedAds.Contracts.TestExecution.DTOs;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.LlmAssistant.Models;
 using ClassifiedAds.Modules.LlmAssistant.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +23,7 @@ public class LlmFailureExplainerTests
     private readonly Mock<ILlmFailureExplanationClient> _clientMock;
     private readonly Mock<ILlmAssistantGatewayService> _gatewayServiceMock;
     private readonly Mock<ILogger<LlmFailureExplainer>> _loggerMock;
+    private readonly FailureExplanationMetrics _metrics;
     private readonly LlmFailureExplainer _explainer;
 
     private readonly TestFailureExplanationContextDto _rawContext;
@@ -36,6 +39,9 @@ public class LlmFailureExplainerTests
         _clientMock = new Mock<ILlmFailureExplanationClient>();
         _gatewayServiceMock = new Mock<ILlmAssistantGatewayService>();
         _loggerMock = new Mock<ILogger<LlmFailureExplainer>>();
+
+        var sp = new ServiceCollection().AddMetrics().BuildServiceProvider();
+        _metrics = new FailureExplanationMetrics(sp.GetRequiredService<IMeterFactory>());
 
         _rawContext = FailureExplanationTestData.CreateContext();
         _sanitizedContext = new FailureExplanationSanitizer().Sanitize(_rawContext);
@@ -59,7 +65,8 @@ public class LlmFailureExplainerTests
             _clientMock.Object,
             _gatewayServiceMock.Object,
             FailureExplanationTestData.CreateOptions(),
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _metrics);
     }
 
     [Fact]
