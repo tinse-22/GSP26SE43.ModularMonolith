@@ -42,6 +42,7 @@ public static class TestExecutionServiceCollectionExtensions
 
         services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>();
         services.AddScoped<ITestFailureReadGatewayService, TestFailureReadGatewayService>();
+        services.AddScoped<ITestRunReportReadGatewayService, TestRunReportReadGatewayService>();
 
         // FE-07/08: Test Execution Engine + Rule-Based Validation
         services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
