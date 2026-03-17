@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Polly;
 using System;
+using System.Linq;
 using System.Reflection;
 
 // ═══════════════════════════════════════════════════════════════════════════════════
@@ -33,6 +34,8 @@ dotenv.net.DotEnv.Fluent()
     .WithProbeForEnv(probeLevelsToSearch: 6)
     .Load();
 
+var verifyMigrationsOnly = args.Any(x => string.Equals(x, "--verify-migrations", StringComparison.OrdinalIgnoreCase));
+
 var hostBuilder = Host.CreateDefaultBuilder(args)
 .UseClassifiedAdsLogger(configuration =>
 {
@@ -53,7 +56,13 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
     services.AddDateTimeProvider();
 
     // Register caching (minimal for migrator, just in case modules need it)
-    services.AddCaches();
+    services.AddCaches(new ClassifiedAds.Infrastructure.Caching.CachingOptions
+    {
+        Distributed = new ClassifiedAds.Infrastructure.Caching.DistributedCacheOptions
+        {
+            Provider = "InMemory",
+        },
+    });
 
     // Get shared connection string for all modules
     var sharedConnectionString = configuration.GetConnectionString("Default");
@@ -178,6 +187,16 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
 
 var app = hostBuilder.Build();
 var configuration = app.Services.GetRequiredService<IConfiguration>();
+var migrationVerifier = new ClassifiedAds.Migrator.MigrationModelSnapshotVerifier(app.Services);
+
+Console.WriteLine("Verifying EF Core migration snapshots...");
+migrationVerifier.VerifyNoPendingModelChanges();
+Console.WriteLine("EF Core migration snapshots are up to date.");
+
+if (verifyMigrationsOnly)
+{
+    return;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Run Migrations with Retry Policy
