@@ -1,96 +1,195 @@
 # AGENTS.md
 
-## Mandatory Rules For Any AI Agent Touching Database
+## Purpose
 
-Scope: these rules are REQUIRED for any task that reads or writes DB schema, migrations, seed data, or connection settings.
+This file defines mandatory repo rules for any AI agent working in `D:\GSP26SE43.ModularMonolith`.
 
-### 1) Single Source Of Truth For Target DB
+The two main goals are:
+
+1. Never leave EF Core migrations out of date.
+2. Never add a module, host dependency, or runtime service without updating Docker and compose wiring.
+
+If an agent skips these checks, the task is not considered complete.
+
+---
+
+## 1) Mandatory Start-Of-Task Gate
+
+Before making changes, the agent must classify the task into one or more of these buckets:
+
+- `Docs only`
+- `Application code only`
+- `Touches EF model / DbContext / migration / seed / connection settings`
+- `Touches module registration / project references`
+- `Touches Docker / compose / runtime wiring`
+
+If the task touches any item except `Docs only`, the agent must actively check whether migration verification and Docker registration checks are required.
+
+The agent must not assume:
+
+- migrations are already current
+- Dockerfiles are already updated
+- `docker-compose.yml` already contains the needed env vars, health checks, or dependencies
+
+The agent must verify.
+
+---
+
+## 2) Mandatory Completion Gate For Every Code Task
+
+Before the agent finishes any code task, it must answer all of these:
+
+1. Are EF Core migrations still up to date?
+2. If a new module, new project reference, or new runtime dependency was added, was Docker updated everywhere it needs to be?
+3. If compose wiring changed, does `docker-compose.yml` still parse correctly?
+
+If any answer is "I do not know", the task is not done.
+
+---
+
+## 3) Mandatory Migration Freshness Check
+
+Scope: required whenever a task changes any of the following:
+
+- `Entities/`
+- `DbConfigurations/`
+- any `DbContext`
+- EF mapping
+- seed data
+- migration files
+- module options affecting a DbContext
+- service registration for a module that owns a DbContext
+
+### Required commands
+
+Run these commands unless the user explicitly forbids running them:
+
+```powershell
+dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore
+```
+
+```powershell
+dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations
+```
+
+Notes:
+
+- `--verify-migrations` is the repo-standard migration freshness gate.
+- If the build output path changes, the agent may use the equivalent compiled DLL path or `dotnet run --project ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj -- --verify-migrations`.
+- If verification fails, the agent must either:
+  - add the required migration, or
+  - explain exactly why the model was not expected to change and what blocked verification
+
+### Hard rule
+
+Do not claim a DB-related task is complete if migration verification was not run or failed, unless you explicitly report the blocker.
+
+---
+
+## 4) Single Source Of Truth For Target DB
+
+Scope: required for any task that reads or writes DB schema, migrations, seed data, or connection settings.
 
 - Use `ConnectionStrings__Default` as the target connection string.
 - Treat `.env` or `.env.docker` as primary for local/dev runs.
 - Do not introduce or keep unrelated hardcoded DB names in host `appsettings.json`.
-- If a host loads `.env` (WebAPI/Background/Migrator), keep behavior consistent across hosts.
-
-### 2) Mandatory Preflight Before DB Changes
-
-- Confirm runtime mode: use ONE mode only (`AppHost` OR standalone).
-- Confirm target DB explicitly before running migration/seed.
-- Run and record:
-- `SELECT current_database();`
-- `SELECT current_schema();`
-- `SELECT "MigrationId" FROM public."__EFMigrationsHistory" ORDER BY "MigrationId" DESC LIMIT 5;`
-
-### 3) Migration And Seed Rules
-
-- Create EF migrations only in `ClassifiedAds.Migrator`.
-- Keep module schemas explicit (`identity`, `subscription`, `configuration`, etc.).
-- For data checks, always query schema-qualified table names.
-- Never assume module tables are in `public`.
-
-### 4) Mandatory Post-Change Verification
-
-- Run migrator against the intended DB only.
-- Verify migration was applied:
-- `SELECT "MigrationId" FROM public."__EFMigrationsHistory" WHERE "MigrationId" = '<ExpectedMigrationId>';`
-- Verify expected seed/data in correct schema with row counts.
-- If expected data is missing, check DB mismatch first (wrong database, wrong runtime mode, wrong env).
-
-### 5) Required Reporting In Agent Response
-
-- Always state exact target DB name used.
-- Always state exact schemas checked.
-- Always include migration IDs applied or missing.
-- If any step was not executed, state it explicitly.
-
-### 6) Hard Prohibitions
-
-- Do not run migrations when target DB cannot be identified with certainty.
-- Do not query only `public` schema for module tables.
-- Do not run mixed runtime modes concurrently when validating DB state.
+- If a host loads `.env` (WebAPI, Background, Migrator), keep behavior consistent across hosts.
+- Do not validate DB state in mixed runtime modes. Use one mode only: `AppHost` or standalone Docker/local host mode.
 
 ---
 
-## Mandatory Rules For Creating Or Modifying A Module
+## 5) Mandatory Preflight Before Applying Migrations To A Live DB
 
-Scope: these rules are REQUIRED whenever you create a new module (`ClassifiedAds.Modules.Xxx`), add/change entities in an existing module's DbContext, or modify any module's project references. Skipping any step **will** break the build, Migrator, or Docker.
+These steps are required before running migrations or seed changes against a real database:
 
-### 7) New Module Checklist (All Steps Required)
+1. Confirm runtime mode: use one mode only.
+2. Confirm the exact target DB from `ConnectionStrings__Default`.
+3. Run and record:
 
-When creating a new module `ClassifiedAds.Modules.Xxx` that has its own `XxxDbContext`:
-
-#### A. Module Project Structure
-
-Create the module project with these mandatory folders/files:
-
+```sql
+SELECT current_database();
+SELECT current_schema();
+SELECT "MigrationId" FROM public."__EFMigrationsHistory" ORDER BY "MigrationId" DESC LIMIT 5;
 ```
+
+### Hard prohibitions
+
+- Do not run migrations when the target DB cannot be identified with certainty.
+- Do not query only `public` for module tables.
+- Do not assume module tables live in `public`.
+- Always query module data using schema-qualified names.
+
+---
+
+## 6) Mandatory Post-Change DB Verification
+
+After applying migrations or seed changes to a live DB:
+
+1. Run the migrator against the intended DB only.
+2. Verify the expected migration ID:
+
+```sql
+SELECT "MigrationId" FROM public."__EFMigrationsHistory"
+WHERE "MigrationId" = '<ExpectedMigrationId>';
+```
+
+3. Verify expected seed/data in the correct schema.
+4. If expected data is missing, first check:
+   - wrong database
+   - wrong runtime mode
+   - wrong `.env` or `.env.docker`
+
+### Required reporting in the final response
+
+- exact target DB name used
+- exact schemas checked
+- migration IDs applied or missing
+- any step that was not executed
+
+---
+
+## 7) New Module Checklist
+
+Scope: required whenever creating `ClassifiedAds.Modules.Xxx`.
+
+If the module owns a `DbContext`, all items below are mandatory.
+
+### A. Required module structure
+
+Create:
+
+```text
 ClassifiedAds.Modules.Xxx/
-├── ConfigurationOptions/
-│   ├── ConnectionStringsOptions.cs
-│   └── XxxModuleOptions.cs
-├── Entities/                    # Domain entities
-├── DbConfigurations/            # IEntityTypeConfiguration<T> per entity
-├── Persistence/
-│   ├── XxxDbContext.cs          # Must use HasDefaultSchema("xxx")
-│   └── Repository.cs
-└── ServiceCollectionExtensions.cs
+|-- ConfigurationOptions/
+|   |-- ConnectionStringsOptions.cs
+|   `-- XxxModuleOptions.cs
+|-- Entities/
+|-- DbConfigurations/
+|-- Persistence/
+|   |-- XxxDbContext.cs
+|   `-- Repository.cs
+`-- ServiceCollectionExtensions.cs
 ```
 
-`ServiceCollectionExtensions.cs` must expose:
-- `AddXxxModule(Action<XxxModuleOptions> configureOptions)` - DI registration
-- `MigrateXxxDb(this IHost host)` - Migration extension for Migrator
+Requirements:
 
-#### B. Migrator Project — 4 Mandatory Updates
+- `XxxDbContext` must use `HasDefaultSchema("xxx")`
+- `ServiceCollectionExtensions.cs` must expose:
+  - `AddXxxModule(Action<XxxModuleOptions> configureOptions)`
+  - `MigrateXxxDb(this IHost host)`
 
-| # | File | Action |
-|---|------|--------|
-| 1 | `ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj` | Add `<ProjectReference Include="..\ClassifiedAds.Modules.Xxx\ClassifiedAds.Modules.Xxx.csproj" />` |
-| 2 | `ClassifiedAds.Migrator/Program.cs` — DI block | Add `.AddXxxModule(opt => { ... })` following the existing pattern (bind config, set ConnectionStrings.Default, set MigrationsAssembly) |
-| 3 | `ClassifiedAds.Migrator/Program.cs` — Migration block | Add `app.MigrateXxxDb();` inside the Polly retry block |
-| 4 | `ClassifiedAds.Migrator/appsettings.json` | Add `"Xxx": {}` under `"Modules"` section (even if empty) |
+### B. Required migrator updates
 
-**DI registration pattern** (copy exactly):
+Update all of these:
+
+1. `ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj`
+2. `ClassifiedAds.Migrator/Program.cs` DI registration block
+3. `ClassifiedAds.Migrator/Program.cs` migration execution block
+4. `ClassifiedAds.Migrator/appsettings.json` under `"Modules"`
+
+Use this DI pattern:
+
 ```csharp
-// Xxx Module
 .AddXxxModule(opt =>
 {
     configuration.GetSection("Modules:Xxx").Bind(opt);
@@ -100,134 +199,270 @@ ClassifiedAds.Modules.Xxx/
 })
 ```
 
-#### C. EF Core Migration — Generate Initial Migration
+### C. Required initial migration
 
-After completing steps A and B, generate the initial migration:
+Generate the initial migration in `ClassifiedAds.Migrator` only:
 
-```bash
-dotnet ef migrations add InitialXxx \
-  --context XxxDbContext \
-  --project ClassifiedAds.Migrator \
-  --startup-project ClassifiedAds.Migrator \
+```powershell
+dotnet ef migrations add InitialXxx `
+  --context XxxDbContext `
+  --project ClassifiedAds.Migrator `
+  --startup-project ClassifiedAds.Migrator `
   --output-dir Migrations/Xxx
 ```
 
-This creates files in `ClassifiedAds.Migrator/Migrations/Xxx/`. **Verify**:
-- `<Timestamp>_InitialXxx.cs` — Up/Down methods exist
-- `<Timestamp>_InitialXxx.Designer.cs` — snapshot metadata
-- `XxxDbContextModelSnapshot.cs` — current model state
+Verify:
 
-#### D. Docker — Update ALL Dockerfiles That Reference The Module
+- `<Timestamp>_InitialXxx.cs`
+- `<Timestamp>_InitialXxx.Designer.cs`
+- `XxxDbContextModelSnapshot.cs`
 
-Each Dockerfile has a "Copy csproj" layer for `dotnet restore` caching. If the module is referenced by a host project, its `.csproj` **must** be copied in that layer, otherwise `dotnet restore` fails.
+### D. Required Docker updates
 
-| Dockerfile | When to update |
-|------------|---------------|
-| `ClassifiedAds.Migrator/Dockerfile` | **Always** (every module with a DbContext must be in Migrator) |
-| `ClassifiedAds.WebAPI/Dockerfile` | If WebAPI references the module |
-| `ClassifiedAds.Background/Dockerfile` | If Background references the module |
+Every module with a DbContext must be wired into Docker restore layers correctly.
 
-**Add this line** in the "Copy csproj" section (before `RUN dotnet restore`):
+Mandatory Dockerfile updates:
+
+- `ClassifiedAds.Migrator/Dockerfile` always
+- `ClassifiedAds.WebAPI/Dockerfile` if WebAPI references the module
+- `ClassifiedAds.Background/Dockerfile` if Background references the module
+
+Add the module copy line before `dotnet restore`:
+
 ```dockerfile
 COPY ./ClassifiedAds.Modules.Xxx/*.csproj ./ClassifiedAds.Modules.Xxx/
 ```
 
-#### E. Host Projects — If Module Is Consumed By WebAPI Or Background
+### E. Required host registration if consumed by WebAPI or Background
 
-If the module exposes controllers, services, or background workers:
+If the module exposes controllers, services, hosted workers, repositories, handlers, or contracts used by a host, update:
 
-| # | File | Action |
-|---|------|--------|
-| 1 | Host `.csproj` | Add `<ProjectReference>` to the module |
-| 2 | Host `Program.cs` — **IMvcBuilder chain** | Add `.AddXxxModule()` to the `AddControllers()` fluent chain (registers controllers via `ApplicationPart`) |
-| 3 | Host `Program.cs` — **IServiceCollection chain** | Add `.AddXxxModule(opt => { ... })` to the services chain (registers DbContext, repositories, message handlers) |
-| 4 | Host `appsettings.json` | Add `"Xxx": {}` under `"Modules"` section (even if empty — config binding requires the section to exist) |
-| 5 | Host `Dockerfile` | Add `COPY` line for the module's `.csproj` (see D above) |
-| 6 | `docker-compose.yml` | Add any module-specific environment variables if needed |
+1. host `.csproj`
+2. host `Program.cs` MVC chain
+3. host `Program.cs` service chain
+4. host `appsettings.json` under `"Modules"`
+5. host `Dockerfile`
+6. `docker-compose.yml` if new env vars or runtime deps are needed
 
-**WebAPI DI registration pattern** (both chains are REQUIRED):
+For WebAPI, both chains are mandatory:
 
 ```csharp
-// 1. IMvcBuilder chain — in AddControllers() fluent call
 services.AddControllers(...)
-    .AddXxxModule()   // <-- ADD THIS LINE
-    // ... other modules
+    .AddXxxModule();
 
-// 2. IServiceCollection chain — after AddControllers block
 services
     .AddXxxModule(opt =>
     {
         configuration.GetSection("Modules:Xxx").Bind(opt);
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.Xxx.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
-    })
-    // ... other modules
+    });
 ```
 
-> **CRITICAL**: A module that is referenced in `.csproj` but NOT registered in BOTH chains will compile successfully but **fail at runtime** with `Unable to resolve service` errors. Always register in BOTH the IMvcBuilder chain AND the IServiceCollection chain.
+### Hard rule
 
-### 8) Existing Module Model Change Checklist
+Do not add a module reference in a host without also checking whether its Dockerfile restore layer and compose env need updates.
 
-When modifying entities, DbConfigurations, or DbSet properties in an existing module's DbContext:
+---
 
-| # | Action | Command / File |
-|---|--------|----------------|
-| 1 | Make code changes | Edit entities, DbConfigurations, DbContext |
-| 2 | Generate new migration | `dotnet ef migrations add <MigrationName> --context XxxDbContext --project ClassifiedAds.Migrator --startup-project ClassifiedAds.Migrator --output-dir Migrations/Xxx` |
-| 3 | Review generated migration | Check the `.cs` file — verify Up/Down are correct, check for data loss warnings |
-| 4 | Build Migrator | `dotnet build ClassifiedAds.Migrator` — must succeed with 0 errors |
-| 5 | Test migration | Run Migrator against dev DB, verify no `PendingModelChangesWarning` |
+## 8) Existing Module Model Change Checklist
 
-**Migration naming convention**: Use descriptive names that reflect the change:
-- `AddTestCaseDependencies` — adding new table
-- `UpdateUserProfileFields` — modifying columns
-- `RemoveDeprecatedColumns` — dropping columns
+Scope: required when changing entities, EF configuration, `DbSet`, or `DbContext` behavior.
 
-### 9) Verification Before Committing
+Required steps:
 
-Run these checks before committing any module-related changes:
+1. Make code changes.
+2. Generate a new migration in `ClassifiedAds.Migrator`.
+3. Review the generated migration for correctness and data loss risk.
+4. Build the migrator.
+5. Run migration freshness verification.
 
-```bash
-# 1. Build entire solution
-dotnet build
+Command pattern:
 
-# 2. Verify no pending model changes for any DbContext
-dotnet ef migrations has-pending-model-changes \
-  --context XxxDbContext \
-  --project ClassifiedAds.Migrator \
-  --startup-project ClassifiedAds.Migrator
+```powershell
+dotnet ef migrations add <MigrationName> `
+  --context XxxDbContext `
+  --project ClassifiedAds.Migrator `
+  --startup-project ClassifiedAds.Migrator `
+  --output-dir Migrations/Xxx
+```
 
-# 3. Docker build (if Dockerfiles were changed)
+Migration naming should be descriptive:
+
+- `AddTestCaseDependencies`
+- `UpdateUserProfileFields`
+- `RemoveDeprecatedColumns`
+
+---
+
+## 9) Mandatory Docker Registration Check
+
+Scope: required whenever any of these happen:
+
+- a new module is added
+- a host adds a new project reference
+- a host starts consuming a different module
+- a new executable service or container is added
+- a runtime dependency changes env vars, volumes, ports, healthchecks, or startup order
+
+### Always inspect these files
+
+- `ClassifiedAds.Migrator/Dockerfile`
+- `ClassifiedAds.WebAPI/Dockerfile`
+- `ClassifiedAds.Background/Dockerfile`
+- `docker-compose.yml`
+
+### Required checks
+
+#### A. Dockerfile restore layer completeness
+
+If a project references `ClassifiedAds.Modules.Xxx`, its Dockerfile must include:
+
+```dockerfile
+COPY ./ClassifiedAds.Modules.Xxx/*.csproj ./ClassifiedAds.Modules.Xxx/
+```
+
+before the relevant `dotnet restore`.
+
+#### B. Compose runtime wiring completeness
+
+If a service is added or its runtime dependencies change, verify:
+
+- service exists in `docker-compose.yml`
+- required env vars are present
+- ports are present if externally needed
+- volumes are present if persistence is needed
+- `depends_on` is correct
+- healthcheck exists where startup ordering depends on readiness
+
+#### C. DB-aware startup ordering
+
+If a service needs the database, it must depend on `db` health:
+
+```yaml
+depends_on:
+  db:
+    condition: service_healthy
+```
+
+If a service needs migrated schema before startup, it must wait for migrator success:
+
+```yaml
+depends_on:
+  migrator:
+    condition: service_completed_successfully
+```
+
+#### D. Preserve existing repo guarantees
+
+Do not remove these guarantees without replacing them with an equivalent or stronger mechanism:
+
+- `db` healthcheck
+- `migrator` waiting for healthy DB
+- `webapi` waiting for successful migrator completion
+- `background` waiting for successful migrator completion
+- migrator Docker build running migration verification
+
+---
+
+## 10) Mandatory Verification Before Finishing A Module / Docker / DB Task
+
+Run the checks that apply:
+
+### Migration verification
+
+```powershell
+dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore
+```
+
+```powershell
+dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations
+```
+
+### Compose verification
+
+```powershell
+docker compose config
+```
+
+### Docker builds
+
+If Docker-related files changed, run the relevant builds:
+
+```powershell
 docker compose build migrator
 docker compose build webapi
 docker compose build background
 ```
 
-#### DI Registration Completeness Check (MANDATORY)
+If Docker daemon is unavailable, say so explicitly in the final response.
 
-Before committing, verify **every** module with a `ServiceCollectionExtensions.cs` is registered in all host projects that reference it:
+---
 
-1. List all modules that have `ServiceCollectionExtensions.cs`:
-   ```bash
-   find . -path "*/ClassifiedAds.Modules.*/ServiceCollectionExtensions.cs" -type f
-   ```
+## 11) Fast Search Commands Agents Should Use
 
-2. For each module found, verify it appears in **ALL THREE** locations in the host `Program.cs`:
-   - [ ] `.AddXxxModule()` in the **IMvcBuilder chain** (AddControllers fluent call)
-   - [ ] `.AddXxxModule(opt => {...})` in the **IServiceCollection chain**
-   - [ ] `"Xxx": {}` section exists in the host's **appsettings.json** under `"Modules"`
+Use these when checking completeness:
 
-3. If any module is missing from any location, **add it immediately** — do not commit with incomplete registrations.
+### List module extension files
 
-### 10) Common Mistakes — Hard Prohibitions
+```powershell
+rg --files | rg "ClassifiedAds\.Modules\..*ServiceCollectionExtensions\.cs$"
+```
 
-- **Do not** create a module with a DbContext without generating its initial migration.
-- **Do not** modify entities/DbConfigurations without generating a new migration.
-- **Do not** add a `<ProjectReference>` to a host `.csproj` without adding the matching `COPY` line in that host's `Dockerfile`.
-- **Do not** register a module in `Program.cs` without adding its `<ProjectReference>` in `.csproj`.
-- **Do not** forget `appsettings.json` — every module registered in Migrator or WebAPI must have a `"Modules:Xxx"` section.
-- **Do not** hardcode connection strings in module options — always use `sharedConnectionString` from `ConnectionStrings:Default`.
-- **Do not** set `MigrationsAssembly` to the module project — it must always be `Assembly.GetExecutingAssembly().GetName().Name` (i.e., `ClassifiedAds.Migrator`).
-- **Do not** register a module in only ONE chain (IMvcBuilder or IServiceCollection) — BOTH chains are required. Missing IMvcBuilder = controllers not discovered. Missing IServiceCollection = services not resolved at runtime.
-- **Do not** create a module with `ServiceCollectionExtensions.cs` without immediately registering it in the host `Program.cs` — unregistered modules are silent runtime failures that compile without errors.
+### Check whether a module is wired into hosts and Docker
 
+```powershell
+rg -n "Xxx" ClassifiedAds.Migrator ClassifiedAds.WebAPI ClassifiedAds.Background docker-compose.yml
+```
+
+### Check Dockerfile module copy lines
+
+```powershell
+rg -n "ClassifiedAds\.Modules\.Xxx" ClassifiedAds.Migrator/Dockerfile ClassifiedAds.WebAPI/Dockerfile ClassifiedAds.Background/Dockerfile
+```
+
+---
+
+## 12) Required Final Response Format For Relevant Tasks
+
+If the task touched DB, module wiring, project references, or Docker, the agent must explicitly state:
+
+- whether migration verification was run
+- exact migration verification command used
+- whether Docker registration was checked
+- exact Docker or compose commands used
+- whether Docker daemon was available
+- whether any step was skipped
+
+For live DB work, also state:
+
+- exact target DB name
+- exact schemas checked
+- migration IDs applied or missing
+
+---
+
+## 13) Hard Prohibitions
+
+- Do not create or modify EF models without checking migration freshness.
+- Do not create a module with a DbContext without generating its initial migration.
+- Do not modify entities or EF configuration without generating a migration when the model changed.
+- Do not add a host project reference without checking that the host Dockerfile restore layer includes the referenced project/module.
+- Do not add a module to a host in code and forget to inspect Docker and compose.
+- Do not register a module in only one DI chain when both are required.
+- Do not claim "done" if migration verification or Docker registration verification was not addressed.
+- Do not silently skip `docker-compose.yml` when runtime dependencies changed.
+
+---
+
+## 14) Repo-Specific Rule Summary
+
+In this repo, every AI agent must treat these as default gates:
+
+1. `ClassifiedAds.Migrator` is the only place migrations are created.
+2. `ConnectionStrings__Default` is the DB source of truth.
+3. `ClassifiedAds.Migrator` must stay able to run `--verify-migrations`.
+4. Docker restore layers must include every referenced project/module.
+5. `docker-compose.yml` must preserve DB health and migrator-before-host startup ordering.
+
+If a change threatens any of those rules, stop and fix the wiring before finishing.
