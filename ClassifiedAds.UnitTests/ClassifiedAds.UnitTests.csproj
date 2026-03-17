@@ -6,6 +6,7 @@
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
         <RootNamespace>ClassifiedAds.UnitTests</RootNamespace>
+        <PreserveCompilationContext>true</PreserveCompilationContext>
     </PropertyGroup>
 
     <ItemGroup>
@@ -51,6 +52,8 @@
             Include="..\ClassifiedAds.Modules.TestGeneration\ClassifiedAds.Modules.TestGeneration.csproj" />
         <ProjectReference
             Include="..\ClassifiedAds.Modules.TestExecution\ClassifiedAds.Modules.TestExecution.csproj" />
+        <ProjectReference
+            Include="..\ClassifiedAds.Modules.TestReporting\ClassifiedAds.Modules.TestReporting.csproj" />
     </ItemGroup>
 
     <ItemGroup>
