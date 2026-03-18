@@ -1,4 +1,4 @@
-# Báo cáo Kiểm tra Tổng quan (Overview) FE-09: LLM-Assisted Failure Explanations
+ # Báo cáo Kiểm tra Tổng quan (Overview) FE-09: LLM-Assisted Failure Explanations
 
 **Ngày kiểm tra:** 15/03/2026
 **Mục tiêu:** Đánh giá tính chuẩn xác của các tài liệu overview FE-09 (`README.md`, `requirement.json`, `workflow.json`, `contracts.json`, `implementation-map.json`) và đối chiếu với thực tế triển khai trong mã nguồn (`LlmAssistant` và `ExecutionEngine`).
@@ -23,7 +23,7 @@ Qua đối chiếu mã nguồn thực tế, kiến trúc đã map 1:1 với `imp
    * Sử dụng `TestFailureReadGatewayService` nhằm tách bạch module. Mã nguồn trả về đúng DTO, không làm rò rỉ `TestRun` entity giữa các module.
    * Xử lý chính xác các HTTP Conflict (`TEST_CASE_NOT_FAILED`, `RUN_RESULTS_EXPIRED`) theo đúng đặc tả workflow.
 3. **Data Persistance (Audit/Cache):** 
-   * Lưu log lịch sử gọi LLM dúng `InteractionType = 1` và cache suggestion qua `SuggestionType = 4`.
+   * Lưu log lịch sử gọi LLM đúng `InteractionType = 1` và cache suggestion qua `SuggestionType = 4`.
 4. **Deterministic Security & Fingerprint:** 
    * Đã có `FailureExplanationSanitizer` và `FailureExplanationFingerprintBuilder` áp dụng băm `SHA256` payload (tránh nạp metadata nhạy cảm, secrets lên LLM provider).
 
