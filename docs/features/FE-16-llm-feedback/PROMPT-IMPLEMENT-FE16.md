@@ -26,7 +26,7 @@ Read these spec files first:
 
 This task is NOT docs-only.
 
-Expected classification:
+Expected overall classification:
 
 - `Application code only`
 - `Touches EF model / DbContext / migration / seed / connection settings`
@@ -39,7 +39,22 @@ Default expectation:
 - no Dockerfile change
 - no compose change
 
-But per `AGENTS.md`, you must still verify Docker/compose conclusions and report them.
+Per `AGENTS.md`, you must still verify the Docker/compose conclusion and report it explicitly.
+
+## DEFAULT IMPLEMENTATION CHOICES
+
+Use these choices unless real code constraints force a different path:
+
+- Keep FE-16 entirely inside `ClassifiedAds.Modules.TestGeneration`.
+- Add a dedicated entity `LlmSuggestionFeedback` with a dedicated enum such as `LlmSuggestionFeedbackSignal`.
+- Store `FeedbackSignal` as a string-backed enum in EF, consistent with existing `LlmSuggestion` enum mapping style.
+- Copy `TestSuiteId` and `EndpointId` from the owning suggestion onto the feedback row for cheap aggregation.
+- Normalize `Notes` with trim + null-if-empty behavior, validate a reasonable max length before persistence, and store the column as `text`.
+- Follow the repo's current concurrency pattern: `RowVersion` is application-managed and refreshed with `Guid.NewGuid().ToByteArray()`.
+- Build the feedback fingerprint from canonical aggregated output, not from raw DB row order, timestamps, or `UserId`.
+- Prefer payload enrichment by adding `FeedbackContext` to `N8nBoundaryEndpointPayload`.
+- Keep `ObservationConfirmationPromptBuilder` unchanged unless payload enrichment proves impossible.
+- Follow the repo pattern where commands/queries and their handlers live in the same file.
 
 ## HARD CONSTRAINTS
 
@@ -52,24 +67,69 @@ But per `AGENTS.md`, you must still verify Docker/compose conclusions and report
 - MUST keep FE-16 additive to FE-06 and FE-15.
 - MUST use ASCII in new files.
 
-## RECOMMENDED FEATURE SHAPE
+## ARCHITECTURE TO IMPLEMENT
 
-Implement FE-16 v1 as:
+### 1. Durable Feedback Persistence
 
-1. one durable feedback entity per suggestion/user
-2. one idempotent feedback write endpoint
-3. feedback summary embedded in FE-15 suggestion models
-4. one internal service that aggregates feedback into endpoint-scoped prompt context
-5. one feedback fingerprint included in `LlmScenarioSuggester` cache-key material
+Add a new entity under `ClassifiedAds.Modules.TestGeneration/Entities/`:
 
-Recommended feedback signals:
+- `LlmSuggestionFeedback`
 
-- `Helpful`
-- `NotHelpful`
+Recommended fields:
 
-Notes should be optional but trimmed and length-limited.
+- `Id : Guid`
+- `SuggestionId : Guid`
+- `TestSuiteId : Guid`
+- `EndpointId : Guid?`
+- `UserId : Guid`
+- `FeedbackSignal : enum`
+- `Notes : string?`
+- `CreatedDateTime : DateTimeOffset`
+- `UpdatedDateTime : DateTimeOffset?`
+- `RowVersion : byte[]`
 
-## REQUIRED API SURFACE
+Persistence rules:
+
+- unique row per `(SuggestionId, UserId)`
+- FK to `LlmSuggestion`
+- cascade delete is acceptable because feedback lifecycle follows suggestion lifecycle
+- `Notes` stored as `text`
+- no separate durable state in `LlmAssistant`
+- no test-case creation side effects
+
+### 2. Feedback Context And Cache Fingerprint
+
+Implement one internal service:
+
+- `ILlmSuggestionFeedbackContextService`
+- `LlmSuggestionFeedbackContextService`
+
+Responsibilities:
+
+1. aggregate feedback for the requested `TestSuiteId + EndpointId` set
+2. ignore suggestions that are `Superseded`
+3. ignore suggestions without `EndpointId`
+4. sanitize and truncate notes before they become prompt context
+5. build a compact endpoint-scoped context string
+6. build a stable feedback fingerprint from canonical aggregated output
+7. return an empty context plus a stable empty fingerprint when no usable feedback exists
+
+Recommended aggregation behavior:
+
+- group by `EndpointId`
+- include helpful and not-helpful counts
+- include only a bounded number of recent note snippets per endpoint
+- sort endpoint groups and note snippets deterministically before hashing
+- do not include raw `UserId`, `RowVersion`, or raw timestamps in the fingerprint material
+
+Then update `LlmScenarioSuggester`:
+
+1. load feedback context before cache lookup
+2. include the feedback fingerprint in cache-key construction
+3. enrich `N8nBoundaryEndpointPayload` with endpoint-scoped `FeedbackContext`
+4. keep graceful fallback when feedback aggregation fails
+
+### 3. HTTP + CQRS Surface
 
 Add:
 
@@ -89,53 +149,35 @@ Both should include:
 - `CurrentUserFeedback`
 - `FeedbackSummary`
 
-## PERSISTENCE TO ADD
+Write-path rules:
 
-Add a new entity under `ClassifiedAds.Modules.TestGeneration/Entities/`:
+- reuse `LlmSuggestionsController`; do not add a second controller
+- validate suite existence and suite ownership using the current FE-15 pattern
+- reject archived suites
+- load suggestion by `suggestionId + testSuiteId`
+- reject `Superseded` suggestions
+- upsert the row for `(SuggestionId, CurrentUserId)`
+- refresh `UpdatedDateTime` and `RowVersion` on update
 
-- `LlmSuggestionFeedback`
+### 4. Read-Model Wiring
 
-Recommended fields:
+Extend `LlmSuggestionModel` with:
 
-- `Id : Guid`
-- `SuggestionId : Guid`
-- `TestSuiteId : Guid`
-- `EndpointId : Guid?`
-- `UserId : Guid`
-- `FeedbackSignal : enum`
-- `Notes : string?`
-- `CreatedDateTime : DateTimeOffset`
-- `UpdatedDateTime : DateTimeOffset?`
-- `RowVersion : byte[]`
+- `CurrentUserFeedback`
+- `FeedbackSummary`
 
-Recommended rules:
+Query rules:
 
-- unique row per `(SuggestionId, UserId)`
-- reject feedback for `Superseded` suggestions
-- trim notes
-- limit notes length
-- no test-case creation side effects
+- batch-load feedback rows for the selected suggestions
+- compute current-user feedback and summary counts in memory
+- do not query feedback per suggestion in a loop
+- keep FE-15 filtering semantics intact
 
-## PROMPT-REFINEMENT REQUIREMENT
+### 5. Leave These Areas Unchanged Unless Blocked
 
-Implement one internal service, for example:
-
-- `ILlmSuggestionFeedbackContextService`
-- `LlmSuggestionFeedbackContextService`
-
-Responsibilities:
-
-1. aggregate recent feedback by `TestSuiteId + EndpointId`
-2. produce a compact, sanitized text summary per endpoint
-3. produce a stable fingerprint/hash for the aggregated feedback input
-4. return empty context safely when no feedback exists
-
-Then update `LlmScenarioSuggester`:
-
-1. load feedback context before cache lookup
-2. include the feedback fingerprint in cache-key construction
-3. include feedback context in prompt/payload generation
-4. keep graceful fallback when feedback aggregation fails
+- `ClassifiedAds.Modules.LlmAssistant` should not gain durable feedback entities.
+- `ObservationConfirmationPromptBuilder` should stay focused on spec/business-rule prompting.
+- `ClassifiedAds.WebAPI/Program.cs`, Dockerfiles, and `docker-compose.yml` should remain unchanged unless the code truly adds a new dependency or reference.
 
 ## FILES TO ADD / MODIFY
 
@@ -160,7 +202,6 @@ Modify:
 - `ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs`
 - `ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs`
 - `ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs`
-- optionally prompt-context builder files if you choose repo-owned prompt enrichment instead of payload-only enrichment
 - `ClassifiedAds.Migrator/...` migration files for `TestGeneration`
 
 ## TESTS
@@ -182,8 +223,9 @@ Test specifically:
 - new feedback row created
 - existing feedback row updated
 - helpful/not-helpful summary counts
-- feedback notes are trimmed/truncated
-- feedback fingerprint changes when feedback changes
+- feedback notes are trimmed and truncated before prompt use
+- feedback fingerprint is stable for semantically identical feedback
+- feedback fingerprint changes when aggregated feedback changes
 - cache key changes when feedback context changes
 - no-feedback path still works
 
@@ -213,13 +255,16 @@ If Docker-related files actually changed, also run the compose/build checks requ
 ## DONE CRITERIA
 
 - FE-16 feedback persistence exists in `TestGeneration`
-- feedback write API exists and is wired
-- FE-15 list/detail surfaces include feedback metadata
+- one feedback row per suggestion/user is enforced
+- feedback write API exists and is wired through the existing controller surface
+- FE-15 list/detail surfaces include current-user feedback and summary metadata
 - feedback context is consumable by `LlmScenarioSuggester`
 - feedback-aware cache fingerprinting is implemented
+- the solution uses payload enrichment rather than broad prompt-builder rewrites unless a blocker forced otherwise
 - migration exists in `ClassifiedAds.Migrator`
 - targeted tests were added and executed
 - migrator verification was executed and passed
+- Docker/compose conclusions were explicitly checked and reported
 
 ## PHASED EXECUTION
 

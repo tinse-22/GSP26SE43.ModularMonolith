@@ -49,6 +49,7 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<TestDataSet, Guid>, Repository<TestDataSet, Guid>>()
             .AddScoped<IRepository<TestCaseChangeLog, Guid>, Repository<TestCaseChangeLog, Guid>>()
             .AddScoped<IRepository<LlmSuggestion, Guid>, Repository<LlmSuggestion, Guid>>()
+            .AddScoped<IRepository<LlmSuggestionFeedback, Guid>, Repository<LlmSuggestionFeedback, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
@@ -77,7 +78,10 @@ public static class TestGenerationServiceCollectionExtensions
 
         // FE-06: Boundary/negative test case generation services
         services
+            .AddSingleton<LlmSuggestionFeedbackMetrics>()
             .AddScoped<IBodyMutationEngine, BodyMutationEngine>()
+            .AddScoped<ILlmSuggestionFeedbackUpsertService, LlmSuggestionFeedbackUpsertService>()
+            .AddScoped<ILlmSuggestionFeedbackContextService, LlmSuggestionFeedbackContextService>()
             .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
             .AddScoped<ILlmSuggestionMaterializer, LlmSuggestionMaterializer>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();

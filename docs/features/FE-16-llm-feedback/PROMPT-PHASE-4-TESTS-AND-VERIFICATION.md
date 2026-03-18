@@ -2,6 +2,14 @@
 
 Implement and run the missing tests for FE-16. Do not redesign the architecture in this phase unless a test reveals a real defect.
 
+## Task Classification
+
+Expected classification for this phase:
+
+- `Application code only`
+
+This phase must still satisfy the relevant completion gates from `AGENTS.md`, especially migration verification for the persistence work introduced earlier.
+
 ## Scope
 
 Projects allowed:
@@ -27,8 +35,8 @@ Finish FE-16 with targeted test coverage and verification commands that prove th
    - endpoint-scoped aggregation
    - helpful/not-helpful counts
    - notes truncation/sanitization
-   - stable fingerprint for same inputs
-   - changed fingerprint when feedback changes
+   - stable fingerprint for same normalized inputs
+   - changed fingerprint when aggregated feedback changes
 
 3. `GetLlmSuggestionsQueryHandlerTests`
    - current-user feedback is attached
@@ -42,7 +50,7 @@ Finish FE-16 with targeted test coverage and verification commands that prove th
 5. `LlmScenarioSuggesterTests`
    - feedback fingerprint participates in cache key
    - empty feedback still allows cache/hit logic
-   - payload or prompt receives feedback context
+   - `N8nBoundaryEndpointPayload` receives endpoint-scoped `FeedbackContext`
 
 ## Verification Commands
 
@@ -66,13 +74,36 @@ dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --v
 
 If Docker-related files actually changed, also run the required compose/build checks from `AGENTS.md`.
 
+## Reporting Requirements
+
+In the final response for a real implementation run, explicitly state:
+
+- whether migration verification was run
+- the exact migration verification command used
+- whether Docker registration was checked
+- which Docker/compose commands were run, if any
+- whether Docker daemon was available when Docker commands were required
+- any verification step that was skipped and why
+
+If no Docker-related files changed, say that Docker registration was checked by inspection and no compose/build command was required.
+
 ## Review Checklist
 
 - feedback state lives in `TestGeneration`, not `LlmAssistant`
 - one feedback row per suggestion/user
 - FE-15 list/detail still work
 - feedback-aware cache fingerprinting is covered by tests
-- migration exists and verify-migrations passes
+- payload enrichment path is covered by tests
+- migration exists and `--verify-migrations` passes
 - no new Docker/runtime wiring was introduced unless explicitly needed and verified
+
+## Done Criteria
+
+- targeted FE-16 tests exist
+- targeted FE-16 tests were executed
+- WebAPI build ran
+- migrator build ran
+- `--verify-migrations` ran and passed
+- any remaining blocker is reported with exact evidence
 
 Stop after tests pass or after you identify the exact remaining blocker with evidence.
