@@ -35,6 +35,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
     private readonly ILlmScenarioSuggester _llmSuggester;
     private readonly ITestCaseRequestBuilder _requestBuilder;
     private readonly ITestCaseExpectationBuilder _expectationBuilder;
+    private readonly ILlmSuggestionMaterializer _materializer;
     private readonly ILogger<BoundaryNegativeTestCaseGenerator> _logger;
 
     public BoundaryNegativeTestCaseGenerator(
@@ -45,6 +46,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         ILlmScenarioSuggester llmSuggester,
         ITestCaseRequestBuilder requestBuilder,
         ITestCaseExpectationBuilder expectationBuilder,
+        ILlmSuggestionMaterializer materializer,
         ILogger<BoundaryNegativeTestCaseGenerator> logger)
     {
         _endpointMetadataService = endpointMetadataService ?? throw new ArgumentNullException(nameof(endpointMetadataService));
@@ -54,6 +56,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         _llmSuggester = llmSuggester ?? throw new ArgumentNullException(nameof(llmSuggester));
         _requestBuilder = requestBuilder ?? throw new ArgumentNullException(nameof(requestBuilder));
         _expectationBuilder = expectationBuilder ?? throw new ArgumentNullException(nameof(expectationBuilder));
+        _materializer = materializer ?? throw new ArgumentNullException(nameof(materializer));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -171,7 +174,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
                 orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem);
                 metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
 
-                var tc = BuildLlmSuggestionTestCase(suite.Id, orderItem, metadata, scenario);
+                var tc = _materializer.MaterializeFromScenario(scenario, suite.Id, orderItem, 0);
                 testCases.Add(tc);
                 llmSuggestionCount++;
             }
@@ -295,72 +298,6 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         return testCase;
     }
 
-    private TestCase BuildLlmSuggestionTestCase(
-        Guid testSuiteId,
-        ApiOrderItemModel orderItem,
-        ApiEndpointMetadataDto metadata,
-        LlmSuggestedScenario scenario)
-    {
-        var testCaseId = Guid.NewGuid();
-
-        var testCase = new TestCase
-        {
-            Id = testCaseId,
-            TestSuiteId = testSuiteId,
-            EndpointId = scenario.EndpointId,
-            Name = SanitizeName(scenario.ScenarioName, orderItem),
-            Description = scenario.Description,
-            TestType = scenario.SuggestedTestType,
-            Priority = ParsePriority(scenario.Priority),
-            IsEnabled = true,
-            Tags = SerializeTags(scenario.SuggestedTestType, "llm-suggested", scenario.Tags?.ToArray() ?? Array.Empty<string>()),
-            Version = 1,
-        };
-
-        // Build request from LLM suggestion
-        var n8nRequest = new N8nTestCaseRequest
-        {
-            HttpMethod = orderItem?.HttpMethod,
-            Url = orderItem?.Path,
-            Body = scenario.SuggestedBody,
-            PathParams = scenario.SuggestedPathParams,
-            QueryParams = scenario.SuggestedQueryParams,
-            Headers = scenario.SuggestedHeaders,
-        };
-        testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
-
-        // Build expectation from LLM suggestion
-        var n8nExpectation = new N8nTestCaseExpectation
-        {
-            ExpectedStatus = new List<int> { scenario.ExpectedStatusCode },
-            BodyContains = !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
-                ? new List<string> { scenario.ExpectedBehavior }
-                : new List<string>(),
-        };
-        testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
-
-        // Build variables from LLM suggestion (reuse FE-05B pattern)
-        if (scenario.Variables != null)
-        {
-            foreach (var v in scenario.Variables)
-            {
-                testCase.Variables.Add(new TestCaseVariable
-                {
-                    Id = Guid.NewGuid(),
-                    TestCaseId = testCaseId,
-                    VariableName = v.VariableName,
-                    ExtractFrom = ParseExtractFrom(v.ExtractFrom),
-                    JsonPath = v.JsonPath,
-                    HeaderName = v.HeaderName,
-                    Regex = v.Regex,
-                    DefaultValue = v.DefaultValue,
-                });
-            }
-        }
-
-        return testCase;
-    }
-
     private static TestType ClassifyPathMutationType(string mutationType)
     {
         if (string.IsNullOrWhiteSpace(mutationType))
@@ -381,32 +318,6 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         return TestType.Negative;
     }
 
-    private static string SanitizeName(string name, ApiOrderItemModel orderItem)
-    {
-        if (!string.IsNullOrWhiteSpace(name))
-        {
-            return name.Length > 200 ? name[..200] : name;
-        }
-
-        return orderItem != null
-            ? $"{orderItem.HttpMethod} {orderItem.Path} - Boundary/Negative"
-            : "Boundary/Negative Test Case";
-    }
-
-    private static TestPriority ParsePriority(string priority)
-    {
-        if (string.IsNullOrWhiteSpace(priority)) return TestPriority.Medium;
-
-        return priority.Trim().ToLowerInvariant() switch
-        {
-            "critical" => TestPriority.Critical,
-            "high" => TestPriority.High,
-            "medium" => TestPriority.Medium,
-            "low" => TestPriority.Low,
-            _ => TestPriority.Medium,
-        };
-    }
-
     private static Entities.HttpMethod ParseHttpMethod(string method)
     {
         if (string.IsNullOrWhiteSpace(method)) return Entities.HttpMethod.GET;
@@ -424,35 +335,6 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         };
     }
 
-    private static ExtractFrom ParseExtractFrom(string extractFrom)
-    {
-        if (string.IsNullOrWhiteSpace(extractFrom)) return ExtractFrom.ResponseBody;
-
-        return extractFrom.Trim().ToLowerInvariant() switch
-        {
-            "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
-            "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
-            "status" => ExtractFrom.Status,
-            _ => ExtractFrom.ResponseBody,
-        };
-    }
-
     private static string SerializeTags(TestType testType, string source, params string[] extraTags)
-    {
-        var tags = new List<string>();
-
-        tags.Add(testType == TestType.Boundary ? "boundary" : "negative");
-        tags.Add("auto-generated");
-        tags.Add(source);
-
-        foreach (var tag in extraTags)
-        {
-            if (!string.IsNullOrWhiteSpace(tag) && !tags.Contains(tag, StringComparer.OrdinalIgnoreCase))
-            {
-                tags.Add(tag);
-            }
-        }
-
-        return JsonSerializer.Serialize(tags, JsonOpts);
-    }
+        => LlmSuggestionMaterializer.SerializeTags(testType, source, extraTags);
 }
