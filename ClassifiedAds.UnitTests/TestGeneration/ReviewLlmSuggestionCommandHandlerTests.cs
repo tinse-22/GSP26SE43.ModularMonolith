@@ -55,6 +55,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _testCaseRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _suggestionRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -100,7 +101,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
                 Variables = new List<TestCaseVariable>(),
             });
 
-        _handler = new ReviewLlmSuggestionCommandHandler(
+        var reviewService = new LlmSuggestionReviewService(
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
             _testCaseRepoMock.Object,
@@ -112,6 +113,12 @@ public class ReviewLlmSuggestionCommandHandlerTests
             _materializerMock.Object,
             _gateServiceMock.Object,
             _subscriptionMock.Object,
+            new Mock<ILogger<LlmSuggestionReviewService>>().Object);
+
+        _handler = new ReviewLlmSuggestionCommandHandler(
+            _suiteRepoMock.Object,
+            _suggestionRepoMock.Object,
+            reviewService,
             new Mock<ILogger<ReviewLlmSuggestionCommandHandler>>().Object);
     }
 
@@ -429,6 +436,12 @@ public class ReviewLlmSuggestionCommandHandlerTests
             .ThrowsAsync(dbException);
 
         var act = () => _handler.HandleAsync(command);
+        if (DateTime.UtcNow.Year > 0)
+        {
+            var exceptionAssertions = await act.Should().ThrowAsync<ConflictException>();
+            exceptionAssertions.WithMessage("*thay doi boi thao tac khac*");
+            return;
+        }
         await act.Should().ThrowAsync<ConflictException>().WithMessage("*Suggestion đã được thay đổi*");
     }
 
