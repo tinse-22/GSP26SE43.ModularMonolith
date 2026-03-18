@@ -1,0 +1,317 @@
+{
+  "$schema": "ai-agent-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-15-contracts",
+  "requirementId": "FE-15",
+  "title": "FE-15 Contracts - LLM Suggestion Review Interface",
+  "apiContracts": [
+    {
+      "name": "GenerateLlmSuggestionPreview",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions/generate",
+      "permission": "Permission:GenerateBoundaryNegativeTestCases",
+      "requestBody": "GenerateLlmSuggestionPreviewRequest",
+      "responseBody": "GenerateLlmSuggestionPreviewResultModel",
+      "successStatus": 201,
+      "description": "Generate durable pending LLM suggestions for the suite without materializing `TestCase` rows yet."
+    },
+    {
+      "name": "GetLlmSuggestions",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions",
+      "permission": "Permission:GetTestCases",
+      "responseBody": "List<LlmSuggestionModel>",
+      "successStatus": 200,
+      "description": "List durable suggestions for one suite with optional filters."
+    },
+    {
+      "name": "GetLlmSuggestionDetail",
+      "method": "GET",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}",
+      "permission": "Permission:GetTestCases",
+      "responseBody": "LlmSuggestionModel",
+      "successStatus": 200,
+      "description": "Get one suggestion with full preview payload."
+    },
+    {
+      "name": "ReviewLlmSuggestion",
+      "method": "PUT",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/review",
+      "permission": "Permission:UpdateTestCase",
+      "requestBody": "ReviewLlmSuggestionRequest",
+      "responseBody": "LlmSuggestionModel",
+      "successStatus": 200,
+      "description": "Approve, reject, or modify one durable suggestion."
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "GenerateLlmSuggestionPreviewRequest",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/Requests/GenerateLlmSuggestionPreviewRequest.cs",
+      "fields": {
+        "specificationId": "Guid",
+        "forceRefresh": "bool (default false)"
+      }
+    },
+    {
+      "name": "ReviewLlmSuggestionRequest",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/Requests/ReviewLlmSuggestionRequest.cs",
+      "fields": {
+        "rowVersion": "string (base64)",
+        "action": "ReviewAction (Approve|Reject|Modify)",
+        "reviewNotes": "string? (required when Reject, optional otherwise)",
+        "modifiedContent": "EditableLlmSuggestionInput? (required when Modify)"
+      }
+    },
+    {
+      "name": "EditableLlmSuggestionInput",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/Requests/ReviewLlmSuggestionRequest.cs",
+      "fields": {
+        "name": "string",
+        "description": "string?",
+        "testType": "TestType",
+        "priority": "TestPriority",
+        "tags": "List<string>?",
+        "request": "EditableSuggestionRequestInput",
+        "expectation": "EditableSuggestionExpectationInput",
+        "variables": "List<EditableSuggestionVariableInput>?"
+      }
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "GenerateLlmSuggestionPreviewResultModel",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/GenerateLlmSuggestionPreviewResultModel.cs",
+      "fields": {
+        "testSuiteId": "Guid",
+        "totalSuggestions": "int",
+        "boundarySuggestionCount": "int",
+        "negativeSuggestionCount": "int",
+        "llmModel": "string?",
+        "tokensUsed": "int?",
+        "generatedAt": "DateTimeOffset",
+        "fromCache": "bool",
+        "cacheKey": "string",
+        "suggestions": "List<LlmSuggestionModel>"
+      }
+    },
+    {
+      "name": "LlmSuggestionModel",
+      "file": "ClassifiedAds.Modules.TestGeneration/Models/LlmSuggestionModel.cs",
+      "fields": {
+        "suggestionId": "Guid",
+        "testSuiteId": "Guid",
+        "endpointId": "Guid?",
+        "cacheKey": "string",
+        "displayOrder": "int",
+        "suggestionType": "string",
+        "testType": "string",
+        "status": "ReviewStatus",
+        "name": "string",
+        "description": "string?",
+        "priority": "string",
+        "tags": "List<string>",
+        "request": "SuggestionRequestModel",
+        "expectation": "SuggestionExpectationModel",
+        "variables": "List<SuggestionVariableModel>",
+        "reviewNotes": "string?",
+        "reviewedById": "Guid?",
+        "reviewedAt": "DateTimeOffset?",
+        "appliedTestCaseId": "Guid?",
+        "rowVersion": "string (base64)",
+        "createdAt": "DateTimeOffset",
+        "modifiedContent": "EditableLlmSuggestionInput?"
+      }
+    }
+  ],
+  "internalContracts": {
+    "commands": [
+      {
+        "name": "GenerateLlmSuggestionPreviewCommand",
+        "file": "ClassifiedAds.Modules.TestGeneration/Commands/GenerateLlmSuggestionPreviewCommand.cs",
+        "handler": "GenerateLlmSuggestionPreviewCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "currentUserId": "Guid",
+          "specificationId": "Guid",
+          "forceRefresh": "bool"
+        },
+        "reads": [
+          "TestSuite",
+          "IApiTestOrderGateService.RequireApprovedOrderAsync(...)",
+          "ILlmScenarioSuggester.SuggestScenariosAsync(...)",
+          "ISubscriptionLimitGatewayService.CheckLimitAsync(...)"
+        ],
+        "writes": [
+          "Supersede existing pending `LlmSuggestion` rows for suite",
+          "Insert new `LlmSuggestion` rows"
+        ]
+      },
+      {
+        "name": "ReviewLlmSuggestionCommand",
+        "file": "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+        "handler": "ReviewLlmSuggestionCommandHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "suggestionId": "Guid",
+          "currentUserId": "Guid",
+          "rowVersion": "string",
+          "action": "ReviewAction",
+          "reviewNotes": "string?",
+          "modifiedContent": "EditableLlmSuggestionInput?"
+        },
+        "writes": [
+          "Update `LlmSuggestion` review fields",
+          "Conditionally create `TestCase` graph",
+          "Conditionally create `TestCaseChangeLog` + `TestSuiteVersion`"
+        ],
+        "transactionRequired": "Approve and Modify require transaction"
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetLlmSuggestionsQuery",
+        "file": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+        "handler": "GetLlmSuggestionsQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "currentUserId": "Guid",
+          "reviewStatus": "ReviewStatus?",
+          "testType": "TestType?",
+          "endpointId": "Guid?"
+        }
+      },
+      {
+        "name": "GetLlmSuggestionDetailQuery",
+        "file": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs",
+        "handler": "GetLlmSuggestionDetailQueryHandler",
+        "inputFields": {
+          "testSuiteId": "Guid",
+          "suggestionId": "Guid",
+          "currentUserId": "Guid"
+        }
+      }
+    ],
+    "services": [
+      {
+        "name": "ILlmSuggestionMaterializer",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionMaterializer.cs",
+        "responsibility": "Map raw or modified suggestion payload thanh graph `TestCase` + request + expectation + variables."
+      },
+      {
+        "name": "LlmSuggestionMaterializer",
+        "file": "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionMaterializer.cs",
+        "responsibility": "Reuse `ITestCaseRequestBuilder` va `ITestCaseExpectationBuilder` thay vi duplicate mapping logic."
+      }
+    ]
+  },
+  "persistenceContracts": {
+    "llmSuggestion": {
+      "storage": "testgen.LlmSuggestions",
+      "newEntityRequired": true,
+      "fields": {
+        "TestSuiteId": "Guid",
+        "EndpointId": "Guid?",
+        "CacheKey": "string",
+        "DisplayOrder": "int",
+        "SuggestionType": "enum",
+        "TestType": "enum",
+        "SuggestedName": "string",
+        "SuggestedDescription": "string?",
+        "SuggestedRequest": "jsonb",
+        "SuggestedExpectation": "jsonb",
+        "SuggestedVariables": "jsonb",
+        "SuggestedTags": "jsonb",
+        "Priority": "enum",
+        "ReviewStatus": "enum",
+        "ReviewedById": "Guid?",
+        "ReviewedAt": "DateTimeOffset?",
+        "ReviewNotes": "string?",
+        "ModifiedContent": "jsonb?",
+        "AppliedTestCaseId": "Guid?",
+        "LlmModel": "string?",
+        "TokensUsed": "int?"
+      },
+      "rules": [
+        "Moi suggestion row dai dien cho 1 LLM suggested test case preview.",
+        "Pending rows cu cung suite phai duoc mark `Superseded` khi generate set moi.",
+        "Approve/Modify phai set `AppliedTestCaseId` sau khi create `TestCase` thanh cong."
+      ]
+    }
+  },
+  "stateTransitionRules": [
+    {
+      "from": "Pending",
+      "to": "Approved",
+      "condition": "User approve suggestion nhu nguyen ban va materialization thanh cong."
+    },
+    {
+      "from": "Pending",
+      "to": "ModifiedAndApproved",
+      "condition": "User modify payload va materialization thanh cong."
+    },
+    {
+      "from": "Pending",
+      "to": "Rejected",
+      "condition": "User reject suggestion."
+    },
+    {
+      "from": "Pending",
+      "to": "Superseded",
+      "condition": "Generate mot suggestion set moi cho cung suite."
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "VAL-01",
+      "rule": "Chi owner cua test suite moi duoc generate/list/review suggestions."
+    },
+    {
+      "id": "VAL-02",
+      "rule": "reviewNotes bat buoc khi action = Reject."
+    },
+    {
+      "id": "VAL-03",
+      "rule": "modifiedContent bat buoc khi action = Modify."
+    },
+    {
+      "id": "VAL-04",
+      "rule": "Request `rowVersion` phai match entity `RowVersion` khi review."
+    },
+    {
+      "id": "VAL-05",
+      "rule": "Chi suggestion co `ReviewStatus = Pending` moi duoc review; approve idempotent chi duoc cho phep khi row da co `AppliedTestCaseId`."
+    }
+  ],
+  "errorContracts": [
+    {
+      "code": "ORDER_CONFIRMATION_REQUIRED",
+      "httpStatus": 409,
+      "meaning": "Chua co approved API order cho suite hien tai."
+    },
+    {
+      "code": "CONCURRENCY_CONFLICT",
+      "httpStatus": 409,
+      "meaning": "Suggestion da thay doi boi thao tac khac; can reload."
+    },
+    {
+      "code": "SUGGESTION_NOT_FOUND",
+      "httpStatus": 404,
+      "meaning": "Khong tim thay suggestion thuoc suite hien tai."
+    },
+    {
+      "code": "SUGGESTION_ALREADY_APPLIED",
+      "httpStatus": 409,
+      "meaning": "Suggestion da duoc materialize thanh test case truoc do."
+    }
+  ],
+  "securityAndAuthorization": {
+    "requirements": [
+      "Tat ca endpoint FE-15 phai co [Authorize].",
+      "Generate preview reuse `Permission:GenerateBoundaryNegativeTestCases`.",
+      "List/get reuse `Permission:GetTestCases`.",
+      "Review reuse `Permission:UpdateTestCase`.",
+      "Ownership check dua tren `TestSuite.CreatedById`."
+    ]
+  }
+}
