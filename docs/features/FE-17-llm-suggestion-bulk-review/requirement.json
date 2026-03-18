@@ -1,0 +1,185 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-17-requirement",
+  "requirement": {
+    "id": "FE-17",
+    "title": "Bulk Review For LLM Suggestions",
+    "goal": "Cho phep user review hang loat LLM suggestions theo filter de approve hoac reject nhieu suggestion cung luc, trong khi van reuse durable `LlmSuggestion` rows va materialization semantics da duoc FE-15 xac lap.",
+    "priority": "P1",
+    "status": "planned",
+    "rationale": [
+      "FE-15 da co durable `LlmSuggestion` rows va single-review API, nhung review tung cai mot se cham khi suite co nhieu suggestion cung loai.",
+      "FE-16 da mo rong cung lifecycle nay voi feedback metadata, nen FE-17 can giu cung aggregate va khong duoc tao luong bulk rieng ben ngoai `TestGeneration`.",
+      "Bulk approve/reject nen reuse chinh transaction/materialization pattern cua FE-15 de tranh drift giua single review va batch review.",
+      "Vi FE-17 la application-flow feature, giai phap tot nhat la them CQRS + controller surface tren storage hien co thay vi tao them bang hoac cache state moi."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Them API bulk review cho `LlmSuggestion` theo `TestSuiteId` va optional filters.",
+      "Support 2 actions: `Approve` va `Reject`.",
+      "Bulk approve phai materialize thanh `TestCase` graph theo cung pattern FE-15.",
+      "Bulk reject chi cap nhat review metadata, khong tao `TestCase` moi.",
+      "Reuse shared review service cho single review va bulk review.",
+      "Them result model tong hop so luong matched/processed/materialized va danh sach ids.",
+      "Them targeted unit tests cho batch filter semantics, approve/reject behavior, va verification gates."
+    ],
+    "outOfScope": [
+      "Bulk modify-and-approve voi noi dung sua rieng cho tung suggestion.",
+      "Bulk feedback submission cho `LlmSuggestionFeedback` (de lai cho feature khac neu can).",
+      "Tao module moi, queue moi, worker moi, hay runtime dependency moi.",
+      "Thay doi schema `LlmSuggestion` hoac tao batch aggregate table moi, tru khi codebase co blocker that su.",
+      "UI implementation; package nay chi dinh nghia backend contracts va implementation direction."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-15",
+        "reason": "Can durable `LlmSuggestion`, single-review semantics, va materialization workflow lam nen tang cho FE-17."
+      },
+      {
+        "id": "FE-16",
+        "reason": "Can giu compatibility voi current-user feedback va feedback summary tren suggestion reads."
+      },
+      {
+        "id": "FE-06",
+        "reason": "Suggestions duoc tao tu existing LLM pipeline va van la source dau vao cho FE-15/FE-17 review workflows."
+      },
+      {
+        "id": "FE-05A",
+        "reason": "Materialization van dua tren approved API order gate."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Can `TestCase` graph builders/materializer conventions khi bulk approve tao test cases."
+      },
+      {
+        "id": "FE-14",
+        "reason": "Bulk approve van phai ton trong `MaxTestCasesPerSuite` usage pattern."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "schema": "testgen",
+        "role": "Primary module cho durable suggestions, review lifecycle, va test-case materialization."
+      },
+      {
+        "name": "ClassifiedAds.Modules.LlmAssistant",
+        "status": "implemented",
+        "schema": "llmassistant",
+        "role": "Indirect support module cho raw suggestion cache/audit da duoc FE-06 va FE-15 su dung; FE-17 khong them durable batch state vao day."
+      },
+      {
+        "name": "ClassifiedAds.Modules.Subscription",
+        "status": "implemented",
+        "role": "Check va increment `MaxTestCasesPerSuite` trong bulk approve."
+      }
+    ],
+    "database": {
+      "schema": "testgen",
+      "newTablesRequired": false,
+      "newMigrationsRequired": false,
+      "reason": "FE-17 preferred design reuse `LlmSuggestion` va `LlmSuggestionFeedback` da ton tai; feature nay la batch workflow tren existing durable state."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "secondaryModules": [
+      "ClassifiedAds.Modules.Subscription"
+    ],
+    "executionMode": "Synchronous request-response with transactional materialization for bulk approve and transactional metadata updates for bulk reject.",
+    "reviewStorage": {
+      "entity": "LlmSuggestion",
+      "schema": "testgen",
+      "selectionRule": "Chi review batch tren suggestion rows thuoc mot `TestSuiteId`, dang `Pending`, va match optional filters.",
+      "historyRule": "Khong tao batch aggregate entity moi; lich su van nam tren tung suggestion row thong qua `ReviewStatus`, `ReviewedById`, `ReviewedAt`, `ReviewNotes`, va `AppliedTestCaseId`."
+    },
+    "designPrinciples": [
+      "FE-17 phai reuse shared review/materialization logic thay vi duplicate logic approve/reject trong bulk command handler.",
+      "Bulk endpoint khong duoc dispatch lai tung single-review command trong loop; phai xu ly nhu mot batch workflow.",
+      "Filter semantics phai batch-load durable suggestions mot lan va order theo `DisplayOrder` de ket qua on dinh.",
+      "FE-17 phai additive, khong duoc pha FE-15 single review hoac FE-16 feedback read/write surface.",
+      "Khong them migration hoac Docker wiring neu implementation chi la CQRS/controller/service."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "bulkRejectP95Ms": 800,
+      "bulkApproveP95Ms": 3000
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:UpdateTestCase"
+      ],
+      "notes": [
+        "Bulk review la write action tren suite-owned data, nen tiep tuc reuse `Permission:UpdateTestCase`."
+      ]
+    },
+    "reliability": {
+      "gracefulDegradation": [
+        "Neu khong co suggestion nao match filters, API tra ket qua hop le voi counts = 0 va khong co side effect.",
+        "Bulk approve phai all-or-nothing trong transaction cho write set materialization.",
+        "Bulk reject khong duoc tao `TestCase` hay `TestSuiteVersion` moi."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testSuiteId",
+        "action",
+        "matchedCount",
+        "processedCount",
+        "materializedCount",
+        "actorUserId"
+      ],
+      "metrics": [
+        "llm_suggestion_bulk_review_total",
+        "llm_suggestion_bulk_review_approved_total",
+        "llm_suggestion_bulk_review_rejected_total",
+        "llm_suggestion_bulk_review_failures_total"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST `/api/test-suites/{suiteId:guid}/llm-suggestions/bulk-review` voi `action=Approve` approve tat ca suggestions dang `Pending` match bo filter va materialize thanh `TestCase` rows.",
+    "AC-02: POST cung endpoint voi `action=Reject` reject tat ca suggestions dang `Pending` match bo filter va khong tao `TestCase` moi.",
+    "AC-03: Chi owner cua suite moi duoc bulk review suggestions cua suite do.",
+    "AC-04: API chi chap nhan `Approve` hoac `Reject`; action khac bi tu choi bang validation error co kiem soat.",
+    "AC-05: `ReviewNotes` la bat buoc khi bulk reject.",
+    "AC-06: Filter semantics ho tro `FilterBySuggestionType`, `FilterByTestType`, va `FilterByEndpointId`.",
+    "AC-07: Suggestions khong o trang thai `Pending` khong duoc xu ly trong batch.",
+    "AC-08: Neu khong co suggestion nao match, API van tra 200 voi counts = 0 va khong co side effect.",
+    "AC-09: Bulk approve phai reuse FE-15 materialization logic, ghi `TestCaseChangeLog`, va tang `TestSuiteVersion` theo cung pattern.",
+    "AC-10: Bulk approve phai check/increment `MaxTestCasesPerSuite` mot lan cho ca batch.",
+    "AC-11: FE-17 khong yeu cau migration moi hay Docker wiring moi theo preferred solution, nhung ket luan nay van phai duoc verify va report theo `AGENTS.md`."
+  ],
+  "implementationOrder": [
+    "1. Reuse or harden shared review service cho ca single review va bulk review.",
+    "2. Them bulk command/request/result/controller wiring voi filter semantics.",
+    "3. Them targeted tests va chay build/test verification."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testSuiteId",
+        "action",
+        "processedCount",
+        "materializedCount",
+        "actorUserId"
+      ]
+    }
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-17 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-17 vao codebase hien tai, trong do FE-15 single review va FE-16 feedback da ton tai o `ClassifiedAds.Modules.TestGeneration`. Muc tieu la them hoac hoan thien bulk approve/reject semantics tren durable `LlmSuggestion` rows ma khong tao schema moi.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T, Guid>, schema isolation, optimistic concurrency by RowVersion)"
+  },
+  "currentCodebaseSnapshot": {
+    "alreadyExistsFromEarlierFeatures": [
+      "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestion.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestionFeedback.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+      "ClassifiedAds.Migrator/Migrations/TestGeneration/*AddLlmSuggestions*.cs",
+      "ClassifiedAds.Migrator/Migrations/TestGeneration/*AddLlmSuggestionFeedback*.cs"
+    ],
+    "currentBranchSignalsForFe17": [
+      "ClassifiedAds.Modules.TestGeneration/Commands/BulkReviewLlmSuggestionsCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/BulkReviewLlmSuggestionsRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/BulkReviewLlmSuggestionsResultModel.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionReviewService.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionReviewService.cs",
+      "ClassifiedAds.UnitTests/TestGeneration/BulkReviewLlmSuggestionsCommandHandlerTests.cs"
+    ],
+    "missingOrNeedsVerificationForFe17": [
+      "Confirm the shared review service is fully reused by both FE-15 single review and FE-17 bulk review.",
+      "Confirm controller route, request model, result model, and logging align with the preferred FE-17 contract.",
+      "Confirm no accidental EF or Docker drift was introduced while adding FE-17."
+    ]
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. FE-17 tiep tuc nam trong `ClassifiedAds.Modules.TestGeneration` vi no la mo rong cua `LlmSuggestion` review lifecycle.",
+    "addedFilesIfMissing": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/BulkReviewLlmSuggestionsCommand.cs",
+        "description": "CQRS write path for batch approve/reject with filters."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/Requests/BulkReviewLlmSuggestionsRequest.cs",
+        "description": "Request body for the bulk-review endpoint."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/BulkReviewLlmSuggestionsResultModel.cs",
+        "description": "Summary result returned by FE-17 bulk review."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionReviewService.cs",
+        "description": "Shared review service contract reused by FE-15 and FE-17."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionReviewService.cs",
+        "description": "Shared implementation for single and batch review/materialization."
+      },
+      {
+        "path": "ClassifiedAds.UnitTests/TestGeneration/BulkReviewLlmSuggestionsCommandHandlerTests.cs",
+        "description": "Targeted unit tests for filter semantics and batch behavior."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+        "change": "Add or reconcile `POST bulk-review` endpoint on the existing suggestion controller."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+        "change": "Reuse the shared review service so single review and bulk review stay aligned."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "change": "Register the shared review service if not already registered."
+      }
+    ],
+    "expectedUnchangedFiles": [
+      "ClassifiedAds.Modules.TestGeneration/Persistence/TestGenerationDbContext.cs - no new `DbSet` expected",
+      "ClassifiedAds.Modules.LlmAssistant/ - no durable FE-17 state expected",
+      "ClassifiedAds.Migrator/ - no new FE-17 migration expected in the preferred design",
+      "ClassifiedAds.WebAPI/Dockerfile - no new project reference expected",
+      "ClassifiedAds.Background/Dockerfile - no new project reference expected",
+      "docker-compose.yml - no new runtime dependency expected"
+    ]
+  },
+  "workflowNotes": {
+    "selectionRules": [
+      "Select only `Pending` suggestions for the suite.",
+      "Apply optional `SuggestionType`, `TestType`, and `EndpointId` filters.",
+      "Order by `DisplayOrder` before batch processing."
+    ],
+    "approveRules": [
+      "Use `ApproveManyAsync` on the shared review service.",
+      "Create `TestCase` graph transactionally.",
+      "Create one `TestSuiteVersion` row for the batch.",
+      "Increment `MaxTestCasesPerSuite` once for the batch."
+    ],
+    "rejectRules": [
+      "Use `RejectManyAsync` on the shared review service.",
+      "Require `ReviewNotes`.",
+      "Do not create `TestCase` rows or `TestSuiteVersion` rows."
+    ]
+  },
+  "queryAndServiceGuidance": {
+    "mandatory": [
+      "Do not dispatch per-suggestion single-review commands in a loop from the bulk command handler.",
+      "Keep batch selection and ordering inside the bulk command handler or a dedicated helper if needed.",
+      "Keep service responsibilities clear: controller binds and dispatches, command handler selects, shared review service writes."
+    ],
+    "forbidden": [
+      "Creating a new bulk-review table or aggregate root just for FE-17.",
+      "Changing FE-16 feedback persistence/query semantics unless a real bug is found.",
+      "Adding EF migrations for FE-17 unless the implementation unexpectedly changes the model."
+    ]
+  },
+  "implementationSequence": [
+    "1. Reuse or harden shared review service",
+    "2. Add or reconcile bulk command + controller + request/result models",
+    "3. Add tests and verify no accidental migration or Docker drift"
+  ]
+}
