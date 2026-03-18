@@ -1,0 +1,209 @@
+{
+  "$schema": "ai-agent-task-prompt",
+  "version": "1.0.0",
+  "documentId": "prompt-implement-fe17",
+  "task": {
+    "id": "FE-17",
+    "title": "Implement FE-17 - Bulk Review For LLM Suggestions",
+    "goal": "Add or complete filter-based bulk approve and bulk reject operations for durable `LlmSuggestion` rows without redesigning the existing FE-15 single-review flow or the FE-16 feedback flow."
+  },
+  "context": {
+    "repo": "GSP26SE43.ModularMonolith",
+    "techStack": [
+      ".NET 10",
+      "ASP.NET Core Web API",
+      "EF Core + PostgreSQL",
+      "CQRS via Dispatcher"
+    ],
+    "primaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "supportingModules": [
+      "ClassifiedAds.Modules.Subscription"
+    ],
+    "migrationProject": "ClassifiedAds.Migrator",
+    "importantCurrentState": [
+      "FE-15 already introduced durable `LlmSuggestion` rows, single-item review APIs, and materialization into real `TestCase` records.",
+      "FE-16 already introduced per-user `LlmSuggestionFeedback` and feedback-aware prompt refinement; FE-17 must stay additive to that work.",
+      "Current codebase or branch may already contain preliminary FE-17 files such as `BulkReviewLlmSuggestionsCommand`, `BulkReviewLlmSuggestionsRequest`, `BulkReviewLlmSuggestionsResultModel`, `ILlmSuggestionReviewService`, `LlmSuggestionReviewService`, and controller wiring. Inspect and reconcile before adding duplicate types."
+    ],
+    "readTheseFirst": [
+      "AGENTS.md",
+      "docs/features/FE-15-llm-suggestion-review/requirement.json",
+      "docs/features/FE-15-llm-suggestion-review/workflow.json",
+      "docs/features/FE-15-llm-suggestion-review/contracts.json",
+      "docs/features/FE-15-llm-suggestion-review/implementation-map.json",
+      "docs/features/FE-16-llm-feedback/README.md",
+      "docs/features/FE-16-llm-feedback/requirement.json",
+      "docs/features/FE-16-llm-feedback/workflow.json"
+    ]
+  },
+  "taskClassification": {
+    "expectedOverallClassification": [
+      "Application code only"
+    ],
+    "defaultExpectation": {
+      "touchesEfModelOrMigration": false,
+      "touchesModuleRegistrationOrProjectReferences": false,
+      "touchesDockerOrCompose": false,
+      "addsNewModule": false,
+      "addsNewRuntimeDependency": false
+    },
+    "agentRules": [
+      "Per `AGENTS.md`, do not assume migrations or Docker wiring are fine. Verify the conclusion and report it explicitly.",
+      "If implementation unexpectedly changes EF model, DbContext, seed data, or migrations, create the migration only in `ClassifiedAds.Migrator` and run migration verification.",
+      "If implementation unexpectedly adds a host reference, runtime dependency, or Docker wiring change, inspect Dockerfiles and `docker-compose.yml` and run the required compose verification."
+    ]
+  },
+  "defaultImplementationChoices": [
+    "Keep FE-17 entirely inside `ClassifiedAds.Modules.TestGeneration`.",
+    "Reuse durable `LlmSuggestion` rows created by FE-15; do not add a batch aggregate table.",
+    "Reuse `ILlmSuggestionReviewService` for materialization, audit, subscription checks, and suite-version updates instead of duplicating approval logic in the bulk command handler.",
+    "Support only `Approve` and `Reject` actions in FE-17 v1.",
+    "Select suggestions by `TestSuiteId` plus optional FE-15 style filters: `FilterBySuggestionType`, `FilterByTestType`, and `FilterByEndpointId`.",
+    "Process only suggestions whose `ReviewStatus` is `Pending`.",
+    "Keep batch execution deterministic by ordering matched suggestions by `DisplayOrder` before processing.",
+    "Return a summary result model instead of a per-item API roundtrip."
+  ],
+  "hardConstraints": [
+    "MUST build on top of FE-15 durable suggestion review instead of redesigning review storage.",
+    "MUST keep FE-17 additive to FE-15 and FE-16. Do not break single-item review or feedback APIs.",
+    "MUST NOT introduce new durable bulk-review tables, new cache state, or a new module unless a real blocker forces it.",
+    "MUST NOT dispatch one single-review command per suggestion from the bulk endpoint. Load the matched rows once and process them as one bulk workflow.",
+    "MUST validate suite ownership using the same suite-owner rule already used by FE-15 and FE-16.",
+    "MUST reject unsupported actions. FE-17 v1 accepts only `Approve` and `Reject`.",
+    "MUST require `ReviewNotes` when bulk action is `Reject`.",
+    "MUST leave already-reviewed or superseded suggestions untouched by selecting only `Pending` rows.",
+    "MUST use ASCII in new files."
+  ],
+  "architectureToImplement": {
+    "bulkReviewEndpoint": {
+      "route": "POST /api/test-suites/{suiteId:guid}/llm-suggestions/bulk-review",
+      "permission": "Permission:UpdateTestCase",
+      "requestModel": "BulkReviewLlmSuggestionsRequest",
+      "responseModel": "BulkReviewLlmSuggestionsResultModel",
+      "supportedActions": [
+        "Approve",
+        "Reject"
+      ],
+      "selectionRules": [
+        "Always scope by `TestSuiteId`.",
+        "Only match `ReviewStatus=Pending` suggestions.",
+        "Apply optional filters for suggestion type, test type, and endpoint id.",
+        "Order matched suggestions by `DisplayOrder` before processing.",
+        "If no suggestions match, return `200 OK` with zero counts and no side effects."
+      ]
+    },
+    "approveFlow": [
+      "Validate suite existence and suite ownership.",
+      "Load all matching pending suggestions in one query.",
+      "Pass the batch to `ILlmSuggestionReviewService.ApproveManyAsync(...)`.",
+      "Reuse the same materialization semantics as FE-15: create `TestCase`, `TestCaseRequest`, `TestCaseExpectation`, `TestCaseVariable`, `TestCaseChangeLog`, and `TestSuiteVersion` records transactionally.",
+      "Increment `MaxTestCasesPerSuite` usage once for the whole batch.",
+      "Return summary fields including processed suggestion ids and applied test case ids."
+    ],
+    "rejectFlow": [
+      "Validate suite existence and suite ownership.",
+      "Load all matching pending suggestions in one query.",
+      "Require non-empty `ReviewNotes`.",
+      "Pass the batch to `ILlmSuggestionReviewService.RejectManyAsync(...)`.",
+      "Update suggestion review metadata without materializing any `TestCase` rows.",
+      "Return summary fields with zero `MaterializedCount`."
+    ],
+    "resultContract": {
+      "fields": [
+        "TestSuiteId",
+        "Action",
+        "MatchedCount",
+        "ProcessedCount",
+        "MaterializedCount",
+        "ReviewedAt",
+        "SuggestionIds",
+        "AppliedTestCaseIds"
+      ],
+      "rules": [
+        "`MatchedCount` and `ProcessedCount` should be identical in the v1 all-or-nothing flow.",
+        "`AppliedTestCaseIds` should be empty for bulk reject.",
+        "`MaterializedCount` should equal the number of created test cases for bulk approve."
+      ]
+    },
+    "leaveUnchangedUnlessBlocked": [
+      "FE-15 single review endpoint and request/response contracts.",
+      "FE-16 feedback persistence and feedback-summary query wiring.",
+      "`ClassifiedAds.Modules.LlmAssistant` and prompt-refinement services.",
+      "Host `Program.cs`, Dockerfiles, and `docker-compose.yml` unless a real new dependency is introduced."
+    ],
+    "outOfScope": [
+      "Bulk modify-and-approve with per-item edited payloads.",
+      "Bulk feedback submission across many suggestions.",
+      "A new UI implementation.",
+      "A background job or queue-based bulk processor.",
+      "A new module, host, cache backend, or runtime dependency."
+    ]
+  },
+  "expectedFiles": {
+    "inspectFirst": [
+      "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestion.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionReviewService.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionReviewService.cs"
+    ],
+    "likelyArtifacts": [
+      "ClassifiedAds.Modules.TestGeneration/Commands/BulkReviewLlmSuggestionsCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/BulkReviewLlmSuggestionsRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/BulkReviewLlmSuggestionsResultModel.cs",
+      "ClassifiedAds.UnitTests/TestGeneration/BulkReviewLlmSuggestionsCommandHandlerTests.cs"
+    ]
+  },
+  "tests": {
+    "requiredGroups": [
+      "BulkReviewLlmSuggestionsCommandHandlerTests"
+    ],
+    "recommendedGroups": [
+      "ReviewLlmSuggestionCommandHandlerTests"
+    ],
+    "mustCover": [
+      "owner validation",
+      "suite not found",
+      "invalid action rejected",
+      "invalid suggestion-type filter rejected",
+      "invalid test-type filter rejected",
+      "bulk reject requires review notes",
+      "approve only processes matching pending suggestions",
+      "reject only processes matching pending suggestions",
+      "zero-match path returns zero counts",
+      "approve path materializes test cases and updates suite version once",
+      "reject path does not materialize test cases",
+      "approve path increments subscription usage once for the batch",
+      "result model contains processed suggestion ids and applied test case ids"
+    ]
+  },
+  "verification": {
+    "requiredCommands": [
+      "dotnet test 'ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj' --no-restore --filter 'FullyQualifiedName~BulkReviewLlmSuggestionsCommandHandlerTests'",
+      "dotnet build 'ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj' --no-restore"
+    ],
+    "conditionalCommands": [
+      "If shared single-review logic changed, also run: dotnet test 'ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj' --no-restore --filter 'FullyQualifiedName~ReviewLlmSuggestionCommandHandlerTests'",
+      "If EF-related files changed unexpectedly, run: dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore",
+      "If EF-related files changed unexpectedly, run: dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations'",
+      "If Docker-related files changed, run: docker compose config",
+      "If `ClassifiedAds.Migrator/Dockerfile` changed, run: docker compose build migrator",
+      "If `ClassifiedAds.WebAPI/Dockerfile` changed, run: docker compose build webapi",
+      "If `ClassifiedAds.Background/Dockerfile` changed, run: docker compose build background"
+    ],
+    "dockerRegistrationCheck": [
+      "Inspect `ClassifiedAds.Migrator/Dockerfile`, `ClassifiedAds.WebAPI/Dockerfile`, `ClassifiedAds.Background/Dockerfile`, and `docker-compose.yml` even if no change is expected.",
+      "Report explicitly whether FE-17 required any Docker or compose update."
+    ]
+  },
+  "doneCriteria": [
+    "A bulk review endpoint exists on the existing `LlmSuggestionsController` surface.",
+    "FE-17 supports filter-based bulk approve and bulk reject for pending suggestions only.",
+    "Bulk approve reuses shared materialization logic and preserves FE-15 audit and suite-version behavior.",
+    "Bulk reject updates review metadata without creating test cases.",
+    "No unnecessary EF schema, module, Docker, or compose changes were introduced.",
+    "Targeted tests were added or updated and executed.",
+    "The final implementation report states whether migration verification was needed, whether Docker registration was checked, and whether any step was skipped."
+  ]
+}
