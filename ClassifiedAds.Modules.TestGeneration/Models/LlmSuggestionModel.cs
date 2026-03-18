@@ -40,6 +40,8 @@ public class LlmSuggestionModel
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
     public string RowVersion { get; set; }
+    public LlmSuggestionFeedbackModel CurrentUserFeedback { get; set; }
+    public LlmSuggestionFeedbackSummaryModel FeedbackSummary { get; set; }
 
     public static LlmSuggestionModel FromEntity(LlmSuggestion entity)
     {
