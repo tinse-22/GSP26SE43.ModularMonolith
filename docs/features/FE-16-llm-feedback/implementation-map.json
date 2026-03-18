@@ -2,7 +2,7 @@
   "$schema": "feature-specification",
   "version": "1.0.0",
   "title": "FE-16 - Implementation Map For Current Codebase",
-  "description": "Map truc tiep FE-16 vao codebase hien tai, trong do FE-15 da ton tai o `ClassifiedAds.Modules.TestGeneration`. Muc tieu la them user feedback cho tung `LlmSuggestion` va dua feedback da aggregate quay lai suggestion generation mot cach cache-safe.",
+  "description": "Map truc tiep FE-16 vao codebase hien tai, trong do FE-15 da ton tai o `ClassifiedAds.Modules.TestGeneration`. Muc tieu la them user feedback cho tung `LlmSuggestion`, aggregate feedback theo endpoint, va dua feedback da sanitize quay lai suggestion generation mot cach cache-safe thong qua payload enrichment + feedback fingerprint.",
   "part": "1/1 - Backend Implementation Map",
   "techStack": {
     "framework": ".NET 10 (ASP.NET Core Web API)",
@@ -96,15 +96,7 @@
       },
       {
         "path": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs",
-        "change": "Optional: add `FeedbackContext` or equivalent payload field per endpoint."
-      },
-      {
-        "path": "ClassifiedAds.Modules.TestGeneration/Algorithms/Models/EndpointPromptContext.cs",
-        "change": "Optional: add feedback context section if prompts are built in-process instead of only n8n payload."
-      },
-      {
-        "path": "ClassifiedAds.Modules.TestGeneration/Algorithms/ObservationConfirmationPromptBuilder.cs",
-        "change": "Optional: append sanitized feedback context into prompt text if the team wants repo-owned prompt refinement instead of only payload enrichment."
+        "change": "Add required `FeedbackContext` field per endpoint so feedback refinement stays outside the spec-only prompt builder."
       },
       {
         "path": "ClassifiedAds.Migrator/ - new migration under Migrations/TestGeneration",
@@ -113,6 +105,8 @@
     ],
     "expectedUnchangedFiles": [
       "ClassifiedAds.Modules.LlmAssistant/ - no durable feedback entity expected",
+      "ClassifiedAds.Modules.TestGeneration/Algorithms/Models/EndpointPromptContext.cs - feedback should not require widening this prompt-context type in the preferred design",
+      "ClassifiedAds.Modules.TestGeneration/Algorithms/ObservationConfirmationPromptBuilder.cs - keep spec/business-rule prompting focused unless payload enrichment is impossible",
       "ClassifiedAds.WebAPI/Program.cs - host wiring should already cover TestGeneration module",
       "ClassifiedAds.WebAPI/Dockerfile - no new project reference expected",
       "docker-compose.yml - no new runtime dependency expected"
@@ -130,19 +124,22 @@
     "notes": [
       "Feedback table nen denormalize `TestSuiteId` va `EndpointId` de aggregate nhanh theo suite/endpoint ma khong can join n qua lon.",
       "Can unique index cho `(SuggestionId, UserId)` de enforce upsert semantics.",
-      "Neu prompt refinement consume feedback context, `LlmScenarioSuggester.BuildCacheKey(...)` phai bao gom feedback fingerprint."
+      "`RowVersion` nen theo repo pattern hien tai: application-managed byte[] token duoc refresh bang `Guid.NewGuid().ToByteArray()` thay vi db-generated rowversion.",
+      "Neu prompt refinement consume feedback context, `LlmScenarioSuggester.BuildCacheKey(...)` phai bao gom feedback fingerprint duoc tao tu canonical aggregated output thay vi raw row order hay timestamp."
     ]
   },
   "queryOptimization": {
     "mandatory": [
       "List/detail queries filter theo `TestSuiteId` truoc, sau do moi nap feedback rows can thiet.",
       "Feedback context service phai aggregate theo endpoint va gioi han so note dua vao prompt.",
-      "Khong duoc query feedback tung suggestion trong loop neu co the lay theo batch."
+      "Khong duoc query feedback tung suggestion trong loop neu co the lay theo batch.",
+      "Feedback fingerprint phai duoc tao tu du lieu da normalize va sap xep on dinh."
     ],
     "forbidden": [
       "Luu helpful/not-helpful flag vao `LlmSuggestionCache`.",
       "Dua raw user IDs hoac note khong sanitize vao prompt context.",
-      "Thay doi FE-15 review command semantics khi chi can bo sung feedback."
+      "Thay doi FE-15 review command semantics khi chi can bo sung feedback.",
+      "Lam ban `ObservationConfirmationPromptBuilder` bang cach dua feedback free-form vao prompt spec neu payload-enrichment da du."
     ]
   },
   "implementationSequence": [
