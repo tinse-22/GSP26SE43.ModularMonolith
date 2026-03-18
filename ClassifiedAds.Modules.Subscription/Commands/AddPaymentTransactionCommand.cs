@@ -46,7 +46,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
     {
         if (command.SubscriptionId == Guid.Empty)
         {
-            throw new ValidationException("Ma dang ky la bat buoc.");
+            throw new ValidationException("Mã đăng ký là bắt buộc.");
         }
 
         command.Model ??= new AddPaymentTransactionModel();
@@ -55,12 +55,12 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
             _subscriptionRepository.GetQueryableSet().Where(x => x.Id == command.SubscriptionId));
         if (subscription == null)
         {
-            throw new NotFoundException($"Khong tim thay dang ky voi ma '{command.SubscriptionId}'.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId}'.");
         }
 
         if (command.UserId != Guid.Empty && subscription.UserId != command.UserId)
         {
-            throw new NotFoundException($"Khong tim thay dang ky voi ma '{command.SubscriptionId}'.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{command.SubscriptionId}'.");
         }
 
         var externalTxnId = command.Model.ExternalTxnId?.Trim();
@@ -97,7 +97,7 @@ public class AddPaymentTransactionCommandHandler : ICommandHandler<AddPaymentTra
         var amount = ResolveAmount(subscription, plan);
         if (amount <= 0)
         {
-            throw new ValidationException("So tien phai lon hon 0.");
+            throw new ValidationException("Số tiền phải lớn hơn 0.");
         }
 
         var transaction = new PaymentTransaction

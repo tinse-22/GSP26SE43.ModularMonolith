@@ -100,7 +100,7 @@ public class SubscriptionsController : ControllerBase
     {
         if (model == null)
         {
-            return BadRequest(new { Error = "Thong tin dang ky la bat buoc." });
+            return BadRequest(new { Error = "Thông tin đăng ký là bắt buộc." });
         }
 
         model.UserId = GetCurrentUserId();
@@ -130,7 +130,7 @@ public class SubscriptionsController : ControllerBase
     {
         if (model == null)
         {
-            return BadRequest(new { Error = "Thong tin dang ky la bat buoc." });
+            return BadRequest(new { Error = "Thông tin đăng ký là bắt buộc." });
         }
 
         var existingSubscription = await EnsureSubscriptionOwnershipAsync(id);
@@ -298,7 +298,7 @@ public class SubscriptionsController : ControllerBase
 
         if (!IsCurrentUserAdmin() && subscription.UserId != GetCurrentUserId())
         {
-            throw new NotFoundException($"Khong tim thay dang ky voi ma '{subscriptionId}'.");
+            throw new NotFoundException($"Không tìm thấy đăng ký với mã '{subscriptionId}'.");
         }
 
         return subscription;
@@ -312,7 +312,7 @@ public class SubscriptionsController : ControllerBase
 
         if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
         {
-            throw new ValidationException("Thong tin nguoi dung la bat buoc.");
+            throw new ValidationException("Thông tin người dùng là bắt buộc.");
         }
 
         return userId;

@@ -1,97 +1,97 @@
-# Bao cao Overview FE-10: Test Reporting And Export
+# Báo cáo Overview FE-10: Test Reporting And Export
 
-**Ngay kiem tra:** 16/03/2026  
-**Muc tieu:** Danh gia muc do san sang cua codebase cho FE-10 va chot huong implement phu hop nhat voi Modular Monolith hien tai.
-
----
-
-## 1. Danh gia chung (Trang thai: NEN TANG RAT TOT)
-
-Codebase hien tai co nen tang rat phu hop de implement FE-10 ma khong can pha vo kien truc:
-
-- `ClassifiedAds.Modules.TestReporting` da ton tai, da duoc wire vao `WebAPI` va `Migrator`.
-- Schema `testreporting` da co migration khoi tao cho `TestReports` va `CoverageMetrics`.
-- `Storage` da co contract gateway de upload/download file.
-- `TestExecution` da co deterministic run summary + cache-backed detailed results.
-- `Infrastructure` da co san HTML/PDF/CSV tooling (`RazorLight`, `DinkToPdf`, `CsvHelper`) va host da dang ky san.
-
-Noi ngan gon: FE-10 khong con la bai toan "thieu nen tang", ma la bai toan "thieu workflow va service layer".
+**Ngày kiểm tra:** 16/03/2026
+**Mục tiêu:** Đánh giá mức độ sẵn sàng của codebase cho FE-10 và chốt hướng implement phù hợp nhất với Modular Monolith hiện tại.
 
 ---
 
-## 2. Nhung diem codebase da san sang rat dung huong
+## 1. Đánh giá chung (Trạng thái: NỀN TẢNG RẤT TỐT)
 
-1. **Module va schema da co san**
-   - `TestReporting` da co `TestReport`, `CoverageMetric`, `DbContext`, `ServiceCollectionExtensions`, va migration initial.
-   - Dieu nay cho phep FE-10 v1 reuse 100% persistence shape hien tai ma khong can mo rong database.
+Codebase hiện tại có nền tảng rất phù hợp để implement FE-10 mà không cần phá vỡ kiến trúc:
 
-2. **Host wiring da dung pattern**
-   - `ClassifiedAds.WebAPI/Program.cs` da dang ky `AddTestReportingModule()` trong ca MVC chain va service chain.
-   - `ClassifiedAds.Migrator` da dang ky va migrate `TestReporting`.
+- `ClassifiedAds.Modules.TestReporting` đã tồn tại, đã được wire vào `WebAPI` và `Migrator`.
+- Schema `testreporting` đã có migration khởi tạo cho `TestReports` và `CoverageMetrics`.
+- `Storage` đã có contract gateway để upload/download file.
+- `TestExecution` đã có deterministic run summary + cache-backed detailed results.
+- `Infrastructure` đã có sẵn HTML/PDF/CSV tooling (`RazorLight`, `DinkToPdf`, `CsvHelper`) và host đã đăng ký sẵn.
 
-3. **Execution data da du kha dung**
-   - `TestRun` summary o PostgreSQL.
-   - `TestRunResultModel` va `TestCaseRunResultModel` da co day du thong tin cho report chi tiet.
-   - FE09 da chung minh pattern gateway doc `TestExecution` qua contract la dung va hop codebase.
-
-4. **Export infrastructure da co san**
-   - `IStorageFileGatewayService` da du de upload/download file.
-   - `IRazorLightEngine` va `IConverter` da duoc dang ky san trong host.
-   - `CsvHelper` da nam trong dependency graph cua repo.
+Nói ngắn gọn: FE-10 không còn là bài toán "thiếu nền tảng", mà là bài toán "thiếu workflow và service layer".
 
 ---
 
-## 3. Cac khoang trong can implement cho FE-10
+## 2. Những điểm codebase đã sẵn sàng rất đúng hướng
 
-Nhung phan hien tai van con thieu hoan toan:
+1. **Module và schema đã có sẵn**
+   - `TestReporting` đã có `TestReport`, `CoverageMetric`, `DbContext`, `ServiceCollectionExtensions`, và migration initial.
+   - Điều này cho phép FE-10 v1 reuse 100% persistence shape hiện tại mà không cần mở rộng database.
 
-1. **Khong co cross-module report read gateway**
-   - `TestReporting` chua co cach hop le de doc detailed run context tu `TestExecution`.
+2. **Host wiring đã đúng pattern**
+   - `ClassifiedAds.WebAPI/Program.cs` đã đăng ký `AddTestReportingModule()` trong cả MVC chain và service chain.
+   - `ClassifiedAds.Migrator` đã đăng ký và migrate `TestReporting`.
 
-2. **Khong co CQRS/API surface**
-   - Chua co `TestReportsController`.
-   - Chua co command/query cho generate, list, get metadata, download.
+3. **Execution data đã đủ khả dụng**
+   - `TestRun` summary ở PostgreSQL.
+   - `TestRunResultModel` và `TestCaseRunResultModel` đã có đầy đủ thông tin cho report chi tiết.
+   - FE09 đã chứng minh pattern gateway đọc `TestExecution` qua contract là đúng và hợp codebase.
 
-3. **Khong co report runtime**
-   - Chua co generator.
-   - Chua co coverage calculator.
-   - Chua co export sanitizer.
-   - Chua co renderer theo format.
-
-4. **Khong co file generation flow**
-   - Chua upload file qua `Storage` gateway.
-   - Chua persist metadata report sau khi render.
-
-5. **Khong co test slice cho TestReporting**
-   - Hien chua co namespace test rieng cho `ClassifiedAds.UnitTests.TestReporting`.
+4. **Export infrastructure đã có sẵn**
+   - `IStorageFileGatewayService` đã đủ để upload/download file.
+   - `IRazorLightEngine` và `IConverter` đã được đăng ký sẵn trong host.
+   - `CsvHelper` đã nằm trong dependency graph của repo.
 
 ---
 
-## 4. Huong implement de xuat (Khuyen nghi cho FE-10 v1)
+## 3. Các khoảng trống cần implement cho FE-10
 
-Huong phu hop nhat voi codebase hien tai la:
+Những phần hiện tại vẫn còn thiếu hoàn toàn:
 
-- FE-10 v1 nen la **synchronous on-demand API**.
-- Module chinh van la `ClassifiedAds.Modules.TestReporting`.
-- Doc run data qua contract moi `ITestRunReportReadGatewayService` trong `ClassifiedAds.Contracts/TestExecution`.
-- Tinh coverage theo **suite-scoped endpoints**, khong tinh theo full spec analytics o v1.
+1. **Không có cross-module report read gateway**
+   - `TestReporting` chưa có cách hợp lệ để đọc detailed run context từ `TestExecution`.
+
+2. **Không có CQRS/API surface**
+   - Chưa có `TestReportsController`.
+   - Chưa có command/query cho generate, list, get metadata, download.
+
+3. **Không có report runtime**
+   - Chưa có generator.
+   - Chưa có coverage calculator.
+   - Chưa có export sanitizer.
+   - Chưa có renderer theo format.
+
+4. **Không có file generation flow**
+   - Chưa upload file qua `Storage` gateway.
+   - Chưa persist metadata report sau khi render.
+
+5. **Không có test slice cho TestReporting**
+   - Hiện chưa có namespace test riêng cho `ClassifiedAds.UnitTests.TestReporting`.
+
+---
+
+## 4. Hướng implement đề xuất (Khuyến nghị cho FE-10 v1)
+
+Hướng phù hợp nhất với codebase hiện tại là:
+
+- FE-10 v1 nên là **synchronous on-demand API**.
+- Module chính vẫn là `ClassifiedAds.Modules.TestReporting`.
+- Đọc run data qua contract mới `ITestRunReportReadGatewayService` trong `ClassifiedAds.Contracts/TestExecution`.
+- Tính coverage theo **suite-scoped endpoints**, không tính theo full spec analytics ở v1.
 - Render:
-  - `JSON` bang `System.Text.Json`
-  - `CSV` bang `CsvHelper`
-  - `HTML` bang `RazorLight`
-  - `PDF` bang HTML -> `DinkToPdf`
+  - `JSON` bằng `System.Text.Json`
+  - `CSV` bằng `CsvHelper`
+  - `HTML` bằng `RazorLight`
+  - `PDF` bằng HTML -> `DinkToPdf`
 - Upload file qua `IStorageFileGatewayService`.
-- Reuse `Permission:GetTestRuns` de tranh mo rong auth seed trong v1.
-- Khong them migration, khong them worker, khong them queue export.
+- Reuse `Permission:GetTestRuns` để tránh mở rộng auth seed trong v1.
+- Không thêm migration, không thêm worker, không thêm queue export.
 
 ---
 
-## 5. Ket luan
+## 5. Kết luận
 
-FE-10 co the duoc implement rat "sach" tren codebase nay neu di theo 3 boundary ro rang:
+FE-10 có thể được implement rất "sạch" trên codebase này nếu đi theo 3 boundary rõ ràng:
 
-- `TestExecution` so huu run data
-- `TestReporting` so huu report orchestration + metadata
-- `Storage` so huu file binary
+- `TestExecution` sở hữu run data
+- `TestReporting` sở hữu report orchestration + metadata
+- `Storage` sở hữu file binary
 
-Bo tai lieu FE-10 da duoc tao theo mau FE-09 de AI Agent co the implement dung huong ma khong phai tu suy doan lai architecture.
+Bộ tài liệu FE-10 đã được tạo theo mẫu FE-09 để AI Agent có thể implement đúng hướng mà không phải tự suy đoán lại architecture.
