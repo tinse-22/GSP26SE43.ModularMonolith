@@ -43,12 +43,12 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{query.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
             suite.CreatedById == query.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
 
         var suggestion = await _suggestionRepository.FirstOrDefaultAsync(
             _suggestionRepository.GetQueryableSet()
@@ -56,7 +56,7 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
 
         if (suggestion == null)
         {
-            throw new NotFoundException($"Khong tim thay suggestion voi ma '{query.SuggestionId}'.");
+            throw new NotFoundException($"Không tìm thấy suggestion với mã '{query.SuggestionId}'.");
         }
 
         var feedbackRows = await _feedbackRepository.ToListAsync(

@@ -54,19 +54,19 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
         BulkReviewLlmSuggestionsCommand command,
         CancellationToken cancellationToken = default)
     {
-        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId la bat buoc.");
-        ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId la bat buoc.");
+        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId là bắt buộc.");
+        ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
 
         var isApprove = string.Equals(command.Action, "Approve", StringComparison.OrdinalIgnoreCase);
         var isReject = string.Equals(command.Action, "Reject", StringComparison.OrdinalIgnoreCase);
         var action = isApprove ? "Approve" : "Reject";
-        ValidationException.Requires(isApprove || isReject, "Action phai la 'Approve' hoac 'Reject'.");
+        ValidationException.Requires(isApprove || isReject, "Action phải là 'Approve' hoặc 'Reject'.");
 
         if (isReject)
         {
             ValidationException.Requires(
                 !string.IsNullOrWhiteSpace(command.ReviewNotes),
-                "ReviewNotes la bat buoc khi bulk reject suggestions.");
+                "ReviewNotes là bắt buộc khi bulk reject suggestions.");
         }
 
         LlmSuggestionType? filterBySuggestionType = null;
@@ -74,7 +74,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
         {
             ValidationException.Requires(
                 Enum.TryParse<LlmSuggestionType>(command.FilterBySuggestionType, true, out var parsedSuggestionType),
-                "FilterBySuggestionType khong hop le.");
+                "FilterBySuggestionType không hợp lệ.");
             filterBySuggestionType = parsedSuggestionType;
         }
 
@@ -83,7 +83,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
         {
             ValidationException.Requires(
                 Enum.TryParse<TestType>(command.FilterByTestType, true, out var parsedTestType),
-                "FilterByTestType khong hop le.");
+                "FilterByTestType không hợp lệ.");
             filterByTestType = parsedTestType;
         }
 
@@ -93,12 +93,12 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{command.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
             suite.CreatedById == command.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
 
         var queryable = _suggestionRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == command.TestSuiteId

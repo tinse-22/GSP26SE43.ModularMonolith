@@ -88,7 +88,7 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
 
         ValidationException.Requires(
             suite.CreatedById == command.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
 
         var suggestion = await _suggestionRepository.FirstOrDefaultAsync(
             _suggestionRepository.GetQueryableSet()

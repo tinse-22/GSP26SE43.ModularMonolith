@@ -56,7 +56,7 @@ public static class ApiTestOrderModelMapper
     {
         if (string.IsNullOrWhiteSpace(rowVersion))
         {
-            throw new ValidationException("rowVersion la bat buoc.");
+            throw new ValidationException("rowVersion là bắt buộc.");
         }
 
         try
@@ -65,7 +65,7 @@ public static class ApiTestOrderModelMapper
         }
         catch (FormatException ex)
         {
-            throw new ValidationException("rowVersion khong dung dinh dang base64.", ex);
+            throw new ValidationException("rowVersion không đúng định dạng base64.", ex);
         }
     }
 
