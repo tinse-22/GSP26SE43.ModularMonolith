@@ -1,0 +1,233 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-15 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-15 vao codebase Modular Monolith hien tai. Muc tieu la them durable review workflow cho LLM suggestions ma van reuse toi da FE-06 suggestion pipeline va khong pha boundary giua TestGeneration va LlmAssistant.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation, cross-module services, optimistic concurrency by RowVersion)"
+  },
+  "currentCodebaseSnapshot": {
+    "testGeneration": {
+      "exists": [
+        "Entities/TestSuite.cs",
+        "Entities/TestCase.cs",
+        "Entities/TestCaseRequest.cs",
+        "Entities/TestCaseExpectation.cs",
+        "Entities/TestCaseVariable.cs",
+        "Entities/TestCaseChangeLog.cs",
+        "Entities/TestSuiteVersion.cs",
+        "Controllers/TestCasesController.cs",
+        "Commands/GenerateBoundaryNegativeTestCasesCommand.cs",
+        "Services/BoundaryNegativeTestCaseGenerator.cs",
+        "Services/LlmScenarioSuggester.cs"
+      ],
+      "missingForFe15": [
+        "Durable entity/table cho tung LLM suggestion dang cho review",
+        "Preview/list/get/review API surface",
+        "Review command handler voi transactional materialization",
+        "Shared materializer/factory de dung chung cho FE-06 va FE-15"
+      ]
+    },
+    "llmAssistant": {
+      "exists": [
+        "Entities/LlmInteraction.cs",
+        "Entities/LlmSuggestionCache.cs",
+        "Services/LlmAssistantGatewayService.cs"
+      ],
+      "usageForFe15": [
+        "Raw suggestion cache + interaction audit da co san thong qua FE-06 pipeline",
+        "Khong can them durable review entity vao LlmAssistant"
+      ]
+    },
+    "subscription": {
+      "exists": [
+        "Contracts/Subscription/Services/ISubscriptionLimitGatewayService.cs"
+      ],
+      "usageForFe15": [
+        "Check/increment LLM usage cho generate preview",
+        "Check/increment test case usage cho approve/modify"
+      ]
+    }
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. FE-15 duoc dat trong `ClassifiedAds.Modules.TestGeneration` de gan voi test suite lifecycle va tranh write cross-module tu LlmAssistant vao test-case persistence.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestion.cs",
+        "description": "Durable suggestion row cho review workflow."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/DbConfigurations/LlmSuggestionConfiguration.cs",
+        "description": "Map table `LlmSuggestions`, jsonb columns, indexes, concurrency fields."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+        "description": "Generate preview, list, get detail, review single suggestion."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/GenerateLlmSuggestionPreviewCommand.cs",
+        "description": "CQRS command tao durable pending suggestions cho suite."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+        "description": "CQRS command approve/reject/modify suggestion."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+        "description": "List suggestions theo suite + filters."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs",
+        "description": "Get preview detail cho mot suggestion."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/LlmSuggestionModel.cs",
+        "description": "API response model cho suggestion preview/detail."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/GenerateLlmSuggestionPreviewResultModel.cs",
+        "description": "Summary result model cho generate preview endpoint."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/Requests/GenerateLlmSuggestionPreviewRequest.cs",
+        "description": "API request model cho preview generation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/Requests/ReviewLlmSuggestionRequest.cs",
+        "description": "API request model cho approve/reject/modify."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionMaterializer.cs",
+        "description": "Shared factory/materializer contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionMaterializer.cs",
+        "description": "Concrete shared mapper tu suggestion payload sang `TestCase` graph."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Persistence/TestGenerationDbContext.cs",
+        "change": "Add `DbSet<LlmSuggestion>`."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "change": "Register repository/service/controller wiring for FE-15."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/BoundaryNegativeTestCaseGenerator.cs",
+        "change": "Refactor de reuse `ILlmSuggestionMaterializer` cho FE-06 LLM suggestion materialization."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+        "change": "Optional: add a `ForceRefresh` or similar option neu can bypass raw cache explicitly."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+        "change": "Optional: honor cache bypass flag while keeping default behavior unchanged."
+      },
+      {
+        "path": "ClassifiedAds.Migrator/ - new migration under Migrations/TestGeneration",
+        "change": "Add migration for `LlmSuggestion` table only."
+      }
+    ],
+    "unchangedFiles": [
+      "ClassifiedAds.Modules.LlmAssistant/ - no new controller or durable review entity required for FE-15 v1.",
+      "ClassifiedAds.WebAPI/Program.cs - host already wires `TestGeneration` and `LlmAssistant`.",
+      "docker-compose.yml - no runtime dependency change expected.",
+      "ClassifiedAds.WebAPI/Dockerfile - no new project reference expected."
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "newMigrationRequired": true,
+    "targetContext": "TestGenerationDbContext",
+    "suggestedMigrationName": "AddLlmSuggestions",
+    "schemasUsed": [
+      "testgen.LlmSuggestions",
+      "testgen.TestCases",
+      "testgen.TestCaseRequests",
+      "testgen.TestCaseExpectations",
+      "testgen.TestCaseVariables",
+      "testgen.TestCaseChangeLogs",
+      "testgen.TestSuiteVersions",
+      "llmassistant.LlmInteractions",
+      "llmassistant.LlmSuggestionCaches"
+    ],
+    "notes": [
+      "`LlmSuggestion` nen co jsonb columns cho request/expectation/variables/tags/modifiedContent de giam schema churn.",
+      "Index toi thieu can co cho `(TestSuiteId, ReviewStatus)`, `EndpointId`, `CacheKey`, va `AppliedTestCaseId`.",
+      "Khong dung `LlmSuggestionCache` lam review table vi cache row co ttl va co the gom nhieu suggestions trong mot blob JSON."
+    ]
+  },
+  "queryOptimization": {
+    "mandatory": [
+      "List query phai filter theo `TestSuiteId` truoc, roi moi apply `ReviewStatus`, `TestType`, `EndpointId`.",
+      "Khong duoc goi LLM khi GET list/get detail/review.",
+      "Generate preview phai reuse raw cache behavior cua `ILlmScenarioSuggester` thay vi tu build mot cache layer moi."
+    ],
+    "forbidden": [
+      "Luu review state vao `llmassistant.LlmSuggestionCaches`.",
+      "Duplicate logic map request/expectation/variables o ca FE-06 va FE-15.",
+      "Sua behavior FE-06 direct-generation de auto-route qua FE-15 ma khong co ly do product ro rang."
+    ]
+  },
+  "flows": [
+    {
+      "name": "Generate Preview",
+      "steps": [
+        "1. Controller dispatch GenerateLlmSuggestionPreviewCommand.",
+        "2. Handler validate suite ownership + approved order + LLM usage limit.",
+        "3. Handler call `ILlmScenarioSuggester`.",
+        "4. Handler supersede pending rows cu va insert pending `LlmSuggestion` rows moi.",
+        "5. Return summary model."
+      ]
+    },
+    {
+      "name": "Review Suggestion",
+      "steps": [
+        "1. Controller dispatch ReviewLlmSuggestionCommand.",
+        "2. Handler load suite + suggestion + validate rowVersion.",
+        "3. Reject -> update review fields only.",
+        "4. Approve/Modify -> materialize `TestCase` graph qua shared materializer.",
+        "5. Persist transaction: test case graph + change log + suite version + suggestion state."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Co migration moi cho `LlmSuggestion` va migration freshness verify pass.",
+    "Khong pha behavior FE-06 hien co.",
+    "Khong tao write dependency truc tiep tu LlmAssistant vao TestGeneration tables.",
+    "Khong mo them Docker wiring vi khong co host/module reference moi; nhung phai xac nhan dieu nay trong final report khi implement."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "GenerateLlmSuggestionPreviewCommandHandlerTests (ownership, archived suite, gate fail, cache hit path, persistence of pending rows).",
+      "GetLlmSuggestionsQueryHandlerTests (filters by status/testType/endpoint).",
+      "GetLlmSuggestionDetailQueryHandlerTests (not found, ownership, payload mapping).",
+      "ReviewLlmSuggestionCommandHandlerTests (approve, reject, modify, concurrency conflict, idempotent approve).",
+      "LlmSuggestionMaterializerTests (raw payload -> TestCase graph, modified payload overrides, tags/priority/testType mapping).",
+      "BoundaryNegativeTestCaseGeneratorTests (ensure FE-06 still works after shared materializer refactor)."
+    ],
+    "integrationTests": [
+      "Optional thin controller tests cho route + permission attributes neu repo dang co pattern nay.",
+      "Optional migration snapshot verification test if team keeps snapshot assertions."
+    ]
+  },
+  "knownTradeoffs": [
+    "FE-15 v1 dung 1 durable `LlmSuggestion` entity thay vi them batch/proposal aggregate rieng. Grouping history duoc giai quyet bang `CacheKey` va `Superseded` rows.",
+    "Generate preview co the van check LLM usage limit ngay ca khi raw suggestion cache hit, neu muon giu pattern don gian giong FE-06.",
+    "Rule-based path/body mutations van nam ngoai FE-15 review flow de tranh mo rong scope khong can thiet."
+  ],
+  "implementationSequence": [
+    "1. Entity + configuration + migration",
+    "2. Shared materializer extraction",
+    "3. Generate preview command",
+    "4. List/detail queries",
+    "5. Review command",
+    "6. Tests + migrator verification"
+  ]
+}

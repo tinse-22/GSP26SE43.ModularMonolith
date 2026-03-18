@@ -42,17 +42,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IObservationConfirmationPromptBuilder _promptBuilder;
     private readonly IN8nIntegrationService _n8nService;
     private readonly ILlmAssistantGatewayService _llmGatewayService;
+    private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
     public LlmScenarioSuggester(
         IObservationConfirmationPromptBuilder promptBuilder,
         IN8nIntegrationService n8nService,
         ILlmAssistantGatewayService llmGatewayService,
+        ILlmSuggestionFeedbackContextService feedbackContextService,
         ILogger<LlmScenarioSuggester> logger)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
+        _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -64,14 +67,25 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             "Starting LLM scenario suggestion. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}",
             context.TestSuiteId, context.OrderedEndpoints.Count);
 
+        var feedbackContext = await BuildFeedbackContextSafeAsync(context, cancellationToken);
+
         // Step 1: Check cache for each endpoint
-        var cacheKey = BuildCacheKey(context);
+        var cacheKey = BuildCacheKey(context, feedbackContext.FeedbackFingerprint);
+        _logger.LogInformation(
+            "Prepared LLM suggestion cache input. TestSuiteId={TestSuiteId}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}, EndpointCount={EndpointCount}",
+            context.TestSuiteId,
+            feedbackContext.FeedbackFingerprint,
+            cacheKey,
+            context.OrderedEndpoints.Count);
         var cachedResult = await TryGetCachedResultAsync(context, cacheKey, cancellationToken);
         if (cachedResult != null)
         {
             _logger.LogInformation(
-                "Using cached LLM scenario suggestions. TestSuiteId={TestSuiteId}, ScenarioCount={Count}",
-                context.TestSuiteId, cachedResult.Scenarios.Count);
+                "Using cached LLM scenario suggestions. TestSuiteId={TestSuiteId}, ScenarioCount={Count}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+                context.TestSuiteId,
+                cachedResult.Scenarios.Count,
+                feedbackContext.FeedbackFingerprint,
+                cacheKey);
             return cachedResult;
         }
 
@@ -86,12 +100,15 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         var prompts = _promptBuilder.BuildForSequence(promptContexts);
 
         // Step 3: Build n8n payload
-        var payload = BuildN8nPayload(context, metadataMap, prompts);
+        var payload = BuildN8nPayload(context, metadataMap, prompts, feedbackContext.EndpointFeedbackContexts);
 
         // Step 4: Call n8n webhook
         _logger.LogInformation(
-            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}",
-            N8nWebhookNames.GenerateBoundaryNegative, context.TestSuiteId);
+            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+            N8nWebhookNames.GenerateBoundaryNegative,
+            context.TestSuiteId,
+            feedbackContext.FeedbackFingerprint,
+            cacheKey);
 
         var stopwatch = Stopwatch.StartNew();
         var n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
@@ -110,8 +127,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         await CacheResultsAsync(context, cacheKey, scenarios, cancellationToken);
 
         _logger.LogInformation(
-            "LLM scenario suggestion complete. TestSuiteId={TestSuiteId}, ScenarioCount={Count}, Model={Model}, TokensUsed={Tokens}, LatencyMs={LatencyMs}",
-            context.TestSuiteId, scenarios.Count, n8nResponse?.Model, n8nResponse?.TokensUsed, latencyMs);
+            "LLM scenario suggestion complete. TestSuiteId={TestSuiteId}, ScenarioCount={Count}, Model={Model}, TokensUsed={Tokens}, LatencyMs={LatencyMs}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+            context.TestSuiteId,
+            scenarios.Count,
+            n8nResponse?.Model,
+            n8nResponse?.TokensUsed,
+            latencyMs,
+            feedbackContext.FeedbackFingerprint,
+            cacheKey);
 
         return new LlmScenarioSuggestionResult
         {
@@ -169,7 +192,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private N8nBoundaryNegativePayload BuildN8nPayload(
         LlmScenarioSuggestionContext context,
         Dictionary<Guid, ApiEndpointMetadataDto> metadataMap,
-        IReadOnlyList<ObservationConfirmationPrompt> prompts)
+        IReadOnlyList<ObservationConfirmationPrompt> prompts,
+        IReadOnlyDictionary<Guid, string> endpointFeedbackContexts)
     {
         var endpointPayloads = new List<N8nBoundaryEndpointPayload>();
 
@@ -201,9 +225,13 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 OperationId = metadata?.OperationId,
                 OrderIndex = orderItem.OrderIndex,
                 BusinessContext = businessContext,
+                FeedbackContext = endpointFeedbackContexts.TryGetValue(orderItem.EndpointId, out var feedbackContext)
+                    ? feedbackContext
+                    : string.Empty,
                 Prompt = promptPayload,
                 ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
                 ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
             });
         }
 
@@ -237,6 +265,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
             Priority = s.Priority,
             Tags = s.Tags ?? new List<string>(),
+            Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
         }).ToList();
     }
 
@@ -308,14 +337,67 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
     }
 
-    private static string BuildCacheKey(LlmScenarioSuggestionContext context)
+    private static List<N8nParameterDetail> BuildParameterDetails(
+        LlmScenarioSuggestionContext context, Guid endpointId)
     {
-        // Include suite ID + specification ID + endpoint IDs to produce a unique cache key
+        if (context.EndpointParameterDetails == null ||
+            !context.EndpointParameterDetails.TryGetValue(endpointId, out var detail) ||
+            detail.Parameters == null)
+        {
+            return new List<N8nParameterDetail>();
+        }
+
+        return detail.Parameters.Select(p => new N8nParameterDetail
+        {
+            Name = p.Name,
+            Location = p.Location,
+            DataType = p.DataType,
+            Format = p.Format,
+            IsRequired = p.IsRequired,
+            DefaultValue = p.DefaultValue,
+        }).ToList();
+    }
+
+    private async Task<LlmSuggestionFeedbackContextResult> BuildFeedbackContextSafeAsync(
+        LlmScenarioSuggestionContext context,
+        CancellationToken cancellationToken)
+    {
+        var endpointIds = context.OrderedEndpoints
+            .Select(x => x.EndpointId)
+            .Distinct()
+            .ToArray();
+
+        if (endpointIds.Length == 0)
+        {
+            return LlmSuggestionFeedbackContextResult.Empty;
+        }
+
+        try
+        {
+            return await _feedbackContextService.BuildAsync(context.TestSuiteId, endpointIds, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to build feedback context. Falling back to empty feedback. TestSuiteId={TestSuiteId}",
+                context.TestSuiteId);
+            return LlmSuggestionFeedbackContextResult.Empty;
+        }
+    }
+
+    private static string BuildCacheKey(LlmScenarioSuggestionContext context, string feedbackFingerprint)
+    {
         var sb = new StringBuilder();
         sb.Append(context.TestSuiteId).Append(':');
         sb.Append(context.SpecificationId).Append(':');
-        foreach (var ep in context.OrderedEndpoints.OrderBy(e => e.EndpointId))
+        sb.Append(string.IsNullOrWhiteSpace(feedbackFingerprint)
+            ? LlmSuggestionFeedbackContextResult.Empty.FeedbackFingerprint
+            : feedbackFingerprint);
+        sb.Append(':');
+        foreach (var ep in context.OrderedEndpoints)
         {
+            sb.Append(ep.OrderIndex).Append('|');
             sb.Append(ep.EndpointId).Append(',');
         }
 

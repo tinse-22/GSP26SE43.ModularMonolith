@@ -1,224 +1,124 @@
 # Feature (FE) Completion Tracker
 
-> **Last Updated:** 2026-02-28
-> **Purpose:** Theo dõi trạng thái hoàn thành của từng Feature (FE) trong PROJECT_REQUIREMENTS.md
-> **Maintained by:** AI Agents & Developers
+> Last Updated: 2026-03-15
+> Audit Basis: code audit across modules + targeted test verification
+> Latest Verification: `dotnet test 'ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj' --no-restore --filter 'FullyQualifiedName~ClassifiedAds.UnitTests.TestExecution'` -> Passed 116/116
+> Note: FE-05 is tracked as one feature here and includes FE-05A (order workflow) + FE-05B (happy-path generation).
 
 ---
 
-## Summary
+## Snapshot
 
 | Status | Count | % |
-|--------|-------|----|
-| ✅ Completed | 10 | 59% |
-| 🔨 In Progress | 1 | 6% |
-| 📋 Skeleton Only | 3 | 17% |
-| ❌ Not Started | 3 | 18% |
-| **Total** | **17** | |
+|---|---:|---:|
+| Completed | 12 | 71% |
+| In Progress | 0 | 0% |
+| Skeleton | 2 | 12% |
+| Not Started | 3 | 18% |
+| Total | 17 | 100% |
 
-> FE-05 tách thành FE-05A + FE-05B trong bảng chi tiết nhưng tính là 1 feature trong Summary.
+Overall implementation-weighted progress: ~86%
 
-**Overall Weighted Progress: ~70%**
-
----
-
-## Recommended Implementation Sequence (Remaining Work)
-
-Chỉ liệt kê các FE chưa hoàn thành. Thứ tự dựa trên dependency chain thực tế.
-
-| Phase | FE | Deliverable | Trọng số | Why this order |
-|------|----|-------------|----------|----------------|
-| 1 | **FE-07 + FE-08** | Test execution engine + rule-based validation | Critical | Core value: chạy test + đánh giá pass/fail — phần nặng nhất còn lại |
-| 2 | **FE-09** | LLM failure explanations | Medium | Cần kết quả fail từ FE-07/08 làm input |
-| 3 | **FE-10** | Reports + PDF/CSV export | Medium | Cần execution results từ FE-07/08 |
-| 4 | **FE-15 → FE-16 → FE-17** | LLM suggestion review/feedback/bulk | Low | Review loop cuối cùng, không blocking |
-
-### Mandatory User Flow (End-to-End)
-
-```
-1.  User uploads OpenAPI/Postman/manual source          → FE-02/03/11/13 ✅
-2.  System async-parses spec into endpoints/params      → FE-03-03 ✅
-3.  User configures test scope & execution environment  → FE-04 ✅
-4.  System proposes API test order (algorithm-based)     → FE-05A ✅
-5.  User verifies and reorders API sequence             → FE-05A ✅
-6.  System saves confirmed order snapshot               → FE-05A ✅
-7.  System generates happy-path test cases              → FE-05B ✅
-8.  System generates boundary/negative cases            → FE-06 ✅
-9.  System executes tests with dependency chaining      → FE-07 🔨
-10. System validates results (rule-based pass/fail)     → FE-08 📋
-11. LLM explains failures                              → FE-09 📋
-12. System generates reports + export                   → FE-10 📋
-13. User reviews/approves/rejects LLM suggestions       → FE-15/16/17 ❌
-```
+Why weighted progress is higher than completion count:
+- Most core and high-weight features are already done, including generation, execution, and rule-based validation.
+- The biggest remaining gaps are post-execution experience features: failure explanation, reporting/export, and LLM review workflow.
 
 ---
 
-## Feature Completion Status
+## Current End-to-End Product Flow
 
-### 5.1 Authentication & Authorization
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-01** | User authentication & role-based access control | Identity | ✅ Completed | `feature/identity-implementation` | 2026-02-07 | 3 controllers (AuthController 12 endpoints, UsersController 13 endpoints, RolesController 5 endpoints), JwtTokenService (JWT + refresh token rotation), InMemoryTokenBlacklistService, 3 rate-limiting policies, email confirmation, account lockout, avatar upload (magic byte validation), RBAC with claim-based authorization, external IdP support (Auth0, Azure AD B2C), permission seeding. 6 test files |
-
-### 5.2 API Input Management
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-02** | Upload, store, manage API input sources (OpenAPI/Swagger, Postman, Manual Entry) | ApiDocumentation | ✅ Completed | `feature/fe-02-subscription-management` | 2026-02-13 | 3 controllers (ProjectsController 7 endpoints, SpecificationsController 9 endpoints, EndpointsController 7 endpoints), 12 command handlers, 10 query handlers. Upload 10MB multipart/form-data, multi-format support (OpenAPI/Postman/Manual/cURL), specification lifecycle (Draft→Parsing→Parsed→Active), user-scoped project isolation, audit logging with field-level highlights |
-| **FE-03** | Parse & normalize API inputs into unified internal model | ApiDocumentation + Storage | ✅ Completed | `feature/FE-03-json-parsing-endpoints` | 2026-02-28 | **3 sub-features all ✅:** FE-03-01 Specification Management (9 endpoints), FE-03-02 Endpoint Management (7 endpoints), FE-03-03 Parser Flow (async parsing). **Parser Flow:** OpenApiSpecificationParser (System.Text.Json, Swagger 2.0 + OpenAPI 3.x), PostmanSpecificationParser (nested folders, auth, variables normalization), ParseUploadedSpecificationCommand (idempotency guard via ParseStatus, replace-all children in transaction, structured error handling), SpecOutboxMessagePublisher dispatches SPEC_UPLOADED → parse, IStorageFileGatewayService.DownloadAsync cross-module contract, ISpecificationParser interface + 6 result models. **39 unit tests** (12 OpenAPI + 16 Postman + 11 CommandHandler), all passing. Entities: ApiSpecification, ApiEndpoint, EndpointParameter, EndpointResponse, EndpointSecurityReq, SecurityScheme |
-
-### 5.3 Test Configuration
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-04** | Test scope & execution configuration | TestGeneration / TestExecution | ✅ Completed | `feature/FE-04-test-scope-configuration` | 2026-02-19 | **TestGeneration side:** TestSuitesController (CRUD + scope endpoints), AddUpdateTestSuiteScopeCommand, ArchiveTestSuiteScopeCommand, scope validation + fallback. **TestExecution side:** ExecutionEnvironmentsController (5 endpoints CRUD), AddUpdateExecutionEnvironmentCommand (313 lines, auth config validation), ExecutionAuthConfigService (Bearer/Basic/ApiKey/OAuth2), auth secret masking. Rowversion conflict handling, default environment transactional switch. 8 test files |
-
-### 5.4 Test Generation
-
-| FE ID | Feature | Sub-scope | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|-----------|--------|--------|--------|----------------|-------|
-| **FE-05A** | API test order proposal + user verify/reorder | Order workflow | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-24 | TestOrderController (6 endpoints: propose, latest, reorder, approve, reject, gate-status), 4 command handlers (Propose/Reorder/Approve/Reject), paper-based algorithms: DependencyAwareTopologicalSorter (Kahn's, KAT arXiv:2407.10227), SemanticTokenMatcher (5-tier matching, SPDG), SchemaRelationshipAnalyzer (Warshall's transitive closure), ObservationConfirmationPromptBuilder (COmbine/RBCTest arXiv:2504.17287). 7 test files |
-| **FE-05B** | Happy-path test case generation from approved order | Test case gen | TestGeneration | ✅ Completed | `feature/FE-05-test-generation-algorithms` | 2026-02-25 | TestCasesController (3 endpoints: generate, list, detail), GenerateHappyPathTestCasesCommand (gate check → subscription limit → n8n call → entity persistence → version bump), HappyPathTestCaseGenerator orchestrator, n8n webhook integration (IN8nIntegrationService), Observation-Confirmation prompt pipeline, TestCaseRequestBuilder (HTTP method/body type parsing), TestCaseExpectationBuilder (status/schema/checks), EndpointPromptContextMapper (global+endpoint business rules merge), ForceRegenerate support, dependency chain wiring. 47 unit tests (command handler + builders + mapper). 5 test files |
-| **FE-06** | Boundary & negative test case generation (rule-based + LLM) | Mutations + LLM scenarios | TestGeneration + LlmAssistant + ApiDocumentation | ✅ Completed | `feature/FE-03-json-parsing-endpoints` | 2026-02-28 | **3-source orchestrator:** BoundaryNegativeTestCaseGenerator combines (1) path param mutations via IPathParameterMutationGatewayService, (2) rule-based body mutations via BodyMutationEngine (6 strategies: emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum), (3) LLM-suggested scenarios via LlmScenarioSuggester + n8n webhook. **CQRS pipeline:** GenerateBoundaryNegativeTestCasesCommand (gate check → subscription limit incl. MaxLlmCallsPerMonth → force-regenerate → orchestrator → transaction persistence → version bump → usage increment). TestCasesController `generate-boundary-negative` endpoint. **Cross-module contracts:** IApiEndpointParameterDetailService (structured param access), IPathParameterMutationGatewayService (path mutation bridge), ILlmAssistantGatewayService (LLM interaction audit + suggestion caching). **DI:** BodyMutationEngine (Singleton), LlmScenarioSuggester + BoundaryNegativeTestCaseGenerator (Scoped). **41 unit tests** across 4 test files (BodyMutationEngineTests 10, LlmScenarioSuggesterTests 7, BoundaryNegativeTestCaseGeneratorTests 8, CommandHandlerTests 16), all passing. 25 new files + 6 modified files |
-
-### 5.4.1 LLM Suggestion Review
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-15** | LLM suggestion review interface (preview, approve, reject, modify) | TestGeneration + LlmAssistant | ❌ Not Started | — | — | No implementation yet |
-| **FE-16** | User feedback on LLM suggestions | TestGeneration + LlmAssistant | ❌ Not Started | — | — | No implementation yet |
-| **FE-17** | Bulk approval/rejection with filtering | TestGeneration + LlmAssistant | ❌ Not Started | — | — | No implementation yet |
-
-### 5.5 Test Execution
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-07** | Dependency-aware test execution with variable extraction | TestExecution | 🔨 In Progress | `feature/FE-04-test-scope-configuration` | — | ExecutionEnvironmentsController (5 endpoints CRUD), AddUpdateExecutionEnvironmentCommand + DeleteExecutionEnvironmentCommand, ExecutionAuthConfigService (Bearer/Basic/ApiKey/OAuth2), 2 query handlers. 3 test files. **Missing:** test run execution engine, HTTP client executor, test case runner with variable extraction, result collection, dependency chaining between test cases |
-| **FE-08** | Deterministic rule-based validation | TestExecution | 📋 Skeleton Only | — | — | Entity TestRun defined (status, counters, timestamps, foreign keys to TestSuite). No validation engine: no HTTP status verification, no response schema validation, no contract conformance checks, no assertion evaluation |
-
-### 5.6 LLM Assistance
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-09** | LLM-assisted failure explanations | LlmAssistant | 📋 Skeleton Only | — | — | Entities defined: LlmInteraction (interaction log), LlmSuggestionCache (suggestion caching with SuggestionType enum). LlmAssistantGatewayService added for FE-06 (interaction audit + suggestion caching). DbContext + repository boilerplate. No LLM API client, no prompt execution runtime, no failure analysis logic |
-
-### 5.7 Reporting
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-10** | Test execution reports (PDF/CSV export) | TestReporting | 📋 Skeleton Only | — | — | Entities: TestReport, CoverageMetric. DbContext + repository boilerplate only. No controllers, no commands, no queries, no services, no report generation logic, no export functionality |
-
-### 5.8 Manual Entry Mode
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-11** | Manual Entry mode for API definition | ApiDocumentation | ✅ Completed | `feature/fe-02-subscription-management` | 2026-02-13 | CreateManualSpecificationCommand with inline endpoint definitions, EndpointsController CRUD (AddUpdateEndpointCommand with replace-all children), subscription limit validation. 2 test files |
-| **FE-12** | Path-parameter templating | ApiDocumentation | ✅ Completed | `feature/FE-12-path-parameter-templating` | 2026-02-20 | PathParameterTemplateService (567 lines): ExtractPathParameters, ValidatePathParameterConsistency, ResolveUrl, GenerateMutations (6 strategies: empty, wrongType, boundary, SQL injection, XSS, overflow). GetResolvedUrlQuery + GetPathParamMutationsQuery. EndpointsController: 2 endpoints (GetResolvedUrl, GetPathParamMutations). 2 test files |
-| **FE-13** | cURL import | ApiDocumentation | ✅ Completed | `feature/fe-02-subscription-management` | 2026-02-13 | CurlParser static service (method, URL, headers, body, query params extraction), ImportCurlCommand with auto-activate option, subscription limit validation. 1 test file |
-
-### 5.9 Subscription & Billing
-
-| FE ID | Feature | Module | Status | Branch | Completed Date | Notes |
-|-------|---------|--------|--------|--------|----------------|-------|
-| **FE-14** | Subscription & billing management | Subscription | ✅ Completed | `feature/fe-02-subscription-management` | 2026-02-18 | 3 controllers (SubscriptionsController, PlansController, PaymentsController), 15 command handlers, 11 query handlers, PayOsService (HMAC-SHA256 + payment links + webhook verification), SubscriptionLimitGatewayService (262 lines, ConsumeLimitAtomically with Serializable transaction), background workers (PublishEventWorker, ReconcilePayOsCheckoutWorker). Entities: SubscriptionPlan, PlanLimit, UserSubscription, SubscriptionHistory, PaymentIntent, PaymentTransaction, UsageTracking. 16 test files |
+| Step | Requirement | Status | Notes |
+|---|---|---|---|
+| 1 | Upload and manage API sources | Completed | FE-02, FE-11, FE-13 |
+| 2 | Parse and normalize specs | Completed | FE-03 |
+| 3 | Configure suite scope and execution environment | Completed | FE-04 |
+| 4 | Propose and confirm API order | Completed | FE-05A |
+| 5 | Generate happy-path test cases | Completed | FE-05B |
+| 6 | Generate boundary and negative cases | Completed | FE-06 |
+| 7 | Execute dependency-aware test runs | Completed | FE-07 |
+| 8 | Apply deterministic pass/fail validation | Completed | FE-08 |
+| 9 | Explain failures with LLM | Remaining | FE-09 |
+| 10 | Generate reports and export files | Remaining | FE-10 |
+| 11 | Review, feedback, and bulk actions for LLM suggestions | Remaining | FE-15, FE-16, FE-17 |
 
 ---
 
-## Weighted Progress Breakdown
+## Recommended Next Requirements
 
-| FE | Feature | Weight | Completion | Weighted % |
-|----|---------|--------|------------|------------|
-| FE-01 | Auth & RBAC | 8% | 100% | 8.0% |
-| FE-02 | API Input Management | 8% | 100% | 8.0% |
-| FE-03 | Parse & Normalize | 6% | 100% | 6.0% |
-| FE-04 | Test Scope Config | 6% | 100% | 6.0% |
-| FE-05A | Test Order Proposal | 6% | 100% | 6.0% |
-| FE-05B | Happy-path Generation | 6% | 100% | 6.0% |
-| FE-06 | Boundary & Negative | 8% | 100% | 8.0% |
-| FE-07 | Test Execution | 10% | 20% | 2.0% |
-| FE-08 | Rule-based Validation | 8% | 0% | 0.0% |
-| FE-09 | LLM Failure Explanations | 5% | 5% | 0.3% |
-| FE-10 | Reports & Export | 5% | 5% | 0.3% |
-| FE-11 | Manual Entry | 4% | 100% | 4.0% |
-| FE-12 | Path Param Templating | 4% | 100% | 4.0% |
-| FE-13 | cURL Import | 3% | 100% | 3.0% |
-| FE-14 | Subscription & Billing | 8% | 100% | 8.0% |
-| FE-15 | LLM Review Interface | 2% | 0% | 0.0% |
-| FE-16 | User Feedback on LLM | 2% | 0% | 0.0% |
-| FE-17 | Bulk Approval/Rejection | 1% | 0% | 0.0% |
-| | | **100%** | | **~70%** |
+| Priority | FE | Recommendation | Why now |
+|---|---|---|---|
+| 1 | FE-09 | Build LLM-assisted failure explanation | FE-07 and FE-08 are now in place, so failure explanation has stable deterministic input. `LlmAssistant` already has interaction logging and suggestion caching primitives. |
+| 2 | FE-10 | Build reporting and export | This naturally follows completed execution/validation flows and can reuse persisted run summaries plus cached run details. |
+| 3 | FE-15 -> FE-16 -> FE-17 | Build the LLM review loop last | These features improve the feedback loop, but they do not block the core MVP workflow from spec -> tests -> execution -> validation. |
+
+Recommended default path for the next sprint:
+1. FE-09
+2. FE-10
+3. FE-15
+4. FE-16
+5. FE-17
+
+Lower-risk alternative:
+- If the next sprint should avoid LLM runtime work, do FE-10 before FE-09.
 
 ---
 
-## Module Implementation Summary
+## Feature Status
 
-| Module | FEs Covered | Completeness | Controllers | Commands | Queries | Tests | Key Components |
-|--------|-------------|--------------|-------------|----------|---------|-------|----------------|
-| **Identity** | FE-01 | ✅ Full | 3 (30 endpoints) | 9 | 5 | 6 files | JwtTokenService, TokenBlacklist, RBAC, Rate Limiting, External IdP |
-| **ApiDocumentation** | FE-02, FE-03, FE-11, FE-12, FE-13 | ✅ Full | 3 (23 endpoints) | 12 | 10 | 10 files | CurlParser, OpenApiParser, PostmanParser, PathParameterTemplateService, ApiEndpointMetadataService, SpecOutboxPublisher |
-| **TestGeneration** | FE-04, FE-05A, FE-05B, FE-06 | ✅ Full | 3 (16 endpoints) | 9 | 6 | 16 files | TopologicalSorter, SemanticTokenMatcher, SchemaRelationshipAnalyzer, PromptBuilder, HappyPathGenerator, BoundaryNegativeTestCaseGenerator, BodyMutationEngine, LlmScenarioSuggester, n8n integration |
-| **TestExecution** | FE-04, FE-07, FE-08 | 🔨 ~25% | 1 (5 endpoints) | 2 | 2 | 3 files | ExecutionAuthConfigService. Execution engine ❌, validation engine ❌ |
-| **Subscription** | FE-14 | ✅ Full | 3 (15 endpoints) | 15 | 11 | 16 files | PayOsService, LimitGateway, ConsumeLimitAtomically, ReconcileWorker |
-| **LlmAssistant** | FE-06, FE-09, FE-15-17 | 🔨 Partial | 0 | 0 | 0 | 0 files | Entities: LlmInteraction, LlmSuggestionCache. LlmAssistantGatewayService (interaction audit + suggestion caching for FE-06). Missing: LLM API client, failure analysis logic |
-| **TestReporting** | FE-10 | 📋 Skeleton | 0 | 0 | 0 | 0 files | Entities only: TestReport, CoverageMetric |
-| **Storage** | (Supporting) | ✅ Full | 1 | — | — | — | FileStorageManager, StorageFileGatewayService (Upload + Download) |
-| **AuditLog** | (Supporting) | ✅ Full | — | — | — | — | Audit logging infrastructure |
-| **Notification** | (Supporting) | ✅ Full | — | — | — | — | Email + notification services |
-| **Configuration** | (Supporting) | ✅ Full | — | — | — | — | App settings management |
-
-**Total across all feature modules:** ~10 controllers, ~89 endpoints, ~47 commands, ~34 queries, ~51 test files
-
----
-
-## Cross-Module Contracts (`ClassifiedAds.Contracts/`)
-
-| Contract | Provider Module | Consumer Module | Purpose |
-|----------|----------------|-----------------|---------|
-| `IStorageFileGatewayService` | Storage | ApiDocumentation | Upload + Download files |
-| `ISubscriptionLimitGatewayService` | Subscription | ApiDocumentation, TestGeneration | Usage limit check + consume |
-| `IApiEndpointMetadataService` | ApiDocumentation | TestGeneration | Endpoint dependency analysis, auth-first ordering |
-| `IApiEndpointParameterDetailService` | ApiDocumentation | TestGeneration | Structured parameter details for mutation generation (FE-06) |
-| `IPathParameterMutationGatewayService` | ApiDocumentation | TestGeneration | Path parameter mutation bridge for boundary tests (FE-06) |
-| `ILlmAssistantGatewayService` | LlmAssistant | TestGeneration | LLM interaction audit logging + suggestion caching (FE-06) |
-| `ICurrentUser` | Identity | All modules | Current user context |
+| FE | Feature | Module | Status | Evidence |
+|---|---|---|---|---|
+| FE-01 | Authentication and role-based access control | Identity | Completed | Auth, users, roles, JWT + refresh rotation, rate limiting, RBAC, external IdP support, seeded permissions |
+| FE-02 | Upload/store/manage API sources | ApiDocumentation | Completed | Project/specification/endpoint management, upload flow, lifecycle, audit logging |
+| FE-03 | Parse and normalize API inputs | ApiDocumentation + Storage | Completed | OpenAPI + Postman parsers, async parse flow, idempotent command pipeline, 39 unit tests |
+| FE-04 | Test scope and execution configuration | TestGeneration + TestExecution | Completed | Test suite scope management plus execution environment CRUD and auth config masking |
+| FE-05 | Happy-path generation workflow | TestGeneration | Completed | FE-05A order proposal/approve/reorder + FE-05B happy-path generation with prompt pipeline and persistence |
+| FE-06 | Boundary and negative generation | TestGeneration + LlmAssistant + ApiDocumentation | Completed | Path mutations, body mutation engine, LLM scenario suggestions, orchestration, 41 unit tests |
+| FE-07 | Dependency-aware execution with variable extraction | TestExecution | Completed | `StartTestRunCommand`, `TestRunsController` (4 endpoints), `TestExecutionOrchestrator`, execution context gateway, dependency skip logic, environment runtime resolver, variable resolve/extract, HTTP executor |
+| FE-08 | Deterministic rule-based validation | TestExecution | Completed | `RuleBasedValidator` for status/schema/header/body/jsonpath/latency checks, endpoint schema fallback, `TestResultCollector`, cached run details, retention handling, sensitive variable masking |
+| FE-09 | LLM-assisted failure explanations | LlmAssistant | Skeleton | `LlmAssistantGatewayService` can log interactions and cache suggestions, but there is no failure-explanation workflow, prompt runtime, command/query/controller, or explanation API yet |
+| FE-10 | Test execution reports and export | TestReporting | Skeleton | `TestReport` and `CoverageMetric` entities plus persistence setup only; no report builder, controller, export service, or file generation yet |
+| FE-11 | Manual Entry mode | ApiDocumentation | Completed | Manual specification and inline endpoint definition flow is implemented |
+| FE-12 | Path-parameter templating | ApiDocumentation | Completed | Path parameter extraction, validation, URL resolution, and mutation generation are implemented |
+| FE-13 | cURL import | ApiDocumentation | Completed | cURL parsing into method, URL, headers, body, and params is implemented |
+| FE-14 | Subscription and billing management | Subscription | Completed | Plan lifecycle, usage limits, payment flow, webhook handling, workers, and billing persistence are implemented |
+| FE-15 | LLM suggestion review interface | TestGeneration + LlmAssistant | Not Started | No review UI/API workflow yet |
+| FE-16 | User feedback on LLM suggestions | TestGeneration + LlmAssistant | Not Started | No feedback capture or storage flow yet |
+| FE-17 | Bulk approval/rejection with filtering | TestGeneration + LlmAssistant | Not Started | No bulk review actions yet |
 
 ---
 
-## How to Update This File
+## Module Status
 
-When an AI Agent or developer completes a Feature (FE):
+| Module | FE Coverage | Status | Notes |
+|---|---|---|---|
+| Identity | FE-01 | Full | Production-ready auth and authorization stack |
+| ApiDocumentation | FE-02, FE-03, FE-11, FE-12, FE-13 | Full | Input management, parsing, manual entry, path templating, cURL import |
+| TestGeneration | FE-04, FE-05, FE-06 | Full | Scope config, ordering, happy-path generation, boundary/negative generation |
+| TestExecution | FE-04, FE-07, FE-08 | Full | 2 controllers, 3 commands, 5 queries, runtime resolution, execution pipeline, validator, result collector, targeted tests passing |
+| Subscription | FE-14 | Full | Plans, limits, payment integration, workers |
+| LlmAssistant | FE-06 support, FE-09, FE-15, FE-16, FE-17 | Partial | Interaction audit and suggestion cache exist; feature workflows are still missing |
+| TestReporting | FE-10 | Skeleton | Persistence model only |
 
-1. Update the **Status** column for that FE row (❌ → 🔨 → ✅)
-2. Fill in the **Branch** name
-3. Fill in the **Completed Date**
-4. Add relevant **Notes** about what was implemented
-5. Update the **Summary** counts at the top
-6. Update the **Weighted Progress Breakdown** table
-7. Update the **Module Implementation Summary** table if needed
+---
 
-### Status Legend
+## Verification Notes
 
-| Icon | Status | Description |
-|------|--------|-------------|
-| ✅ | Completed | Feature fully implemented, tested, and ready |
-| 🔨 | In Progress | Currently being developed — has partial business logic |
-| 📋 | Skeleton Only | Module structure exists (entities, DbContext) but no business logic |
-| ❌ | Not Started | No implementation exists |
+- Targeted verification for `TestExecution` passed on 2026-03-15: 116/116 tests.
+- During verification, `ClassifiedAds.UnitTests/TestExecution/StartTestRunCommandHandlerTests.cs` was aligned with the current `ITestExecutionOrchestrator.ExecuteAsync(...)` signature so the test project reflects the actual service contract.
+- The solution still emits existing nullable/analyzer warnings outside the scope of this tracker refresh, but the targeted `TestExecution` test slice is green.
 
 ---
 
 ## Change Log
 
-| Date | FE ID(s) | Action | By |
-|------|----------|--------|----|
-| 2026-02-28 | FE-06 | FE-06 completed: boundary/negative test case generation with 3-source orchestrator (path mutations + body mutations + LLM suggestions via n8n). 25 new files, 6 modified files. 3 cross-module contracts (IApiEndpointParameterDetailService, IPathParameterMutationGatewayService, ILlmAssistantGatewayService). BodyMutationEngine (6 strategies), LlmScenarioSuggester (n8n + caching), BoundaryNegativeTestCaseGenerator orchestrator, CQRS command+handler, controller endpoint. 41 unit tests across 4 test files, all passing. Overall progress 63% → 70% | AI Agent |
-| 2026-02-28 | All | Full tracker audit: verified all modules against actual codebase. FE-03 updated with FE-03-03 Parser Flow completion (OpenAPI/Postman parsers, ParseUploadedSpecificationCommand, outbox wiring, 39 tests). FE-06 status corrected to 🔨 Partial. FE-14 bumped to 100% (audit confirmed 3 controllers, 15 commands, 11 queries, 16 test files). Added controller/command/query/test counts per module. Added cross-module contracts table. Overall progress ~63% | AI Agent |
-| 2026-02-25 | FE-05B | FE-05B completed: happy-path test case generation with n8n LLM integration, full CQRS pipeline (command/queries/controller), 47 unit tests | AI Agent |
-| 2026-02-24 | All | Full tracker refresh: FE-05 split into FE-05A (✅) + FE-05B (🔨), FE-12 marked ✅, FE-14 marked ✅, FE-07 updated to 🔨 partial, added weighted progress table, updated recommended sequence for remaining work | AI Agent |
-| 2026-02-19 | FE-04 | FE-04 completed; added operations runbook + tracker/module summary refresh | AI Agent |
-| 2026-02-18 | FE roadmap | Reordered implementation phases; added mandatory user verify/reorder gate before FE-05 generation | AI Agent |
-| 2026-02-13 | FE-02, FE-03, FE-11, FE-13 | ApiDocumentation module completed | AI Agent |
-| 2026-02-13 | FE-14 | Subscription module in progress | AI Agent |
-| 2026-02-13 | — | Initial tracker creation based on codebase analysis | AI Agent |
-| 2026-02-07 | FE-01 | Identity module completed (v2 production ready) | AI Agent |
+| Date | Scope | Change |
+|---|---|---|
+| 2026-03-15 | FE-07, FE-08 | Promoted both features to `Completed` after full code audit. Confirmed `StartTestRunCommand`, test run queries, `TestRunsController`, `TestExecutionOrchestrator`, `HttpTestExecutor`, `VariableResolver`, `VariableExtractor`, `RuleBasedValidator`, and `TestResultCollector`. Targeted `TestExecution` tests now pass 116/116. Overall weighted progress moved from ~70% to ~86%. |
+| 2026-02-28 | FE-06 | Completed boundary and negative test generation with path mutations, body mutation engine, LLM scenario suggestions, orchestration, and 41 unit tests. |
+| 2026-02-28 | FE-03 | Confirmed parser flow completion for OpenAPI/Postman parsing and async spec processing. |
+| 2026-02-25 | FE-05B | Completed happy-path test case generation workflow. |
+| 2026-02-24 | FE-05A | Completed API ordering workflow with propose/reorder/approve flow. |
+| 2026-02-19 | FE-04 | Completed test scope and execution environment configuration. |
+| 2026-02-18 | FE-14 | Completed subscription and billing flow. |
+| 2026-02-13 | FE-02, FE-11, FE-13 | Completed API input management, manual entry, and cURL import. |
+| 2026-02-07 | FE-01 | Completed identity module implementation. |

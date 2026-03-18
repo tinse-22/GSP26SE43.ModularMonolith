@@ -1,8 +1,10 @@
+using Microsoft.EntityFrameworkCore.Query;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace ClassifiedAds.UnitTests.Helpers;
 
@@ -10,7 +12,7 @@ namespace ClassifiedAds.UnitTests.Helpers;
 /// Wraps an IEnumerable as an IQueryable that supports EF Core async operations (ToListAsync, etc.).
 /// Uses composition to avoid infinite recursion with Provider property.
 /// </summary>
-internal class TestAsyncEnumerable<T> : IQueryable<T>, IAsyncEnumerable<T>
+internal class TestAsyncEnumerable<T> : IOrderedQueryable<T>, IAsyncEnumerable<T>
 {
     private readonly EnumerableQuery<T> _inner;
     private readonly TestAsyncQueryProvider<T> _provider;
@@ -60,7 +62,7 @@ internal class TestAsyncEnumerator<T> : IAsyncEnumerator<T>
     }
 }
 
-internal class TestAsyncQueryProvider<TEntity> : IQueryProvider
+internal class TestAsyncQueryProvider<TEntity> : IAsyncQueryProvider
 {
     private readonly IQueryProvider _inner;
 
@@ -75,4 +77,27 @@ internal class TestAsyncQueryProvider<TEntity> : IQueryProvider
     public object Execute(Expression expression) => _inner.Execute(expression)!;
 
     public TResult Execute<TResult>(Expression expression) => _inner.Execute<TResult>(expression);
+
+    public TResult ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
+    {
+        var asyncResultType = typeof(TResult).GetGenericArguments().FirstOrDefault();
+        if (asyncResultType == null)
+        {
+            return _inner.Execute<TResult>(expression);
+        }
+
+        var executionResult = typeof(IQueryProvider)
+            .GetMethods()
+            .Single(method => method.Name == nameof(IQueryProvider.Execute)
+                && method.IsGenericMethod
+                && method.GetParameters().Length == 1)
+            .MakeGenericMethod(asyncResultType)
+            .Invoke(_inner, new object[] { expression });
+
+        return (TResult)typeof(Task)
+            .GetMethods()
+            .Single(method => method.Name == nameof(Task.FromResult) && method.IsGenericMethod)
+            .MakeGenericMethod(asyncResultType)
+            .Invoke(null, new[] { executionResult })!;
+    }
 }

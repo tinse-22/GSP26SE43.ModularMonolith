@@ -29,6 +29,8 @@ RUN dotnet restore ./ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj
 # Copy everything else and build
 COPY . ./
 RUN dotnet publish ./ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj -c Release -o out
+RUN ConnectionStrings__Default="Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres" \
+    dotnet ./out/ClassifiedAds.Migrator.dll --verify-migrations
 
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0

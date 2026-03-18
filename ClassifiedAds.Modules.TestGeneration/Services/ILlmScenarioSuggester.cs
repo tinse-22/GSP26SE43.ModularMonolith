@@ -32,6 +32,8 @@ public class LlmScenarioSuggestionContext
     public IReadOnlyList<ApiOrderItemModel> OrderedEndpoints { get; set; } = Array.Empty<ApiOrderItemModel>();
 
     public Guid SpecificationId { get; set; }
+
+    public IReadOnlyDictionary<Guid, EndpointParameterDetailDto> EndpointParameterDetails { get; set; } = new Dictionary<Guid, EndpointParameterDetailDto>();
 }
 
 public class LlmScenarioSuggestionResult
@@ -72,4 +74,6 @@ public class LlmSuggestedScenario
     public string Priority { get; set; }
 
     public List<string> Tags { get; set; } = new();
+
+    public List<N8nTestCaseVariable> Variables { get; set; } = new();
 }

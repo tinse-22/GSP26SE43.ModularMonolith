@@ -39,5 +39,6 @@ public enum SuggestionType
     BoundaryCase = 0,
     NegativeCase = 1,
     HappyPath = 2,
-    SecurityCase = 3
+    SecurityCase = 3,
+    FailureExplanation = 4,
 }

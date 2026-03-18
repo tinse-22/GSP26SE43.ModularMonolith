@@ -1,4 +1,3 @@
-version: "3.6"
 services:
     db:
         image: "postgres:16"
@@ -8,6 +7,12 @@ services:
             POSTGRES_USER: ${POSTGRES_USER}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
             POSTGRES_DB: ${POSTGRES_DB}
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+            start_period: 10s
         volumes:
             - postgres_data:/var/lib/postgresql/data
     rabbitmq:
@@ -33,7 +38,8 @@ services:
           context: .
           dockerfile: ./ClassifiedAds.Migrator/Dockerfile
         depends_on:
-          - db
+          db:
+            condition: service_healthy
         environment:
           DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
           ConnectionStrings__Default: ${ConnectionStrings__Default}
@@ -47,9 +53,12 @@ services:
         ports:
             - "9002:8080"
         depends_on:
-          - db
-          - migrator
-          - rabbitmq
+          db:
+            condition: service_healthy
+          migrator:
+            condition: service_completed_successfully
+          rabbitmq:
+            condition: service_started
         environment:
           ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
           ConnectionStrings__Default: ${ConnectionStrings__Default}
@@ -61,10 +70,14 @@ services:
           context: .
           dockerfile: ./ClassifiedAds.Background/Dockerfile
         depends_on:
-          - db
-          - migrator
-          - rabbitmq
-          - mailhog
+          db:
+            condition: service_healthy
+          migrator:
+            condition: service_completed_successfully
+          rabbitmq:
+            condition: service_started
+          mailhog:
+            condition: service_started
         environment:
           DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
           CheckDependency__Enabled: "true"

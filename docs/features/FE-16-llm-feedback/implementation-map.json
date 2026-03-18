@@ -1,0 +1,151 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-16 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-16 vao codebase hien tai, trong do FE-15 da ton tai o `ClassifiedAds.Modules.TestGeneration`. Muc tieu la them user feedback cho tung `LlmSuggestion`, aggregate feedback theo endpoint, va dua feedback da sanitize quay lai suggestion generation mot cach cache-safe thong qua payload enrichment + feedback fingerprint.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T, Guid>, schema isolation, optimistic concurrency by RowVersion)"
+  },
+  "currentCodebaseSnapshot": {
+    "alreadyExists": [
+      "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestion.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/GenerateLlmSuggestionPreviewCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs",
+      "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+      "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionMaterializer.cs",
+      "ClassifiedAds.Migrator/Migrations/TestGeneration/20260317161713_AddLlmSuggestions.cs"
+    ],
+    "missingForFe16": [
+      "Durable per-user feedback entity/table for suggestions",
+      "Feedback upsert command + request/response model",
+      "Feedback summary wiring in FE-15 list/detail responses",
+      "Feedback aggregate service for prompt refinement",
+      "Feedback-aware cache key in `LlmScenarioSuggester`"
+    ]
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. FE-16 tiep tuc song trong `ClassifiedAds.Modules.TestGeneration` vi feedback thuoc ve `LlmSuggestion` lifecycle. `ClassifiedAds.Modules.LlmAssistant` van chi giu vai tro cache/audit support.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Entities/LlmSuggestionFeedback.cs",
+        "description": "Durable per-user feedback row for a suggestion."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/DbConfigurations/LlmSuggestionFeedbackConfiguration.cs",
+        "description": "Map feedback table, unique constraint, indexes, concurrency token."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/UpsertLlmSuggestionFeedbackCommand.cs",
+        "description": "CQRS write path for helpful/not-helpful feedback."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/LlmSuggestionFeedbackModel.cs",
+        "description": "Feedback write/read model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/LlmSuggestionFeedbackSummaryModel.cs",
+        "description": "Aggregate counts shown on suggestion list/detail."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/Requests/UpsertLlmSuggestionFeedbackRequest.cs",
+        "description": "Request body for the feedback endpoint."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ILlmSuggestionFeedbackContextService.cs",
+        "description": "Build endpoint-scoped feedback summary + fingerprint."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionFeedbackContextService.cs",
+        "description": "Concrete aggregator used by `LlmScenarioSuggester`."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Persistence/TestGenerationDbContext.cs",
+        "change": "Add `DbSet<LlmSuggestionFeedback>`."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "change": "Register repository + feedback context service."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/LlmSuggestionModel.cs",
+        "change": "Expose current-user feedback + feedback summary."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionsQuery.cs",
+        "change": "Join feedback rows needed for list summary."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Queries/GetLlmSuggestionDetailQuery.cs",
+        "change": "Join current-user feedback + aggregate summary."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+        "change": "Add PUT feedback endpoint."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+        "change": "Consume feedback context and include feedback fingerprint in cache key."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs",
+        "change": "Add required `FeedbackContext` field per endpoint so feedback refinement stays outside the spec-only prompt builder."
+      },
+      {
+        "path": "ClassifiedAds.Migrator/ - new migration under Migrations/TestGeneration",
+        "change": "Add migration for `LlmSuggestionFeedback`."
+      }
+    ],
+    "expectedUnchangedFiles": [
+      "ClassifiedAds.Modules.LlmAssistant/ - no durable feedback entity expected",
+      "ClassifiedAds.Modules.TestGeneration/Algorithms/Models/EndpointPromptContext.cs - feedback should not require widening this prompt-context type in the preferred design",
+      "ClassifiedAds.Modules.TestGeneration/Algorithms/ObservationConfirmationPromptBuilder.cs - keep spec/business-rule prompting focused unless payload enrichment is impossible",
+      "ClassifiedAds.WebAPI/Program.cs - host wiring should already cover TestGeneration module",
+      "ClassifiedAds.WebAPI/Dockerfile - no new project reference expected",
+      "docker-compose.yml - no new runtime dependency expected"
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "newMigrationRequired": true,
+    "targetContext": "TestGenerationDbContext",
+    "suggestedMigrationName": "AddLlmSuggestionFeedback",
+    "schemasUsed": [
+      "testgen.LlmSuggestions",
+      "testgen.LlmSuggestionFeedbacks"
+    ],
+    "notes": [
+      "Feedback table nen denormalize `TestSuiteId` va `EndpointId` de aggregate nhanh theo suite/endpoint ma khong can join n qua lon.",
+      "Can unique index cho `(SuggestionId, UserId)` de enforce upsert semantics.",
+      "`RowVersion` nen theo repo pattern hien tai: application-managed byte[] token duoc refresh bang `Guid.NewGuid().ToByteArray()` thay vi db-generated rowversion.",
+      "Neu prompt refinement consume feedback context, `LlmScenarioSuggester.BuildCacheKey(...)` phai bao gom feedback fingerprint duoc tao tu canonical aggregated output thay vi raw row order hay timestamp."
+    ]
+  },
+  "queryOptimization": {
+    "mandatory": [
+      "List/detail queries filter theo `TestSuiteId` truoc, sau do moi nap feedback rows can thiet.",
+      "Feedback context service phai aggregate theo endpoint va gioi han so note dua vao prompt.",
+      "Khong duoc query feedback tung suggestion trong loop neu co the lay theo batch.",
+      "Feedback fingerprint phai duoc tao tu du lieu da normalize va sap xep on dinh."
+    ],
+    "forbidden": [
+      "Luu helpful/not-helpful flag vao `LlmSuggestionCache`.",
+      "Dua raw user IDs hoac note khong sanitize vao prompt context.",
+      "Thay doi FE-15 review command semantics khi chi can bo sung feedback.",
+      "Lam ban `ObservationConfirmationPromptBuilder` bang cach dua feedback free-form vao prompt spec neu payload-enrichment da du."
+    ]
+  },
+  "implementationSequence": [
+    "1. Entity + configuration + migration",
+    "2. Feedback context service + feedback-aware cache key",
+    "3. Controller/command/model/query updates",
+    "4. Tests + migrator verification"
+  ]
+}

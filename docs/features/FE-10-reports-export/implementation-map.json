@@ -1,0 +1,306 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-10 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-10 vao codebase Modular Monolith hien tai. Muc tieu la build API synchronous, upload generated files qua Storage, reuse `TestReport` + `CoverageMetric`, va khong pha boundary giua TestReporting, TestExecution, va Storage.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "rendering": "CsvHelper + System.Text.Json + RazorLight + DinkToPdf",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation, cross-module contracts)"
+  },
+  "currentCodebaseSnapshot": {
+    "testReporting": {
+      "exists": [
+        "Entities/TestReport.cs",
+        "Entities/CoverageMetric.cs",
+        "Persistence/TestReportingDbContext.cs",
+        "ServiceCollectionExtensions.cs"
+      ],
+      "missingForFe10": [
+        "Controller cho reports API",
+        "Command/query surface cho POST/GET/download report",
+        "Report generator service",
+        "Coverage calculator",
+        "Export sanitizer",
+        "Format-specific renderers",
+        "Storage upload/download orchestration"
+      ]
+    },
+    "testExecution": {
+      "exists": [
+        "Entities/TestRun.cs",
+        "Controllers/TestRunsController.cs",
+        "Queries/GetTestRunResultsQuery.cs",
+        "Models/TestRunResultModel.cs",
+        "Services/TestFailureReadGatewayService.cs"
+      ],
+      "missingForFe10": [
+        "Cross-module report read gateway de assemble full run report context"
+      ]
+    },
+    "apiDocumentation": {
+      "exists": [
+        "Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+        "Services/ApiEndpointMetadataService.cs"
+      ],
+      "usageForFe10": [
+        "Lay endpoint metadata cho ordered endpoint scope de tinh coverage by-method, by-tag, va uncovered paths"
+      ]
+    },
+    "storage": {
+      "exists": [
+        "Contracts/Storage/Services/IStorageFileGatewayService.cs",
+        "Services/StorageFileGatewayService.cs"
+      ],
+      "usageForFe10": [
+        "Upload rendered report file",
+        "Download report binary cho report route"
+      ]
+    },
+    "infrastructure": {
+      "exists": [
+        "Infrastructure/ClassifiedAds.Infrastructure.csproj (CsvHelper, RazorLight, DinkToPdf)",
+        "Infrastructure/Html/HtmlCollectionExtensions.cs",
+        "Infrastructure/Pdf/DinkToPdf/DinkToPdfCollectionExtensions.cs",
+        "WebAPI/Program.cs -> AddHtmlRazorLightEngine() + AddDinkToPdfConverter()"
+      ],
+      "usageForFe10": [
+        "HTML renderer can reuse existing `IRazorLightEngine`",
+        "PDF renderer can reuse existing `IConverter`",
+        "CSV renderer can reuse existing CsvHelper dependency already in infrastructure graph"
+      ]
+    }
+  },
+  "moduleStructure": {
+    "description": "Khong tao module moi. Chi them contract gateway o Contracts/TestExecution, implementation o TestExecution, va API/runtime/render surface trong TestReporting.",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Contracts/TestExecution/DTOs/TestRunReportContextDto.cs",
+        "description": "Cross-module DTO gom suite access, run summary, recent history, ordered definitions, va actual run results."
+      },
+      {
+        "path": "ClassifiedAds.Contracts/TestExecution/Services/ITestRunReportReadGatewayService.cs",
+        "description": "Read gateway contract tu TestExecution sang TestReporting."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/Services/TestRunReportReadGatewayService.cs",
+        "description": "Gateway implementation doc TestRun + distributed cache payload + execution context + recent history."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Controllers/TestReportsController.cs",
+        "description": "POST generate report, GET list/get metadata, GET download."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Commands/GenerateTestReportCommand.cs",
+        "description": "CQRS command + handler tao report/export on demand."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Queries/GetTestRunReportsQuery.cs",
+        "description": "List reports for one run."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Queries/GetTestRunReportQuery.cs",
+        "description": "Get one report metadata."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Queries/DownloadTestRunReportQuery.cs",
+        "description": "Download one report file via Storage gateway."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Models/Requests/GenerateTestReportRequest.cs",
+        "description": "API request model cho FE-10."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Models/TestReportModel.cs",
+        "description": "API response model cho report metadata."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Models/CoverageMetricModel.cs",
+        "description": "Structured coverage summary response model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Models/TestRunReportDocumentModel.cs",
+        "description": "Internal structured document model duoc cac renderer consume."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Models/RenderedReportFile.cs",
+        "description": "Internal render result contract gom content stream, file name, content type, va file category."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/ConfigurationOptions/ReportGenerationOptions.cs",
+        "description": "History limit, body preview limit, va retention options cho FE-10."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/ITestReportGenerator.cs",
+        "description": "Top-level report generator contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/TestReportGenerator.cs",
+        "description": "Pipeline: gateway context -> sanitize -> coverage -> renderer -> storage upload -> metadata persistence."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/ICoverageCalculator.cs",
+        "description": "Coverage calculation contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/CoverageCalculator.cs",
+        "description": "Compute suite-scoped coverage percentages and uncovered paths."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/IReportDataSanitizer.cs",
+        "description": "Sensitive-data masking contract for exports."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/ReportDataSanitizer.cs",
+        "description": "Mask headers, variables, and truncate previews before rendering."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/IReportRenderer.cs",
+        "description": "Format renderer strategy contract."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/PdfReportRenderer.cs",
+        "description": "HTML -> PDF renderer using existing `IConverter`."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/HtmlReportRenderer.cs",
+        "description": "Render HTML report using existing `IRazorLightEngine` and inline template."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/JsonReportRenderer.cs",
+        "description": "Serialize structured report model to JSON."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/Services/CsvReportRenderer.cs",
+        "description": "Flatten report data to CSV using existing CsvHelper dependency."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestExecution/ServiceCollectionExtensions.cs",
+        "change": "Register ITestRunReportReadGatewayService implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/ConfigurationOptions/TestReportingModuleOptions.cs",
+        "change": "Add nested ReportGeneration options subtree."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestReporting/ServiceCollectionExtensions.cs",
+        "change": "Register FE-10 services and renderer strategies."
+      },
+      {
+        "path": "ClassifiedAds.WebAPI/appsettings.json",
+        "change": "Add Modules:TestReporting:ReportGeneration config."
+      },
+      {
+        "path": "ClassifiedAds.WebAPI/appsettings.Development.json",
+        "change": "Add optional local overrides cho retention/history/preview settings neu host dang dung file nay."
+      }
+    ],
+    "unchangedFiles": [
+      "ClassifiedAds.Migrator/ - no new migration files for FE-10 v1.",
+      "ClassifiedAds.Background/ - no host registration changes trong synchronous v1.",
+      "Entities/TestReport.cs - reuse current report metadata shape.",
+      "Entities/CoverageMetric.cs - reuse current coverage storage shape."
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "noNewMigrationsRequired": true,
+    "schemasUsed": [
+      "testreporting.TestReports",
+      "testreporting.CoverageMetrics",
+      "testexecution.TestRuns",
+      "storage.FileEntries"
+    ],
+    "notes": [
+      "Chi tiet run van nam trong distributed cache cua FE-07/08; FE-10 khong duoc thay doi storage pattern do.",
+      "Coverage snapshot chi la persisted aggregate strings/percentages trong `CoverageMetric`, khong can bang moi."
+    ]
+  },
+  "queryOptimization": {
+    "mandatory": [
+      "TestRunReportReadGatewayService chi duoc deserialize 1 cache payload moi request generate report.",
+      "Khong duoc query per-test-case endpoint metadata.",
+      "Cho v1, duoc phep goi `GetExecutionContextAsync(testSuiteId, null)` mot lan va map testCaseId trong memory.",
+      "Recent run history phai `Take()` voi limit ro rang."
+    ],
+    "forbidden": [
+      "TestReporting doc TestExecutionDbContext truc tiep.",
+      "TestReporting doc IDistributedCache truc tiep bang RedisKey cua TestRun.",
+      "TestReporting doc StorageDbContext truc tiep de upload/download file.",
+      "Them Background worker hoac queue export vao FE-10 v1.",
+      "Them migration chi de luu report options."
+    ]
+  },
+  "flows": [
+    {
+      "name": "Generate Report",
+      "steps": [
+        "1. Controller dispatch GenerateTestReportCommand.",
+        "2. Handler load report context qua ITestRunReportReadGatewayService va validate owner.",
+        "3. Handler call TestReportGenerator.",
+        "4. Generator sanitize -> load endpoint metadata -> calculate coverage -> render file.",
+        "5. Generator upload file qua Storage gateway, upsert CoverageMetric, create TestReport row.",
+        "6. Return TestReportModel."
+      ]
+    },
+    {
+      "name": "List And Get Report Metadata",
+      "steps": [
+        "1. Controller dispatch GetTestRunReportsQuery or GetTestRunReportQuery.",
+        "2. Query handler validate owner qua ITestExecutionReadGatewayService.GetSuiteAccessContextAsync(...).",
+        "3. Query handler read TestReport metadata trong testreporting schema va map response."
+      ]
+    },
+    {
+      "name": "Download Report File",
+      "steps": [
+        "1. Controller dispatch DownloadTestRunReportQuery.",
+        "2. Query handler validate owner va load TestReport metadata.",
+        "3. Query handler call IStorageFileGatewayService.DownloadAsync(fileId).",
+        "4. Controller return File(...) response."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Khong them migration, entity, hoac DbSet moi.",
+    "Khong direct reference TestExecution repositories or cache tu TestReporting.",
+    "Khong ghi raw secrets vao exported headers, extracted variables, hoac response body preview.",
+    "Khong implement background queue worker trong pass nay.",
+    "Khong them dependency PDF/CSV stack moi khi repo da co san infrastructure utilities."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "TestRunReportReadGatewayServiceTests (run not ready, expired results, successful mapping with recent history).",
+      "CoverageCalculatorTests (suite-scoped totals, by-method, by-tag, uncovered paths).",
+      "ReportDataSanitizerTests (Authorization/Cookie/token/password/apiKey masking, body preview truncation).",
+      "JsonReportRendererTests (structured JSON output).",
+      "CsvReportRendererTests (deterministic flattened export rows).",
+      "HtmlReportRendererTests (contains summary, coverage, recent history, sanitized details).",
+      "PdfReportRendererTests (delegates HTML conversion to existing `IConverter`).",
+      "TestReportGeneratorTests (renderer selection, storage upload, coverage upsert, metadata create).",
+      "GenerateTestReportCommandHandlerTests (owner validation, run ready validation, service invocation).",
+      "GetTestRunReportsQueryHandlerTests / GetTestRunReportQueryHandlerTests / DownloadTestRunReportQueryHandlerTests."
+    ],
+    "integrationTests": [
+      "Optional thin controller tests cho route binding va permission attribute neu repo da co controller auth test pattern.",
+      "Optional module wiring test cho renderer registrations neu can."
+    ]
+  },
+  "knownTradeoffs": [
+    "V1 report generation la synchronous; PDF co the cham hon JSON/CSV/HTML va khong co queue backpressure.",
+    "Neu DB save fail sau khi file da upload, file co the bi orphan cho den khi co cleanup strategy rieng; day la tradeoff chap nhan duoc vi Storage contract hien tai chua co delete API.",
+    "Coverage trong FE-10 v1 duoc tinh tren suite-scoped endpoints thay vi full specification-wide analytics."
+  ],
+  "implementationSequence": [
+    "1. Contracts/TestExecution report-read DTOs + interface",
+    "2. TestExecution report-read gateway implementation + DI",
+    "3. TestReporting runtime services (sanitizer, coverage, renderers, generator)",
+    "4. TestReporting command/query/controller surface + config",
+    "5. Unit tests",
+    "6. Targeted verification"
+  ]
+}

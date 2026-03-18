@@ -1,0 +1,365 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-15-workflow",
+  "workflow": {
+    "id": "wf-fe15-llm-suggestion-review-v1",
+    "requirementId": "FE-15",
+    "name": "LLM Suggestion Review Workflow",
+    "mode": "request-response + durable-review-state + transactional-materialization",
+    "description": "FE-15 v1 them review-first workflow cho LLM-suggested scenarios. Suggestions duoc tao tu FE-06 LLM pipeline, persist thanh pending rows trong TestGeneration, sau do user preview va review tung cai truoc khi tao `TestCase` thuc te."
+  },
+  "architectureOverview": {
+    "summary": "Khac voi FE-06 direct-generation, FE-15 tao durable pending suggestions truoc, roi moi cho phep human approve/reject/modify. `TestGeneration` la primary module, `LlmAssistant` chi tiep tuc lo raw cache + audit cho luong LLM call.",
+    "outboxRequired": false,
+    "redisRequired": false,
+    "newEntitiesRequired": true,
+    "newMigrationsRequired": true,
+    "schema": "testgen",
+    "futureExtension": "FE-16 co the them feedback table tham chieu `LlmSuggestion`; FE-17 co the them bulk review commands tren cung entity nay."
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-05A",
+      "FE-06",
+      "FE-05B",
+      "FE-14"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestGeneration (primary)",
+      "ClassifiedAds.Modules.LlmAssistant (cache + audit support)",
+      "ClassifiedAds.Modules.Subscription (usage limits)"
+    ],
+    "crossModuleConsumption": {
+      "LlmAssistant": {
+        "service": "ILlmAssistantGatewayService",
+        "usage": [
+          "Reuse raw cache and audit behavior indirectly through existing `ILlmScenarioSuggester` implementation.",
+          "Khong duoc luu durable review state vao `llmassistant` schema."
+        ]
+      },
+      "Subscription": {
+        "service": "ISubscriptionLimitGatewayService",
+        "usage": [
+          "Check `MaxLlmCallsPerMonth` khi generate preview.",
+          "Check/increment `MaxTestCasesPerSuite` khi approve hoac modify."
+        ]
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Generate Pending Suggestions",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId:guid}/llm-suggestions/generate",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "LlmSuggestionsController",
+          "action": "Resolve CurrentUserId, bind request, dispatch GenerateLlmSuggestionPreviewCommand.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "GenerateLlmSuggestionPreviewCommandHandler",
+          "action": "Validate suite ownership, suite status, approved API order, va LLM usage limit.",
+          "output": "Validated suite context"
+        },
+        {
+          "step": 4,
+          "actor": "ILlmScenarioSuggester",
+          "action": "Reuse FE-06 pipeline de load raw suggestions; cache hit thi dung cached payload, cache miss thi goi live LLM.",
+          "output": "IReadOnlyList<LlmSuggestedScenario>"
+        },
+        {
+          "step": 5,
+          "actor": "GenerateLlmSuggestionPreviewCommandHandler",
+          "action": "Mark existing pending suggestions for suite as `Superseded`, persist new `LlmSuggestion` rows with `ReviewStatus=Pending`, `CacheKey`, ordered display index, va raw payload snapshot.",
+          "output": "Suggestion rows persisted"
+        },
+        {
+          "step": 6,
+          "actor": "LlmSuggestionsController",
+          "action": "Return 201 voi `GenerateLlmSuggestionPreviewResultModel`.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "List Suggestions",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId:guid}/llm-suggestions?reviewStatus=&testType=&endpointId=",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "GetLlmSuggestionsQueryHandler",
+          "action": "Validate suite ownership, query durable `LlmSuggestion` rows by suite + filters, order by active set first then display index.",
+          "output": "List<LlmSuggestionModel>"
+        },
+        {
+          "step": 3,
+          "actor": "Client",
+          "action": "Nhan 200 voi preview cards cho UI review.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Get Suggestion Detail",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "GetLlmSuggestionDetailQueryHandler",
+          "action": "Validate suite ownership, load exact suggestion row, deserialize payloads, map full detail model.",
+          "output": "LlmSuggestionModel"
+        },
+        {
+          "step": 3,
+          "actor": "Client",
+          "action": "Nhan 200 voi request/expectation/variables de preview.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Approve Suggestion",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/review { action: Approve, rowVersion }",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Load suite + suggestion, validate owner, validate rowVersion, validate suggestion status co the review.",
+          "output": "Entities loaded"
+        },
+        {
+          "step": 3,
+          "actor": "ILlmSuggestionMaterializer",
+          "action": "Map raw suggestion payload thanh in-memory `TestCase`, `TestCaseRequest`, `TestCaseExpectation`, `TestCaseVariable` su dung same builder logic da dung trong FE-06.",
+          "output": "Materialized entities"
+        },
+        {
+          "step": 4,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Execute transaction: persist test case graph + change log + suite version, update suggestion `ReviewStatus=Approved`, `ReviewedById`, `ReviewedAt`, `AppliedTestCaseId`.",
+          "output": "Suggestion approved and applied"
+        },
+        {
+          "step": 5,
+          "actor": "LlmSuggestionsController",
+          "action": "Return 200 voi updated `LlmSuggestionModel`.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Modify And Approve Suggestion",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/review { action: Modify, rowVersion, modifiedContent }",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Validate modified payload day du va hop le cho request/expectation/test-type fields.",
+          "output": "Validated modified payload"
+        },
+        {
+          "step": 3,
+          "actor": "ILlmSuggestionMaterializer",
+          "action": "Materialize tu modified payload thay vi raw original payload.",
+          "output": "Modified test case graph"
+        },
+        {
+          "step": 4,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Execute same transaction pattern nhu Approve, nhung set `ReviewStatus=ModifiedAndApproved` va luu `ModifiedContent` jsonb.",
+          "output": "Modified suggestion applied"
+        }
+      ]
+    },
+    {
+      "id": "flow-06",
+      "name": "Reject Suggestion",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/review { action: Reject, rowVersion, reviewNotes }",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Validate suggestion status con review duoc va reviewNotes co noi dung hop ly.",
+          "output": "Validation passed"
+        },
+        {
+          "step": 3,
+          "actor": "ReviewLlmSuggestionCommandHandler",
+          "action": "Update suggestion `ReviewStatus=Rejected`, `ReviewedById`, `ReviewedAt`, `ReviewNotes`; khong tao `TestCase` moi.",
+          "output": "Suggestion rejected"
+        },
+        {
+          "step": 4,
+          "actor": "LlmSuggestionsController",
+          "action": "Return 200 voi updated suggestion row.",
+          "output": "HTTP response"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "explicitTransactions": [
+      {
+        "operation": "Approve suggestion",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "LlmSuggestion(update review fields)",
+          "TestCase(new)",
+          "TestCaseRequest(new)",
+          "TestCaseExpectation(new)",
+          "TestCaseVariable(new...n)",
+          "TestCaseChangeLog(new)",
+          "TestSuite(update version)",
+          "TestSuiteVersion(new)"
+        ]
+      },
+      {
+        "operation": "Modify and approve suggestion",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "Same write set as approve + `ModifiedContent` persisted"
+        ]
+      }
+    ],
+    "nonTransactionalWrites": [
+      "Reject suggestion can use normal save path if only one aggregate row changes.",
+      "Generate preview can use default save path unless you choose to supersede old rows + insert new rows in one explicit transaction."
+    ]
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "Do Not Reuse Raw Cache As Review Storage",
+      "rule": "Durable review state phai nam trong `testgen` schema; `llmassistant.LlmSuggestionCaches` chi la raw cache."
+    },
+    {
+      "id": "QG-02",
+      "name": "Reuse FE-06 Mapping Logic",
+      "rule": "Khong duplicate manually logic map request/expectation/variables neu co the tach thanh shared service."
+    },
+    {
+      "id": "QG-03",
+      "name": "No FE-06 Regression",
+      "rule": "Refactor cho FE-15 khong duoc thay doi output semantics cua endpoint `generate-boundary-negative`."
+    },
+    {
+      "id": "QG-04",
+      "name": "Migration Required",
+      "rule": "Vi them entity durable moi trong TestGeneration, phai co migration moi va `--verify-migrations` phai xanh."
+    }
+  ],
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "reviewNotes bat buoc khi reject.",
+        "modifiedContent bat buoc khi action = Modify.",
+        "Khong the review suggestion da o trang thai cuoi cung."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test suite.",
+        "Khong tim thay suggestion voi ma '{suggestionId}'."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException or DbUpdateConcurrencyException",
+      "examples": [
+        "CONCURRENCY_CONFLICT: RowVersion cua suggestion khong khop.",
+        "ORDER_CONFIRMATION_REQUIRED: Chua co approved API order.",
+        "SUGGESTION_ALREADY_APPLIED: Suggestion da duoc materialize truoc do."
+      ]
+    }
+  },
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Persistence",
+      "tasks": [
+        "Tao `LlmSuggestion` entity + enum `ReviewStatus`.",
+        "Them DbConfiguration va migration trong `ClassifiedAds.Migrator`."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Shared Materializer",
+      "tasks": [
+        "Tach logic map suggestion sang service/factory dung chung.",
+        "Cap nhat FE-06 generator de reuse service nay."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "API Surface",
+      "tasks": [
+        "Them controller, commands, queries, request/response models.",
+        "Apply authorization va ownership checks."
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Review Lifecycle",
+      "tasks": [
+        "Implement approve/reject/modify flows.",
+        "Them suite version + change log writes cho approve/modify."
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Verification",
+      "tasks": [
+        "Targeted unit tests.",
+        "Migrator build + verify migrations."
+      ]
+    }
+  ]
+}
