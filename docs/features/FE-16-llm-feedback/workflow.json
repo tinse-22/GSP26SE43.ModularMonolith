@@ -1,0 +1,229 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-16-workflow",
+  "workflow": {
+    "id": "wf-fe16-llm-feedback-v1",
+    "requirementId": "FE-16",
+    "name": "LLM Suggestion Feedback Workflow",
+    "mode": "request-response + durable-feedback-state + prompt-refinement-context",
+    "description": "FE-16 mo rong FE-15 bang cach them user feedback cho `LlmSuggestion`, expose feedback summary tren suggestion APIs, va aggregate feedback thanh prompt context cho nhung lan LLM suggestion generation tiep theo."
+  },
+  "architectureOverview": {
+    "summary": "FE-16 phai dua tren `LlmSuggestion` da ton tai trong `TestGeneration`. Feedback state la durable state moi trong `testgen`, con `LlmAssistant` tiep tuc lo cache/audit. Vi feedback co the lam thay doi prompt generation, cache fingerprint cho FE-06 / FE-15 cung phai thay doi theo.",
+    "outboxRequired": false,
+    "redisRequired": false,
+    "newEntitiesRequired": true,
+    "newMigrationsRequired": true,
+    "schema": "testgen",
+    "futureExtension": "FE-17 co the reuse cung table feedback nay cho bulk review dashboards hoac batch prompt analytics."
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Upsert Suggestion Feedback",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "PUT /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/feedback",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "LlmSuggestionsController",
+          "action": "Resolve CurrentUserId, bind `UpsertLlmSuggestionFeedbackRequest`, dispatch command.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "UpsertLlmSuggestionFeedbackCommandHandler",
+          "action": "Load suite + validate owner + reject archived suite + load suggestion by `suggestionId + testSuiteId`.",
+          "output": "Validated scope"
+        },
+        {
+          "step": 4,
+          "actor": "UpsertLlmSuggestionFeedbackCommandHandler",
+          "action": "Reject feedback on `Superseded`; trim/normalize notes; upsert one row per `(SuggestionId, UserId)`.",
+          "output": "Feedback row persisted"
+        },
+        {
+          "step": 5,
+          "actor": "Client",
+          "action": "Receive 200 with feedback model.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Read Suggestions With Feedback Summary",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "GET existing FE-15 list/detail endpoints.",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "GetLlmSuggestionsQueryHandler / GetLlmSuggestionDetailQueryHandler",
+          "action": "Load suggestions by suite, then join feedback rows needed for current user and aggregate summary counts.",
+          "output": "Suggestion models with feedback metadata"
+        },
+        {
+          "step": 3,
+          "actor": "Client",
+          "action": "UI can show thumbs-up / thumbs-down state plus helpful/not-helpful counts.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Build Feedback Context For Future Suggestion Generation",
+      "type": "synchronous internal service",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "LlmScenarioSuggester",
+          "action": "Before cache lookup, request endpoint-scoped feedback summaries for the current suite + endpoint set.",
+          "output": "Feedback context map"
+        },
+        {
+          "step": 2,
+          "actor": "LlmSuggestionFeedbackContextService",
+          "action": "Aggregate recent helpful/not-helpful notes, truncate text, and build a stable feedback fingerprint.",
+          "output": "Per-endpoint feedback context + fingerprint"
+        },
+        {
+          "step": 3,
+          "actor": "LlmScenarioSuggester",
+          "action": "Append fingerprint into cache-key material and include feedback context in prompt/payload generation.",
+          "output": "Cache-safe generation input"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "Generate Suggestions After Feedback Exists",
+      "type": "synchronous + cache-aware",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "GenerateLlmSuggestionPreviewCommandHandler or FE-06 generation flow",
+          "action": "Call `ILlmScenarioSuggester.SuggestScenariosAsync(...)` as before.",
+          "output": "Suggestion request"
+        },
+        {
+          "step": 2,
+          "actor": "LlmScenarioSuggester",
+          "action": "Compute cache key from suite/spec/endpoints + feedback fingerprint.",
+          "output": "Cache key"
+        },
+        {
+          "step": 3,
+          "actor": "LlmScenarioSuggester",
+          "action": "Cache hit with same fingerprint -> reuse cached suggestions. Cache miss or changed fingerprint -> call live LLM with feedback context.",
+          "output": "Suggestions result"
+        },
+        {
+          "step": 4,
+          "actor": "Client",
+          "action": "Receives suggestions informed by prior feedback without stale cache leakage.",
+          "output": "HTTP response"
+        }
+      ]
+    }
+  ],
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "Feedback State Stays In TestGeneration",
+      "rule": "Khong luu durable feedback state vao `llmassistant` schema hay cache blobs."
+    },
+    {
+      "id": "QG-02",
+      "name": "One Feedback Row Per User Per Suggestion",
+      "rule": "Submit feedback nhieu lan phai update row cu, khong duoc insert duplicate."
+    },
+    {
+      "id": "QG-03",
+      "name": "Feedback Must Affect Cache Fingerprint",
+      "rule": "Neu prompt refinement consume feedback context, cache key cua suggestion generation phai doi theo feedback fingerprint."
+    },
+    {
+      "id": "QG-04",
+      "name": "No FE-15 Regression",
+      "rule": "List/detail/review/generate preview cua FE-15 van phai hoat dong sau khi bo sung feedback metadata."
+    },
+    {
+      "id": "QG-05",
+      "name": "Migration Required",
+      "rule": "Vi them entity durable moi trong TestGeneration, phai co migration moi va `--verify-migrations` phai xanh."
+    }
+  ],
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "Feedback signal khong hop le.",
+        "Notes vuot qua gioi han do dai sau normalize.",
+        "Khong duoc feedback suggestion da `Superseded`."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test suite.",
+        "Khong tim thay suggestion theo `suggestionId + testSuiteId`."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException or DbUpdateConcurrencyException",
+      "examples": [
+        "CONCURRENCY_CONFLICT: RowVersion feedback khong khop.",
+        "SUGGESTION_SUPERSEDED: Suggestion da bi supersede boi preview set moi."
+      ]
+    }
+  },
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Persistence",
+      "tasks": [
+        "Tao entity + DbConfiguration + migration cho `LlmSuggestionFeedback`.",
+        "Dang ky repository + DbSet + indexes/unique constraint."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Prompt Refinement",
+      "tasks": [
+        "Them feedback aggregation/fingerprint service.",
+        "Cap nhat `LlmScenarioSuggester` va payload/prompt context de consume feedback."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "API Surface",
+      "tasks": [
+        "Them command + request/response models cho PUT feedback.",
+        "Mo rong list/detail models de tra feedback summary."
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Verification",
+      "tasks": [
+        "Targeted unit tests cho feedback + prompt cache key.",
+        "Migrator build + verify migrations + targeted WebAPI build."
+      ]
+    }
+  ]
+}

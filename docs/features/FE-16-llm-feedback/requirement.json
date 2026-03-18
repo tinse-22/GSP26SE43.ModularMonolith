@@ -1,0 +1,187 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-16-requirement",
+  "requirement": {
+    "id": "FE-16",
+    "title": "User Feedback On LLM Suggestions",
+    "goal": "Cho phep user danh dau LLM suggestion la helpful hoac not helpful, them ghi chu tuy chon, va dua feedback da sanitize quay lai prompt generation de cai thien chat luong suggestion o nhung lan generate sau.",
+    "priority": "P1",
+    "status": "planned",
+    "rationale": [
+      "Codebase hien tai da co FE-15 runtime thuc te trong `ClassifiedAds.Modules.TestGeneration`: `LlmSuggestion`, controller, commands, queries, va migration `AddLlmSuggestions`.",
+      "FE-16 nen mo rong durable review workflow hien co thay vi tao feedback state moi trong `ClassifiedAds.Modules.LlmAssistant` hay trong cache.",
+      "Neu feedback anh huong den prompt generation, cache key cho FE-06 / FE-15 cung phai thay doi; neu khong thi stale cache se bo qua feedback moi nhat.",
+      "Feature nay co gia tri thuc te nhat neu feedback duoc vua luu lai de audit/query, vua duoc aggregate thanh prompt context nho gon cho lan generate tiep theo."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Them entity durable moi trong `ClassifiedAds.Modules.TestGeneration` de luu feedback per-user cho tung `LlmSuggestion`.",
+      "Them API idempotent de create/update feedback cho suggestion voi 2 signal: `Helpful` va `NotHelpful`.",
+      "Mo rong FE-15 list/detail response de tra ve `CurrentUserFeedback` va `FeedbackSummary`.",
+      "Them service aggregate feedback thanh endpoint-scoped prompt context da sanitize va da truncate.",
+      "Cap nhat `LlmScenarioSuggester` de dua feedback context vao prompt/payload generation.",
+      "Cap nhat cache key / fingerprint cho LLM suggestions de feedback thay doi se invalidated cache hop ly.",
+      "Them targeted unit tests cho persistence, feedback aggregation, query mapping, va prompt-refinement wiring."
+    ],
+    "outOfScope": [
+      "Bulk feedback cho nhieu suggestions cung luc (de lai cho FE-17 hoac feature khac).",
+      "Fine-tuning model, RLHF pipeline, external dataset export, hay background retraining workflow.",
+      "Tao module moi, host moi, queue moi, hoac runtime dependency moi.",
+      "Global cross-tenant learning tu feedback cua tat ca user. FE-16 v1 chi nen scope theo suite va endpoint cua current workflow.",
+      "Thay doi FE-15 review actions `Approve`, `Reject`, `Modify`, ngoai viec bo sung feedback metadata vao response models neu can."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-06",
+        "reason": "Can `ILlmScenarioSuggester` va boundary/negative generation pipeline de consume feedback context."
+      },
+      {
+        "id": "FE-15",
+        "reason": "Can durable `LlmSuggestion` rows va review/list/detail API surface lam nen tang cho feedback."
+      },
+      {
+        "id": "FE-05A",
+        "reason": "Suggestion generation van dua tren approved order, nen feedback refinement khong duoc pha order gate."
+      },
+      {
+        "id": "FE-14",
+        "reason": "Khong them limit moi, nhung FE-16 khong duoc pha pattern su dung limit va usage da co trong generation flow."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "schema": "testgen",
+        "role": "Primary module cho `LlmSuggestion`, feedback persistence, aggregate summary, va prompt refinement context."
+      },
+      {
+        "name": "ClassifiedAds.Modules.LlmAssistant",
+        "status": "implemented",
+        "schema": "llmassistant",
+        "role": "Support module cho cache/audit primitives da duoc FE-06 va FE-09 su dung; FE-16 khong duoc dua durable feedback state vao day."
+      }
+    ],
+    "database": {
+      "schema": "testgen",
+      "newTablesRequired": true,
+      "newMigrationsRequired": true,
+      "reason": "Feedback can write semantics, idempotent update, audit trail, va query summary; vi vay can durable entity rieng thay vi nhung vao `LlmSuggestionCache`."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "secondaryModules": [
+      "ClassifiedAds.Modules.LlmAssistant"
+    ],
+    "feedbackStorage": {
+      "entity": "LlmSuggestionFeedback",
+      "schema": "testgen",
+      "uniquenessRule": "Moi cap `(SuggestionId, UserId)` chi co toi da 1 row; submit lai thi update row cu thay vi insert duplicate.",
+      "recommendedFields": [
+        "Id : Guid",
+        "SuggestionId : Guid",
+        "TestSuiteId : Guid",
+        "EndpointId : Guid?",
+        "UserId : Guid",
+        "FeedbackSignal : enum",
+        "Notes : string?",
+        "CreatedDateTime : DateTimeOffset",
+        "UpdatedDateTime : DateTimeOffset?",
+        "RowVersion : byte[]"
+      ]
+    },
+    "designPrinciples": [
+      "Khong luu feedback state trong `llmassistant.LlmSuggestionCaches`.",
+      "Feedback state thuoc ve `TestGeneration` vi no gan chat voi `LlmSuggestion` va ownership cua suite.",
+      "Prompt refinement context phai duoc aggregate, sanitize, truncate, va khong gui raw user identity vao LLM payload.",
+      "Neu feedback thay doi prompt input, cache key cho `LlmScenarioSuggester` phai bao gom feedback fingerprint.",
+      "FE-16 phai additive: khong duoc pha response semantics cua FE-06 direct generation hoac FE-15 review APIs."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "submitFeedbackP95Ms": 250,
+      "listOrGetWithSummaryP95Ms": 250,
+      "feedbackContextBuildP95Ms": 150
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:UpdateTestCase",
+        "Permission:GetTestCases"
+      ],
+      "notes": [
+        "PUT feedback nen reuse `Permission:UpdateTestCase` vi day la write action tren suite-owned data.",
+        "GET list/detail tiep tuc reuse `Permission:GetTestCases` nhung bo sung feedback summary vao payload."
+      ]
+    },
+    "reliability": {
+      "gracefulDegradation": [
+        "Neu khong co feedback cho endpoint, generation van chay binh thuong voi feedback context rong.",
+        "Neu aggregate feedback service gap loi, log warning va fallback ve no-feedback context thay vi fail toan bo generation.",
+        "Neu feedback notes qua dai, service phai truncate truoc khi dua vao prompt context thay vi fail request."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testSuiteId",
+        "suggestionId",
+        "endpointId",
+        "feedbackSignal",
+        "feedbackUpdated",
+        "feedbackFingerprint",
+        "cacheKey"
+      ],
+      "metrics": [
+        "llm_suggestion_feedback_upserts_total",
+        "llm_suggestion_feedback_helpful_total",
+        "llm_suggestion_feedback_not_helpful_total",
+        "llm_suggestion_feedback_context_build_total",
+        "llm_suggestion_feedback_context_failures_total"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: PUT `/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/feedback` create hoac update feedback cua current user cho suggestion do.",
+    "AC-02: Feedback chi chap nhan `Helpful` hoac `NotHelpful`; `Notes` la tuy chon nhung phai duoc trim va gioi han do dai hop ly.",
+    "AC-03: User khong phai owner cua test suite thi khong duoc submit feedback.",
+    "AC-04: Suggestion khong ton tai hoac khong thuoc suite thi API tra `NotFound` co kiem soat.",
+    "AC-05: Suggestion o trang thai `Superseded` thi khong duoc nhan feedback moi.",
+    "AC-06: FE-15 list/detail response tra duoc `CurrentUserFeedback` va `FeedbackSummary` ma khong can endpoint GET feedback rieng.",
+    "AC-07: `LlmScenarioSuggester` co the doc endpoint-scoped feedback context da sanitize va dua vao prompt/payload khi generate live suggestions.",
+    "AC-08: Cache key hoac prompt fingerprint cua suggestion generation thay doi khi feedback context thay doi, tranh reuse stale cache.",
+    "AC-09: FE-16 co migration moi trong `ClassifiedAds.Migrator`, build migrator pass, va `--verify-migrations` pass.",
+    "AC-10: Khong co host/module reference moi, khong co Docker wiring moi, nhung ket luan nay van phai duoc verify theo `AGENTS.md` khi implement code."
+  ],
+  "implementationOrder": [
+    "1. Tao `LlmSuggestionFeedback` entity + configuration + migration.",
+    "2. Tao feedback aggregation / fingerprint service va wire vao `LlmScenarioSuggester`.",
+    "3. Mo rong FE-15 controller/models/queries de expose feedback submit + feedback summary.",
+    "4. Them unit tests + migrator verification + targeted build verification."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testSuiteId",
+        "suggestionId",
+        "feedbackSignal",
+        "feedbackFingerprint",
+        "cacheKey"
+      ]
+    }
+  }
+}

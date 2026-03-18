@@ -1,0 +1,207 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-15-requirement",
+  "requirement": {
+    "id": "FE-15",
+    "title": "LLM Suggestion Review Interface",
+    "goal": "Cho phep user generate, preview, approve, reject, hoac modify tung LLM-suggested test case truoc khi materialize thanh `TestCase` thuc te trong test suite.",
+    "priority": "P1",
+    "status": "planned",
+    "rationale": [
+      "FE-06 da co pipeline tao `LlmSuggestedScenario` qua `ILlmScenarioSuggester`, nhung hien tai suggestions bi materialize truc tiep vao `TestCase` ma khong co human review gate.",
+      "`ClassifiedAds.Modules.TestGeneration` da so huu test suite lifecycle, change log, suite versioning, ownership checks, va approval-style workflows, nen review state cho suggested test cases nen nam tai day.",
+      "`LlmSuggestionCache` trong `ClassifiedAds.Modules.LlmAssistant` chi la raw cache theo endpoint + ttl, khong phu hop lam durable review state vi khong co per-suggestion review status, reviewedBy, modified payload, hay applied test-case link.",
+      "Codebase hien tai da co request/expectation builders va pattern materialize test case tu LLM data, nen FE-15 co the them mot review-first workflow ma khong can tao module moi."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Them API de generate mot pending suggestion set cho test suite tu pipeline LLM cua FE-06.",
+      "Them API de list suggestions theo suite voi filter theo `ReviewStatus`, `TestType`, va `EndpointId`.",
+      "Them API de get detail mot suggestion de frontend preview full request/expectation/variables.",
+      "Them API de review tung suggestion voi 3 action: Approve, Reject, Modify.",
+      "Approve hoac Modify phai materialize suggestion thanh `TestCase`, `TestCaseRequest`, `TestCaseExpectation`, `TestCaseVariable`, va cap nhat `TestCaseChangeLog` + `TestSuiteVersion`.",
+      "Reject chi cap nhat review state, khong tao `TestCase` moi.",
+      "Them entity durable moi trong `ClassifiedAds.Modules.TestGeneration` de luu tung suggestion voi review state, modified payload, va `AppliedTestCaseId`.",
+      "Reuse `ILlmScenarioSuggester` cua FE-06 de generate raw suggestions va reuse `ILlmAssistantGatewayService` de huong loi tu cache/audit hien co.",
+      "Refactor phan map `LlmSuggestedScenario` -> `TestCase` thanh service/factory tai su dung duoc boi ca FE-06 va FE-15.",
+      "Them unit tests cho generation command, list/detail queries, review command, va materializer/factory."
+    ],
+    "outOfScope": [
+      "Bulk approve/reject va filter-based bulk operations (FE-17).",
+      "User feedback rating/helpfulness va feedback persistence (FE-16).",
+      "Thay doi bat buoc luong FE-06 hien tai de moi client deu phai qua review gate. FE-15 v1 la additive workflow.",
+      "Review cho rule-based path/body mutations; FE-15 v1 chi nham vao LLM-suggested cases.",
+      "UI implementation; package nay chi dinh nghia backend contracts va implementation direction.",
+      "Failure explanation workflow (FE-09) va reporting/export workflow (FE-10)."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-05A",
+        "reason": "Can approved API order de giam suggestion drift va giu endpoint scope deterministic."
+      },
+      {
+        "id": "FE-06",
+        "reason": "Can `ILlmScenarioSuggester`, LLM cache, audit logging, va normalized `LlmSuggestedScenario` payload."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Can `TestCase`, request/expectation builders, va persistence patterns cho generated test cases."
+      },
+      {
+        "id": "FE-04",
+        "reason": "Can suite scope, selected endpoints, business context, va ownership data."
+      },
+      {
+        "id": "FE-14",
+        "reason": "Can subscription usage checks cho LLM preview generation va approved test-case materialization."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "schema": "testgen",
+        "role": "Primary module cho suggestion review state, approval workflow, va test-case materialization."
+      },
+      {
+        "name": "ClassifiedAds.Modules.LlmAssistant",
+        "status": "implemented",
+        "schema": "llmassistant",
+        "role": "Support module cho raw suggestion cache (`LlmSuggestionCache`) va interaction audit (`LlmInteraction`)."
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "role": "Indirect dependency thong qua FE-06 suggestion pipeline."
+      },
+      {
+        "name": "ClassifiedAds.Modules.Subscription",
+        "status": "implemented",
+        "role": "Check/increment `MaxLlmCallsPerMonth` va `MaxTestCasesPerSuite`."
+      }
+    ],
+    "database": {
+      "schema": "testgen",
+      "newTablesRequired": true,
+      "newMigrationsRequired": true,
+      "reason": "Review workflow can durable per-suggestion state, modified payload, review metadata, va applied test-case links; `LlmSuggestionCache` khong dap ung requirement nay."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "secondaryModules": [
+      "ClassifiedAds.Modules.LlmAssistant",
+      "ClassifiedAds.Modules.Subscription"
+    ],
+    "executionMode": "Synchronous request-response with transactional materialization when a suggestion is approved or modified.",
+    "reviewStorage": {
+      "entity": "LlmSuggestion",
+      "schema": "testgen",
+      "groupingStrategy": "Dung `CacheKey`/generation fingerprint de nhan dien mot suggestion set duoc tao tu cung request context.",
+      "historyRule": "Suggestion set pending cu cung suite bi mark `Superseded` truoc khi tao set moi; khong xoa lich su."
+    },
+    "designPrinciples": [
+      "FE-15 khong duoc luu review state trong `LlmSuggestionCache`; cache do la raw, ephemerial, va endpoint-scoped.",
+      "Materialized test cases van do `TestGeneration` so huu 100%; `LlmAssistant` khong duoc ghi truc tiep vao `TestCase` tables.",
+      "Approve/Modify phai transaction de tao test case + request/expectation/variables + change log + suite version + suggestion review state trong cung mot lan save.",
+      "Reject khong duoc tao side effect len `TestCase` hay suite version.",
+      "Mapping `LlmSuggestedScenario` -> `TestCase` phai duoc trich ra service/factory tai su dung boi ca FE-06 va FE-15, tranh duplicate logic.",
+      "FE-15 v1 phai additive, khong duoc vo tinh pha backward compatibility cua endpoint `generate-boundary-negative` da co."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "generatePreviewP95Ms": 7000,
+      "listOrGetP95Ms": 200,
+      "singleReviewApproveP95Ms": 1500
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:GenerateBoundaryNegativeTestCases",
+        "Permission:GetTestCases",
+        "Permission:UpdateTestCase"
+      ],
+      "notes": [
+        "Generate preview reuse permission cua FE-06 de tranh mo them RBAC surface trong v1.",
+        "List/get preview reuse `Permission:GetTestCases`.",
+        "Review approve/reject/modify reuse `Permission:UpdateTestCase`."
+      ]
+    },
+    "reliability": {
+      "gracefulDegradation": [
+        "Neu `ILlmScenarioSuggester` tra cache hit, FE-15 van tao durable suggestions moi tu cached payload ma khong goi live LLM.",
+        "Neu generate request khong tao ra suggestion nao, API tra ket qua hop le voi `TotalSuggestions = 0` va khong insert suggestion rows rac.",
+        "Neu approve fail sau khi da create `TestCase` nhung truoc khi commit, transaction phai rollback toan bo.",
+        "Neu suggestion da duoc approve truoc do va `AppliedTestCaseId` da co, review command nen idempotent thay vi tao duplicate test case."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testSuiteId",
+        "suggestionId",
+        "endpointId",
+        "cacheKey",
+        "reviewAction",
+        "appliedTestCaseId",
+        "llmModel",
+        "latencyMs"
+      ],
+      "metrics": [
+        "llm_suggestion_preview_requests_total",
+        "llm_suggestion_preview_created_total",
+        "llm_suggestion_review_total",
+        "llm_suggestion_review_failures_total",
+        "llm_suggestion_materialized_total"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST `/api/test-suites/{suiteId:guid}/llm-suggestions/generate` tao durable pending suggestions cho suite dua tren FE-06 suggestion pipeline.",
+    "AC-02: Generate preview chi hop le khi suite ton tai, user la owner, suite khong archived, va FE-05A gate co approved order.",
+    "AC-03: GET `/api/test-suites/{suiteId:guid}/llm-suggestions` tra danh sach suggestions theo suite va support filter theo `reviewStatus`, `testType`, `endpointId`.",
+    "AC-04: GET `/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}` tra day du payload preview cua mot suggestion.",
+    "AC-05: PUT `/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/review` voi `action=Approve` tao chinh xac 1 `TestCase` moi va cap nhat suggestion thanh `Approved`.",
+    "AC-06: PUT cung endpoint voi `action=Modify` materialize noi dung da modify, cap nhat suggestion thanh `ModifiedAndApproved`, va luu `ModifiedContent`.",
+    "AC-07: PUT cung endpoint voi `action=Reject` khong tao `TestCase` moi, chi cap nhat `ReviewStatus=Rejected`, `ReviewedById`, `ReviewedAt`, `ReviewNotes`.",
+    "AC-08: Approve/Modify phai luu `AppliedTestCaseId` de truy vet suggestion -> test case.",
+    "AC-09: Suggestion rows pending cu cung suite bi mark `Superseded` khi generate mot set moi.",
+    "AC-10: FE-06 `generate-boundary-negative` van giu behavior hien tai sau khi FE-15 duoc them.",
+    "AC-11: Materialized `TestCase` tu FE-15 duoc ghi `TestCaseChangeLog` va `TestSuiteVersion` theo cung audit pattern dang dung.",
+    "AC-12: Approve/Modify phai check `MaxTestCasesPerSuite`; generate preview phai check `MaxLlmCallsPerMonth` theo pattern FE-06.",
+    "AC-13: Model change cua FE-15 co migration moi trong `ClassifiedAds.Migrator`, build migrator pass, va `--verify-migrations` pass."
+  ],
+  "implementationOrder": [
+    "1. Tao entity + DbConfiguration + migration cho `LlmSuggestion` trong TestGeneration.",
+    "2. Trich logic map `LlmSuggestedScenario` -> `TestCase` thanh service/factory tai su dung duoc.",
+    "3. Implement command generate preview va persistence cho pending suggestions.",
+    "4. Implement list/detail query surface va models.",
+    "5. Implement review command cho Approve/Reject/Modify voi transaction.",
+    "6. Them tests + migration verification."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testSuiteId",
+        "suggestionId",
+        "reviewAction",
+        "appliedTestCaseId",
+        "llmModel",
+        "latencyMs"
+      ]
+    }
+  }
+}
