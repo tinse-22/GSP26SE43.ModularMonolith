@@ -39,7 +39,7 @@ public class N8nFailureExplanationClient : ILlmFailureExplanationClient
         var client = _httpClientFactory.CreateClient(HttpClientName);
         if (client.BaseAddress == null && string.IsNullOrWhiteSpace(_options.BaseUrl))
         {
-            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR: BaseUrl chua duoc cau hinh.");
+            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR: BaseUrl chưa được cấu hình.");
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookPath)
@@ -65,7 +65,7 @@ public class N8nFailureExplanationClient : ILlmFailureExplanationClient
         {
             throw new ConflictException(
                 "FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR",
-                $"Failure explanation provider tra ve HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
+                $"Failure explanation provider trả về HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
         }
 
         try
@@ -74,7 +74,7 @@ public class N8nFailureExplanationClient : ILlmFailureExplanationClient
         }
         catch (JsonException ex)
         {
-            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Provider response khong phai JSON hop le.", ex);
+            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Provider response không phải JSON hợp lệ.", ex);
         }
     }
 
@@ -108,7 +108,7 @@ public class N8nFailureExplanationClient : ILlmFailureExplanationClient
             }
         }
 
-        throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thieu cac truong JSON bat buoc.");
+        throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thiếu các trường JSON bắt buộc.");
     }
 
     private static bool TryMapResponse(JsonElement element, out FailureExplanationProviderResponse response)
