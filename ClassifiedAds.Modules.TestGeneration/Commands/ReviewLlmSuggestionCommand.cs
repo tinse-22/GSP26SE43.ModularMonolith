@@ -53,12 +53,12 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
         ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
         ValidationException.Requires(
             !string.IsNullOrWhiteSpace(command.RowVersion),
-            "RowVersion là bắt buộc cho concurrency control.");
+            "RowVersion la bat buoc cho concurrency control.");
 
         var validActions = new[] { "Approve", "Reject", "Modify" };
         ValidationException.Requires(
             validActions.Contains(command.ReviewAction, StringComparer.OrdinalIgnoreCase),
-            "ReviewAction phải là 'Approve', 'Reject', hoặc 'Modify'.");
+            "ReviewAction phai la 'Approve', 'Reject', hoac 'Modify'.");
 
         var isReject = string.Equals(command.ReviewAction, "Reject", StringComparison.OrdinalIgnoreCase);
         var isModify = string.Equals(command.ReviewAction, "Modify", StringComparison.OrdinalIgnoreCase);
@@ -67,7 +67,7 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
         {
             ValidationException.Requires(
                 !string.IsNullOrWhiteSpace(command.ReviewNotes),
-                "ReviewNotes là bắt buộc khi reject suggestion.");
+                "ReviewNotes la bat buoc khi reject suggestion.");
         }
 
         if (isModify)
