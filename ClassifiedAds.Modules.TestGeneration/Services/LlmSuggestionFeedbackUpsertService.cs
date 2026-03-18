@@ -66,15 +66,15 @@ public class LlmSuggestionFeedbackUpsertService : ILlmSuggestionFeedbackUpsertSe
         var suite = await LoadSuiteForWriteAsync(request.TestSuiteId, cancellationToken);
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{request.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{request.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
             suite.CreatedById == request.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
         ValidationException.Requires(
             suite.Status != TestSuiteStatus.Archived,
-            "Khong the feedback suggestion cho test suite da archived.");
+            "Không thể feedback suggestion cho test suite đã archived.");
 
         var suggestion = await LoadSuggestionForWriteAsync(
             request.TestSuiteId,
@@ -82,12 +82,12 @@ public class LlmSuggestionFeedbackUpsertService : ILlmSuggestionFeedbackUpsertSe
             cancellationToken);
         if (suggestion == null)
         {
-            throw new NotFoundException($"Khong tim thay suggestion voi ma '{request.SuggestionId}'.");
+            throw new NotFoundException($"Không tìm thấy suggestion với mã '{request.SuggestionId}'.");
         }
 
         ValidationException.Requires(
             suggestion.ReviewStatus != ReviewStatus.Superseded,
-            "Khong the feedback suggestion da superseded.");
+            "Không thể feedback suggestion đã superseded.");
 
         var feedback = await _dbContext.LlmSuggestionFeedbacks
             .SingleOrDefaultAsync(

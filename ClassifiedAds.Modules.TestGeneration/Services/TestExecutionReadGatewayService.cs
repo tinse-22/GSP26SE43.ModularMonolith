@@ -49,7 +49,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{testSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{testSuiteId}'.");
         }
 
         return new TestSuiteAccessContextDto
@@ -161,12 +161,12 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         {
             if (!enabledMap.TryGetValue(id, out var tc))
             {
-                throw new ValidationException($"Test case '{id}' khong ton tai trong suite hoac da bi vo hieu hoa.");
+                throw new ValidationException($"Test case '{id}' không tồn tại trong suite hoặc đã bị vô hiệu hóa.");
             }
 
             if (!tc.IsEnabled)
             {
-                throw new ValidationException($"Test case '{tc.Name}' da bi vo hieu hoa, khong the chon de chay.");
+                throw new ValidationException($"Test case '{tc.Name}' đã bị vô hiệu hóa, không thể chọn để chạy.");
             }
         }
     }
@@ -184,14 +184,14 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             {
                 var dependentName = enabledMap.TryGetValue(dep.TestCaseId, out var tc) ? tc.Name : dep.TestCaseId.ToString();
                 var dependsOnName = enabledMap.TryGetValue(dep.DependsOnTestCaseId, out var depTc) ? depTc.Name : dep.DependsOnTestCaseId.ToString();
-                missingDeps.Add($"'{dependentName}' phu thuoc '{dependsOnName}'");
+                missingDeps.Add($"'{dependentName}' phụ thuộc '{dependsOnName}'");
             }
         }
 
         if (missingDeps.Count > 0)
         {
             throw new ValidationException(
-                $"Danh sach test case duoc chon thieu cac dependency can thiet: {string.Join("; ", missingDeps)}.");
+                $"Danh sách test case được chọn thiếu các dependency cần thiết: {string.Join("; ", missingDeps)}.");
         }
     }
 
