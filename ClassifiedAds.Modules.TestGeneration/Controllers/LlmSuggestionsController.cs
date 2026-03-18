@@ -151,4 +151,38 @@ public class LlmSuggestionsController : ControllerBase
 
         return Ok(command.Result);
     }
+
+    /// <summary>
+    /// Create or update current-user feedback for an LLM suggestion.
+    /// </summary>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPut("{suggestionId:guid}/feedback")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(LlmSuggestionFeedbackModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<LlmSuggestionFeedbackModel>> UpsertFeedback(
+        Guid suiteId,
+        Guid suggestionId,
+        [FromBody] UpsertLlmSuggestionFeedbackRequest request)
+    {
+        var command = new UpsertLlmSuggestionFeedbackCommand
+        {
+            TestSuiteId = suiteId,
+            SuggestionId = suggestionId,
+            CurrentUserId = _currentUser.UserId,
+            Signal = request.Signal,
+            Notes = request.Notes,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Upserted LLM suggestion feedback. SuggestionId={SuggestionId}, TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
+            suggestionId,
+            suiteId,
+            _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
 }
