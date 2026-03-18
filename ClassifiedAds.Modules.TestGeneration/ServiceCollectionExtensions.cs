@@ -48,6 +48,7 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<TestCaseVariable, Guid>, Repository<TestCaseVariable, Guid>>()
             .AddScoped<IRepository<TestDataSet, Guid>, Repository<TestDataSet, Guid>>()
             .AddScoped<IRepository<TestCaseChangeLog, Guid>, Repository<TestCaseChangeLog, Guid>>()
+            .AddScoped<IRepository<LlmSuggestion, Guid>, Repository<LlmSuggestion, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
@@ -78,6 +79,7 @@ public static class TestGenerationServiceCollectionExtensions
         services
             .AddScoped<IBodyMutationEngine, BodyMutationEngine>()
             .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
+            .AddScoped<ILlmSuggestionMaterializer, LlmSuggestionMaterializer>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
 
         // n8n Integration (typed HttpClient + Options pattern, same as PayOS in Subscription module)
