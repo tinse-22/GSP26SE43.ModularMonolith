@@ -46,6 +46,10 @@ public class BoundaryNegativeTestCaseGeneratorTests
         _expectationBuilderMock.Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
             .Returns<Guid, N8nTestCaseExpectation>((id, exp) => new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
 
+        var materializer = new LlmSuggestionMaterializer(
+            _requestBuilderMock.Object,
+            _expectationBuilderMock.Object);
+
         _generator = new BoundaryNegativeTestCaseGenerator(
             _endpointMetadataServiceMock.Object,
             _parameterDetailServiceMock.Object,
@@ -54,6 +58,7 @@ public class BoundaryNegativeTestCaseGeneratorTests
             _llmSuggesterMock.Object,
             _requestBuilderMock.Object,
             _expectationBuilderMock.Object,
+            materializer,
             new Mock<ILogger<BoundaryNegativeTestCaseGenerator>>().Object);
     }
 
