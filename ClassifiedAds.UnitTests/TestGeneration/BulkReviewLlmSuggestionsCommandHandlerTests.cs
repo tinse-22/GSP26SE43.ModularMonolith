@@ -208,6 +208,123 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_IgnoreSuggestionsThatAreNotPending()
+    {
+        var suite = CreateSuite();
+        var pendingSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 1);
+        var approvedSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 0);
+        approvedSuggestion.ReviewStatus = ReviewStatus.Approved;
+
+        SetupSuiteFound(suite);
+        SetupSuggestions(new List<LlmSuggestion> { approvedSuggestion, pendingSuggestion });
+        SetupSubscriptionAllowed();
+        SetupGateApproved();
+        SetupNoExistingTestCases();
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = suite.Id,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+        };
+
+        await _handler.HandleAsync(command);
+
+        approvedSuggestion.ReviewStatus.Should().Be(ReviewStatus.Approved);
+        pendingSuggestion.ReviewStatus.Should().Be(ReviewStatus.Approved);
+        command.Result.MatchedCount.Should().Be(1);
+        command.Result.ProcessedCount.Should().Be(1);
+        command.Result.SuggestionIds.Should().Equal(pendingSuggestion.Id);
+        _testCaseRepoMock.Verify(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_AppendAfterHighestExistingOrderIndex_WhenApprovingBatch()
+    {
+        var suite = CreateSuite();
+        var suggestions = new List<LlmSuggestion>
+        {
+            CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 0),
+            CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Boundary, displayOrder: 1),
+        };
+        var addedOrderIndexes = new List<int>();
+
+        SetupSuiteFound(suite);
+        SetupSuggestions(suggestions);
+        SetupSubscriptionAllowed();
+        SetupGateApproved();
+        SetupExistingTestCases(
+            new TestCase { Id = Guid.NewGuid(), TestSuiteId = suite.Id, OrderIndex = 2 },
+            new TestCase { Id = Guid.NewGuid(), TestSuiteId = suite.Id, OrderIndex = 7 });
+
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((testCase, _) => addedOrderIndexes.Add(testCase.OrderIndex));
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = suite.Id,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+        };
+
+        await _handler.HandleAsync(command);
+
+        addedOrderIndexes.Should().Equal(8, 9);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_CreateSuiteSnapshotContainingExistingAndNewTestCases()
+    {
+        var suite = CreateSuite();
+        var existingFirst = new TestCase
+        {
+            Id = Guid.NewGuid(),
+            TestSuiteId = suite.Id,
+            Name = "Existing A",
+            EndpointId = Guid.NewGuid(),
+            OrderIndex = 1,
+        };
+        var existingSecond = new TestCase
+        {
+            Id = Guid.NewGuid(),
+            TestSuiteId = suite.Id,
+            Name = "Existing B",
+            EndpointId = Guid.NewGuid(),
+            OrderIndex = 4,
+        };
+        var suggestions = new List<LlmSuggestion>
+        {
+            CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 0),
+            CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Boundary, displayOrder: 1),
+        };
+        TestSuiteVersion? capturedVersion = null;
+
+        SetupSuiteFound(suite);
+        SetupSuggestions(suggestions);
+        SetupSubscriptionAllowed();
+        SetupGateApproved();
+        SetupExistingTestCases(existingFirst, existingSecond);
+
+        _versionRepoMock.Setup(x => x.AddAsync(It.IsAny<TestSuiteVersion>(), It.IsAny<CancellationToken>()))
+            .Callback<TestSuiteVersion, CancellationToken>((version, _) => capturedVersion = version);
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = suite.Id,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+        };
+
+        await _handler.HandleAsync(command);
+
+        capturedVersion.Should().NotBeNull();
+        capturedVersion!.TestCaseOrderSnapshot.Should().Contain("Existing A");
+        capturedVersion.TestCaseOrderSnapshot.Should().Contain("Existing B");
+        capturedVersion.TestCaseOrderSnapshot.Should().Contain("Suggestion 0");
+        capturedVersion.TestCaseOrderSnapshot.Should().Contain("Suggestion 1");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ReturnZeroCounts_WhenNoSuggestionsMatch()
     {
         var suite = CreateSuite();
@@ -232,6 +349,8 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
         command.Result.MatchedCount.Should().Be(0);
         command.Result.ProcessedCount.Should().Be(0);
         command.Result.MaterializedCount.Should().Be(0);
+        command.Result.SuggestionIds.Should().BeEmpty();
+        command.Result.AppliedTestCaseIds.Should().BeEmpty();
         _testCaseRepoMock.Verify(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -251,6 +370,119 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
         var act = () => _handler.HandleAsync(command);
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*FilterBySuggestionType*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ReturnProcessedSuggestionIdsAndAppliedTestCaseIds()
+    {
+        var suite = CreateSuite();
+        var firstSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 0);
+        var secondSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Boundary, displayOrder: 1);
+        var addedTestCaseIds = new List<Guid>();
+
+        SetupSuiteFound(suite);
+        SetupSuggestions(new List<LlmSuggestion> { firstSuggestion, secondSuggestion });
+        SetupSubscriptionAllowed();
+        SetupGateApproved();
+        SetupNoExistingTestCases();
+
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((testCase, _) => addedTestCaseIds.Add(testCase.Id));
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = suite.Id,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+        };
+
+        await _handler.HandleAsync(command);
+
+        command.Result.SuggestionIds.Should().Equal(firstSuggestion.Id, secondSuggestion.Id);
+        command.Result.AppliedTestCaseIds.Should().Equal(addedTestCaseIds);
+        command.Result.MaterializedCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenActionInvalid()
+    {
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = DefaultUserId,
+            Action = "Modify",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Action*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenTestTypeFilterInvalid()
+    {
+        SetupSuiteFound(CreateSuite());
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+            FilterByTestType = "InvalidTestType",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*FilterByTestType*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenRejectWithoutReviewNotes()
+    {
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = DefaultUserId,
+            Action = "Reject",
+            ReviewNotes = "   ",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*ReviewNotes*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowNotFound_WhenSuiteMissing()
+    {
+        SetupSuiteNotFound();
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = DefaultUserId,
+            Action = "Approve",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenCurrentUserIsNotSuiteOwner()
+    {
+        SetupSuiteFound(CreateSuite());
+
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = Guid.NewGuid(),
+            Action = "Approve",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*chu so huu*");
     }
 
     private static readonly Guid DefaultUserId = Guid.NewGuid();
@@ -291,6 +523,12 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
         _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>())).ReturnsAsync(suite);
     }
 
+    private void SetupSuiteNotFound()
+    {
+        _suiteRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestSuite>().AsQueryable());
+        _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>())).ReturnsAsync((TestSuite)null);
+    }
+
     private void SetupSuggestions(List<LlmSuggestion> suggestions)
     {
         _suggestionRepoMock.Setup(x => x.GetQueryableSet()).Returns(suggestions.AsQueryable());
@@ -314,7 +552,13 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
 
     private void SetupNoExistingTestCases()
     {
-        _testCaseRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestCase>().AsQueryable());
-        _testCaseRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCase>>())).ReturnsAsync(new List<TestCase>());
+        SetupExistingTestCases();
+    }
+
+    private void SetupExistingTestCases(params TestCase[] testCases)
+    {
+        var existingCases = testCases.ToList();
+        _testCaseRepoMock.Setup(x => x.GetQueryableSet()).Returns(existingCases.AsQueryable());
+        _testCaseRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCase>>())).ReturnsAsync(existingCases);
     }
 }

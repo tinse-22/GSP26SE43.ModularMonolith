@@ -80,10 +80,15 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         string reviewNotes,
         CancellationToken cancellationToken = default)
     {
-        if (suggestions == null || suggestions.Count == 0)
+        ValidationException.Requires(currentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
+
+        var reviewSuggestions = PrepareSuggestions(suggestions);
+        if (reviewSuggestions.Count == 0)
         {
             return;
         }
+
+        EnsureSuggestionsArePending(reviewSuggestions);
 
         var now = DateTimeOffset.UtcNow;
 
@@ -91,7 +96,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         {
             await _suggestionRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
             {
-                foreach (var suggestion in suggestions)
+                foreach (var suggestion in reviewSuggestions)
                 {
                     suggestion.ReviewStatus = ReviewStatus.Rejected;
                     suggestion.ReviewedById = currentUserId;
@@ -110,13 +115,13 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         {
             throw new ConflictException(
                 "CONCURRENCY_CONFLICT",
-                "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.");
+                "Suggestion đã được thay đổi bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
 
         _logger.LogInformation(
             "Rejected {SuggestionCount} LLM suggestion(s). SuggestionIds={SuggestionIds}, ActorUserId={ActorUserId}",
-            suggestions.Count,
-            suggestions.Select(x => x.Id).ToArray(),
+            reviewSuggestions.Count,
+            reviewSuggestions.Select(x => x.Id).ToArray(),
             currentUserId);
     }
 
@@ -126,15 +131,20 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         Guid currentUserId,
         CancellationToken cancellationToken = default)
     {
-        var approvalItems = approvals?
-            .Where(x => x?.Suggestion != null)
-            .OrderBy(x => x.Suggestion.DisplayOrder)
-            .ToList() ?? new List<LlmSuggestionApprovalItem>();
+        ValidationException.Requires(suite != null, "TestSuite là bắt buộc.");
+        ValidationException.Requires(currentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
+
+        var approvalItems = PrepareApprovalItems(approvals);
 
         if (approvalItems.Count == 0)
         {
             return new LlmSuggestionApprovalBatchResult();
         }
+
+        ValidationException.Requires(
+            approvalItems.All(x => x.Suggestion.TestSuiteId == suite.Id),
+            "Tất cả suggestions phải thuộc về test suite được review.");
+        EnsureSuggestionsArePending(approvalItems.Select(x => x.Suggestion));
 
         var limitCheck = await _subscriptionLimitService.CheckLimitAsync(
             currentUserId,
@@ -145,7 +155,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         if (!limitCheck.IsAllowed)
         {
             throw new ValidationException(
-                $"Da vuot qua gioi han test case cho goi subscription. {limitCheck.DenialReason}");
+                $"Đã vượt quá giới hạn test case cho gói subscription. {limitCheck.DenialReason}");
         }
 
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(suite.Id, cancellationToken);
@@ -156,7 +166,9 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 .Where(x => x.TestSuiteId == suite.Id));
 
         var now = DateTimeOffset.UtcNow;
-        var nextOrderIndex = existingTestCases.Count;
+        var nextOrderIndex = existingTestCases.Count == 0
+            ? 0
+            : existingTestCases.Max(x => x.OrderIndex) + 1;
         var materializedTestCases = new List<TestCase>(approvalItems.Count);
 
         try
@@ -233,7 +245,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                     ChangeType = VersionChangeType.TestCasesModified,
                     ChangeDescription = BuildSuiteChangeDescription(approvalItems),
                     TestCaseOrderSnapshot = JsonSerializer.Serialize(
-                        materializedTestCases
+                        existingTestCases
+                            .Concat(materializedTestCases)
                             .OrderBy(x => x.OrderIndex)
                             .Select(x => new { x.Id, x.EndpointId, x.Name, x.OrderIndex })
                             .ToList(),
@@ -255,7 +268,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         {
             throw new ConflictException(
                 "CONCURRENCY_CONFLICT",
-                "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.");
+                "Suggestion đã được thay đổi bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
 
         await _subscriptionLimitService.IncrementUsageAsync(
@@ -301,8 +314,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         }
 
         return isModify
-            ? $"Modified and approved from LLM suggestion preview (SuggestionId={suggestionId})"
-            : $"Approved from LLM suggestion preview (SuggestionId={suggestionId})";
+            ? $"Modified and approved from LLM suggestion review (SuggestionId={suggestionId})"
+            : $"Approved from LLM suggestion review (SuggestionId={suggestionId})";
     }
 
     private static string BuildSuiteChangeDescription(IReadOnlyCollection<LlmSuggestionApprovalItem> approvals)
@@ -319,5 +332,50 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         }
 
         return $"Bulk reviewed {approvals.Count} LLM suggestion(s): approved {approvedCount}, modified and approved {modifiedCount}.";
+    }
+
+    private static List<LlmSuggestion> PrepareSuggestions(IReadOnlyCollection<LlmSuggestion> suggestions)
+    {
+        var normalizedSuggestions = suggestions?
+            .Where(x => x != null)
+            .OrderBy(x => x.DisplayOrder)
+            .ToList() ?? new List<LlmSuggestion>();
+
+        EnsureNoDuplicateSuggestions(normalizedSuggestions.Select(x => x.Id));
+
+        return normalizedSuggestions;
+    }
+
+    private static List<LlmSuggestionApprovalItem> PrepareApprovalItems(
+        IReadOnlyCollection<LlmSuggestionApprovalItem> approvals)
+    {
+        var approvalItems = approvals?
+            .Where(x => x?.Suggestion != null)
+            .OrderBy(x => x.Suggestion.DisplayOrder)
+            .ToList() ?? new List<LlmSuggestionApprovalItem>();
+
+        EnsureNoDuplicateSuggestions(approvalItems.Select(x => x.Suggestion.Id));
+
+        return approvalItems;
+    }
+
+    private static void EnsureSuggestionsArePending(IEnumerable<LlmSuggestion> suggestions)
+    {
+        ValidationException.Requires(
+            suggestions.All(x => x.ReviewStatus == ReviewStatus.Pending),
+            "Chỉ có thể review suggestions đang Pending trong shared review service.");
+    }
+
+    private static void EnsureNoDuplicateSuggestions(IEnumerable<Guid> suggestionIds)
+    {
+        var duplicateIds = suggestionIds
+            .GroupBy(x => x)
+            .Where(x => x.Count() > 1)
+            .Select(x => x.Key)
+            .ToList();
+
+        ValidationException.Requires(
+            duplicateIds.Count == 0,
+            "Danh sách suggestion review không được chứa phần tử trùng lặp.");
     }
 }

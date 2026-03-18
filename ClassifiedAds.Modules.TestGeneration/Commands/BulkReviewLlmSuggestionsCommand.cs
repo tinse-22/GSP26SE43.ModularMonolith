@@ -59,6 +59,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
 
         var isApprove = string.Equals(command.Action, "Approve", StringComparison.OrdinalIgnoreCase);
         var isReject = string.Equals(command.Action, "Reject", StringComparison.OrdinalIgnoreCase);
+        var action = isApprove ? "Approve" : "Reject";
         ValidationException.Requires(isApprove || isReject, "Action phai la 'Approve' hoac 'Reject'.");
 
         if (isReject)
@@ -127,7 +128,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
             command.Result = new BulkReviewLlmSuggestionsResultModel
             {
                 TestSuiteId = command.TestSuiteId,
-                Action = isApprove ? "Approve" : "Reject",
+                Action = action,
                 MatchedCount = 0,
                 ProcessedCount = 0,
                 MaterializedCount = 0,
@@ -136,7 +137,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
             return;
         }
 
-        var appliedTestCaseIds = new Guid[0];
+        var appliedTestCaseIds = Array.Empty<Guid>();
 
         if (isApprove)
         {
@@ -161,14 +162,21 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
                 cancellationToken);
         }
 
+        var reviewedAt = suggestions
+            .Select(x => x.ReviewedAt)
+            .Where(x => x.HasValue)
+            .Select(x => x.Value)
+            .DefaultIfEmpty(DateTimeOffset.UtcNow)
+            .Max();
+
         command.Result = new BulkReviewLlmSuggestionsResultModel
         {
             TestSuiteId = command.TestSuiteId,
-            Action = isApprove ? "Approve" : "Reject",
+            Action = action,
             MatchedCount = suggestions.Count,
             ProcessedCount = suggestions.Count,
             MaterializedCount = appliedTestCaseIds.Length,
-            ReviewedAt = now,
+            ReviewedAt = reviewedAt,
             SuggestionIds = suggestions.Select(x => x.Id).ToList(),
             AppliedTestCaseIds = appliedTestCaseIds.ToList(),
         };
