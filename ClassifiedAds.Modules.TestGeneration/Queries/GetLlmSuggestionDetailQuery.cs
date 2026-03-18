@@ -21,13 +21,16 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
 {
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
+    private readonly IRepository<LlmSuggestionFeedback, Guid> _feedbackRepository;
 
     public GetLlmSuggestionDetailQueryHandler(
         IRepository<TestSuite, Guid> suiteRepository,
-        IRepository<LlmSuggestion, Guid> suggestionRepository)
+        IRepository<LlmSuggestion, Guid> suggestionRepository,
+        IRepository<LlmSuggestionFeedback, Guid> feedbackRepository)
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
+        _feedbackRepository = feedbackRepository;
     }
 
     public async Task<LlmSuggestionModel> HandleAsync(
@@ -39,19 +42,36 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
                 .Where(x => x.Id == query.TestSuiteId));
 
         if (suite == null)
-            throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");
+        {
+            throw new NotFoundException($"Khong tim thay test suite voi ma '{query.TestSuiteId}'.");
+        }
 
         ValidationException.Requires(
             suite.CreatedById == query.CurrentUserId,
-            "Bạn không phải chủ sở hữu của test suite này.");
+            "Ban khong phai chu so huu cua test suite nay.");
 
         var suggestion = await _suggestionRepository.FirstOrDefaultAsync(
             _suggestionRepository.GetQueryableSet()
                 .Where(x => x.Id == query.SuggestionId && x.TestSuiteId == query.TestSuiteId));
 
         if (suggestion == null)
-            throw new NotFoundException($"Không tìm thấy suggestion với mã '{query.SuggestionId}'.");
+        {
+            throw new NotFoundException($"Khong tim thay suggestion voi ma '{query.SuggestionId}'.");
+        }
 
-        return LlmSuggestionModel.FromEntity(suggestion);
+        var feedbackRows = await _feedbackRepository.ToListAsync(
+            _feedbackRepository.GetQueryableSet()
+                .Where(x =>
+                    x.TestSuiteId == query.TestSuiteId &&
+                    x.SuggestionId == suggestion.Id));
+
+        var model = LlmSuggestionModel.FromEntity(suggestion);
+        model.CurrentUserFeedback = feedbackRows
+            .Where(x => x.UserId == query.CurrentUserId)
+            .Select(LlmSuggestionFeedbackModel.FromEntity)
+            .FirstOrDefault();
+        model.FeedbackSummary = LlmSuggestionFeedbackSummaryModel.FromEntities(feedbackRows);
+
+        return model;
     }
 }

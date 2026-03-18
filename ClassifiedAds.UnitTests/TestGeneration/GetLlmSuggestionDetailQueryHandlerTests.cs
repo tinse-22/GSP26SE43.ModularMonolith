@@ -16,16 +16,19 @@ public class GetLlmSuggestionDetailQueryHandlerTests
 {
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<LlmSuggestion, Guid>> _suggestionRepoMock;
+    private readonly Mock<IRepository<LlmSuggestionFeedback, Guid>> _feedbackRepoMock;
     private readonly GetLlmSuggestionDetailQueryHandler _handler;
 
     public GetLlmSuggestionDetailQueryHandlerTests()
     {
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _suggestionRepoMock = new Mock<IRepository<LlmSuggestion, Guid>>();
+        _feedbackRepoMock = new Mock<IRepository<LlmSuggestionFeedback, Guid>>();
 
         _handler = new GetLlmSuggestionDetailQueryHandler(
             _suiteRepoMock.Object,
-            _suggestionRepoMock.Object);
+            _suggestionRepoMock.Object,
+            _feedbackRepoMock.Object);
     }
 
     [Fact]
@@ -47,14 +50,13 @@ public class GetLlmSuggestionDetailQueryHandlerTests
     [Fact]
     public async Task HandleAsync_Should_ThrowValidation_WhenNotSuiteOwner()
     {
-        var suite = CreateSuite();
-        SetupSuiteFound(suite);
+        SetupSuiteFound(CreateSuite());
 
         var query = new GetLlmSuggestionDetailQuery
         {
             TestSuiteId = DefaultSuiteId,
             SuggestionId = DefaultSuggestionId,
-            CurrentUserId = Guid.NewGuid(), // different user
+            CurrentUserId = Guid.NewGuid(),
         };
 
         var act = () => _handler.HandleAsync(query);
@@ -64,8 +66,7 @@ public class GetLlmSuggestionDetailQueryHandlerTests
     [Fact]
     public async Task HandleAsync_Should_ThrowNotFound_WhenSuggestionDoesNotExist()
     {
-        var suite = CreateSuite();
-        SetupSuiteFound(suite);
+        SetupSuiteFound(CreateSuite());
         SetupSuggestionNotFound();
 
         var query = new GetLlmSuggestionDetailQuery
@@ -82,10 +83,10 @@ public class GetLlmSuggestionDetailQueryHandlerTests
     [Fact]
     public async Task HandleAsync_Should_ReturnSuggestionModel()
     {
-        var suite = CreateSuite();
         var suggestion = CreateSuggestion();
-        SetupSuiteFound(suite);
+        SetupSuiteFound(CreateSuite());
         SetupSuggestionFound(suggestion);
+        SetupFeedbacksFound(new List<LlmSuggestionFeedback>());
 
         var query = new GetLlmSuggestionDetailQuery
         {
@@ -96,7 +97,6 @@ public class GetLlmSuggestionDetailQueryHandlerTests
 
         var result = await _handler.HandleAsync(query);
 
-        result.Should().NotBeNull();
         result.Id.Should().Be(suggestion.Id);
         result.TestSuiteId.Should().Be(suggestion.TestSuiteId);
         result.SuggestedName.Should().Be(suggestion.SuggestedName);
@@ -105,13 +105,42 @@ public class GetLlmSuggestionDetailQueryHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_ReturnFeedbackSummaryAndCurrentUserFeedback()
+    {
+        var suggestion = CreateSuggestion();
+        SetupSuiteFound(CreateSuite());
+        SetupSuggestionFound(suggestion);
+        SetupFeedbacksFound(new List<LlmSuggestionFeedback>
+        {
+            CreateFeedback(DefaultUserId, LlmSuggestionFeedbackSignal.Helpful, "Useful"),
+            CreateFeedback(Guid.NewGuid(), LlmSuggestionFeedbackSignal.NotHelpful, "Too generic"),
+        });
+
+        var query = new GetLlmSuggestionDetailQuery
+        {
+            TestSuiteId = DefaultSuiteId,
+            SuggestionId = DefaultSuggestionId,
+            CurrentUserId = DefaultUserId,
+        };
+
+        var result = await _handler.HandleAsync(query);
+
+        result.CurrentUserFeedback.Should().NotBeNull();
+        result.CurrentUserFeedback.Signal.Should().Be("Helpful");
+        result.CurrentUserFeedback.Notes.Should().Be("Useful");
+        result.FeedbackSummary.HelpfulCount.Should().Be(1);
+        result.FeedbackSummary.NotHelpfulCount.Should().Be(1);
+        result.FeedbackSummary.LastFeedbackAt.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_DeserializeTagsCorrectly()
     {
-        var suite = CreateSuite();
         var suggestion = CreateSuggestion();
         suggestion.SuggestedTags = "[\"negative\",\"auto-generated\",\"llm-suggested\"]";
-        SetupSuiteFound(suite);
+        SetupSuiteFound(CreateSuite());
         SetupSuggestionFound(suggestion);
+        SetupFeedbacksFound(new List<LlmSuggestionFeedback>());
 
         var query = new GetLlmSuggestionDetailQuery
         {
@@ -126,8 +155,6 @@ public class GetLlmSuggestionDetailQueryHandlerTests
         result.SuggestedTags.Should().Contain("negative");
         result.SuggestedTags.Should().Contain("llm-suggested");
     }
-
-    #region Helpers
 
     private static readonly Guid DefaultUserId = Guid.NewGuid();
     private static readonly Guid DefaultSuiteId = Guid.NewGuid();
@@ -162,37 +189,50 @@ public class GetLlmSuggestionDetailQueryHandlerTests
         CreatedDateTime = DateTimeOffset.UtcNow,
     };
 
+    private static LlmSuggestionFeedback CreateFeedback(
+        Guid userId,
+        LlmSuggestionFeedbackSignal signal,
+        string notes) => new()
+    {
+        Id = Guid.NewGuid(),
+        SuggestionId = DefaultSuggestionId,
+        TestSuiteId = DefaultSuiteId,
+        EndpointId = Guid.NewGuid(),
+        UserId = userId,
+        FeedbackSignal = signal,
+        Notes = notes,
+        CreatedDateTime = DateTimeOffset.UtcNow,
+        RowVersion = Guid.NewGuid().ToByteArray(),
+    };
+
     private void SetupSuiteFound(TestSuite suite)
     {
-        _suiteRepoMock.Setup(x => x.GetQueryableSet())
-            .Returns(new List<TestSuite> { suite }.AsQueryable());
-        _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>()))
-            .ReturnsAsync(suite);
+        _suiteRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestSuite> { suite }.AsQueryable());
+        _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>())).ReturnsAsync(suite);
     }
 
     private void SetupSuiteNotFound()
     {
-        _suiteRepoMock.Setup(x => x.GetQueryableSet())
-            .Returns(new List<TestSuite>().AsQueryable());
-        _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>()))
-            .ReturnsAsync((TestSuite)null);
+        _suiteRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestSuite>().AsQueryable());
+        _suiteRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestSuite>>())).ReturnsAsync((TestSuite)null);
     }
 
     private void SetupSuggestionFound(LlmSuggestion suggestion)
     {
-        _suggestionRepoMock.Setup(x => x.GetQueryableSet())
-            .Returns(new List<LlmSuggestion> { suggestion }.AsQueryable());
-        _suggestionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<LlmSuggestion>>()))
-            .ReturnsAsync(suggestion);
+        _suggestionRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<LlmSuggestion> { suggestion }.AsQueryable());
+        _suggestionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<LlmSuggestion>>())).ReturnsAsync(suggestion);
     }
 
     private void SetupSuggestionNotFound()
     {
-        _suggestionRepoMock.Setup(x => x.GetQueryableSet())
-            .Returns(new List<LlmSuggestion>().AsQueryable());
-        _suggestionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<LlmSuggestion>>()))
-            .ReturnsAsync((LlmSuggestion)null);
+        _suggestionRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<LlmSuggestion>().AsQueryable());
+        _suggestionRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<LlmSuggestion>>())).ReturnsAsync((LlmSuggestion)null);
     }
 
-    #endregion
+    private void SetupFeedbacksFound(List<LlmSuggestionFeedback> feedbacks)
+    {
+        _feedbackRepoMock.Setup(x => x.GetQueryableSet()).Returns(feedbacks.AsQueryable());
+        _feedbackRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<LlmSuggestionFeedback>>()))
+            .ReturnsAsync((IQueryable<LlmSuggestionFeedback> query) => query.ToList());
+    }
 }
