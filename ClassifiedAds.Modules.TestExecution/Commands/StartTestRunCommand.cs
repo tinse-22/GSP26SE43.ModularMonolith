@@ -61,7 +61,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         // 1. Validate input
         if (command.TestSuiteId == Guid.Empty)
         {
-            throw new ValidationException("TestSuiteId la bat buoc.");
+            throw new ValidationException("TestSuiteId là bắt buộc.");
         }
 
         // Normalize selectedTestCaseIds
@@ -76,13 +76,13 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         // 3. Validate ownership
         if (suiteContext.CreatedById != command.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         // 4. Validate status
         if (suiteContext.Status != "Ready")
         {
-            throw new ValidationException("Test suite chua san sang de chay test.");
+            throw new ValidationException("Test suite chưa sẵn sàng để chạy test.");
         }
 
         // 5. Resolve environment
@@ -95,7 +95,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
 
             if (environment == null)
             {
-                throw new NotFoundException($"Khong tim thay execution environment voi ma '{command.EnvironmentId.Value}'.");
+                throw new NotFoundException($"Không tìm thấy execution environment với mã '{command.EnvironmentId.Value}'.");
             }
         }
         else
@@ -106,7 +106,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
 
             if (environment == null)
             {
-                throw new NotFoundException("Khong tim thay execution environment mac dinh cho project nay.");
+                throw new NotFoundException("Không tìm thấy execution environment mặc định cho project này.");
             }
         }
 
@@ -125,7 +125,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
 
         if (!concurrentCheck.IsAllowed)
         {
-            throw new ValidationException("Da dat gioi han so luong run dang chay dong thoi.");
+            throw new ValidationException("Đã đạt giới hạn số lượng run đang chạy đồng thời.");
         }
 
         // 7. Reserve monthly quota
@@ -137,7 +137,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
 
         if (!monthlyCheck.IsAllowed)
         {
-            throw new ValidationException("Da dat gioi han so luong test run trong thang.");
+            throw new ValidationException("Đã đạt giới hạn số lượng test run trong tháng.");
         }
 
         // 8. Allocate RunNumber in Serializable transaction and insert Pending run

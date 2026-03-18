@@ -95,7 +95,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                     result.Failures.Add(new ValidationFailureModel
                     {
                         Code = "STATUS_CODE_MISMATCH",
-                        Message = $"Ma trang thai khong khop. Mong doi: [{string.Join(", ", expectedStatuses)}], thuc te: {response.StatusCode}.",
+                        Message = $"Mã trạng thái không khớp. Mong đợi: [{string.Join(", ", expectedStatuses)}], thực tế: {response.StatusCode}.",
                         Expected = string.Join(", ", expectedStatuses),
                         Actual = response.StatusCode.Value.ToString(),
                     });
@@ -113,7 +113,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                     result.Failures.Add(new ValidationFailureModel
                     {
                         Code = "STATUS_CODE_MISMATCH",
-                        Message = $"Ma trang thai khong khop. Mong doi: {singleStatus}, thuc te: {response.StatusCode}.",
+                        Message = $"Mã trạng thái không khớp. Mong đợi: {singleStatus}, thực tế: {response.StatusCode}.",
                         Expected = singleStatus.ToString(),
                         Actual = response.StatusCode?.ToString(),
                     });
@@ -148,7 +148,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             result.Failures.Add(new ValidationFailureModel
             {
                 Code = "RESPONSE_NOT_JSON",
-                Message = "Response body trong nhung co schema validation.",
+                Message = "Response body trống nhưng có schema validation.",
             });
             return;
         }
@@ -167,7 +167,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 result.Failures.Add(new ValidationFailureModel
                 {
                     Code = "RESPONSE_SCHEMA_MISMATCH",
-                    Message = "Response body khong phu hop voi JSON schema mong doi.",
+                    Message = "Response body không phù hợp với JSON schema mong đợi.",
                 });
             }
         }
@@ -177,7 +177,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             result.Failures.Add(new ValidationFailureModel
             {
                 Code = "RESPONSE_NOT_JSON",
-                Message = "Response body khong phai JSON hop le.",
+                Message = "Response body không phải JSON hợp lệ.",
             });
         }
     }
@@ -347,7 +347,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                         result.Failures.Add(new ValidationFailureModel
                         {
                             Code = "HEADER_MISMATCH",
-                            Message = $"Header '{check.Key}' khong khop. Mong doi: '{check.Value?.Trim()}', thuc te: '{h.Value?.Trim()}'.",
+                            Message = $"Header '{check.Key}' không khớp. Mong đợi: '{check.Value?.Trim()}', thực tế: '{h.Value?.Trim()}'.",
                             Target = check.Key,
                             Expected = check.Value?.Trim(),
                             Actual = h.Value?.Trim(),
@@ -364,7 +364,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 result.Failures.Add(new ValidationFailureModel
                 {
                     Code = "HEADER_MISMATCH",
-                    Message = $"Header '{check.Key}' khong ton tai trong response.",
+                    Message = $"Header '{check.Key}' không tồn tại trong response.",
                     Target = check.Key,
                     Expected = check.Value,
                 });
@@ -410,7 +410,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 result.Failures.Add(new ValidationFailureModel
                 {
                     Code = "BODY_CONTAINS_MISSING",
-                    Message = $"Response body khong chua chuoi mong doi: '{Truncate(pattern, 100)}'.",
+                    Message = $"Response body không chứa chuỗi mong đợi: '{Truncate(pattern, 100)}'.",
                     Expected = Truncate(pattern, 200),
                 });
             }
@@ -455,7 +455,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 result.Failures.Add(new ValidationFailureModel
                 {
                     Code = "BODY_NOT_CONTAINS_PRESENT",
-                    Message = $"Response body chua chuoi khong mong doi: '{Truncate(pattern, 100)}'.",
+                    Message = $"Response body chứa chuỗi không mong đợi: '{Truncate(pattern, 100)}'.",
                     Actual = Truncate(pattern, 200),
                 });
             }
@@ -495,7 +495,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             result.Failures.Add(new ValidationFailureModel
             {
                 Code = "RESPONSE_NOT_JSON",
-                Message = "Response body trong nhung co JSONPath checks.",
+                Message = "Response body trống nhưng có JSONPath checks.",
             });
             return;
         }
@@ -511,7 +511,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             result.Failures.Add(new ValidationFailureModel
             {
                 Code = "RESPONSE_NOT_JSON",
-                Message = "Response body khong phai JSON hop le cho JSONPath checks.",
+                Message = "Response body không phải JSON hợp lệ cho JSONPath checks.",
             });
             return;
         }
@@ -530,7 +530,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                     result.Failures.Add(new ValidationFailureModel
                     {
                         Code = "JSONPATH_ASSERTION_FAILED",
-                        Message = $"JSONPath '{check.Key}' khong khop. Mong doi: '{check.Value}', thuc te: '{actualValue ?? "(null)"}'.",
+                        Message = $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
                         Target = check.Key,
                         Expected = check.Value,
                         Actual = actualValue,
@@ -558,7 +558,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             result.Failures.Add(new ValidationFailureModel
             {
                 Code = "RESPONSE_TIME_EXCEEDED",
-                Message = $"Thoi gian phan hoi vuot nguong. Toi da: {expectation.MaxResponseTime}ms, thuc te: {response.LatencyMs}ms.",
+                Message = $"Thời gian phản hồi vượt ngưỡng. Tối đa: {expectation.MaxResponseTime}ms, thực tế: {response.LatencyMs}ms.",
                 Expected = $"{expectation.MaxResponseTime}ms",
                 Actual = $"{response.LatencyMs}ms",
             });

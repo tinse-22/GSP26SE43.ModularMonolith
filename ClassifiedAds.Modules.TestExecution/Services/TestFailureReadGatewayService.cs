@@ -51,7 +51,7 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
         if (run == null)
         {
-            throw new NotFoundException($"Khong tim thay test run voi ma '{runId}'.");
+            throw new NotFoundException($"Không tìm thấy test run với mã '{runId}'.");
         }
 
         var runResults = await GetRunResultsAsync(run, ct);
@@ -60,12 +60,12 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
         if (failedCaseResult == null)
         {
-            throw new NotFoundException($"Khong tim thay test case can giai thich trong test run '{runId}'.");
+            throw new NotFoundException($"Không tìm thấy test case cần giải thích trong test run '{runId}'.");
         }
 
         if (!string.Equals(failedCaseResult.Status, "Failed", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ConflictException("TEST_CASE_NOT_FAILED", "Chi co the giai thich test case that bai.");
+            throw new ConflictException("TEST_CASE_NOT_FAILED", "Chỉ có thể giải thích test case thất bại.");
         }
 
         var executionContext = await _executionReadGatewayService.GetExecutionContextAsync(testSuiteId, null, ct);
@@ -74,7 +74,7 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
         if (definition == null)
         {
-            throw new NotFoundException($"Khong tim thay test case definition voi ma '{testCaseId}' trong test suite '{testSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test case definition với mã '{testCaseId}' trong test suite '{testSuiteId}'.");
         }
 
         return new TestFailureExplanationContextDto
@@ -210,6 +210,6 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
     private static ConflictException CreateRunResultsExpiredException()
     {
-        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiet ket qua da het han luu tru trong cache.");
+        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
     }
 }

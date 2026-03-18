@@ -38,7 +38,7 @@ public class GetTestRunQueryHandler : IQueryHandler<GetTestRunQuery, TestRunMode
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
         if (suiteContext.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var run = await _runRepository.FirstOrDefaultAsync(
@@ -47,7 +47,7 @@ public class GetTestRunQueryHandler : IQueryHandler<GetTestRunQuery, TestRunMode
 
         if (run == null)
         {
-            throw new NotFoundException($"Khong tim thay test run voi ma '{query.RunId}'.");
+            throw new NotFoundException($"Không tìm thấy test run với mã '{query.RunId}'.");
         }
 
         return TestRunModel.FromEntity(run);

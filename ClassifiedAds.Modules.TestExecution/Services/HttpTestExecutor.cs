@@ -110,7 +110,7 @@ public class HttpTestExecutor : IHttpTestExecutor
             return new HttpTestResponse
             {
                 LatencyMs = sw.ElapsedMilliseconds,
-                TransportError = $"Loi HTTP: {ex.Message}",
+                TransportError = $"Lỗi HTTP: {ex.Message}",
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -120,7 +120,7 @@ public class HttpTestExecutor : IHttpTestExecutor
             return new HttpTestResponse
             {
                 LatencyMs = sw.ElapsedMilliseconds,
-                TransportError = $"Loi khong mong muon: {ex.Message}",
+                TransportError = $"Lỗi không mong muốn: {ex.Message}",
             };
         }
     }

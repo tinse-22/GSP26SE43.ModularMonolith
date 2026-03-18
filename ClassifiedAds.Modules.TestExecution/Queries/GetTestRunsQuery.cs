@@ -44,7 +44,7 @@ public class GetTestRunsQueryHandler : IQueryHandler<GetTestRunsQuery, Paged<Tes
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
         if (suiteContext.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var baseQuery = _runRepository.GetQueryableSet()

@@ -54,14 +54,14 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
 
         if (run == null)
         {
-            throw new NotFoundException($"Khong tim thay test run voi ma '{runId}'.");
+            throw new NotFoundException($"Không tìm thấy test run với mã '{runId}'.");
         }
 
         if (run.Status != TestRunStatus.Completed && run.Status != TestRunStatus.Failed)
         {
             throw new ConflictException(
                 "REPORT_RUN_NOT_READY",
-                "Chi co the tao report sau khi test run da Completed hoac Failed.");
+                "Chỉ có thể tạo report sau khi test run đã Completed hoặc Failed.");
         }
 
         var runResults = await GetRunResultsAsync(run, ct);
@@ -253,6 +253,6 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
 
     private static ConflictException CreateRunResultsExpiredException()
     {
-        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiet ket qua da het han luu tru trong cache.");
+        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
     }
 }
