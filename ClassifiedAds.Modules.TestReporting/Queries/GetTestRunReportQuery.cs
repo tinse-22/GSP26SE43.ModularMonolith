@@ -42,23 +42,23 @@ public class GetTestRunReportQueryHandler : IQueryHandler<GetTestRunReportQuery,
     {
         if (query.TestSuiteId == Guid.Empty)
         {
-            throw new ValidationException("TestSuiteId la bat buoc.");
+            throw new ValidationException("TestSuiteId là bắt buộc.");
         }
 
         if (query.RunId == Guid.Empty)
         {
-            throw new ValidationException("RunId la bat buoc.");
+            throw new ValidationException("RunId là bắt buộc.");
         }
 
         if (query.ReportId == Guid.Empty)
         {
-            throw new ValidationException("ReportId la bat buoc.");
+            throw new ValidationException("ReportId là bắt buộc.");
         }
 
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
         if (suiteContext.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var report = await _reportRepository.FirstOrDefaultAsync(
@@ -67,7 +67,7 @@ public class GetTestRunReportQueryHandler : IQueryHandler<GetTestRunReportQuery,
 
         if (report == null)
         {
-            throw new NotFoundException($"REPORT_NOT_FOUND: Khong tim thay report metadata voi ma '{query.ReportId}'.");
+            throw new NotFoundException($"REPORT_NOT_FOUND: Không tìm thấy report metadata với mã '{query.ReportId}'.");
         }
 
         var coverage = await _coverageRepository.FirstOrDefaultAsync(
