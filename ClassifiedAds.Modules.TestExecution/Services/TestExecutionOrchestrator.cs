@@ -154,7 +154,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                     new()
                     {
                         Code = "DEPENDENCY_FAILED",
-                        Message = "Test case bi bo qua vi dependency khong thanh cong.",
+                        Message = "Test case bị bỏ qua vì dependency không thành công.",
                     },
                 },
             };

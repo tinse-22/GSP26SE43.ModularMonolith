@@ -48,7 +48,7 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
         if (suiteContext.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var run = await _runRepository.FirstOrDefaultAsync(
@@ -57,24 +57,24 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
 
         if (run == null)
         {
-            throw new NotFoundException($"Khong tim thay test run voi ma '{query.RunId}'.");
+            throw new NotFoundException($"Không tìm thấy test run với mã '{query.RunId}'.");
         }
 
         if (string.IsNullOrEmpty(run.RedisKey))
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiet ket qua da het han luu tru trong cache.");
+            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
         }
 
         // Check expiry
         if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiet ket qua da het han luu tru trong cache.");
+            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
         }
 
         var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
         if (cached == null)
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiet ket qua da het han luu tru trong cache.");
+            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
         }
 
         var result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
