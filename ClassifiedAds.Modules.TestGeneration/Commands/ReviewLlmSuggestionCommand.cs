@@ -48,8 +48,9 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
         ReviewLlmSuggestionCommand command,
         CancellationToken cancellationToken = default)
     {
-        ValidationException.Requires(command.SuggestionId != Guid.Empty, "SuggestionId la bat buoc.");
-        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId la bat buoc.");
+        ValidationException.Requires(command.SuggestionId != Guid.Empty, "SuggestionId là bắt buộc.");
+        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId là bắt buộc.");
+        ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
         ValidationException.Requires(
             !string.IsNullOrWhiteSpace(command.RowVersion),
             "RowVersion la bat buoc cho concurrency control.");
@@ -59,21 +60,21 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
             validActions.Contains(command.ReviewAction, StringComparer.OrdinalIgnoreCase),
             "ReviewAction phai la 'Approve', 'Reject', hoac 'Modify'.");
 
-        if (string.Equals(command.ReviewAction, "Reject", StringComparison.OrdinalIgnoreCase))
+        var isReject = string.Equals(command.ReviewAction, "Reject", StringComparison.OrdinalIgnoreCase);
+        var isModify = string.Equals(command.ReviewAction, "Modify", StringComparison.OrdinalIgnoreCase);
+
+        if (isReject)
         {
             ValidationException.Requires(
                 !string.IsNullOrWhiteSpace(command.ReviewNotes),
                 "ReviewNotes la bat buoc khi reject suggestion.");
         }
 
-        if (string.Equals(command.ReviewAction, "Modify", StringComparison.OrdinalIgnoreCase))
+        if (isModify)
         {
             ValidationException.Requires(
                 command.ModifiedContent != null,
-                "ModifiedContent la bat buoc khi Modify suggestion.");
-            ValidationException.Requires(
-                !string.IsNullOrWhiteSpace(command.ModifiedContent?.Name),
-                "ModifiedContent.Name la bat buoc.");
+                "ModifiedContent là bắt buộc khi Modify suggestion.");
         }
 
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -82,7 +83,7 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{command.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
@@ -95,17 +96,40 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
 
         if (suggestion == null)
         {
-            throw new NotFoundException($"Khong tim thay suggestion voi ma '{command.SuggestionId}'.");
+            throw new NotFoundException($"Không tìm thấy suggestion với mã '{command.SuggestionId}'.");
+        }
+
+        if (IsIdempotentApproveRequest(command.ReviewAction, suggestion))
+        {
+            command.Result = LlmSuggestionModel.FromEntity(suggestion);
+
+            _logger.LogInformation(
+                "LLM suggestion approve request was idempotent. SuggestionId={SuggestionId}, AppliedTestCaseId={AppliedTestCaseId}, TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
+                suggestion.Id,
+                suggestion.AppliedTestCaseId,
+                command.TestSuiteId,
+                command.CurrentUserId);
+
+            return;
         }
 
         ValidationException.Requires(
             suggestion.ReviewStatus == ReviewStatus.Pending,
-            $"Khong the review suggestion o trang thai '{suggestion.ReviewStatus}'. Chi co the review suggestion dang Pending.");
+            $"Không thể review suggestion ở trạng thái '{suggestion.ReviewStatus}'. Chỉ có thể review suggestion đang Pending.");
 
-        var parsedRowVersion = Convert.FromBase64String(command.RowVersion);
+        byte[] parsedRowVersion;
+        try
+        {
+            parsedRowVersion = Convert.FromBase64String(command.RowVersion);
+        }
+        catch (FormatException)
+        {
+            throw new ValidationException("RowVersion không hợp lệ. Giá trị phải là chuỗi Base64.");
+        }
+
         _suggestionRepository.SetRowVersion(suggestion, parsedRowVersion);
 
-        if (string.Equals(command.ReviewAction, "Reject", StringComparison.OrdinalIgnoreCase))
+        if (isReject)
         {
             await _reviewService.RejectAsync(
                 suggestion,
@@ -115,19 +139,16 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
         }
         else
         {
-            var isModify = string.Equals(command.ReviewAction, "Modify", StringComparison.OrdinalIgnoreCase);
+            var singleApproval = new LlmSuggestionApprovalItem
+            {
+                Suggestion = suggestion,
+                ReviewNotes = command.ReviewNotes,
+                ModifiedContent = isModify ? command.ModifiedContent : null,
+            };
 
             await _reviewService.ApproveManyAsync(
                 suite,
-                new[]
-                {
-                    new LlmSuggestionApprovalItem
-                    {
-                        Suggestion = suggestion,
-                        ReviewNotes = command.ReviewNotes,
-                        ModifiedContent = isModify ? command.ModifiedContent : null,
-                    },
-                },
+                new[] { singleApproval },
                 command.CurrentUserId,
                 cancellationToken);
         }
@@ -140,5 +161,13 @@ public class ReviewLlmSuggestionCommandHandler : ICommandHandler<ReviewLlmSugges
             command.ReviewAction,
             command.TestSuiteId,
             command.CurrentUserId);
+    }
+
+    private static bool IsIdempotentApproveRequest(string reviewAction, LlmSuggestion suggestion)
+    {
+        return string.Equals(reviewAction, "Approve", StringComparison.OrdinalIgnoreCase)
+            && suggestion.AppliedTestCaseId.HasValue
+            && (suggestion.ReviewStatus == ReviewStatus.Approved
+                || suggestion.ReviewStatus == ReviewStatus.ModifiedAndApproved);
     }
 }
