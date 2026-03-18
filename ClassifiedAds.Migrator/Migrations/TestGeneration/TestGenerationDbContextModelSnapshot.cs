@@ -113,9 +113,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<int?>("CustomOrderIndex")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("DependsOnId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
@@ -169,8 +166,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .HasDefaultValue(1);
 
                     b.HasKey("Id");
-
-                    b.HasIndex("DependsOnId");
 
                     b.HasIndex("EndpointId");
 
@@ -249,6 +244,40 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.HasIndex("TestCaseId");
 
                     b.ToTable("TestCaseChangeLogs", "testgen");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseDependency", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DependsOnTestCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("TestCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DependsOnTestCaseId");
+
+                    b.HasIndex("TestCaseId", "DependsOnTestCaseId")
+                        .IsUnique();
+
+                    b.ToTable("TestCaseDependencies", "testgen");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseExpectation", b =>
@@ -693,18 +722,11 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
                 {
-                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", "DependsOn")
-                        .WithMany()
-                        .HasForeignKey("DependsOnId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestSuite", "TestSuite")
                         .WithMany("TestCases")
                         .HasForeignKey("TestSuiteId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("DependsOn");
 
                     b.Navigation("TestSuite");
                 });
@@ -716,6 +738,25 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .HasForeignKey("TestCaseId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("TestCase");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseDependency", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", "DependsOnTestCase")
+                        .WithMany()
+                        .HasForeignKey("DependsOnTestCaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", "TestCase")
+                        .WithMany("Dependencies")
+                        .HasForeignKey("TestCaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DependsOnTestCase");
 
                     b.Navigation("TestCase");
                 });
@@ -791,6 +832,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("ChangeLogs");
 
                     b.Navigation("DataSets");
+
+                    b.Navigation("Dependencies");
 
                     b.Navigation("Expectation");
 

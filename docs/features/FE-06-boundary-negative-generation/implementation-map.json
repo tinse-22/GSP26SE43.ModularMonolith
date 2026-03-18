@@ -1,0 +1,419 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-06 - Implementation Map For Current Codebase",
+  "description": "Map truc tiep FE-06 vao file C# hien co trong codebase. AI Agent doc file nay de biet chinh xac file nao da ton tai, file nao can sua, thu tu implement.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation)",
+    "externalIntegration": "n8n webhook for LLM orchestration"
+  },
+  "currentCodebaseSnapshot": {
+    "testGeneration": {
+      "existingForFe06": [
+        {
+          "file": "Controllers/TestCasesController.cs",
+          "status": "IMPLEMENTED",
+          "description": "GenerateBoundaryNegative endpoint (POST generate-boundary-negative) va GetAll, GetById test case queries."
+        },
+        {
+          "file": "Commands/GenerateBoundaryNegativeTestCasesCommand.cs",
+          "status": "IMPLEMENTED",
+          "description": "CQRS command + handler voi 10-step pipeline: validate, gate check, existing check, subscription check, delete old, generate, persist transaction, increment usage, build result."
+        },
+        {
+          "file": "Services/BoundaryNegativeTestCaseGenerator.cs",
+          "status": "IMPLEMENTED",
+          "description": "Orchestrator service: fetch metadata, per-endpoint path+body mutations, LLM suggestions, assign OrderIndex."
+        },
+        {
+          "file": "Services/IBoundaryNegativeTestCaseGenerator.cs",
+          "status": "IMPLEMENTED",
+          "description": "Interface + BoundaryNegativeOptions + BoundaryNegativeGenerationResult models."
+        },
+        {
+          "file": "Services/BodyMutationEngine.cs",
+          "status": "IMPLEMENTED",
+          "description": "Rule-based body mutation engine: 6 mutation types (emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum) + schema-based mutations."
+        },
+        {
+          "file": "Services/IBodyMutationEngine.cs",
+          "status": "IMPLEMENTED",
+          "description": "Interface + BodyMutationContext model."
+        },
+        {
+          "file": "Services/LlmScenarioSuggester.cs",
+          "status": "IMPLEMENTED",
+          "description": "LLM scenario suggestion via n8n webhook: cache check, prompt build, n8n call, audit log, parse, cache save."
+        },
+        {
+          "file": "Services/ILlmScenarioSuggester.cs",
+          "status": "IMPLEMENTED",
+          "description": "Interface + LlmScenarioSuggestionContext + LlmScenarioSuggestionResult + LlmSuggestedScenario models."
+        },
+        {
+          "file": "Models/BodyMutation.cs",
+          "status": "IMPLEMENTED",
+          "description": "Body mutation model: MutationType, Label, MutatedBody, TargetFieldName, ExpectedStatusCode, Description, SuggestedTestType."
+        },
+        {
+          "file": "Models/GenerateBoundaryNegativeResultModel.cs",
+          "status": "IMPLEMENTED",
+          "description": "API response model voi per-pipeline counts va test case summaries."
+        },
+        {
+          "file": "Models/N8nBoundaryNegativePayload.cs",
+          "status": "IMPLEMENTED",
+          "description": "n8n webhook request payload: TestSuiteId, TestSuiteName, GlobalBusinessRules, Endpoints[]."
+        },
+        {
+          "file": "Models/N8nBoundaryNegativeResponse.cs",
+          "status": "IMPLEMENTED",
+          "description": "n8n webhook response: Scenarios[], Model, TokensUsed."
+        },
+        {
+          "file": "Models/Requests/GenerateBoundaryNegativeTestCasesRequest.cs",
+          "status": "IMPLEMENTED",
+          "description": "API request model: SpecificationId, ForceRegenerate, IncludePathMutations, IncludeBodyMutations, IncludeLlmSuggestions."
+        },
+        {
+          "file": "Authorization/Permissions.cs",
+          "status": "IMPLEMENTED",
+          "description": "Permission:GenerateBoundaryNegativeTestCases da duoc khai bao."
+        },
+        {
+          "file": "Constants/N8nWebhookNames.cs",
+          "status": "IMPLEMENTED",
+          "description": "GenerateBoundaryNegative = 'generate-boundary-negative-scenarios'."
+        }
+      ],
+      "sharedWithFe05": [
+        {
+          "file": "Services/IApiTestOrderGateService.cs",
+          "description": "FE-05A gate service — shared voi FE-05B va FE-06."
+        },
+        {
+          "file": "Services/ApiTestOrderGateService.cs",
+          "description": "Gate service implementation."
+        },
+        {
+          "file": "Services/ITestCaseRequestBuilder.cs",
+          "description": "Build TestCaseRequest tu n8n response — shared voi happy-path builder."
+        },
+        {
+          "file": "Services/TestCaseRequestBuilder.cs",
+          "description": "Implementation."
+        },
+        {
+          "file": "Services/ITestCaseExpectationBuilder.cs",
+          "description": "Build TestCaseExpectation tu n8n response — shared voi happy-path builder."
+        },
+        {
+          "file": "Services/TestCaseExpectationBuilder.cs",
+          "description": "Implementation."
+        },
+        {
+          "file": "Services/EndpointPromptContextMapper.cs",
+          "description": "Map endpoint metadata to prompt context — shared voi happy-path."
+        },
+        {
+          "file": "Services/IN8nIntegrationService.cs",
+          "description": "n8n webhook caller interface — shared voi happy-path."
+        },
+        {
+          "file": "Services/N8nIntegrationService.cs",
+          "description": "Implementation."
+        },
+        {
+          "file": "Algorithms/IObservationConfirmationPromptBuilder.cs",
+          "description": "Build Observation-Confirmation prompts — shared voi happy-path."
+        },
+        {
+          "file": "Algorithms/ObservationConfirmationPromptBuilder.cs",
+          "description": "Implementation."
+        }
+      ],
+      "entities": [
+        {
+          "file": "Entities/TestCase.cs",
+          "note": "Reuse — TestType enum da co Boundary=1 va Negative=2."
+        },
+        {
+          "file": "Entities/TestCaseRequest.cs",
+          "note": "Reuse 1:1 voi TestCase."
+        },
+        {
+          "file": "Entities/TestCaseExpectation.cs",
+          "note": "Reuse 1:1 voi TestCase."
+        },
+        {
+          "file": "Entities/TestCaseVariable.cs",
+          "note": "Reuse."
+        },
+        {
+          "file": "Entities/TestCaseDependency.cs",
+          "note": "Reuse."
+        },
+        {
+          "file": "Entities/TestCaseChangeLog.cs",
+          "note": "Reuse — ChangeType=Created."
+        },
+        {
+          "file": "Entities/TestSuiteVersion.cs",
+          "note": "Reuse — ChangeType=TestCasesModified."
+        },
+        {
+          "file": "Entities/TestSuite.cs",
+          "note": "Reuse — Version++, Status=Ready."
+        }
+      ]
+    },
+    "crossModuleBoundaryFiles": {
+      "apiDocumentation": [
+        {
+          "file": "ClassifiedAds.Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+          "method": "GetEndpointMetadataAsync(specId, endpointIds)",
+          "description": "Fetch endpoint basic info (HttpMethod, Path, OperationId, SchemaPayloads)."
+        },
+        {
+          "file": "ClassifiedAds.Contracts/ApiDocumentation/Services/IApiEndpointParameterDetailService.cs",
+          "method": "GetParameterDetailsAsync(specId, endpointIds)",
+          "description": "Fetch parameter details (Name, Location, DataType, Format, IsRequired, DefaultValue, Schema, Examples)."
+        },
+        {
+          "file": "ClassifiedAds.Contracts/ApiDocumentation/Services/IPathParameterMutationGatewayService.cs",
+          "method": "GenerateMutations(name, dataType, format, defaultValue)",
+          "description": "Generate path parameter mutation variants."
+        }
+      ],
+      "llmAssistant": [
+        {
+          "file": "ClassifiedAds.Contracts/LlmAssistant/Services/ILlmAssistantGatewayService.cs",
+          "methods": [
+            "SaveInteractionAsync(SaveLlmInteractionRequest)",
+            "GetCachedSuggestionsAsync(endpointId, suggestionType, cacheKey)",
+            "CacheSuggestionsAsync(endpointId, suggestionType, cacheKey, json, ttl)"
+          ],
+          "description": "Cross-module boundary cho LLM audit trail va suggestion caching."
+        }
+      ],
+      "subscription": [
+        {
+          "file": "ClassifiedAds.Contracts/Subscription/Services/ISubscriptionLimitGatewayService.cs",
+          "methods": [
+            "CheckLimitAsync(userId, limitType, count)",
+            "IncrementUsageAsync(request)"
+          ],
+          "description": "Cross-module boundary cho subscription limit checking va usage tracking."
+        }
+      ]
+    },
+    "unitTests": [
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/GenerateBoundaryNegativeTestCasesCommandHandlerTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho command handler: gate fail, validation, force regenerate, empty result, subscription limit."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/BodyMutationEngineTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho 6 mutation types: emptyBody, malformedJson, missingRequired, typeMismatch, overflow, invalidEnum."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/BoundaryNegativeTestCaseGeneratorTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho orchestrator: 3 pipeline toggle, metadata fetch, test case building."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/LlmScenarioSuggesterTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho LLM suggester: cache hit, cache miss, n8n call, parse response, audit log."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/TestCaseRequestBuilderTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho request builder (shared with FE-05B)."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/TestCaseExpectationBuilderTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho expectation builder (shared with FE-05B)."
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/TestGeneration/EndpointPromptContextMapperTests.cs",
+        "status": "IMPLEMENTED",
+        "description": "Unit tests cho prompt context mapper (shared with FE-05B)."
+      }
+    ]
+  },
+  "moduleStructure": {
+    "description": "FE-06 nam toan bo trong ClassifiedAds.Modules.TestGeneration. Khong tao module moi. Khong sua module khac.",
+    "primaryModule": "ClassifiedAds.Modules.TestGeneration",
+    "addedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/IBoundaryNegativeTestCaseGenerator.cs",
+        "description": "Interface + BoundaryNegativeOptions + BoundaryNegativeGenerationResult."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/BoundaryNegativeTestCaseGenerator.cs",
+        "description": "Orchestrator pipeline implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/IBodyMutationEngine.cs",
+        "description": "Interface + BodyMutationContext."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/BodyMutationEngine.cs",
+        "description": "Rule-based body mutation engine."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/ILlmScenarioSuggester.cs",
+        "description": "Interface + context + result + LlmSuggestedScenario models."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Services/LlmScenarioSuggester.cs",
+        "description": "LLM suggestion pipeline implementation."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/BodyMutation.cs",
+        "description": "Body mutation data model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/GenerateBoundaryNegativeResultModel.cs",
+        "description": "API response model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativePayload.cs",
+        "description": "n8n webhook request payload + N8nBoundaryEndpointPayload + N8nParameterDetail."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/N8nBoundaryNegativeResponse.cs",
+        "description": "n8n webhook response + N8nSuggestedScenario."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Models/Requests/GenerateBoundaryNegativeTestCasesRequest.cs",
+        "description": "API request model."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Commands/GenerateBoundaryNegativeTestCasesCommand.cs",
+        "description": "CQRS command + handler."
+      }
+    ],
+    "modifiedFiles": [
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs",
+        "change": "Them const GenerateBoundaryNegativeTestCases = 'Permission:GenerateBoundaryNegativeTestCases'."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/Controllers/TestCasesController.cs",
+        "change": "Them GenerateBoundaryNegative endpoint method."
+      },
+      {
+        "path": "ClassifiedAds.Modules.TestGeneration/ServiceCollectionExtensions.cs",
+        "change": "Register: services.AddScoped<IBodyMutationEngine, BodyMutationEngine>(); services.AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>(); services.AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();"
+      }
+    ],
+    "unchangedFiles": [
+      "Entities/*.cs — khong them entity moi, reuse tat ca entity tu FE-04/FE-05.",
+      "DbConfigurations/*.cs — khong sua cau hinh database.",
+      "Persistence/*.cs — khong sua DbContext.",
+      "ClassifiedAds.Migrator/ — khong tao migration moi."
+    ]
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "noNewMigrationsRequired": true,
+    "noNewTablesRequired": true,
+    "noSchemaChanges": true,
+    "reason": "FE-06 reuse toan bo entity va table da co tu FE-04/FE-05 (testgen schema). TestCase.TestType da support Boundary=1 va Negative=2. Khong can them column hay table moi.",
+    "existingTablesUsed": [
+      "testgen.TestSuites",
+      "testgen.TestCases",
+      "testgen.TestCaseRequests",
+      "testgen.TestCaseExpectations",
+      "testgen.TestCaseVariables",
+      "testgen.TestCaseDependencies",
+      "testgen.TestCaseChangeLogs",
+      "testgen.TestSuiteVersions",
+      "testgen.TestOrderProposals"
+    ],
+    "crossSchemaTablesUsed": [
+      "llmassistant.LlmInteractions (via ILlmAssistantGatewayService, khong truy cap truc tiep)",
+      "llmassistant.LlmSuggestionCaches (via ILlmAssistantGatewayService, khong truy cap truc tiep)"
+    ]
+  },
+  "flows": [
+    {
+      "name": "FE-06 Boundary/Negative Generation Flow",
+      "steps": [
+        "1. Client POST /api/test-suites/{suiteId}/test-cases/generate-boundary-negative.",
+        "2. Controller dispatch GenerateBoundaryNegativeTestCasesCommand.",
+        "3. Handler validate (input, ownership, archived, pipeline enabled).",
+        "4. Handler call FE-05A gate (RequireApprovedOrderAsync).",
+        "5. Handler check existing boundary/negative cases + subscription limits.",
+        "6. Handler delete old cases if ForceRegenerate=true.",
+        "7. Orchestrator fetch endpoint metadata + parameter details.",
+        "8. Orchestrator run path mutation pipeline (per endpoint, per path param).",
+        "9. Orchestrator run body mutation pipeline (per endpoint, 6 mutation types).",
+        "10. Orchestrator run LLM suggestion pipeline (cache check -> n8n call -> parse -> cache).",
+        "11. Orchestrator assign sequential OrderIndex.",
+        "12. Handler persist all in transaction (TestCase, Request, Expectation, Variable, Dependency, ChangeLog, Version, Suite update).",
+        "13. Handler increment subscription usage.",
+        "14. Controller return 201 Created with result model."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Khong generate truoc khi FE-05A gate pass.",
+    "Khong truy cap ApiDocumentation/LlmAssistant/Subscription DbContext truc tiep.",
+    "Khong throw exception tu LLM audit log failure (graceful degradation).",
+    "Khong throw exception tu LLM cache failure (graceful degradation).",
+    "Transaction phai bao gom toan bo test case + change log + suite version + suite update.",
+    "Subscription usage increment phai chay NGOAI transaction chinh.",
+    "Delete old cases phai chay SAU subscription check, TRUOC main transaction.",
+    "Test case Tags phai duoc serialize dung format JSON array."
+  ],
+  "testPlan": {
+    "unitTests": [
+      "BodyMutationEngine: 6 mutation types voi cac data types khac nhau.",
+      "BodyMutationEngine: schema-based mutations khi co JSON schema.",
+      "BodyMutationEngine: POST/PUT/PATCH endpoints tao empty body + malformed JSON.",
+      "BodyMutationEngine: GET endpoints KHONG tao body mutations.",
+      "BoundaryNegativeTestCaseGenerator: toggle tung pipeline rieng le.",
+      "BoundaryNegativeTestCaseGenerator: OrderIndex duoc gan tuan tu.",
+      "BoundaryNegativeTestCaseGenerator: endpointsCovered dem dung.",
+      "LlmScenarioSuggester: cache hit tra ket qua ngay, khong goi n8n.",
+      "LlmScenarioSuggester: cache miss goi n8n va cache ket qua.",
+      "LlmScenarioSuggester: partial cache miss (1 endpoint missing) goi n8n.",
+      "LlmScenarioSuggester: n8n response parsing correct.",
+      "LlmScenarioSuggester: audit log failure khong throw.",
+      "GenerateBoundaryNegativeTestCasesCommandHandler: gate fail tra 409.",
+      "GenerateBoundaryNegativeTestCasesCommandHandler: existing cases + ForceRegenerate=false tra 400.",
+      "GenerateBoundaryNegativeTestCasesCommandHandler: ForceRegenerate=true xoa va tao lai.",
+      "GenerateBoundaryNegativeTestCasesCommandHandler: subscription limit exceeded tra 400.",
+      "GenerateBoundaryNegativeTestCasesCommandHandler: empty result khong tao transaction."
+    ],
+    "integrationTests": [
+      "Full pipeline: POST generate-boundary-negative voi mock n8n, verify test cases persisted.",
+      "Gate fail integration: verify 409 response voi correct error body.",
+      "Permission check: verify 403 khi thieu permission.",
+      "GET test-cases?testType=Boundary filter dung.",
+      "GET test-cases/{id} tra day du request + expectation + variables."
+    ]
+  },
+  "implementationSequence": [
+    "1. Models: BodyMutation, BoundaryNegativeResultModel, N8n payload/response, request model",
+    "2. Interfaces: IBodyMutationEngine, ILlmScenarioSuggester, IBoundaryNegativeTestCaseGenerator",
+    "3. Services: BodyMutationEngine (stateless, no dependencies)",
+    "4. Services: LlmScenarioSuggester (depends on IObservationConfirmationPromptBuilder, IN8nIntegrationService, ILlmAssistantGatewayService)",
+    "5. Services: BoundaryNegativeTestCaseGenerator (depends on metadata, parameter, path mutation, body engine, LLM suggester, builders)",
+    "6. Commands: GenerateBoundaryNegativeTestCasesCommand + handler",
+    "7. Authorization: Add permission constant",
+    "8. Controller: Add endpoint in TestCasesController",
+    "9. DI: Register services in ServiceCollectionExtensions",
+    "10. Unit tests",
+    "11. Integration tests"
+  ]
+}

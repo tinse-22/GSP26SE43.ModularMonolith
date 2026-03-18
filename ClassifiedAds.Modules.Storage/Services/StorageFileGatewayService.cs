@@ -1,6 +1,7 @@
 using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Storage.DTOs;
 using ClassifiedAds.Contracts.Storage.Services;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Storage.Entities;
 using ClassifiedAds.Modules.Storage.Models;
@@ -67,6 +68,30 @@ public class StorageFileGatewayService : IStorageFileGatewayService
         return new StorageUploadedFileDTO
         {
             Id = fileEntry.Id,
+        };
+    }
+
+    public async Task<StorageDownloadResult> DownloadAsync(Guid fileId, CancellationToken cancellationToken = default)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new ArgumentException("File ID is required.", nameof(fileId));
+        }
+
+        var fileEntry = await _dispatcher.DispatchAsync(new GetEntityByIdQuery<FileEntry> { Id = fileId, ThrowNotFoundIfNull = false }, cancellationToken);
+
+        if (fileEntry == null)
+        {
+            throw new NotFoundException($"File with ID '{fileId}' not found.");
+        }
+
+        var content = await _fileStorageManager.ReadAsync(fileEntry.ToModel(), cancellationToken);
+
+        return new StorageDownloadResult
+        {
+            Content = content,
+            FileName = fileEntry.FileName,
+            ContentType = fileEntry.ContentType ?? "application/octet-stream",
         };
     }
 }

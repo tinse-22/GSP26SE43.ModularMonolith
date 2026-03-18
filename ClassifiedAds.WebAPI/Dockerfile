@@ -16,6 +16,9 @@ COPY ./ClassifiedAds.Modules.Notification/*.csproj ./ClassifiedAds.Modules.Notif
 COPY ./ClassifiedAds.Modules.Product/*.csproj ./ClassifiedAds.Modules.Product/
 COPY ./ClassifiedAds.Modules.Storage/*.csproj ./ClassifiedAds.Modules.Storage/
 COPY ./ClassifiedAds.Modules.Subscription/*.csproj ./ClassifiedAds.Modules.Subscription/
+COPY ./ClassifiedAds.Modules.ApiDocumentation/*.csproj ./ClassifiedAds.Modules.ApiDocumentation/
+COPY ./ClassifiedAds.Modules.TestGeneration/*.csproj ./ClassifiedAds.Modules.TestGeneration/
+COPY ./ClassifiedAds.Modules.TestExecution/*.csproj ./ClassifiedAds.Modules.TestExecution/
 
 COPY ./ClassifiedAds.WebAPI/*.csproj ./ClassifiedAds.WebAPI/
 

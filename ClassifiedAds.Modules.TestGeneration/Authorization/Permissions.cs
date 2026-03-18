@@ -14,6 +14,10 @@ public static class Permissions
     public const string ReorderTestOrder = "Permission:ReorderTestOrder";
     public const string ApproveTestOrder = "Permission:ApproveTestOrder";
 
-    // Test Generation (FE-05B)
+    // Test Case Generation (FE-05B)
     public const string GenerateTestCases = "Permission:GenerateTestCases";
+    public const string GetTestCases = "Permission:GetTestCases";
+
+    // Boundary/Negative Test Case Generation (FE-06)
+    public const string GenerateBoundaryNegativeTestCases = "Permission:GenerateBoundaryNegativeTestCases";
 }

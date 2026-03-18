@@ -1,0 +1,224 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-01-requirement",
+  "requirement": {
+    "id": "FE-03-01",
+    "parentId": "FE-03",
+    "title": "Specification Management",
+    "goal": "Cung cap 9 API endpoints cho viec quan ly API specifications: upload file (OpenAPI/Postman), tao thu cong, import cURL, activate/deactivate, delete, list/get, va upload-methods trong module ApiDocumentation.",
+    "priority": "P0",
+    "status": "implemented",
+    "rationale": [
+      "SpecificationsController.cs da duoc implement day du voi 9 endpoints.",
+      "Tich hop voi Storage module qua IStorageFileGatewayService de upload file.",
+      "Tich hop voi Subscription module qua ISubscriptionLimitGatewayService de check limit truoc khi tao.",
+      "Outbox pattern duoc su dung cho spec lifecycle events (SpecUploaded, SpecActivated, SpecDeleted).",
+      "Ho tro 4 SourceType: OpenAPI, Postman, Manual, cURL."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "GET list specifications voi filter ParseStatus va SourceType.",
+      "GET specification detail voi EndpointCount va ParseErrors.",
+      "GET upload methods (danh sach phuong thuc upload duoc ho tro).",
+      "POST upload file multipart/form-data (gioi han 10MB, extension .json/.yaml/.yml).",
+      "POST tao manual specification voi inline endpoint definitions.",
+      "POST import cURL command qua CurlParser static service.",
+      "PUT activate specification (cap nhat Project.ActiveSpecId).",
+      "PUT deactivate specification.",
+      "DELETE specification (xoa cascade children).",
+      "Outbox events: SpecUploadedOutboxEvent, SpecActivatedOutboxEvent, SpecDeletedOutboxEvent."
+    ],
+    "outOfScope": [
+      "Async parsing cua uploaded files (FE-03-03).",
+      "Endpoint-level CRUD va queries (FE-03-02).",
+      "Project management CRUD (FE-02).",
+      "UI implementation."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "schema": "apidoc",
+        "reusedEntities": [
+          "ApiSpecification",
+          "ApiEndpoint",
+          "EndpointParameter",
+          "EndpointResponse",
+          "EndpointSecurityReq",
+          "SecurityScheme",
+          "Project",
+          "OutboxMessage"
+        ],
+        "existingFiles": [
+          "Controllers/SpecificationsController.cs",
+          "Commands/UploadApiSpecificationCommand.cs",
+          "Commands/CreateManualSpecificationCommand.cs",
+          "Commands/ImportCurlCommand.cs",
+          "Commands/ActivateSpecificationCommand.cs",
+          "Commands/DeleteSpecificationCommand.cs",
+          "Commands/PublishEventsCommand.cs",
+          "Queries/GetSpecificationsQuery.cs",
+          "Queries/GetSpecificationQuery.cs",
+          "Models/UploadSpecificationModel.cs",
+          "Models/CreateManualSpecificationModel.cs",
+          "Models/ImportCurlModel.cs",
+          "Models/SpecificationModel.cs",
+          "Models/SpecificationDetailModel.cs",
+          "Models/UploadMethodOptionModel.cs",
+          "Models/SpecificationUploadMethod.cs",
+          "Models/SpecSummaryModel.cs",
+          "Services/CurlParser.cs",
+          "IntegrationEvents/SpecOutboxEvents.cs",
+          "OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs",
+          "Authorization/Permissions.cs",
+          "Constants/EventTypeConstants.cs"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Storage",
+        "status": "implemented",
+        "requiredContracts": [
+          "IStorageFileGatewayService.UploadAsync"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Subscription",
+        "status": "implemented",
+        "requiredContracts": [
+          "ISubscriptionLimitGatewayService.TryConsumeLimitAsync"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "requiredContracts": [
+          "ICurrentUser"
+        ]
+      }
+    ],
+    "featureDependencies": [
+      "FE-02"
+    ]
+  },
+  "architecturePatterns": {
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Command/Query + Handler cung file. Controller chi bind request va dispatch."
+      },
+      {
+        "pattern": "Repository + UnitOfWork",
+        "description": "Dung IRepository<TEntity, Guid> va UnitOfWork.SaveChangesAsync cho persistence."
+      },
+      {
+        "pattern": "Cross-Module Contract Boundary",
+        "description": "Upload file qua IStorageFileGatewayService, check limit qua ISubscriptionLimitGatewayService. Khong truy cap truc tiep DbContext cua module khac."
+      },
+      {
+        "pattern": "Outbox Pattern",
+        "description": "Spec lifecycle events duoc ghi vao OutboxMessage table va publish boi PublishEventWorker."
+      },
+      {
+        "pattern": "Rate Limiting",
+        "description": "Controller su dung [EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]."
+      }
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "uploadP95Ms": 3000,
+      "listP95Ms": 200,
+      "writeP95Ms": 500
+    },
+    "reliability": {
+      "fileSizeLimitEnforced": true,
+      "subscriptionLimitEnforced": true,
+      "outboxReliableDelivery": true
+    },
+    "security": {
+      "authorizeAllEndpoints": true,
+      "ownerCheckOnWrite": true
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST upload luu file qua Storage gateway va tao ApiSpecification voi ParseStatus=Pending va OriginalFileId khong null.",
+    "AC-02: POST manual tao spec voi ParseStatus=Success va inline endpoints duoc persist.",
+    "AC-03: POST curl-import parse cURL string va tao spec+endpoint tu ket qua voi ParseStatus=Success.",
+    "AC-04: PUT activate cap nhat Project.ActiveSpecId va set spec IsActive=true; deactivate old active spec.",
+    "AC-05: PUT deactivate set spec IsActive=false.",
+    "AC-06: DELETE specification xoa cascade toan bo children (endpoints, parameters, responses, security, schemes).",
+    "AC-07: Upload tu choi files > 10MB (413) hoac extension sai (400).",
+    "AC-08: Upload validate OpenAPI content (can key openapi/swagger) va Postman content (can info+item).",
+    "AC-09: Subscription limit check chan tao moi khi da vuot han muc (403).",
+    "AC-10: Tat ca 9 endpoints yeu cau [Authorize] va permission policy tuong ung."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Upload OpenAPI spec thanh cong",
+      "given": "Project hop le, file .json co key openapi/swagger",
+      "when": "POST /api/projects/{projectId}/specifications/upload",
+      "then": "Spec duoc tao voi ParseStatus=Pending va OriginalFileId khong null"
+    },
+    {
+      "id": "TS-02",
+      "name": "Upload file vuot 10MB",
+      "given": "File > 10MB",
+      "when": "POST upload",
+      "then": "Tra 413 RequestSizeLimitExceededException"
+    },
+    {
+      "id": "TS-03",
+      "name": "Upload file extension sai",
+      "given": "File co extension .txt hoac .pdf",
+      "when": "POST upload",
+      "then": "Tra 400 ValidationException"
+    },
+    {
+      "id": "TS-04",
+      "name": "Upload OpenAPI content khong hop le",
+      "given": "File .json nhung khong chua key openapi/swagger",
+      "when": "POST upload voi SourceType=OpenAPI",
+      "then": "Tra 400 ValidationException"
+    },
+    {
+      "id": "TS-05",
+      "name": "Tao manual specification",
+      "given": "Request body hop le voi endpoints",
+      "when": "POST /api/projects/{projectId}/specifications/manual",
+      "then": "Spec duoc tao voi ParseStatus=Success va endpoints duoc persist"
+    },
+    {
+      "id": "TS-06",
+      "name": "Import cURL thanh cong",
+      "given": "cURL command hop le: curl -X GET https://api.example.com/users",
+      "when": "POST /api/projects/{projectId}/specifications/curl-import",
+      "then": "Spec+endpoint duoc tao voi method=GET va path=/users"
+    },
+    {
+      "id": "TS-07",
+      "name": "Import cURL syntax loi",
+      "given": "cURL command khong hop le (rong hoac khong co URL)",
+      "when": "POST curl-import",
+      "then": "Tra 400 ValidationException"
+    },
+    {
+      "id": "TS-08",
+      "name": "Activate specification",
+      "given": "Spec ton tai va thuoc ve project cua user",
+      "when": "PUT /api/projects/{projectId}/specifications/{specId}/activate",
+      "then": "Spec IsActive=true, Project.ActiveSpecId=specId, old active spec IsActive=false"
+    },
+    {
+      "id": "TS-09",
+      "name": "Subscription limit vuot han muc",
+      "given": "User da su dung het storage limit",
+      "when": "POST upload/manual/curl-import",
+      "then": "Tra 403 ForbiddenException"
+    }
+  ]
+}

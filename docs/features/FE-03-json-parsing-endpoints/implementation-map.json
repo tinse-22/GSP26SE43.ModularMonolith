@@ -1,0 +1,299 @@
+{
+  "$schema": "feature-specification",
+  "version": "1.0.0",
+  "title": "FE-03 - Implementation Map For Current Codebase",
+  "description": "File nay map truc tiep FE-03 vao file C# hien co trong codebase de AI Agent implement dung kien truc Modular Monolith CQRS.",
+  "part": "1/1 - Backend Implementation Map",
+  "techStack": {
+    "framework": ".NET 10 (ASP.NET Core Web API)",
+    "database": "PostgreSQL + EF Core/Npgsql",
+    "architecture": "Modular Monolith (CQRS via Dispatcher, IRepository<T,Guid>, schema isolation)"
+  },
+  "currentCodebaseSnapshot": {
+    "apiDocumentation": {
+      "module": "ClassifiedAds.Modules.ApiDocumentation",
+      "schema": "apidoc",
+      "controllers": [
+        "Controllers/SpecificationsController.cs (9 endpoints, FE-03-01)",
+        "Controllers/EndpointsController.cs (7 endpoints, FE-03-02)",
+        "Controllers/ProjectsController.cs (FE-02, shared)"
+      ],
+      "commands": [
+        "Commands/UploadApiSpecificationCommand.cs (FE-03-01)",
+        "Commands/CreateManualSpecificationCommand.cs (FE-03-01)",
+        "Commands/ImportCurlCommand.cs (FE-03-01)",
+        "Commands/ActivateSpecificationCommand.cs (FE-03-01)",
+        "Commands/DeleteSpecificationCommand.cs (FE-03-01)",
+        "Commands/AddUpdateEndpointCommand.cs (FE-03-02)",
+        "Commands/DeleteEndpointCommand.cs (FE-03-02)",
+        "Commands/AddUpdateProjectCommand.cs (FE-02)",
+        "Commands/ArchiveProjectCommand.cs (FE-02)",
+        "Commands/DeleteProjectCommand.cs (FE-02)",
+        "Commands/PublishEventsCommand.cs (shared outbox)"
+      ],
+      "queries": [
+        "Queries/GetSpecificationsQuery.cs (FE-03-01)",
+        "Queries/GetSpecificationQuery.cs (FE-03-01)",
+        "Queries/GetEndpointsQuery.cs (FE-03-02)",
+        "Queries/GetEndpointQuery.cs (FE-03-02)",
+        "Queries/GetResolvedUrlQuery.cs (FE-03-02)",
+        "Queries/GetPathParamMutationsQuery.cs (FE-03-02)",
+        "Queries/GetProjectQuery.cs (FE-02)",
+        "Queries/GetProjectsQuery.cs (FE-02)",
+        "Queries/GetAuditEntriesQuery.cs (shared)",
+        "Queries/GetUsersQuery.cs (shared)"
+      ],
+      "services": [
+        "Services/CurlParser.cs (static, FE-03-01)",
+        "Services/IPathParameterTemplateService.cs (FE-03-02)",
+        "Services/PathParameterTemplateService.cs (FE-03-02)",
+        "Services/ApiEndpointMetadataService.cs (FE-03-02, cross-module contract)"
+      ],
+      "models": [
+        "Models/UploadSpecificationModel.cs (FE-03-01 request)",
+        "Models/CreateManualSpecificationModel.cs (FE-03-01 request + ManualParameterDefinition/ManualResponseDefinition shared)",
+        "Models/ImportCurlModel.cs (FE-03-01 request)",
+        "Models/SpecificationModel.cs (FE-03-01 response)",
+        "Models/SpecificationDetailModel.cs (FE-03-01 response)",
+        "Models/UploadMethodOptionModel.cs (FE-03-01 response)",
+        "Models/SpecificationUploadMethod.cs (FE-03-01 enum)",
+        "Models/SpecSummaryModel.cs (FE-03-01)",
+        "Models/CreateUpdateEndpointModel.cs (FE-03-02 request)",
+        "Models/EndpointModel.cs (FE-03-02 response: EndpointModel, EndpointDetailModel, ParameterModel, ResponseModel, SecurityReqModel)",
+        "Models/PathParameterModels.cs (FE-03-02 response: PathParameterInfo, PathTemplateValidationResult, ResolvedUrlResult, PathParameterMutation, PathParameterMutationWithUrl, ParameterMutationGroup, PathParamMutationsResult)",
+        "Models/EndpointParameterDataType.cs (shared enum)",
+        "Models/CreateUpdateProjectModel.cs (FE-02)",
+        "Models/ProjectModel.cs (FE-02)",
+        "Models/ProjectDetailModel.cs (FE-02)",
+        "Models/PaginatedResult.cs (shared)"
+      ],
+      "entities": [
+        "Entities/ApiSpecification.cs",
+        "Entities/ApiEndpoint.cs",
+        "Entities/EndpointParameter.cs",
+        "Entities/EndpointResponse.cs",
+        "Entities/EndpointSecurityReq.cs",
+        "Entities/SecurityScheme.cs",
+        "Entities/Project.cs",
+        "Entities/OutboxMessage.cs",
+        "Entities/AuditLogEntry.cs"
+      ],
+      "dbConfigurations": [
+        "DbConfigurations/ApiSpecificationConfiguration.cs",
+        "DbConfigurations/ApiEndpointConfiguration.cs",
+        "DbConfigurations/EndpointParameterConfiguration.cs",
+        "DbConfigurations/EndpointResponseConfiguration.cs",
+        "DbConfigurations/EndpointSecurityReqConfiguration.cs",
+        "DbConfigurations/SecuritySchemeConfiguration.cs",
+        "DbConfigurations/ProjectConfiguration.cs",
+        "DbConfigurations/OutboxMessageConfiguration.cs",
+        "DbConfigurations/AuditLogEntryConfiguration.cs"
+      ],
+      "integrationEvents": [
+        "IntegrationEvents/ApiDocOutboxEventBase.cs",
+        "IntegrationEvents/SpecOutboxEvents.cs (SpecUploadedOutboxEvent, SpecActivatedOutboxEvent, SpecDeletedOutboxEvent)",
+        "IntegrationEvents/ProjectOutboxEvents.cs"
+      ],
+      "outBoxEventPublishers": [
+        "OutBoxEventPublishers/SpecOutBoxMessagePublisher.cs",
+        "OutBoxEventPublishers/ProjectOutBoxMessagePublisher.cs",
+        "OutBoxEventPublishers/AuditLogEntryOutBoxMessagePublisher.cs"
+      ],
+      "eventHandlers": [
+        "EventHandlers/SpecCreatedEventHandler.cs",
+        "EventHandlers/SpecDeletedEventHandler.cs",
+        "EventHandlers/SpecUpdatedEventHandler.cs",
+        "EventHandlers/ProjectCreatedEventHandler.cs",
+        "EventHandlers/ProjectDeletedEventHandler.cs",
+        "EventHandlers/ProjectUpdatedEventHandler.cs"
+      ],
+      "hostedServices": [
+        "HostedServices/PublishEventWorker.cs"
+      ],
+      "authorization": [
+        "Authorization/Permissions.cs (GetSpecifications, AddSpecification, UpdateSpecification, DeleteSpecification, ActivateSpecification, GetEndpoints, AddEndpoint, UpdateEndpoint, DeleteEndpoint, GetProjects, AddProject, UpdateProject, DeleteProject, ArchiveProject)"
+      ],
+      "constants": [
+        "Constants/EventTypeConstants.cs"
+      ],
+      "persistence": [
+        "Persistence/ApiDocumentationDbContext.cs",
+        "Persistence/Repository.cs"
+      ],
+      "configuration": [
+        "ConfigurationOptions/ApiDocumentationModuleOptions.cs",
+        "ConfigurationOptions/ConnectionStringsOptions.cs"
+      ],
+      "rateLimiterPolicies": [
+        "RateLimiterPolicies/DefaultRateLimiterPolicy.cs",
+        "RateLimiterPolicies/RateLimiterPolicyNames.cs"
+      ],
+      "outbox": [
+        "Outbox/OutboxMessageFactory.cs"
+      ],
+      "serviceRegistration": [
+        "ServiceCollectionExtensions.cs"
+      ]
+    },
+    "contracts": {
+      "apiDocumentation": [
+        "ClassifiedAds.Contracts/ApiDocumentation/Services/IApiEndpointMetadataService.cs",
+        "ClassifiedAds.Contracts/ApiDocumentation/DTOs/ApiEndpointMetadataDto.cs"
+      ],
+      "storage": [
+        "ClassifiedAds.Contracts/Storage/Services/IStorageFileGatewayService.cs (UploadAsync existing, DownloadAsync planned for FE-03-03)"
+      ],
+      "subscription": [
+        "ClassifiedAds.Contracts/Subscription/Services/ISubscriptionLimitGatewayService.cs (TryConsumeLimitAsync)"
+      ],
+      "identity": [
+        "ClassifiedAds.Contracts/Identity/Services/ICurrentUser.cs"
+      ]
+    },
+    "missingForFe03": [
+      "Commands/ParseUploadedSpecificationCommand.cs (FE-03-03, design-only)",
+      "Services/ISpecificationParser.cs (FE-03-03, design-only)",
+      "Services/OpenApiSpecificationParser.cs (FE-03-03, design-only)",
+      "Services/PostmanSpecificationParser.cs (FE-03-03, design-only)",
+      "IStorageFileGatewayService.DownloadAsync (FE-03-03, design-only)"
+    ]
+  },
+  "moduleStructure": {
+    "description": "FE-03 da duoc implement hoan chinh cho FE-03-01 va FE-03-02 trong module ClassifiedAds.Modules.ApiDocumentation. FE-03-03 chi la design document.",
+    "addedFiles": [],
+    "modifiedFiles": [],
+    "note": "Tat ca files da ton tai. Khong can them hoac sua file nao cho FE-03-01 va FE-03-02."
+  },
+  "databasePlan": {
+    "migrationProject": "ClassifiedAds.Migrator",
+    "schema": "apidoc",
+    "existingTables": [
+      "apidoc.\"ApiSpecifications\" (Id, ProjectId, Name, SourceType, Version, IsActive, ParseStatus, ParsedAt, ParseErrors, OriginalFileId, CreatedDateTime, UpdatedDateTime)",
+      "apidoc.\"ApiEndpoints\" (Id, ApiSpecId, HttpMethod, Path, OperationId, Summary, Description, Tags, IsDeprecated, CreatedDateTime, UpdatedDateTime)",
+      "apidoc.\"EndpointParameters\" (Id, EndpointId, Name, Location, DataType, Format, IsRequired, DefaultValue, Schema, Examples)",
+      "apidoc.\"EndpointResponses\" (Id, EndpointId, StatusCode, Description, Schema, Examples, Headers)",
+      "apidoc.\"EndpointSecurityReqs\" (Id, EndpointId, SecurityType, SchemeName, Scopes)",
+      "apidoc.\"SecuritySchemes\" (Id, SpecId, Type, Name, In, Scheme, BearerFormat, Description, Flows, OpenIdConnectUrl)",
+      "apidoc.\"Projects\" (Id, Name, Description, OwnerId, ActiveSpecId, Status, CreatedDateTime, UpdatedDateTime)",
+      "apidoc.\"OutboxMessages\" (Id, EventType, Payload, CreatedDateTime, PublishedDateTime, Status)"
+    ],
+    "noSchemaChangesExpected": [
+      "Tat ca tables da ton tai va du columns cho FE-03-01, FE-03-02.",
+      "FE-03-03 khong can them tables moi (chi them Command va Services)."
+    ],
+    "jsonbColumns": [
+      "ApiSpecifications.ParseErrors (JSONB, string[])",
+      "ApiEndpoints.Tags (JSONB, string[])",
+      "EndpointParameters.Schema (JSONB, JSON schema string)",
+      "EndpointParameters.Examples (JSONB, JSON string)",
+      "EndpointResponses.Schema (JSONB, JSON schema string)",
+      "EndpointResponses.Examples (JSONB, JSON string)",
+      "EndpointResponses.Headers (JSONB, JSON string)"
+    ],
+    "cascadeDeleteConfig": [
+      "ApiSpecification -> ApiEndpoint (cascade)",
+      "ApiEndpoint -> EndpointParameter (cascade)",
+      "ApiEndpoint -> EndpointResponse (cascade)",
+      "ApiEndpoint -> EndpointSecurityReq (cascade)",
+      "ApiSpecification -> SecurityScheme (cascade)"
+    ]
+  },
+  "testPlan": {
+    "existingUnitTests": [
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/CurlParserTests.cs",
+        "covers": "CurlParser.Parse static method (FE-03-01)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/PathParameterTemplateServiceTests.cs",
+        "covers": "PathParameterTemplateService: ExtractPathParameters, EnsurePathParameterConsistency, ResolveUrl, GenerateMutations (FE-03-02)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/PathParameterQueryHandlerTests.cs",
+        "covers": "GetResolvedUrlQuery va GetPathParamMutationsQuery handlers (FE-03-02)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/AddUpdateEndpointCommandHandlerTests.cs",
+        "covers": "AddUpdateEndpointCommandHandler: create, update, validation, subscription limit check (FE-03-02)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/DeleteEndpointCommandHandlerTests.cs",
+        "covers": "DeleteEndpointCommandHandler: delete, validation, ownership check (FE-03-02)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/CreateManualSpecificationCommandHandlerTests.cs",
+        "covers": "CreateManualSpecificationCommandHandler: manual spec creation, inline endpoints, validation (FE-03-01)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/ImportCurlCommandHandlerTests.cs",
+        "covers": "ImportCurlCommandHandler: cURL parsing, spec+endpoint creation, validation (FE-03-01)"
+      },
+      {
+        "file": "ClassifiedAds.UnitTests/ApiDocumentation/ApiEndpointMetadataServiceTests.cs",
+        "covers": "ApiEndpointMetadataService: dependency analysis, auth detection, schema ref extraction, resource token matching (FE-03-02)"
+      }
+    ],
+    "missingTests": [
+      "UploadApiSpecificationCommandHandler tests (FE-03-01)",
+      "ActivateSpecificationCommandHandler tests (FE-03-01)",
+      "DeleteSpecificationCommandHandler tests (FE-03-01)",
+      "GetSpecificationsQueryHandler tests (FE-03-01)",
+      "GetSpecificationQueryHandler tests (FE-03-01)",
+      "GetEndpointsQueryHandler tests (FE-03-02)",
+      "GetEndpointQueryHandler tests (FE-03-02)",
+      "Controller integration tests (FE-03-01, FE-03-02)"
+    ]
+  },
+  "flows": [
+    {
+      "name": "FE-03-01 Specification Management Flow",
+      "steps": [
+        "1. User upload file/manual/cURL spec qua POST endpoints.",
+        "2. Handler validate input, check subscription limit.",
+        "3. Upload: store file via Storage gateway, create spec with ParseStatus=Pending, create outbox event.",
+        "4. Manual: create spec with inline endpoints in transaction, ParseStatus=Success.",
+        "5. cURL: parse via CurlParser.Parse, create spec+endpoint, ParseStatus=Success.",
+        "6. Activate/deactivate: update Project.ActiveSpecId + spec.IsActive in transaction.",
+        "7. Delete: cascade delete spec and all children."
+      ]
+    },
+    {
+      "name": "FE-03-02 Endpoint Management Flow",
+      "steps": [
+        "1. User CRUD endpoints qua POST/PUT/DELETE endpoints.",
+        "2. Create: validate + subscription limit + auto-create path params + persist in transaction.",
+        "3. Update: replace-all children (delete old + create new) in transaction.",
+        "4. Delete: cascade via DB configuration.",
+        "5. Resolved URL: substitute path params using query string > DefaultValue > Examples fallback.",
+        "6. Mutations: generate boundary/negative test data per path param using dataType."
+      ]
+    },
+    {
+      "name": "FE-03-03 Parser Flow (Design Only)",
+      "steps": [
+        "1. PublishEventWorker poll SPEC_UPLOADED outbox event.",
+        "2. Dispatch ParseUploadedSpecificationCommand.",
+        "3. Idempotency guard: exit if not Pending.",
+        "4. Download file via IStorageFileGatewayService.DownloadAsync.",
+        "5. Parse via OpenApiSpecificationParser or PostmanSpecificationParser.",
+        "6. Success: replace-all children, set ParseStatus=Success.",
+        "7. Failure: set ParseStatus=Failed, ParseErrors."
+      ]
+    }
+  ],
+  "qualityGates": [
+    "Khong truy cap truc tiep DbContext cua module khac (su dung contract boundary).",
+    "Tat ca write operations phai verify Project.OwnerId == currentUser.UserId.",
+    "File upload phai validate extension va content truoc khi luu.",
+    "Subscription limit phai kiem tra truoc khi tao moi spec hoac endpoint.",
+    "Outbox events phai duoc tao trong cung transaction voi entity changes.",
+    "Path parameter consistency phai duoc dam bao khi create/update endpoint."
+  ],
+  "implementationSequence": [
+    "1. FE-03-01: Specification Management (9 endpoints) - COMPLETED",
+    "2. FE-03-02: Endpoint Management (7 endpoints) - COMPLETED",
+    "3. FE-03-03: Parser Flow (async pipeline) - DESIGN ONLY",
+    "4. Unit tests for command handlers and services - PARTIALLY COMPLETED (8 test files exist)",
+    "5. Integration tests for controllers - NOT YET STARTED"
+  ]
+}

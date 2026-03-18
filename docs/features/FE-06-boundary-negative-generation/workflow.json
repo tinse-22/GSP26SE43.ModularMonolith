@@ -1,0 +1,402 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-06-workflow",
+  "workflow": {
+    "id": "wf-fe06-boundary-negative-generation-v1",
+    "requirementId": "FE-06",
+    "name": "Boundary & Negative Test Case Generation Workflow",
+    "mode": "request-response + transactional-pipeline",
+    "description": "Flow FE-06 gom 3 pipeline doc lap (path mutations, body mutations, LLM suggestions) duoc orchestrate boi BoundaryNegativeTestCaseGenerator. Bat buoc qua FE-05A gate truoc khi bat dau. Tat ca ket qua persist trong 1 transaction."
+  },
+  "architectureOverview": {
+    "summary": "Command handler validate va check gate, sau do delegate cho orchestrator service (IBoundaryNegativeTestCaseGenerator). Orchestrator chay 3 pipeline tuan tu, gom ket qua lai, gan OrderIndex. Handler persist toan bo trong 1 transaction, cap nhat suite version, increment subscription usage.",
+    "noNewEntitiesNeeded": true,
+    "noNewMigrationsNeeded": true,
+    "outboxRequired": false,
+    "transactionRequired": "Persist toan bo test cases + change logs + suite version trong 1 ExecuteInTransactionAsync.",
+    "schema": "testgen",
+    "keyPrinciples": [
+      "No generation before FE-05A gate pass.",
+      "Rule-based mutations are deterministic — cung input thi cung output.",
+      "LLM suggestions are non-deterministic nhung duoc cache 24h.",
+      "Cross-module boundary via contract/service interface only.",
+      "Each pipeline can be toggled independently.",
+      "Graceful degradation: LLM audit log failure does not block main flow."
+    ]
+  },
+  "dependencies": {
+    "featureDependencies": ["FE-05A", "FE-05B", "FE-04", "FE-03", "FE-12"],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestGeneration (primary module)",
+      "ClassifiedAds.Modules.ApiDocumentation (endpoint metadata + parameter details + path mutations)",
+      "ClassifiedAds.Modules.LlmAssistant (cache + audit logging)",
+      "ClassifiedAds.Modules.Subscription (limit checking + usage increment)",
+      "ClassifiedAds.Contracts.Identity (ICurrentUser)"
+    ],
+    "crossModuleConsumption": {
+      "ApiDocumentation": {
+        "services": [
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync(specId, endpointIds) — fetch endpoint basic info",
+          "IApiEndpointParameterDetailService.GetParameterDetailsAsync(specId, endpointIds) — fetch parameter details (Location, DataType, Format, IsRequired, DefaultValue, Schema)",
+          "IPathParameterMutationGatewayService.GenerateMutations(name, dataType, format, defaultValue) — generate path param mutation variants"
+        ],
+        "forbidden": "Khong truy cap ApiDocumentationDbContext/Repository truc tiep."
+      },
+      "LlmAssistant": {
+        "services": [
+          "ILlmAssistantGatewayService.GetCachedSuggestionsAsync(endpointId, suggestionType, cacheKey) — check cache",
+          "ILlmAssistantGatewayService.CacheSuggestionsAsync(endpointId, suggestionType, cacheKey, json, ttl) — save cache",
+          "ILlmAssistantGatewayService.SaveInteractionAsync(request) — audit logging"
+        ],
+        "forbidden": "Khong truy cap LlmAssistantDbContext/Repository truc tiep."
+      },
+      "Subscription": {
+        "services": [
+          "ISubscriptionLimitGatewayService.CheckLimitAsync(userId, limitType, count) — check quota",
+          "ISubscriptionLimitGatewayService.IncrementUsageAsync(request) — track usage"
+        ]
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "API Request Entry Point",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId}/test-cases/generate-boundary-negative { specificationId, forceRegenerate?, includePathMutations?, includeBodyMutations?, includeLlmSuggestions? }",
+          "output": "HTTP Request"
+        },
+        {
+          "step": 2,
+          "actor": "TestCasesController",
+          "action": "Bind request, resolve ICurrentUser.UserId, dispatch GenerateBoundaryNegativeTestCasesCommand.",
+          "output": "Command dispatched"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Command Handler Validation & Gate Check",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Validate inputs: TestSuiteId != Empty, SpecificationId != Empty, at least 1 pipeline enabled.",
+          "output": "Validated or throw ValidationException(400)"
+        },
+        {
+          "step": 2,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Load TestSuite by ID. Validate ownership (CreatedById == CurrentUserId), status != Archived.",
+          "output": "Suite loaded or throw NotFoundException(404) / ValidationException(400)"
+        },
+        {
+          "step": 3,
+          "actor": "IApiTestOrderGateService",
+          "action": "RequireApprovedOrderAsync(testSuiteId). Check active proposal with Status in [Approved, ModifiedAndApproved, Applied] and AppliedOrder != null.",
+          "output": "Ordered endpoints list or throw ConflictException(409, ORDER_CONFIRMATION_REQUIRED)"
+        },
+        {
+          "step": 4,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Query existing boundary/negative test cases. If count > 0 and ForceRegenerate=false, throw ValidationException.",
+          "output": "Existing case count checked"
+        },
+        {
+          "step": 5,
+          "actor": "ISubscriptionLimitGatewayService",
+          "action": "CheckLimitAsync(userId, MaxTestCasesPerSuite, endpointCount). If IncludeLlmSuggestions=true, also check MaxLlmCallsPerMonth.",
+          "output": "Limits checked or throw ValidationException(400)"
+        },
+        {
+          "step": 6,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "If ForceRegenerate=true and existing cases exist: delete all existing boundary/negative test cases, SaveChanges.",
+          "output": "Old test cases deleted (or skipped if no existing cases)"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "Orchestrator Pipeline Execution",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "BoundaryNegativeTestCaseGenerator",
+          "action": "Fetch endpoint metadata: IApiEndpointMetadataService.GetEndpointMetadataAsync(specificationId, endpointIds).",
+          "output": "Dictionary<Guid, ApiEndpointMetadataDto>"
+        },
+        {
+          "step": 2,
+          "actor": "BoundaryNegativeTestCaseGenerator",
+          "action": "If IncludePathMutations or IncludeBodyMutations: fetch parameter details via IApiEndpointParameterDetailService.GetParameterDetailsAsync(specificationId, endpointIds).",
+          "output": "Dictionary<Guid, EndpointParameterDetailDto>"
+        },
+        {
+          "step": 3,
+          "actor": "BoundaryNegativeTestCaseGenerator",
+          "action": "Iterate ordered endpoints. Per endpoint: (3a) path mutations, (3b) body mutations.",
+          "output": "TestCase list from rule-based pipelines",
+          "subSteps": [
+            {
+              "subStep": "3a",
+              "name": "Path Parameter Mutations Pipeline",
+              "condition": "IncludePathMutations=true AND endpoint has path parameters (Location=Path)",
+              "action": "For each path parameter: call IPathParameterMutationGatewayService.GenerateMutations(name, dataType, format, defaultValue). Build TestCase per mutation via BuildPathMutationTestCase.",
+              "output": "N path mutation test cases"
+            },
+            {
+              "subStep": "3b",
+              "name": "Body Mutations Pipeline",
+              "condition": "IncludeBodyMutations=true",
+              "action": "Build BodyMutationContext from body parameters (Location=Body) and RequestBodySchema. Call IBodyMutationEngine.GenerateMutations(context). Build TestCase per mutation via BuildBodyMutationTestCase.",
+              "output": "M body mutation test cases"
+            }
+          ]
+        },
+        {
+          "step": 4,
+          "actor": "BoundaryNegativeTestCaseGenerator",
+          "action": "LLM Suggestion Pipeline (IncludeLlmSuggestions=true). Call ILlmScenarioSuggester.SuggestScenariosAsync(context). Build TestCase per scenario via BuildLlmSuggestionTestCase.",
+          "output": "K LLM suggestion test cases",
+          "detailedFlow": "See flow-04 (LLM Scenario Suggestion Sub-Flow)"
+        },
+        {
+          "step": 5,
+          "actor": "BoundaryNegativeTestCaseGenerator",
+          "action": "Assign sequential OrderIndex (0..N-1) to all test cases. Count endpointsCovered (distinct EndpointId).",
+          "output": "BoundaryNegativeGenerationResult { TestCases, PathMutationCount, BodyMutationCount, LlmSuggestionCount, EndpointsCovered, LlmModel, LlmTokensUsed }"
+        }
+      ]
+    },
+    {
+      "id": "flow-04",
+      "name": "LLM Scenario Suggestion Sub-Flow",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "LlmScenarioSuggester",
+          "action": "Build cache key: SHA256(testSuiteId:specificationId:sortedEndpointIds) -> hex[0..16].",
+          "output": "Cache key string"
+        },
+        {
+          "step": 2,
+          "actor": "LlmScenarioSuggester",
+          "action": "Check cache per endpoint: for each endpointId, call ILlmAssistantGatewayService.GetCachedSuggestionsAsync(endpointId, SuggestionTypeBoundaryNegative=1, cacheKey). If ALL endpoints have cache -> return cached result (FromCache=true).",
+          "output": "Cached result or null (cache miss)"
+        },
+        {
+          "step": 3,
+          "actor": "LlmScenarioSuggester",
+          "action": "Build prompts: Map metadata to EndpointPromptContext via EndpointPromptContextMapper. Build Observation-Confirmation prompts via IObservationConfirmationPromptBuilder.BuildForSequence.",
+          "output": "ObservationConfirmationPrompt list"
+        },
+        {
+          "step": 4,
+          "actor": "LlmScenarioSuggester",
+          "action": "Build N8nBoundaryNegativePayload with: TestSuiteId, TestSuiteName, GlobalBusinessRules, per-endpoint data (EndpointId, HttpMethod, Path, OperationId, OrderIndex, BusinessContext, Prompt, ParameterSchemaPayloads, ResponseSchemaPayloads).",
+          "output": "N8nBoundaryNegativePayload"
+        },
+        {
+          "step": 5,
+          "actor": "IN8nIntegrationService",
+          "action": "TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(webhookName='generate-boundary-negative-scenarios', payload). Record latency via Stopwatch.",
+          "output": "N8nBoundaryNegativeResponse { Scenarios, Model, TokensUsed }"
+        },
+        {
+          "step": 6,
+          "actor": "LlmScenarioSuggester",
+          "action": "Save interaction audit: ILlmAssistantGatewayService.SaveInteractionAsync({ UserId, InteractionType=ScenarioSuggestion(0), InputContext=serialized-payload, LlmResponse=serialized-response, ModelUsed, TokensUsed, LatencyMs }). Graceful failure: log warning if save fails, do not throw.",
+          "output": "Audit logged (or warning logged on failure)"
+        },
+        {
+          "step": 7,
+          "actor": "LlmScenarioSuggester",
+          "action": "Parse N8nBoundaryNegativeResponse.Scenarios -> List<LlmSuggestedScenario>: map EndpointId, ScenarioName, Description, TestType(boundary|negative), Body, PathParams, QueryParams, Headers, ExpectedStatusCode, ExpectedBehavior, Priority, Tags.",
+          "output": "LlmSuggestedScenario list"
+        },
+        {
+          "step": 8,
+          "actor": "LlmScenarioSuggester",
+          "action": "Cache results per endpoint: group scenarios by EndpointId, serialize each group, call ILlmAssistantGatewayService.CacheSuggestionsAsync(endpointId, SuggestionTypeBoundaryNegative=1, cacheKey, json, TTL=24h). Graceful failure: log warning if cache fails.",
+          "output": "Results cached (or warning logged on failure)"
+        }
+      ]
+    },
+    {
+      "id": "flow-05",
+      "name": "Persist & Finalize",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "If generationResult.TestCases is empty, build empty result model and return immediately (no transaction needed).",
+          "output": "Early return with TotalGenerated=0 or continue to transaction"
+        },
+        {
+          "step": 2,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Execute transaction via _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync:",
+          "output": "All entities persisted atomically",
+          "transactionBoundary": {
+            "includes": [
+              "For each TestCase: AddAsync(testCase), AddAsync(testCase.Request), AddAsync(testCase.Expectation), AddAsync(each variable), AddAsync(each dependency), AddAsync(TestCaseChangeLog { ChangeType=Created })",
+              "AddAsync(TestSuiteVersion { VersionNumber=suite.Version+1, ChangeType=TestCasesModified, ChangeDescription=summary })",
+              "UpdateAsync(TestSuite { Version++, Status=Ready, LastModifiedById, RowVersion=new })",
+              "SaveChangesAsync (1 time at end of transaction)"
+            ],
+            "excludes": [
+              "Subscription usage increment (runs after transaction)",
+              "LLM audit logging (runs before transaction, in orchestrator)",
+              "LLM cache save (runs before transaction, in orchestrator)"
+            ]
+          }
+        },
+        {
+          "step": 3,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Increment subscription usage: IncrementUsageAsync(MaxTestCasesPerSuite, totalGenerated). If LLM suggestions used and count > 0: IncrementUsageAsync(MaxLlmCallsPerMonth, 1).",
+          "output": "Usage tracked"
+        },
+        {
+          "step": 4,
+          "actor": "GenerateBoundaryNegativeTestCasesCommandHandler",
+          "action": "Build GenerateBoundaryNegativeResultModel with all counts, test case summaries, LLM model info. Set on command.Result.",
+          "output": "Result model populated"
+        },
+        {
+          "step": 5,
+          "actor": "TestCasesController",
+          "action": "Return HTTP 201 Created with GenerateBoundaryNegativeResultModel body. Location header: /api/test-suites/{suiteId}/test-cases.",
+          "output": "HTTP 201 Response"
+        }
+      ]
+    }
+  ],
+  "testCaseBuilders": {
+    "description": "BoundaryNegativeTestCaseGenerator co 3 builder methods de tao TestCase entities tu moi pipeline.",
+    "builders": [
+      {
+        "name": "BuildPathMutationTestCase",
+        "source": "Path parameter mutation (PIPE-01)",
+        "inputs": "TestSuiteId, ApiOrderItemModel, ApiEndpointMetadataDto, ParameterDetailDto, PathParameterMutationDto",
+        "output": "TestCase { TestType=Boundary|Negative (by ClassifyPathMutationType), Tags=['boundary|negative', 'auto-generated', 'rule-based', 'path-mutation'] }",
+        "naming": "{HttpMethod} {Path} - {mutation.Label}",
+        "request": "HttpMethod, Url=path, PathParams={paramName: mutation.Value}, BodyType=None, Timeout=30000ms",
+        "expectation": "ExpectedStatus=[mutation.ExpectedStatusCode]"
+      },
+      {
+        "name": "BuildBodyMutationTestCase",
+        "source": "Body mutation (PIPE-02)",
+        "inputs": "TestSuiteId, ApiOrderItemModel, ApiEndpointMetadataDto, BodyMutation",
+        "output": "TestCase { TestType=mutation.SuggestedTestType, Tags=['boundary|negative', 'auto-generated', 'rule-based', 'body-mutation'] }",
+        "naming": "{HttpMethod} {Path} - {mutation.Label}",
+        "request": "HttpMethod, Url=path, BodyType=JSON, Body=mutation.MutatedBody, Timeout=30000ms",
+        "expectation": "ExpectedStatus=[mutation.ExpectedStatusCode]"
+      },
+      {
+        "name": "BuildLlmSuggestionTestCase",
+        "source": "LLM suggestion (PIPE-03)",
+        "inputs": "TestSuiteId, ApiOrderItemModel, ApiEndpointMetadataDto, LlmSuggestedScenario",
+        "output": "TestCase { TestType=scenario.SuggestedTestType, Tags=['boundary|negative', 'auto-generated', 'llm-suggested', ...scenario.Tags] }",
+        "naming": "SanitizeName(scenario.ScenarioName, orderItem) — max 200 chars",
+        "request": "Built via ITestCaseRequestBuilder.Build (reuse FE-05B builder)",
+        "expectation": "Built via ITestCaseExpectationBuilder.Build (reuse FE-05B builder)"
+      }
+    ],
+    "helperMethods": [
+      {
+        "name": "ClassifyPathMutationType",
+        "description": "Phan loai path mutation thanh Boundary hoac Negative. Boundary: chua 'boundary', 'zero', 'max', 'overflow'. Con lai: Negative."
+      },
+      {
+        "name": "SanitizeName",
+        "description": "Truncate scenario name to 200 chars. Fallback: '{HttpMethod} {Path} - Boundary/Negative'."
+      },
+      {
+        "name": "ParsePriority",
+        "description": "Parse string priority (critical|high|medium|low) to TestPriority enum. Default: Medium."
+      },
+      {
+        "name": "ParseHttpMethod",
+        "description": "Parse string HTTP method to Entities.HttpMethod enum. Default: GET."
+      },
+      {
+        "name": "SerializeTags",
+        "description": "Serialize tag list to JSON array string. Auto-add: testType tag + 'auto-generated' + source tag."
+      }
+    ]
+  },
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "TestSuiteId la bat buoc.",
+        "SpecificationId la bat buoc.",
+        "It nhat mot nguon tao test case phai duoc bat.",
+        "Ban khong co quyen thao tac test suite nay.",
+        "Khong the generate test cases cho test suite da archived.",
+        "Test suite da co N boundary/negative test case(s). Su dung ForceRegenerate=true de tao lai.",
+        "Da vuot qua gioi han test case cho goi subscription.",
+        "Da vuot qua gioi han LLM calls cho goi subscription."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test suite voi ma '{TestSuiteId}'."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException",
+      "examples": [
+        "ORDER_CONFIRMATION_REQUIRED: Chua co API order duoc xac nhan."
+      ]
+    },
+    "gracefulDegradation": [
+      "LLM interaction audit save failure: log warning, khong throw, tiep tuc flow.",
+      "LLM cache save failure: log warning, khong throw, tiep tuc flow.",
+      "LLM cache deserialize failure: log warning, treat as cache miss, call LLM fresh."
+    ]
+  },
+  "observability": {
+    "metrics": [
+      "boundary_negative_generated_total (counter: per request)",
+      "boundary_negative_path_mutations_total (counter: per request)",
+      "boundary_negative_body_mutations_total (counter: per request)",
+      "boundary_negative_llm_suggestions_total (counter: per request)",
+      "boundary_negative_llm_cache_hit (counter: cache hits vs misses)",
+      "boundary_negative_generation_duration_ms (histogram)",
+      "boundary_negative_llm_call_duration_ms (histogram)",
+      "boundary_negative_llm_tokens_used (counter)"
+    ],
+    "logFields": [
+      "TestSuiteId",
+      "EndpointCount",
+      "PathMutations (bool)",
+      "BodyMutations (bool)",
+      "LlmSuggestions (bool)",
+      "TotalGenerated",
+      "PathMutationCount",
+      "BodyMutationCount",
+      "LlmSuggestionCount",
+      "EndpointsCovered",
+      "LlmModel",
+      "LlmTokensUsed",
+      "LatencyMs",
+      "ActorUserId"
+    ]
+  }
+}

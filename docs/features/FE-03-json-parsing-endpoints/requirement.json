@@ -1,0 +1,220 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-requirement",
+  "requirement": {
+    "id": "FE-03",
+    "title": "JSON Parsing Endpoints",
+    "goal": "Cung cap day du API CRUD cho API specifications (upload file, tao thu cong, import cURL) va API endpoints (CRUD, resolved URL, path parameter mutations) trong module ApiDocumentation, dong thoi thiet ke pipeline async parser de chuyen file OpenAPI/Postman da upload thanh normalized entities.",
+    "priority": "P0",
+    "status": "partially-implemented",
+    "rationale": [
+      "Module ApiDocumentation la nguon du lieu nen tang cho tat ca cac feature downstream (FE-04 scope, FE-05 order/generation, FE-06 mutation, FE-07 execution).",
+      "SpecificationsController va EndpointsController da duoc implement day du voi 16 endpoints.",
+      "Pipeline async parser (FE-03-03) da duoc thiet ke nhung chua co code implementation.",
+      "IApiEndpointMetadataService cung cap cross-module contract cho TestGeneration module."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-03-01",
+      "title": "Specification Management",
+      "file": "FE-03-01/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 1
+    },
+    {
+      "id": "FE-03-02",
+      "title": "Endpoint Management",
+      "file": "FE-03-02/requirement.json",
+      "priority": "P0",
+      "implementationOrder": 2
+    },
+    {
+      "id": "FE-03-03",
+      "title": "Parser Flow (Async Specification Parsing)",
+      "file": "FE-03-03/requirement.json",
+      "priority": "P1",
+      "implementationOrder": 3
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "FE-03-01: CRUD API specifications voi 9 endpoints (upload file/manual/cURL, activate/deactivate, delete, list/get/upload-methods).",
+      "FE-03-01: Upload file qua IStorageFileGatewayService voi gioi han 10MB, extension .json/.yaml/.yml.",
+      "FE-03-01: Kiem tra subscription limit qua ISubscriptionLimitGatewayService truoc khi tao.",
+      "FE-03-01: Outbox events cho spec lifecycle (SpecUploaded, SpecActivated, SpecDeleted).",
+      "FE-03-02: CRUD API endpoints voi 7 endpoints (list/detail/create/update/delete/resolved-url/path-param-mutations).",
+      "FE-03-02: PathParameterTemplateService cho URL resolution va mutation generation.",
+      "FE-03-02: ApiEndpointMetadataService implement cross-module contract IApiEndpointMetadataService.",
+      "FE-03-03: Thiet ke pipeline async parser tu SPEC_UPLOADED outbox event (design-only, chua implement)."
+    ],
+    "outOfScope": [
+      "Test suite scope configuration (FE-04).",
+      "Test order proposal/generation (FE-05).",
+      "Boundary/negative test mutation generation (FE-06).",
+      "Project management CRUD (FE-02).",
+      "UI implementation."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      "FE-02"
+    ],
+    "requiredModules": [
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Contracts",
+      "ClassifiedAds.Modules.Storage (qua IStorageFileGatewayService)",
+      "ClassifiedAds.Modules.Subscription (qua ISubscriptionLimitGatewayService)"
+    ],
+    "database": {
+      "schema": "apidoc",
+      "tables": [
+        "ApiSpecifications",
+        "ApiEndpoints",
+        "EndpointParameters",
+        "EndpointResponses",
+        "EndpointSecurityReqs",
+        "SecuritySchemes",
+        "OutboxMessages"
+      ]
+    }
+  },
+  "codebaseAlignment": {
+    "alreadyImplemented": [
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/SpecificationsController.cs (9 endpoints)",
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/EndpointsController.cs (7 endpoints)",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/CreateManualSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/ImportCurlCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/ActivateSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/DeleteSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/AddUpdateEndpointCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/DeleteEndpointCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetSpecificationsQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetSpecificationQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetEndpointsQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetEndpointQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetResolvedUrlQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetPathParamMutationsQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/CurlParser.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/PathParameterTemplateService.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Services/ApiEndpointMetadataService.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Authorization/Permissions.cs"
+    ],
+    "missingForFe03": [
+      "Commands/ParseUploadedSpecificationCommand.cs (FE-03-03, design-only)",
+      "Services/OpenApiSpecificationParser.cs (FE-03-03, design-only)",
+      "Services/PostmanSpecificationParser.cs (FE-03-03, design-only)",
+      "IStorageFileGatewayService download/read method (FE-03-03, design-only)"
+    ]
+  },
+  "architecturePatterns": {
+    "referenceModules": [
+      "ClassifiedAds.Modules.ApiDocumentation"
+    ],
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Command/Query + Handler cung file. Controller chi bind request va dispatch."
+      },
+      {
+        "pattern": "Repository + UnitOfWork",
+        "description": "Dung IRepository<TEntity, Guid> va UnitOfWork.SaveChangesAsync cho persistence."
+      },
+      {
+        "pattern": "Permission-Based Authorization",
+        "description": "Them permission constants trong Authorization/Permissions.cs va [Authorize(Permissions.X)] cho tung endpoint."
+      },
+      {
+        "pattern": "Cross-Module Contract Boundary",
+        "description": "IApiEndpointMetadataService (trong ClassifiedAds.Contracts) cung cap endpoint metadata cho cac module khac. File upload qua IStorageFileGatewayService."
+      },
+      {
+        "pattern": "Outbox Pattern",
+        "description": "Spec lifecycle events (upload, activate, delete) duoc ghi vao OutboxMessage table va publish boi PublishEventWorker."
+      },
+      {
+        "pattern": "Rate Limiting",
+        "description": "Controllers su dung [EnableRateLimiting(RateLimiterPolicyNames.DefaultPolicy)]."
+      }
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "specListP95Ms": 200,
+      "specWriteP95Ms": 500,
+      "endpointListP95Ms": 200,
+      "endpointWriteP95Ms": 500,
+      "uploadP95Ms": 3000
+    },
+    "reliability": {
+      "fileSizeLimitEnforced": true,
+      "subscriptionLimitEnforced": true,
+      "outboxReliableDelivery": true
+    },
+    "security": {
+      "allEndpointsRequireAuthorize": true,
+      "permissionPolicyPerAction": true,
+      "ownershipValidationRequired": true
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST upload luu file qua Storage gateway va tao ApiSpecification voi ParseStatus=Pending.",
+    "AC-02: POST manual tao spec voi ParseStatus=Success va inline endpoints.",
+    "AC-03: POST curl-import parse cURL string va tao spec+endpoint tu ket qua.",
+    "AC-04: PUT activate cap nhat Project.ActiveSpecId va set spec IsActive=true.",
+    "AC-05: DELETE specification xoa cascade toan bo children (endpoints, parameters, responses, security).",
+    "AC-06: File upload tu choi files > 10MB hoac extension sai (.json/.yaml/.yml).",
+    "AC-07: Subscription limit check chan viec tao moi khi da vuot han muc.",
+    "AC-08: CRUD endpoints hoat dong day du voi nested parameters/responses/security.",
+    "AC-09: GET resolved-url thay the path parameters dung voi parameter values tu query string.",
+    "AC-10: GET path-param-mutations sinh cac mutation variants (empty, wrongType, boundary, sqlInjection, nonExistent) cho tung path parameter.",
+    "AC-11: IApiEndpointMetadataService.GetEndpointMetadataAsync tra ve dependency analysis chinh xac.",
+    "AC-12: Tat ca 16 endpoints yeu cau [Authorize] va permission policy tuong ung."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "Upload OpenAPI spec thanh cong",
+      "given": "Project hop le va file .json chua OpenAPI swagger/openapi key",
+      "when": "POST /api/projects/{projectId}/specifications/upload",
+      "then": "Spec duoc tao voi ParseStatus=Pending va OriginalFileId khong null"
+    },
+    {
+      "id": "TS-02",
+      "name": "Upload file qua lon",
+      "given": "File > 10MB",
+      "when": "POST upload",
+      "then": "Tra 413 RequestSizeLimitExceededException"
+    },
+    {
+      "id": "TS-03",
+      "name": "Tao manual specification",
+      "given": "Request body hop le voi endpoints",
+      "when": "POST /api/projects/{projectId}/specifications/manual",
+      "then": "Spec duoc tao voi ParseStatus=Success va endpoints duoc persist"
+    },
+    {
+      "id": "TS-04",
+      "name": "Import cURL thanh cong",
+      "given": "cURL command hop le",
+      "when": "POST /api/projects/{projectId}/specifications/curl-import",
+      "then": "Spec+endpoint duoc tao tu cURL parsed result"
+    },
+    {
+      "id": "TS-05",
+      "name": "Path parameter mutations",
+      "given": "Endpoint co path /users/{userId} voi userId la integer",
+      "when": "GET .../endpoints/{endpointId}/path-param-mutations",
+      "then": "Tra ve mutations: empty, wrongType, boundary_zero, boundary_negative, sqlInjection, nonExistent"
+    },
+    {
+      "id": "TS-06",
+      "name": "Cross-module metadata service",
+      "given": "Specification co endpoints voi auth va CRUD operations",
+      "when": "GetEndpointMetadataAsync duoc goi tu TestGeneration module",
+      "then": "Tra ve dependency analysis voi auth-first, producer-before-consumer ordering"
+    }
+  ]
+}

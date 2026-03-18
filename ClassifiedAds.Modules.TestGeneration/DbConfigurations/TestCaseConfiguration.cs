@@ -35,7 +35,6 @@ public class TestCaseConfiguration : IEntityTypeConfiguration<Entities.TestCase>
 
         builder.HasIndex(x => x.TestSuiteId);
         builder.HasIndex(x => x.EndpointId);
-        builder.HasIndex(x => x.DependsOnId);
         builder.HasIndex(x => new { x.TestSuiteId, x.OrderIndex });
         builder.HasIndex(x => new { x.TestSuiteId, x.CustomOrderIndex });
         builder.HasIndex(x => x.LastModifiedById);
@@ -44,11 +43,6 @@ public class TestCaseConfiguration : IEntityTypeConfiguration<Entities.TestCase>
             .WithMany(x => x.TestCases)
             .HasForeignKey(x => x.TestSuiteId)
             .OnDelete(DeleteBehavior.Cascade);
-
-        builder.HasOne(x => x.DependsOn)
-            .WithMany()
-            .HasForeignKey(x => x.DependsOnId)
-            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasOne(x => x.Request)
             .WithOne(x => x.TestCase)

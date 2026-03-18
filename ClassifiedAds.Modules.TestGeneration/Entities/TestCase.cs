@@ -45,9 +45,9 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
-    /// Optional dependency on another test case.
+    /// Dependencies on other test cases (many-to-many via join table).
     /// </summary>
-    public Guid? DependsOnId { get; set; }
+    public ICollection<TestCaseDependency> Dependencies { get; set; } = new List<TestCaseDependency>();
 
     /// <summary>
     /// Execution order within the suite.
@@ -81,7 +81,6 @@ public class TestCase : Entity<Guid>, IAggregateRoot
 
     // Navigation properties
     public TestSuite TestSuite { get; set; }
-    public TestCase DependsOn { get; set; }
     public TestCaseRequest Request { get; set; }
     public TestCaseExpectation Expectation { get; set; }
     public ICollection<TestCaseVariable> Variables { get; set; } = new List<TestCaseVariable>();

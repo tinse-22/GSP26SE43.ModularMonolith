@@ -41,10 +41,12 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<TestOrderProposal, Guid>, Repository<TestOrderProposal, Guid>>()
             .AddScoped<IRepository<TestSuiteVersion, Guid>, Repository<TestSuiteVersion, Guid>>()
             .AddScoped<IRepository<TestCase, Guid>, Repository<TestCase, Guid>>()
+            .AddScoped<IRepository<TestCaseDependency, Guid>, Repository<TestCaseDependency, Guid>>()
             .AddScoped<IRepository<TestCaseRequest, Guid>, Repository<TestCaseRequest, Guid>>()
             .AddScoped<IRepository<TestCaseExpectation, Guid>, Repository<TestCaseExpectation, Guid>>()
             .AddScoped<IRepository<TestCaseVariable, Guid>, Repository<TestCaseVariable, Guid>>()
             .AddScoped<IRepository<TestDataSet, Guid>, Repository<TestDataSet, Guid>>()
+            .AddScoped<IRepository<TestCaseChangeLog, Guid>, Repository<TestCaseChangeLog, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
@@ -60,6 +62,18 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
             .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
+
+        // FE-05B: Happy-path test case generation services
+        services
+            .AddScoped<ITestCaseRequestBuilder, TestCaseRequestBuilder>()
+            .AddScoped<ITestCaseExpectationBuilder, TestCaseExpectationBuilder>()
+            .AddScoped<IHappyPathTestCaseGenerator, HappyPathTestCaseGenerator>();
+
+        // FE-06: Boundary/negative test case generation services
+        services
+            .AddSingleton<IBodyMutationEngine, BodyMutationEngine>()
+            .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
+            .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
 
         // n8n Integration (typed HttpClient + Options pattern, same as PayOS in Subscription module)
         services.Configure<N8nIntegrationOptions>(options =>

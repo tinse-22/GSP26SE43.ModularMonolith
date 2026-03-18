@@ -1,0 +1,210 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-03-02-requirement",
+  "requirement": {
+    "id": "FE-03-02",
+    "parentId": "FE-03",
+    "title": "Endpoint Management",
+    "goal": "Cung cap 7 API endpoints cho viec quan ly API endpoints trong mot specification: CRUD endpoints, resolved URL, va path parameter mutations cho negative/boundary testing trong module ApiDocumentation.",
+    "priority": "P0",
+    "status": "implemented",
+    "rationale": [
+      "EndpointsController.cs da duoc implement day du voi 7 endpoints.",
+      "PathParameterTemplateService cung cap URL resolution va mutation generation cho cac test generation features.",
+      "ApiEndpointMetadataService implement cross-module contract IApiEndpointMetadataService de cung cap endpoint metadata cho TestGeneration module.",
+      "Replace-all strategy cho parameters/responses khi update endpoint (xoa children cu, tao children moi trong 1 transaction).",
+      "Subscription limit check duoc enforce khi tao endpoint moi qua ISubscriptionLimitGatewayService."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "GET list endpoints cua mot specification.",
+      "GET endpoint detail voi parameters, responses, security requirements, va resolved URL.",
+      "POST tao endpoint moi voi inline parameters va responses.",
+      "PUT update endpoint (replace-all children strategy trong transaction).",
+      "DELETE endpoint (cascade delete children qua DB configuration).",
+      "GET resolved URL bang PathParameterTemplateService voi dynamic query string params.",
+      "GET path parameter mutations sinh boundary/negative test variants cho tung path parameter."
+    ],
+    "outOfScope": [
+      "Specification-level CRUD (FE-03-01).",
+      "Async parsing pipeline (FE-03-03).",
+      "Test suite scope configuration (FE-04).",
+      "Test order proposal/generation (FE-05).",
+      "UI implementation."
+    ]
+  },
+  "dependencies": {
+    "modules": [
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "schema": "apidoc",
+        "reusedEntities": [
+          "ApiEndpoint",
+          "EndpointParameter",
+          "EndpointResponse",
+          "EndpointSecurityReq",
+          "ApiSpecification",
+          "Project"
+        ],
+        "existingFiles": [
+          "Controllers/EndpointsController.cs",
+          "Commands/AddUpdateEndpointCommand.cs",
+          "Commands/DeleteEndpointCommand.cs",
+          "Queries/GetEndpointsQuery.cs",
+          "Queries/GetEndpointQuery.cs",
+          "Queries/GetResolvedUrlQuery.cs",
+          "Queries/GetPathParamMutationsQuery.cs",
+          "Models/EndpointModel.cs",
+          "Models/CreateUpdateEndpointModel.cs",
+          "Models/PathParameterModels.cs",
+          "Models/CreateManualSpecificationModel.cs (ManualParameterDefinition, ManualResponseDefinition reused)",
+          "Services/PathParameterTemplateService.cs",
+          "Services/IPathParameterTemplateService.cs",
+          "Services/ApiEndpointMetadataService.cs",
+          "Authorization/Permissions.cs"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.ApiDocumentation",
+        "status": "implemented",
+        "requiredContracts": [
+          "IApiEndpointMetadataService.GetEndpointMetadataAsync"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Subscription",
+        "status": "implemented",
+        "requiredContracts": [
+          "ISubscriptionLimitGatewayService.TryConsumeLimitAsync (LimitType.MaxEndpointsPerProject)"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "requiredContracts": [
+          "ICurrentUser"
+        ]
+      }
+    ],
+    "featureDependencies": [
+      "FE-02",
+      "FE-03-01"
+    ]
+  },
+  "architecturePatterns": {
+    "patterns": [
+      {
+        "pattern": "CQRS + Dispatcher",
+        "description": "Command/Query + Handler cung file. Controller chi bind request va dispatch."
+      },
+      {
+        "pattern": "Repository + UnitOfWork",
+        "description": "Dung IRepository<TEntity, Guid> va UnitOfWork.SaveChangesAsync cho persistence. ExecuteInTransactionAsync cho atomic create/update."
+      },
+      {
+        "pattern": "Replace-All Children Strategy",
+        "description": "Khi update endpoint, xoa tat ca parameters va responses cu, tao lai moi trong cung transaction."
+      },
+      {
+        "pattern": "Cross-Module Contract Boundary",
+        "description": "ApiEndpointMetadataService implement IApiEndpointMetadataService (trong ClassifiedAds.Contracts) de cung cap dependency analysis cho TestGeneration module."
+      },
+      {
+        "pattern": "PathParameterTemplateService",
+        "description": "Service chuyen dung cho URL template resolution va mutation generation. Su dung regex de extract path parameters, thay the bang values, va sinh negative/boundary test data."
+      }
+    ]
+  },
+  "nonFunctionalTargets": {
+    "performance": {
+      "listP95Ms": 200,
+      "writeP95Ms": 500,
+      "resolvedUrlP95Ms": 100,
+      "mutationsP95Ms": 200
+    },
+    "reliability": {
+      "subscriptionLimitEnforced": true,
+      "transactionalChildrenUpdate": true,
+      "cascadeDeleteViaDbConfig": true
+    },
+    "security": {
+      "authorizeAllEndpoints": true,
+      "ownerCheckOnWrite": true,
+      "permissionPolicyPerAction": true
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: GET list endpoints tra ve danh sach EndpointModel cua specification, sap xep theo CreatedDateTime giam dan.",
+    "AC-02: GET endpoint detail tra ve EndpointDetailModel voi Parameters, Responses, SecurityRequirements, va ResolvedUrl.",
+    "AC-03: POST tao endpoint moi voi HttpMethod, Path, va inline Parameters/Responses duoc persist trong transaction.",
+    "AC-04: POST tao endpoint kiem tra subscription limit MaxEndpointsPerProject truoc khi persist.",
+    "AC-05: PUT update endpoint thuc hien replace-all: xoa children cu va tao children moi trong cung transaction.",
+    "AC-06: DELETE endpoint cascade xoa parameters, responses, security requirements qua DB configuration.",
+    "AC-07: GET resolved-url thay the path parameters bang values tu query string, fallback sang DefaultValue va Examples.",
+    "AC-08: GET path-param-mutations sinh mutation variants (empty, wrongType, boundary, sqlInjection, nonExistent) cho tung path parameter.",
+    "AC-09: PathParameterTemplateService.EnsurePathParameterConsistency tu dong tao missing path params khi create/update endpoint.",
+    "AC-10: IApiEndpointMetadataService.GetEndpointMetadataAsync tra ve dependency analysis voi auth-first, producer-before-consumer ordering.",
+    "AC-11: Tat ca 7 endpoints yeu cau [Authorize] va permission policy tuong ung (GetEndpoints, AddEndpoint, UpdateEndpoint, DeleteEndpoint)."
+  ],
+  "testScenarios": [
+    {
+      "id": "TS-01",
+      "name": "List endpoints cua specification",
+      "given": "Specification co 3 endpoints",
+      "when": "GET /api/projects/{projectId}/specifications/{specId}/endpoints",
+      "then": "Tra ve 3 EndpointModel, sap xep theo CreatedDateTime desc"
+    },
+    {
+      "id": "TS-02",
+      "name": "Get endpoint detail",
+      "given": "Endpoint co parameters, responses, va security requirements",
+      "when": "GET /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "then": "Tra ve EndpointDetailModel voi day du children va ResolvedUrl"
+    },
+    {
+      "id": "TS-03",
+      "name": "Create endpoint thanh cong",
+      "given": "Request body hop le voi HttpMethod=GET, Path=/users/{userId}",
+      "when": "POST /api/projects/{projectId}/specifications/{specId}/endpoints",
+      "then": "Endpoint duoc tao voi parameters tu dong tao cho {userId}, tra ve 201"
+    },
+    {
+      "id": "TS-04",
+      "name": "Create endpoint HTTP method khong hop le",
+      "given": "HttpMethod la 'INVALID'",
+      "when": "POST create endpoint",
+      "then": "Tra ve 400 ValidationException"
+    },
+    {
+      "id": "TS-05",
+      "name": "Update endpoint replace-all children",
+      "given": "Endpoint co 2 parameters, update voi 3 parameters moi",
+      "when": "PUT /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "then": "2 parameters cu bi xoa, 3 parameters moi duoc tao, tra ve 200"
+    },
+    {
+      "id": "TS-06",
+      "name": "Delete endpoint cascade",
+      "given": "Endpoint co parameters, responses, security requirements",
+      "when": "DELETE /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "then": "Endpoint va tat ca children bi xoa, tra ve 204"
+    },
+    {
+      "id": "TS-07",
+      "name": "Resolved URL thanh cong",
+      "given": "Endpoint co path /users/{userId}/orders/{orderId}, userId co DefaultValue=42",
+      "when": "GET .../endpoints/{endpointId}/resolved-url?orderId=abc",
+      "then": "Tra ve ResolvedUrl=/users/42/orders/abc, IsFullyResolved=true"
+    },
+    {
+      "id": "TS-08",
+      "name": "Path parameter mutations",
+      "given": "Endpoint co path /users/{userId} voi userId la Integer",
+      "when": "GET .../endpoints/{endpointId}/path-param-mutations",
+      "then": "Tra ve mutations: empty, wrongType, boundary_zero, boundary_negative, sqlInjection, nonExistent"
+    }
+  ]
+}
