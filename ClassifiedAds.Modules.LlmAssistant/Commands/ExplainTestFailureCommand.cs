@@ -51,7 +51,7 @@ public class ExplainTestFailureCommandHandler : ICommandHandler<ExplainTestFailu
 
         if (context.CreatedById != command.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         ApiEndpointMetadataDto endpointMetadata = null;
