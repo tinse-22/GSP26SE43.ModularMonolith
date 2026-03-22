@@ -11,6 +11,11 @@ public class SmsMessageConfiguration : IEntityTypeConfiguration<SmsMessage>
         builder.ToTable("SmsMessages");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
         NpgsqlIndexBuilderExtensions.IncludeProperties(builder.HasIndex(x => x.SentDateTime), x => new { x.ExpiredDateTime, x.AttemptCount, x.MaxAttemptCount, x.NextAttemptDateTime });
+        NpgsqlIndexBuilderExtensions.IncludeProperties(
+            builder.HasIndex(x => x.NextAttemptDateTime)
+                .HasDatabaseName("IX_SmsMessages_Pending")
+                .HasFilter("\"SentDateTime\" IS NULL"),
+            x => new { x.ExpiredDateTime, x.AttemptCount, x.MaxAttemptCount });
         builder.HasIndex(x => x.CreatedDateTime);
     }
 }

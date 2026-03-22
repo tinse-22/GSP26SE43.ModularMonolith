@@ -10,8 +10,10 @@ public class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessage
     {
         builder.ToTable("OutboxMessages");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
-        builder.HasIndex(x => new { x.Published, x.CreatedDateTime });
         builder.HasIndex(x => x.CreatedDateTime);
+        builder.HasIndex(x => x.CreatedDateTime)
+            .HasDatabaseName("IX_OutboxMessages_Published_CreatedDateTime")
+            .HasFilter("\"Published\" = FALSE");
     }
 }
 
