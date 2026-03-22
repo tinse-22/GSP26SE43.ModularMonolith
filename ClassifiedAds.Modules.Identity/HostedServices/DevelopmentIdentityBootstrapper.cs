@@ -1,8 +1,10 @@
+using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Linq;
 using System.Threading;
@@ -14,21 +16,24 @@ public class DevelopmentIdentityBootstrapper : IHostedService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IHostEnvironment _hostEnvironment;
+    private readonly IOptions<IdentityModuleOptions> _options;
     private readonly ILogger<DevelopmentIdentityBootstrapper> _logger;
 
     public DevelopmentIdentityBootstrapper(
         IServiceProvider serviceProvider,
         IHostEnvironment hostEnvironment,
+        IOptions<IdentityModuleOptions> options,
         ILogger<DevelopmentIdentityBootstrapper> logger)
     {
         _serviceProvider = serviceProvider;
         _hostEnvironment = hostEnvironment;
+        _options = options;
         _logger = logger;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (!_hostEnvironment.IsDevelopment())
+        if (!_hostEnvironment.IsDevelopment() || !_options.Value.BootstrapDevelopmentData)
         {
             return;
         }
