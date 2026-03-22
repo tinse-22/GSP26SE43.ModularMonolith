@@ -29,10 +29,14 @@ using System.Reflection;
 
 // Load .env for local parity with WebAPI/Background.
 // Prevents migrator from targeting a different DB than runtime hosts.
-dotenv.net.DotEnv.Fluent()
-    .WithTrimValues()
-    .WithProbeForEnv(probeLevelsToSearch: 6)
-    .Load();
+if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
 
 var verifyMigrationsOnly = args.Any(x => string.Equals(x, "--verify-migrations", StringComparison.OrdinalIgnoreCase));
 

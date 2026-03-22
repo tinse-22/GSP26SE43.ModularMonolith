@@ -62,6 +62,7 @@ services:
         environment:
           ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
           ConnectionStrings__Default: ${ConnectionStrings__Default}
+          Modules__Identity__BootstrapDevelopmentData: "true"
           Modules__Storage__Provider: ${Storage__Provider}
           Modules__Storage__Local__Path: ${Storage__Local__Path}
     background:

@@ -4,6 +4,7 @@ using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
 using ClassifiedAds.Infrastructure.Web.Validation;
+using ClassifiedAds.Modules.Identity.HostedServices;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Services;
 using ClassifiedAds.Modules.Notification.Hubs;
@@ -46,10 +47,14 @@ using System.Threading.Tasks;
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Load .env file for private configuration (not committed to git)
 // Probes up parent directories to find .env at solution root
-dotenv.net.DotEnv.Fluent()
-    .WithTrimValues()
-    .WithProbeForEnv(probeLevelsToSearch: 6)
-    .Load();
+if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -289,6 +294,12 @@ services.AddAuditLogModule(opt =>
     opt.ConnectionStrings.Default = sharedConnectionString;
 })
 .AddApplicationServices();
+
+if (builder.Environment.IsDevelopment() &&
+    configuration.GetValue<bool>("Modules:Identity:BootstrapDevelopmentData"))
+{
+    services.AddHostedService<DevelopmentIdentityBootstrapper>();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // HTML & PDF Utilities

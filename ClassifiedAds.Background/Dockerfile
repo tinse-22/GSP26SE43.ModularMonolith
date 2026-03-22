@@ -26,6 +26,9 @@ RUN dotnet publish ./ClassifiedAds.Background/ClassifiedAds.Background.csproj -c
 
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /ClassifiedAds.ModularMonolith
 COPY --from=build-env /ClassifiedAds.ModularMonolith/out .
 

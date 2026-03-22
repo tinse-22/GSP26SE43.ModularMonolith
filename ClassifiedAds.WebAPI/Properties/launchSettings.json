@@ -13,14 +13,16 @@
       "commandName": "IISExpress",
       "launchUrl": "api/products",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Modules__Identity__BootstrapDevelopmentData": "true"
       }
     },
     "https": {
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Modules__Identity__BootstrapDevelopmentData": "true"
       },
       "applicationUrl": "https://localhost:44312;http://localhost:5099"
     }

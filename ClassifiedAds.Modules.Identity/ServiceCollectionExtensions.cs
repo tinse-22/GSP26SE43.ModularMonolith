@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
     {
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
+        settings.ConnectionStrings ??= new ConnectionStringsOptions();
 
         services.Configure(configureOptions);
 
@@ -38,6 +39,11 @@ public static class ServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            sql.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorCodesToAdd: null);
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
@@ -75,8 +81,6 @@ public static class ServiceCollectionExtensions
             options.AddPolicy<string, PasswordRateLimiterPolicy>(RateLimiterPolicyNames.PasswordPolicy);
         });
 
-        services.AddHostedService<DevelopmentIdentityBootstrapper>();
-
         return services;
     }
 
@@ -84,6 +88,7 @@ public static class ServiceCollectionExtensions
     {
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
+        settings.ConnectionStrings ??= new ConnectionStringsOptions();
 
         services.Configure(configureOptions);
 
@@ -98,6 +103,11 @@ public static class ServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            sql.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorCodesToAdd: null);
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
