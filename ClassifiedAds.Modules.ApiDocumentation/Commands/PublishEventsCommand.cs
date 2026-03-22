@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.DateTimes;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using System;
@@ -38,7 +39,7 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
 
     public async Task HandleAsync(PublishEventsCommand command, CancellationToken cancellationToken = default)
     {
-        var events = GetPendingEvents();
+        var events = await GetPendingEventsAsync(cancellationToken);
 
         foreach (var eventLog in events)
         {
@@ -77,15 +78,15 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
         command.SentEventsCount = events.Count(x => x.Published);
     }
 
-    private List<OutboxMessage> GetPendingEvents()
+    private async Task<List<OutboxMessage>> GetPendingEventsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return _outboxMessageRepository.GetQueryableSet()
+            return await _outboxMessageRepository.GetQueryableSet()
                 .Where(x => !x.Published)
                 .OrderBy(x => x.CreatedDateTime)
                 .Take(50)
-                .ToList();
+                .ToListAsync(cancellationToken);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
         {
@@ -93,5 +94,31 @@ public class PublishEventsCommandHandler : ICommandHandler<PublishEventsCommand>
                 "Skipping ApiDocumentation outbox publishing because table apidoc.\"OutboxMessages\" does not exist. Run database migrations.");
             return new List<OutboxMessage>();
         }
+        catch (Exception ex) when (IsTransientDatabaseTimeout(ex))
+        {
+            _logger.LogWarning(ex,
+                "Skipping ApiDocumentation outbox publishing because querying apidoc.\"OutboxMessages\" timed out. The worker will retry on the next iteration.");
+            return new List<OutboxMessage>();
+        }
+    }
+
+    private static bool IsTransientDatabaseTimeout(Exception exception)
+    {
+        return HasException<TimeoutException>(exception)
+            && (exception is InvalidOperationException || HasException<NpgsqlException>(exception));
+    }
+
+    private static bool HasException<TException>(Exception exception)
+        where TException : Exception
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is TException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

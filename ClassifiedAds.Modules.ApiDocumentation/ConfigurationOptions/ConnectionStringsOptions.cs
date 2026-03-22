@@ -6,5 +6,5 @@ public class ConnectionStringsOptions
 
     public string MigrationsAssembly { get; set; }
 
-    public int? CommandTimeout { get; set; }
+    public int? CommandTimeout { get; set; } = 60;
 }
