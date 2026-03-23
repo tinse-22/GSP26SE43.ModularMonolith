@@ -47,12 +47,12 @@ public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuer
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{query.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
             suite.CreatedById == query.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
 
         var queryable = _suggestionRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);

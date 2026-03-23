@@ -157,7 +157,7 @@ public class VariableResolver : IVariableResolver
         if (match.Success)
         {
             throw new UnresolvedVariableException(
-                $"Bien '{{{{{{match.Groups[1].Value}}}}}}' chua duoc giai quyet trong {surface}.");
+                $"Biến '{{{{{{match.Groups[1].Value}}}}}}' chưa được giải quyết trong {surface}.");
         }
     }
 

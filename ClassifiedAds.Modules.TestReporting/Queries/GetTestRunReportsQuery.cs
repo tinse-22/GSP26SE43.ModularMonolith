@@ -41,18 +41,18 @@ public class GetTestRunReportsQueryHandler : IQueryHandler<GetTestRunReportsQuer
     {
         if (query.TestSuiteId == Guid.Empty)
         {
-            throw new ValidationException("TestSuiteId la bat buoc.");
+            throw new ValidationException("TestSuiteId là bắt buộc.");
         }
 
         if (query.RunId == Guid.Empty)
         {
-            throw new ValidationException("RunId la bat buoc.");
+            throw new ValidationException("RunId là bắt buộc.");
         }
 
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(query.TestSuiteId, cancellationToken);
         if (suiteContext.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var coverage = await GetCoverageAsync(query.RunId);

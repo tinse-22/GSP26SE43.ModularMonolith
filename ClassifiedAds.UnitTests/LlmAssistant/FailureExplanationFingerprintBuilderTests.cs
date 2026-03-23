@@ -34,7 +34,7 @@ public class FailureExplanationFingerprintBuilderTests
             new FailureExplanationFailureReasonDto
             {
                 Code = "BODY_CONTAINS_FAILED",
-                Message = "Response body khong co truong mong doi.",
+                Message = "Response body không có trường mong đợi.",
                 Target = "body",
                 Expected = "id",
                 Actual = "error",

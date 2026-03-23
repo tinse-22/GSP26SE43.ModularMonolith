@@ -1,0 +1,255 @@
+{
+  "$schema": "ai-agent-workflow-spec",
+  "version": "1.0.0",
+  "documentId": "fe-17-workflow",
+  "workflow": {
+    "id": "wf-fe17-llm-suggestion-bulk-review-v1",
+    "requirementId": "FE-17",
+    "name": "LLM Suggestion Bulk Review Workflow",
+    "mode": "request-response + transactional-materialization",
+    "description": "FE-17 them batch review workflow tren durable `LlmSuggestion` rows de user co the approve hoac reject hang loat theo filter ma van reuse FE-15 materialization logic va FE-16 feedback-compatible read model."
+  },
+  "architectureOverview": {
+    "summary": "Khac voi FE-15 single review, FE-17 chon mot tap `Pending` suggestions theo filter roi xu ly batch. `TestGeneration` van la primary module. Khong tao table moi; chi them CQRS/controller surface va reuse shared review service.",
+    "outboxRequired": false,
+    "redisRequired": false,
+    "newEntitiesRequired": false,
+    "newMigrationsRequired": false,
+    "schema": "testgen",
+    "futureExtension": "Future scope co the them bulk modify hoac bulk feedback, nhung FE-17 v1 chi gom bulk approve/reject."
+  },
+  "dependencies": {
+    "featureDependencies": [
+      "FE-15",
+      "FE-16",
+      "FE-05A",
+      "FE-05B",
+      "FE-14"
+    ],
+    "moduleDependencies": [
+      "ClassifiedAds.Modules.TestGeneration (primary)",
+      "ClassifiedAds.Modules.Subscription (limit checks)",
+      "ClassifiedAds.Modules.LlmAssistant (indirect, no new writes expected)"
+    ],
+    "crossModuleConsumption": {
+      "Subscription": {
+        "service": "ISubscriptionLimitGatewayService",
+        "usage": [
+          "Check `MaxTestCasesPerSuite` for the total batch size before bulk approve.",
+          "Increment the same limit once after the batch is approved successfully."
+        ]
+      }
+    }
+  },
+  "flows": [
+    {
+      "id": "flow-01",
+      "name": "Bulk Approve Suggestions",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId:guid}/llm-suggestions/bulk-review { action: Approve, filters... }",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "LlmSuggestionsController",
+          "action": "Resolve `CurrentUserId`, bind request, and dispatch `BulkReviewLlmSuggestionsCommand`.",
+          "output": "Command dispatched"
+        },
+        {
+          "step": 3,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Validate suite existence, suite ownership, supported action, and optional filter enums.",
+          "output": "Validated batch review context"
+        },
+        {
+          "step": 4,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Load matching `Pending` suggestions for the suite, apply filters, and order by `DisplayOrder`.",
+          "output": "Ordered suggestion batch"
+        },
+        {
+          "step": 5,
+          "actor": "ILlmSuggestionReviewService",
+          "action": "Approve the batch transactionally: materialize `TestCase` graph, update suggestions, create change logs, and create one `TestSuiteVersion` entry.",
+          "output": "Approved suggestions + applied test cases"
+        },
+        {
+          "step": 6,
+          "actor": "LlmSuggestionsController",
+          "action": "Return 200 with `BulkReviewLlmSuggestionsResultModel`.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-02",
+      "name": "Bulk Reject Suggestions",
+      "type": "synchronous + transaction",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "Client",
+          "action": "POST /api/test-suites/{suiteId:guid}/llm-suggestions/bulk-review { action: Reject, reviewNotes, filters... }",
+          "output": "HTTP request"
+        },
+        {
+          "step": 2,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Validate suite ownership, supported action, and non-empty `ReviewNotes`.",
+          "output": "Validated reject batch context"
+        },
+        {
+          "step": 3,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Load matching `Pending` suggestions using the same filter semantics and deterministic ordering.",
+          "output": "Ordered suggestion batch"
+        },
+        {
+          "step": 4,
+          "actor": "ILlmSuggestionReviewService",
+          "action": "Reject the batch transactionally by updating review metadata only.",
+          "output": "Rejected suggestion rows"
+        },
+        {
+          "step": 5,
+          "actor": "LlmSuggestionsController",
+          "action": "Return 200 with summary counts and no applied test case ids.",
+          "output": "HTTP response"
+        }
+      ]
+    },
+    {
+      "id": "flow-03",
+      "name": "No Matching Suggestions",
+      "type": "synchronous",
+      "steps": [
+        {
+          "step": 1,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Load the filtered `Pending` suggestion set and find zero rows.",
+          "output": "Empty batch"
+        },
+        {
+          "step": 2,
+          "actor": "BulkReviewLlmSuggestionsCommandHandler",
+          "action": "Return a result model with zero counts and no side effects.",
+          "output": "Stable zero-result response"
+        }
+      ]
+    }
+  ],
+  "transactionSummary": {
+    "explicitTransactions": [
+      {
+        "operation": "Bulk approve suggestions",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "LlmSuggestion(update review fields)",
+          "TestCase(new...n)",
+          "TestCaseRequest(new...n)",
+          "TestCaseExpectation(new...n)",
+          "TestCaseVariable(new...n)",
+          "TestCaseChangeLog(new...n)",
+          "TestSuite(update version)",
+          "TestSuiteVersion(new)"
+        ]
+      },
+      {
+        "operation": "Bulk reject suggestions",
+        "method": "UnitOfWork.ExecuteInTransactionAsync",
+        "entities": [
+          "LlmSuggestion(update review fields)"
+        ]
+      }
+    ],
+    "nonTransactionalWrites": [
+      "Zero-match path should return without writes."
+    ]
+  },
+  "qualityGates": [
+    {
+      "id": "QG-01",
+      "name": "No New Review Storage",
+      "rule": "FE-17 phai reuse `LlmSuggestion` durable rows. Khong tao batch aggregate table moi."
+    },
+    {
+      "id": "QG-02",
+      "name": "No Per-Item Command Loop",
+      "rule": "Bulk endpoint khong duoc dispatch lai tung single-review command trong loop; phai dung shared batch-capable service."
+    },
+    {
+      "id": "QG-03",
+      "name": "Pending Only",
+      "rule": "Chi `Pending` suggestions moi duoc xu ly trong batch. Suggestions da approved/rejected/superseded phai bi bo qua vi khong nam trong query target set."
+    },
+    {
+      "id": "QG-04",
+      "name": "No Unexpected Migration",
+      "rule": "Preferred FE-17 implementation khong can migration. Neu EF model thay doi thi phai quay lai migration gate cua `AGENTS.md`."
+    },
+    {
+      "id": "QG-05",
+      "name": "Preserve FE-15 And FE-16",
+      "rule": "Single review, feedback reads, va feedback writes phai tiep tuc hoat dong nhu truoc."
+    }
+  ],
+  "errorHandling": {
+    "validationErrors": {
+      "httpStatus": 400,
+      "exceptionType": "ValidationException",
+      "examples": [
+        "Action phai la 'Approve' hoac 'Reject'.",
+        "ReviewNotes la bat buoc khi bulk reject suggestions.",
+        "FilterBySuggestionType khong hop le.",
+        "FilterByTestType khong hop le."
+      ]
+    },
+    "notFoundErrors": {
+      "httpStatus": 404,
+      "exceptionType": "NotFoundException",
+      "examples": [
+        "Khong tim thay test suite voi ma '{testSuiteId}'."
+      ]
+    },
+    "conflictErrors": {
+      "httpStatus": 409,
+      "exceptionType": "ConflictException or DbUpdateConcurrencyException",
+      "examples": [
+        "CONCURRENCY_CONFLICT: Suggestion da duoc thay doi boi thao tac khac.",
+        "ORDER_CONFIRMATION_REQUIRED: Chua co approved API order.",
+        "MAX_TEST_CASES_LIMIT_REACHED: Vuot qua gioi han test case cua goi subscription."
+      ]
+    }
+  },
+  "implementationChecklist": [
+    {
+      "phase": 1,
+      "name": "Shared Review Service Reuse",
+      "tasks": [
+        "Reuse or harden `ILlmSuggestionReviewService` with batch-capable approve/reject methods.",
+        "Ensure single review can continue using the same service."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Bulk API Surface",
+      "tasks": [
+        "Add or reconcile bulk command, request model, result model, and controller action.",
+        "Apply suite-owner validation, filter parsing, and zero-match behavior."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Verification",
+      "tasks": [
+        "Add targeted unit tests for batch behavior.",
+        "Run unit tests and WebAPI build.",
+        "Inspect Docker/compose conclusion and report it explicitly."
+      ]
+    }
+  ]
+}

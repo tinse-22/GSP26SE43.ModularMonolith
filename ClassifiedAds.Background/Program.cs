@@ -29,10 +29,14 @@ using System;
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 // Load .env file for private configuration (not committed to git)
-dotenv.net.DotEnv.Fluent()
-    .WithTrimValues()
-    .WithProbeForEnv(probeLevelsToSearch: 6)
-    .Load();
+if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
 
 Host.CreateDefaultBuilder(args)
 .UseWindowsService()

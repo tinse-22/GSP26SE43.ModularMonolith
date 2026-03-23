@@ -53,17 +53,17 @@ public class UpsertLlmSuggestionFeedbackCommandHandler : ICommandHandler<UpsertL
         UpsertLlmSuggestionFeedbackCommand command,
         CancellationToken cancellationToken = default)
     {
-        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId la bat buoc.");
-        ValidationException.Requires(command.SuggestionId != Guid.Empty, "SuggestionId la bat buoc.");
-        ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId la bat buoc.");
+        ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId là bắt buộc.");
+        ValidationException.Requires(command.SuggestionId != Guid.Empty, "SuggestionId là bắt buộc.");
+        ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
         ValidationException.Requires(
             TryParseSignal(command.Signal, out var signal),
-            "Signal phai la 'Helpful' hoac 'NotHelpful'.");
+            "Signal phải là 'Helpful' hoặc 'NotHelpful'.");
 
         var normalizedNotes = LlmSuggestionFeedbackTextSanitizer.NormalizeForStorage(command.Notes);
         ValidationException.Requires(
             normalizedNotes == null || normalizedNotes.Length <= LlmSuggestionFeedbackTextSanitizer.MaxNotesLength,
-            $"Notes khong duoc vuot qua {LlmSuggestionFeedbackTextSanitizer.MaxNotesLength} ky tu.");
+            $"Notes không được vượt quá {LlmSuggestionFeedbackTextSanitizer.MaxNotesLength} ký tự.");
 
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet()
@@ -71,15 +71,15 @@ public class UpsertLlmSuggestionFeedbackCommandHandler : ICommandHandler<UpsertL
 
         if (suite == null)
         {
-            throw new NotFoundException($"Khong tim thay test suite voi ma '{command.TestSuiteId}'.");
+            throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
         }
 
         ValidationException.Requires(
             suite.CreatedById == command.CurrentUserId,
-            "Ban khong phai chu so huu cua test suite nay.");
+            "Bạn không phải chủ sở hữu của test suite này.");
         ValidationException.Requires(
             suite.Status != TestSuiteStatus.Archived,
-            "Khong the feedback suggestion cho test suite da archived.");
+            "Không thể feedback suggestion cho test suite đã archived.");
 
         var suggestion = await _suggestionRepository.FirstOrDefaultAsync(
             _suggestionRepository.GetQueryableSet()
@@ -87,12 +87,12 @@ public class UpsertLlmSuggestionFeedbackCommandHandler : ICommandHandler<UpsertL
 
         if (suggestion == null)
         {
-            throw new NotFoundException($"Khong tim thay suggestion voi ma '{command.SuggestionId}'.");
+            throw new NotFoundException($"Không tìm thấy suggestion với mã '{command.SuggestionId}'.");
         }
 
         ValidationException.Requires(
             suggestion.ReviewStatus != ReviewStatus.Superseded,
-            "Khong the feedback suggestion da superseded.");
+            "Không thể feedback suggestion đã superseded.");
 
         var upsertResult = await _feedbackUpsertService.UpsertAsync(
             new LlmSuggestionFeedbackUpsertRequest

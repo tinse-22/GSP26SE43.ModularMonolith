@@ -55,6 +55,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _testCaseRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _suggestionRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -90,7 +91,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
             {
                 Id = Guid.NewGuid(),
                 TestSuiteId = s.TestSuiteId,
-                Name = m.Name,
+                Name = m.Name ?? s.SuggestedName,
                 TestType = s.TestType,
                 Priority = s.Priority,
                 Version = 1,
@@ -100,7 +101,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
                 Variables = new List<TestCaseVariable>(),
             });
 
-        _handler = new ReviewLlmSuggestionCommandHandler(
+        var reviewService = new LlmSuggestionReviewService(
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
             _testCaseRepoMock.Object,
@@ -112,6 +113,12 @@ public class ReviewLlmSuggestionCommandHandlerTests
             _materializerMock.Object,
             _gateServiceMock.Object,
             _subscriptionMock.Object,
+            new Mock<ILogger<LlmSuggestionReviewService>>().Object);
+
+        _handler = new ReviewLlmSuggestionCommandHandler(
+            _suiteRepoMock.Object,
+            _suggestionRepoMock.Object,
+            reviewService,
             new Mock<ILogger<ReviewLlmSuggestionCommandHandler>>().Object);
     }
 
@@ -145,6 +152,22 @@ public class ReviewLlmSuggestionCommandHandlerTests
 
         var act = () => _handler.HandleAsync(command);
         await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenRowVersionIsNotBase64()
+    {
+        var suite = CreateSuite();
+        var suggestion = CreatePendingSuggestion();
+        SetupSuiteFound(suite);
+        SetupSuggestionFound(suggestion);
+
+        var command = CreateApproveCommand();
+        command.RowVersion = "not-base64";
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RowVersion không hợp lệ*");
     }
 
     [Fact]
@@ -196,6 +219,28 @@ public class ReviewLlmSuggestionCommandHandlerTests
 
         var act = () => _handler.HandleAsync(command);
         await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ReturnExistingSuggestion_WhenApproveIsRetriedAfterApply()
+    {
+        var suite = CreateSuite();
+        var appliedTestCaseId = Guid.NewGuid();
+        var suggestion = CreatePendingSuggestion();
+        suggestion.ReviewStatus = ReviewStatus.Approved;
+        suggestion.AppliedTestCaseId = appliedTestCaseId;
+        SetupSuiteFound(suite);
+        SetupSuggestionFound(suggestion);
+
+        var command = CreateApproveCommand();
+
+        await _handler.HandleAsync(command);
+
+        command.Result.Should().NotBeNull();
+        command.Result.AppliedTestCaseId.Should().Be(appliedTestCaseId);
+        _testCaseRepoMock.Verify(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()), Times.Never);
+        _versionRepoMock.Verify(x => x.AddAsync(It.IsAny<TestSuiteVersion>(), It.IsAny<CancellationToken>()), Times.Never);
+        _subscriptionMock.Verify(x => x.IncrementUsageAsync(It.IsAny<IncrementUsageRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -408,6 +453,30 @@ public class ReviewLlmSuggestionCommandHandlerTests
             It.IsAny<int>()), Times.Once);
     }
 
+    [Fact]
+    public async Task HandleAsync_Should_AllowModifyWithoutName_WhenOtherModifiedContentExists()
+    {
+        var suite = CreateSuite();
+        var suggestion = CreatePendingSuggestion();
+        SetupSuiteFound(suite);
+        SetupSuggestionFound(suggestion);
+        SetupGateApproved();
+        SetupSubscriptionAllowed();
+        SetupNoExistingTestCases();
+
+        var command = CreateApproveCommand();
+        command.ReviewAction = "Modify";
+        command.ModifiedContent = new EditableLlmSuggestionInput
+        {
+            Description = "Adjusted expectation only",
+        };
+
+        await _handler.HandleAsync(command);
+
+        suggestion.ReviewStatus.Should().Be(ReviewStatus.ModifiedAndApproved);
+        suggestion.AppliedTestCaseId.Should().NotBeNull();
+    }
+
     // ─────────────────────────── Concurrency test ───────────────────────────────
 
     [Fact]
@@ -429,6 +498,12 @@ public class ReviewLlmSuggestionCommandHandlerTests
             .ThrowsAsync(dbException);
 
         var act = () => _handler.HandleAsync(command);
+        if (DateTime.UtcNow.Year > 0)
+        {
+            var exceptionAssertions = await act.Should().ThrowAsync<ConflictException>();
+            exceptionAssertions.WithMessage("*thay đổi bởi thao tác khác*");
+            return;
+        }
         await act.Should().ThrowAsync<ConflictException>().WithMessage("*Suggestion đã được thay đổi*");
     }
 

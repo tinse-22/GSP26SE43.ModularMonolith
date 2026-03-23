@@ -48,10 +48,10 @@ public class FailureExplanationPromptBuilder : IFailureExplanationPromptBuilder
     {
         var builder = new StringBuilder();
 
-        builder.AppendLine("Ban la tro ly giai thich nguyen nhan that bai cua test API.");
-        builder.AppendLine("Khong duoc quyet dinh pass/fail. Chi giai thich cac nguyen nhan co kha nang xay ra.");
-        builder.AppendLine("Chi duoc tra ve JSON hop le, khong them markdown, khong them giai thich ben ngoai.");
-        builder.AppendLine("JSON bat buoc dung schema sau:");
+        builder.AppendLine("Bạn là trợ lý giải thích nguyên nhân thất bại của test API.");
+        builder.AppendLine("Không được quyết định pass/fail. Chỉ giải thích các nguyên nhân có khả năng xảy ra.");
+        builder.AppendLine("Chỉ được trả về JSON hợp lệ, không thêm markdown, không thêm giải thích bên ngoài.");
+        builder.AppendLine("JSON bắt buộc đúng schema sau:");
         builder.AppendLine("{");
         builder.AppendLine("  \"summaryVi\": \"string\",");
         builder.AppendLine("  \"possibleCauses\": [\"string\"],");

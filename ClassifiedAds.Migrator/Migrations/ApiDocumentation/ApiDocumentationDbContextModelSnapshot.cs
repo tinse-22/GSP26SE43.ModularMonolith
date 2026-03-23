@@ -399,9 +399,9 @@ namespace ClassifiedAds.Migrator.Migrations.ApiDocumentation
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CreatedDateTime");
-
-                    b.HasIndex("Published", "CreatedDateTime");
+                    b.HasIndex("CreatedDateTime")
+                        .HasDatabaseName("IX_OutboxMessages_Published_CreatedDateTime")
+                        .HasFilter("\"Published\" = FALSE");
 
                     b.ToTable("OutboxMessages", "apidoc");
                 });

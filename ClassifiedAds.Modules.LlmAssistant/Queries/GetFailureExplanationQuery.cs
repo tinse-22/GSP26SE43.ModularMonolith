@@ -45,14 +45,14 @@ public class GetFailureExplanationQueryHandler : IQueryHandler<GetFailureExplana
 
         if (context.CreatedById != query.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var cached = await _explainer.GetCachedAsync(context, cancellationToken);
         if (cached == null)
         {
             throw new NotFoundException(
-                $"FAILURE_EXPLANATION_NOT_FOUND: Khong tim thay cached explanation cho test case '{query.TestCaseId}'.");
+                $"FAILURE_EXPLANATION_NOT_FOUND: Không tìm thấy cached explanation cho test case '{query.TestCaseId}'.");
         }
 
         return cached;

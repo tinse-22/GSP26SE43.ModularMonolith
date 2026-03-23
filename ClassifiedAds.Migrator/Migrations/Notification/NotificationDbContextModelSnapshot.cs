@@ -288,6 +288,12 @@ namespace ClassifiedAds.Migrator.Migrations.Notification
 
                     b.HasIndex("CreatedDateTime");
 
+                    b.HasIndex("NextAttemptDateTime")
+                        .HasDatabaseName("IX_SmsMessages_Pending")
+                        .HasFilter("\"SentDateTime\" IS NULL");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("NextAttemptDateTime"), new[] { "ExpiredDateTime", "AttemptCount", "MaxAttemptCount" });
+
                     b.HasIndex("SentDateTime");
 
                     NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("SentDateTime"), new[] { "ExpiredDateTime", "AttemptCount", "MaxAttemptCount", "NextAttemptDateTime" });

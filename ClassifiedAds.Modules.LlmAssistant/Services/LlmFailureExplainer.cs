@@ -168,7 +168,7 @@ public class LlmFailureExplainer : ILlmFailureExplainer
         if (providerResponse == null || string.IsNullOrWhiteSpace(providerResponse.SummaryVi))
         {
             _metrics.RecordFailure();
-            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thieu summaryVi.");
+            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thiếu summaryVi.");
         }
 
         var generatedAt = DateTimeOffset.UtcNow;

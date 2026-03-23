@@ -83,6 +83,7 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<ILlmSuggestionFeedbackUpsertService, LlmSuggestionFeedbackUpsertService>()
             .AddScoped<ILlmSuggestionFeedbackContextService, LlmSuggestionFeedbackContextService>()
             .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
+            .AddScoped<ILlmSuggestionReviewService, LlmSuggestionReviewService>()
             .AddScoped<ILlmSuggestionMaterializer, LlmSuggestionMaterializer>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
 

@@ -134,7 +134,7 @@ public class TestResultCollector : ITestResultCollector
             _logger.LogWarning("Test run {RunId}: summary saved but cache write failed", run.Id);
             throw new ConflictException(
                 "CACHE_WRITE_FAILED",
-                $"Ket qua chi tiet khong the luu vao cache. RunId={run.Id}");
+                $"Kết quả chi tiết không thể lưu vào cache. RunId={run.Id}");
         }
 
         resultModel.Run = TestRunModel.FromEntity(run);

@@ -185,4 +185,42 @@ public class LlmSuggestionsController : ControllerBase
 
         return Ok(command.Result);
     }
+
+    /// <summary>
+    /// Bulk review pending LLM suggestions with optional FE-15 style filters.
+    /// FE-17 supports bulk approve and bulk reject actions.
+    /// </summary>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPost("bulk-review")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(BulkReviewLlmSuggestionsResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<BulkReviewLlmSuggestionsResultModel>> BulkReview(
+        Guid suiteId,
+        [FromBody] BulkReviewLlmSuggestionsRequest request)
+    {
+        var command = new BulkReviewLlmSuggestionsCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            Action = request.Action,
+            ReviewNotes = request.ReviewNotes,
+            FilterBySuggestionType = request.FilterBySuggestionType,
+            FilterByTestType = request.FilterByTestType,
+            FilterByEndpointId = request.FilterByEndpointId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Bulk reviewed LLM suggestions. TestSuiteId={TestSuiteId}, Action={Action}, ProcessedCount={ProcessedCount}, ActorUserId={ActorUserId}",
+            suiteId,
+            command.Result?.Action,
+            command.Result?.ProcessedCount,
+            _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
 }

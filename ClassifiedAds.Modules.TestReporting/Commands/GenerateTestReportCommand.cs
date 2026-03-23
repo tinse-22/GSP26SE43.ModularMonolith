@@ -49,12 +49,12 @@ public class GenerateTestReportCommandHandler : ICommandHandler<GenerateTestRepo
     {
         if (command.TestSuiteId == Guid.Empty)
         {
-            throw new ValidationException("TestSuiteId la bat buoc.");
+            throw new ValidationException("TestSuiteId là bắt buộc.");
         }
 
         if (command.RunId == Guid.Empty)
         {
-            throw new ValidationException("RunId la bat buoc.");
+            throw new ValidationException("RunId là bắt buộc.");
         }
 
         var recentHistoryLimit = NormalizeRecentHistoryLimit(command.RecentHistoryLimit);
@@ -66,7 +66,7 @@ public class GenerateTestReportCommandHandler : ICommandHandler<GenerateTestRepo
 
         if (context.CreatedById != command.CurrentUserId)
         {
-            throw new ValidationException("Ban khong co quyen thao tac test suite nay.");
+            throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
         var reportType = NormalizeReportType(command.ReportType);
@@ -95,12 +95,12 @@ public class GenerateTestReportCommandHandler : ICommandHandler<GenerateTestRepo
 
         if (recentHistoryLimit.Value < 1)
         {
-            throw new ValidationException("RecentHistoryLimit phai lon hon hoac bang 1.");
+            throw new ValidationException("RecentHistoryLimit phải lớn hơn hoặc bằng 1.");
         }
 
         if (recentHistoryLimit.Value > maxHistoryLimit)
         {
-            throw new ValidationException($"RecentHistoryLimit khong duoc vuot qua {maxHistoryLimit}.");
+            throw new ValidationException($"RecentHistoryLimit không được vượt quá {maxHistoryLimit}.");
         }
 
         return recentHistoryLimit.Value;
@@ -117,14 +117,14 @@ public class GenerateTestReportCommandHandler : ICommandHandler<GenerateTestRepo
     {
         if (string.IsNullOrWhiteSpace(reportType))
         {
-            throw new ValidationException("ReportType la bat buoc.");
+            throw new ValidationException("ReportType là bắt buộc.");
         }
 
         var normalized = reportType.Trim();
         if (!Enum.TryParse<ReportType>(normalized, true, out var parsed)
             || !Enum.IsDefined(typeof(ReportType), parsed))
         {
-            throw new ValidationException($"ReportType '{reportType}' khong hop le.");
+            throw new ValidationException($"ReportType '{reportType}' không hợp lệ.");
         }
 
         return parsed;
@@ -134,14 +134,14 @@ public class GenerateTestReportCommandHandler : ICommandHandler<GenerateTestRepo
     {
         if (string.IsNullOrWhiteSpace(format))
         {
-            throw new ValidationException("Format la bat buoc.");
+            throw new ValidationException("Format là bắt buộc.");
         }
 
         var normalized = format.Trim();
         if (!Enum.TryParse<ReportFormat>(normalized, true, out var parsed)
             || !Enum.IsDefined(typeof(ReportFormat), parsed))
         {
-            throw new ValidationException($"Format '{format}' khong duoc ho tro.");
+            throw new ValidationException($"Format '{format}' không được hỗ trợ.");
         }
 
         return parsed;

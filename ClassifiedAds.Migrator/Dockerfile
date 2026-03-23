@@ -1,4 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build-env
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /ClassifiedAds.ModularMonolith
 
 # Copy csproj and restore as distinct layers
@@ -13,7 +16,6 @@ COPY ./ClassifiedAds.Modules.AuditLog/*.csproj ./ClassifiedAds.Modules.AuditLog/
 COPY ./ClassifiedAds.Modules.Configuration/*.csproj ./ClassifiedAds.Modules.Configuration/
 COPY ./ClassifiedAds.Modules.Identity/*.csproj ./ClassifiedAds.Modules.Identity/
 COPY ./ClassifiedAds.Modules.Notification/*.csproj ./ClassifiedAds.Modules.Notification/
-COPY ./ClassifiedAds.Modules.Product/*.csproj ./ClassifiedAds.Modules.Product/
 COPY ./ClassifiedAds.Modules.Storage/*.csproj ./ClassifiedAds.Modules.Storage/
 COPY ./ClassifiedAds.Modules.Subscription/*.csproj ./ClassifiedAds.Modules.Subscription/
 COPY ./ClassifiedAds.Modules.TestGeneration/*.csproj ./ClassifiedAds.Modules.TestGeneration/
@@ -34,6 +36,9 @@ RUN ConnectionStrings__Default="Host=127.0.0.1;Port=5432;Database=ClassifiedAds;
 
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /ClassifiedAds.ModularMonolith
 COPY --from=build-env /ClassifiedAds.ModularMonolith/out .
 
