@@ -58,17 +58,20 @@ public class SaveAiGeneratedTestCasesCommand : ICommand
 
 public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGeneratedTestCasesCommand>
 {
+    private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _testCaseExpectationRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
+        IRepository<TestSuite, Guid> suiteRepository,
         IRepository<TestCase, Guid> testCaseRepository,
         IRepository<TestCaseRequest, Guid> testCaseRequestRepository,
         IRepository<TestCaseExpectation, Guid> testCaseExpectationRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
+        _suiteRepository = suiteRepository;
         _testCaseRepository = testCaseRepository;
         _testCaseRequestRepository = testCaseRequestRepository;
         _testCaseExpectationRepository = testCaseExpectationRepository;
@@ -149,6 +152,18 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             }
 
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
+
+            // Mark suite as ready once AI test cases are persisted successfully.
+            var suite = await _suiteRepository.FirstOrDefaultAsync(
+                _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
+            if (suite != null)
+            {
+                suite.Status = TestSuiteStatus.Ready;
+                suite.Version += 1;
+                suite.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suiteRepository.UpdateAsync(suite, ct);
+                await _suiteRepository.UnitOfWork.SaveChangesAsync(ct);
+            }
 
             _logger.LogInformation(
                 "Saved {Count} AI-generated test cases for TestSuiteId={TestSuiteId}",
