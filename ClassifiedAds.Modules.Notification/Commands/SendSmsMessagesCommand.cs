@@ -2,7 +2,9 @@
 using ClassifiedAds.CrossCuttingConcerns.DateTimes;
 using ClassifiedAds.Infrastructure.Notification.Sms;
 using ClassifiedAds.Modules.Notification.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using System;
 using System.Globalization;
 using System.Linq;
@@ -53,12 +55,7 @@ public class SendSmsMessagesCommandHandler : ICommandHandler<SendSmsMessagesComm
         var dateTime = _dateTimeProvider.OffsetUtcNow;
         var defaultAttemptCount = 5;
 
-        var messages = _repository.GetQueryableSet()
-            .Where(x => x.SentDateTime == null)
-            .Where(x => x.ExpiredDateTime == null || x.ExpiredDateTime > dateTime)
-            .Where(x => (x.MaxAttemptCount == 0 && x.AttemptCount < defaultAttemptCount) || x.AttemptCount < x.MaxAttemptCount)
-            .Where(x => x.NextAttemptDateTime == null || x.NextAttemptDateTime <= dateTime)
-            .ToList();
+        var messages = await GetPendingMessagesAsync(dateTime, defaultAttemptCount, cancellationToken);
 
         if (messages.Any())
         {
@@ -101,5 +98,52 @@ public class SendSmsMessagesCommandHandler : ICommandHandler<SendSmsMessagesComm
         }
 
         command.SentMessagesCount = messages.Count;
+    }
+
+    private async Task<System.Collections.Generic.List<Entities.SmsMessage>> GetPendingMessagesAsync(DateTimeOffset dateTime,
+        int defaultAttemptCount,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _repository.GetQueryableSet()
+                .Where(x => x.SentDateTime == null)
+                .Where(x => x.ExpiredDateTime == null || x.ExpiredDateTime > dateTime)
+                .Where(x => (x.MaxAttemptCount == 0 && x.AttemptCount < defaultAttemptCount) || x.AttemptCount < x.MaxAttemptCount)
+                .Where(x => x.NextAttemptDateTime == null || x.NextAttemptDateTime <= dateTime)
+                .ToListAsync(cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            _logger.LogWarning(ex,
+                "Skipping SMS processing because table notification.\"SmsMessages\" does not exist. Run database migrations.");
+            return new System.Collections.Generic.List<Entities.SmsMessage>();
+        }
+        catch (Exception ex) when (IsTransientDatabaseTimeout(ex))
+        {
+            _logger.LogWarning(ex,
+                "Skipping SMS processing because querying notification.\"SmsMessages\" timed out. The worker will retry on the next iteration.");
+            return new System.Collections.Generic.List<Entities.SmsMessage>();
+        }
+    }
+
+    private static bool IsTransientDatabaseTimeout(Exception exception)
+    {
+        return HasException<TimeoutException>(exception)
+            && (exception is InvalidOperationException || HasException<NpgsqlException>(exception));
+    }
+
+    private static bool HasException<TException>(Exception exception)
+        where TException : Exception
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is TException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

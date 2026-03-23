@@ -123,6 +123,29 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             return true;
         }
+        else if (exception is DbUpdateException dbUpdateException && IsUniqueConstraintViolation(dbUpdateException))
+        {
+            var problemDetails = new ProblemDetails
+            {
+                Detail = "Yeu cau xung dot voi du lieu hien tai. Vui long tai lai va thu lai.",
+                Instance = null,
+                Status = (int)HttpStatusCode.Conflict,
+                Title = "Conflict",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8"
+            };
+
+            problemDetails.Extensions.Add("message", problemDetails.Detail);
+            problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+            problemDetails.Extensions.Add("reasonCode", "UNIQUE_CONSTRAINT_VIOLATION");
+
+            response.ContentType = "application/problem+json";
+            response.StatusCode = problemDetails.Status.Value;
+
+            var result = JsonSerializer.Serialize(problemDetails);
+            await response.WriteAsync(result, cancellationToken: cancellationToken);
+
+            return true;
+        }
         else
         {
             _logger.LogError(exception, "[{Ticks}-{ThreadId}]", DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
@@ -152,5 +175,17 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             return true;
         }
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
+    {
+        const string PostgreSqlUniqueViolationSqlState = "23505";
+
+        var sqlState = exception.InnerException?
+            .GetType()
+            .GetProperty("SqlState")?
+            .GetValue(exception.InnerException) as string;
+
+        return string.Equals(sqlState, PostgreSqlUniqueViolationSqlState, StringComparison.Ordinal);
     }
 }

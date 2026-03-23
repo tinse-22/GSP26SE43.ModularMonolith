@@ -1,0 +1,90 @@
+{
+  "$schema": "feature-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-16-contracts",
+  "apiContracts": [
+    {
+      "name": "UpsertLlmSuggestionFeedback",
+      "method": "PUT",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}/feedback",
+      "permission": "Permission:UpdateTestCase",
+      "requestModel": "UpsertLlmSuggestionFeedbackRequest",
+      "responseModel": "LlmSuggestionFeedbackModel",
+      "notes": [
+        "Idempotent write per `(SuggestionId, UserId)`.",
+        "Should update the existing row instead of creating duplicates.",
+        "Should reuse the existing `LlmSuggestionsController` instead of adding a separate feedback controller."
+      ]
+    }
+  ],
+  "responseExtensions": [
+    {
+      "targetModel": "LlmSuggestionModel",
+      "fields": [
+        "CurrentUserFeedback : LlmSuggestionFeedbackModel?",
+        "FeedbackSummary : LlmSuggestionFeedbackSummaryModel?"
+      ],
+      "appliesTo": [
+        "GET /api/test-suites/{suiteId:guid}/llm-suggestions",
+        "GET /api/test-suites/{suiteId:guid}/llm-suggestions/{suggestionId}"
+      ]
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "UpsertLlmSuggestionFeedbackRequest",
+      "fields": [
+        "Signal : string",
+        "Notes : string?"
+      ],
+      "rules": [
+        "`Signal` chi chap nhan `Helpful` hoac `NotHelpful`.",
+        "`Notes` la optional, trim whitespace, gioi han do dai hop ly.",
+        "Khong require `RowVersion` trong request cho FE-16 v1; server xu ly upsert va cap nhat `RowVersion` noi bo."
+      ]
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "LlmSuggestionFeedbackModel",
+      "fields": [
+        "Id : Guid",
+        "SuggestionId : Guid",
+        "TestSuiteId : Guid",
+        "EndpointId : Guid?",
+        "UserId : Guid",
+        "Signal : string",
+        "Notes : string?",
+        "CreatedDateTime : DateTimeOffset",
+        "UpdatedDateTime : DateTimeOffset?",
+        "RowVersion : string"
+      ]
+    },
+    {
+      "name": "LlmSuggestionFeedbackSummaryModel",
+      "fields": [
+        "HelpfulCount : int",
+        "NotHelpfulCount : int",
+        "LastFeedbackAt : DateTimeOffset?"
+      ]
+    }
+  ],
+  "internalServices": [
+    {
+      "name": "ILlmSuggestionFeedbackContextService",
+      "purpose": "Aggregate feedback by suite + endpoint into sanitized prompt context and stable feedback fingerprint."
+    }
+  ],
+  "persistenceContracts": [
+    {
+      "entity": "LlmSuggestionFeedback",
+      "rules": [
+        "Unique index on `(SuggestionId, UserId)`.",
+        "Indexes at least on `(TestSuiteId, EndpointId)` and `FeedbackSignal`.",
+        "FK to `LlmSuggestion` with cascade delete is acceptable because feedback lifecycle follows suggestion lifecycle.",
+        "`FeedbackSignal` nen duoc luu theo string-backed enum.",
+        "`RowVersion` nen theo application-managed concurrency pattern giong `LlmSuggestion`."
+      ]
+    }
+  ]
+}

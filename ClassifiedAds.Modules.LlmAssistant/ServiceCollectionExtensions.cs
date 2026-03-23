@@ -1,7 +1,9 @@
+using ClassifiedAds.Contracts.LlmAssistant.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions;
 using ClassifiedAds.Modules.LlmAssistant.Entities;
 using ClassifiedAds.Modules.LlmAssistant.Persistence;
+using ClassifiedAds.Modules.LlmAssistant.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +18,7 @@ public static class LlmAssistantServiceCollectionExtensions
     {
         var settings = new LlmAssistantModuleOptions();
         configureOptions(settings);
+        settings.FailureExplanation ??= new FailureExplanationOptions();
 
         services.Configure(configureOptions);
 
@@ -39,8 +42,26 @@ public static class LlmAssistantServiceCollectionExtensions
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
         // FE-06: Cross-module gateway for LLM interaction audit + caching
-        services.AddScoped<ClassifiedAds.Contracts.LlmAssistant.Services.ILlmAssistantGatewayService,
-            ClassifiedAds.Modules.LlmAssistant.Services.LlmAssistantGatewayService>();
+        services.AddScoped<ILlmAssistantGatewayService, LlmAssistantGatewayService>();
+        services.AddSingleton<FailureExplanationMetrics>();
+        services.AddScoped<ILlmFailureExplainer, LlmFailureExplainer>();
+        services.AddScoped<IFailureExplanationFingerprintBuilder, FailureExplanationFingerprintBuilder>();
+        services.AddScoped<IFailureExplanationSanitizer, FailureExplanationSanitizer>();
+        services.AddScoped<IFailureExplanationPromptBuilder, FailureExplanationPromptBuilder>();
+        services.AddScoped<ILlmFailureExplanationClient, N8nFailureExplanationClient>();
+
+        services.AddHttpClient(N8nFailureExplanationClient.HttpClientName, client =>
+        {
+            if (!string.IsNullOrWhiteSpace(settings.FailureExplanation.BaseUrl))
+            {
+                client.BaseAddress = new Uri(settings.FailureExplanation.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(
+                settings.FailureExplanation.TimeoutSeconds > 0
+                    ? settings.FailureExplanation.TimeoutSeconds
+                    : 30);
+        });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 

@@ -13,12 +13,13 @@ COPY ./ClassifiedAds.Modules.AuditLog/*.csproj ./ClassifiedAds.Modules.AuditLog/
 COPY ./ClassifiedAds.Modules.Configuration/*.csproj ./ClassifiedAds.Modules.Configuration/
 COPY ./ClassifiedAds.Modules.Identity/*.csproj ./ClassifiedAds.Modules.Identity/
 COPY ./ClassifiedAds.Modules.Notification/*.csproj ./ClassifiedAds.Modules.Notification/
-COPY ./ClassifiedAds.Modules.Product/*.csproj ./ClassifiedAds.Modules.Product/
 COPY ./ClassifiedAds.Modules.Storage/*.csproj ./ClassifiedAds.Modules.Storage/
 COPY ./ClassifiedAds.Modules.Subscription/*.csproj ./ClassifiedAds.Modules.Subscription/
 COPY ./ClassifiedAds.Modules.ApiDocumentation/*.csproj ./ClassifiedAds.Modules.ApiDocumentation/
 COPY ./ClassifiedAds.Modules.TestGeneration/*.csproj ./ClassifiedAds.Modules.TestGeneration/
 COPY ./ClassifiedAds.Modules.TestExecution/*.csproj ./ClassifiedAds.Modules.TestExecution/
+COPY ./ClassifiedAds.Modules.TestReporting/*.csproj ./ClassifiedAds.Modules.TestReporting/
+COPY ./ClassifiedAds.Modules.LlmAssistant/*.csproj ./ClassifiedAds.Modules.LlmAssistant/
 
 COPY ./ClassifiedAds.WebAPI/*.csproj ./ClassifiedAds.WebAPI/
 
@@ -30,7 +31,12 @@ RUN dotnet publish ./ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj -c Release
 
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /ClassifiedAds.ModularMonolith
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080
+EXPOSE 8080
 COPY --from=build-env /ClassifiedAds.ModularMonolith/out .
 
 ENTRYPOINT ["dotnet", "ClassifiedAds.WebAPI.dll"]

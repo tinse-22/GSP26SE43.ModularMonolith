@@ -33,6 +33,7 @@ public class LlmScenarioSuggesterTests
     private readonly Mock<IObservationConfirmationPromptBuilder> _promptBuilderMock;
     private readonly Mock<IN8nIntegrationService> _n8nServiceMock;
     private readonly Mock<ILlmAssistantGatewayService> _llmGatewayServiceMock;
+    private readonly Mock<ILlmSuggestionFeedbackContextService> _feedbackContextServiceMock;
     private readonly Mock<ILogger<LlmScenarioSuggester>> _loggerMock;
     private readonly LlmScenarioSuggester _sut;
 
@@ -47,12 +48,18 @@ public class LlmScenarioSuggesterTests
         _promptBuilderMock = new Mock<IObservationConfirmationPromptBuilder>();
         _n8nServiceMock = new Mock<IN8nIntegrationService>();
         _llmGatewayServiceMock = new Mock<ILlmAssistantGatewayService>();
+        _feedbackContextServiceMock = new Mock<ILlmSuggestionFeedbackContextService>();
         _loggerMock = new Mock<ILogger<LlmScenarioSuggester>>();
+
+        _feedbackContextServiceMock
+            .Setup(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LlmSuggestionFeedbackContextResult.Empty);
 
         _sut = new LlmScenarioSuggester(
             _promptBuilderMock.Object,
             _n8nServiceMock.Object,
             _llmGatewayServiceMock.Object,
+            _feedbackContextServiceMock.Object,
             _loggerMock.Object);
     }
 
@@ -336,6 +343,134 @@ public class LlmScenarioSuggesterTests
         // Assert — all captured keys should be identical (deterministic)
         capturedKeys.Should().HaveCountGreaterThanOrEqualTo(2);
         capturedKeys.Distinct().Should().ContainSingle("all cache keys should be identical");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenFeedbackFingerprintChanges()
+    {
+        var context = CreateDefaultContext();
+        var capturedKeys = new List<string>();
+
+        _feedbackContextServiceMock
+            .SetupSequence(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmSuggestionFeedbackContextResult
+            {
+                FeedbackFingerprint = "AAAAAAAAAAAAAAAA",
+                EndpointFeedbackContexts = new Dictionary<Guid, string>(),
+            })
+            .ReturnsAsync(new LlmSuggestionFeedbackContextResult
+            {
+                FeedbackFingerprint = "BBBBBBBBBBBBBBBB",
+                EndpointFeedbackContexts = new Dictionary<Guid, string>(),
+            });
+
+        _llmGatewayServiceMock
+            .Setup(x => x.GetCachedSuggestionsAsync(
+                It.IsAny<Guid>(), 1, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, int, string, CancellationToken>((_, _, key, _) => capturedKeys.Add(key))
+            .ReturnsAsync(new CachedSuggestionsDto { HasCache = false });
+
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        await _sut.SuggestScenariosAsync(context);
+        await _sut.SuggestScenariosAsync(context);
+
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenEndpointOrderChanges()
+    {
+        var context1 = CreateDefaultContext();
+        var context2 = CreateDefaultContext();
+        context2.OrderedEndpoints = context2.OrderedEndpoints.Reverse().ToList();
+
+        var capturedKeys = new List<string>();
+        _llmGatewayServiceMock
+            .Setup(x => x.GetCachedSuggestionsAsync(
+                It.IsAny<Guid>(), 1, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, int, string, CancellationToken>((_, _, key, _) => capturedKeys.Add(key))
+            .ReturnsAsync(new CachedSuggestionsDto { HasCache = false });
+
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        await _sut.SuggestScenariosAsync(context1);
+        await _sut.SuggestScenariosAsync(context2);
+
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_IncludeEndpointSpecificFeedbackContext_InPayload()
+    {
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        _feedbackContextServiceMock
+            .Setup(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmSuggestionFeedbackContextResult
+            {
+                FeedbackFingerprint = "FEEDBACK12345678",
+                EndpointFeedbackContexts = new Dictionary<Guid, string>
+                {
+                    { EndpointId1, "Helpful: 1\nNotHelpful: 0\n- Keep invalid email scenarios" },
+                },
+            });
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) => capturedPayload = payload)
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        await _sut.SuggestScenariosAsync(context);
+
+        capturedPayload.Should().NotBeNull();
+        capturedPayload.Endpoints.First(x => x.EndpointId == EndpointId1).FeedbackContext
+            .Should().Contain("Keep invalid email scenarios");
+        capturedPayload.Endpoints.First(x => x.EndpointId == EndpointId2).FeedbackContext
+            .Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_FallBackToEmptyFeedback_WhenFeedbackServiceFails()
+    {
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        _feedbackContextServiceMock
+            .Setup(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("feedback service unavailable"));
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) => capturedPayload = payload)
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        var act = () => _sut.SuggestScenariosAsync(context);
+
+        await act.Should().NotThrowAsync();
+        capturedPayload.Should().NotBeNull();
+        capturedPayload.Endpoints.Should().OnlyContain(x => string.IsNullOrEmpty(x.FeedbackContext));
     }
 
     [Fact]

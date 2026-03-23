@@ -24,6 +24,8 @@ public class TestGenerationDbContext : DbContextUnitOfWork<TestGenerationDbConte
     public DbSet<TestCaseExpectation> TestCaseExpectations { get; set; }
     public DbSet<TestCaseVariable> TestCaseVariables { get; set; }
     public DbSet<TestDataSet> TestDataSets { get; set; }
+    public DbSet<LlmSuggestion> LlmSuggestions { get; set; }
+    public DbSet<LlmSuggestionFeedback> LlmSuggestionFeedbacks { get; set; }
     public DbSet<AuditLogEntry> AuditLogEntries { get; set; }
     public DbSet<OutboxMessage> OutboxMessages { get; set; }
 

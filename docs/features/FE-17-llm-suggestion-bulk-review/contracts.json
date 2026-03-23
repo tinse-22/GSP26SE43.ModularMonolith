@@ -1,0 +1,105 @@
+{
+  "$schema": "feature-contract-spec",
+  "version": "1.0.0",
+  "documentId": "fe-17-contracts",
+  "apiContracts": [
+    {
+      "name": "BulkReviewLlmSuggestions",
+      "method": "POST",
+      "route": "/api/test-suites/{suiteId:guid}/llm-suggestions/bulk-review",
+      "permission": "Permission:UpdateTestCase",
+      "requestModel": "BulkReviewLlmSuggestionsRequest",
+      "responseModel": "BulkReviewLlmSuggestionsResultModel",
+      "notes": [
+        "Should reuse the existing `LlmSuggestionsController`.",
+        "Should validate suite ownership using the same FE-15/FE-16 suite-owner pattern.",
+        "Should process only `Pending` suggestions that match the supplied filters."
+      ]
+    }
+  ],
+  "requestModels": [
+    {
+      "name": "BulkReviewLlmSuggestionsRequest",
+      "fields": [
+        "Action : string",
+        "FilterBySuggestionType : string?",
+        "FilterByTestType : string?",
+        "FilterByEndpointId : Guid?",
+        "ReviewNotes : string?"
+      ],
+      "rules": [
+        "`Action` chi chap nhan `Approve` hoac `Reject`.",
+        "`ReviewNotes` la bat buoc khi `Action = Reject`.",
+        "`FilterBySuggestionType` phai parse duoc thanh `LlmSuggestionType` neu co.",
+        "`FilterByTestType` phai parse duoc thanh `TestType` neu co."
+      ]
+    }
+  ],
+  "responseModels": [
+    {
+      "name": "BulkReviewLlmSuggestionsResultModel",
+      "fields": [
+        "TestSuiteId : Guid",
+        "Action : string",
+        "MatchedCount : int",
+        "ProcessedCount : int",
+        "MaterializedCount : int",
+        "ReviewedAt : DateTimeOffset",
+        "SuggestionIds : List<Guid>",
+        "AppliedTestCaseIds : List<Guid>"
+      ],
+      "rules": [
+        "`MatchedCount` va `ProcessedCount` giong nhau trong v1 all-or-nothing flow.",
+        "`AppliedTestCaseIds` rong khi action la `Reject`.",
+        "`MaterializedCount` bang so test cases duoc tao trong bulk approve."
+      ]
+    }
+  ],
+  "commandContracts": [
+    {
+      "name": "BulkReviewLlmSuggestionsCommand",
+      "purpose": "Controller-to-handler command cho FE-17 bulk approve/reject workflow.",
+      "fields": [
+        "TestSuiteId : Guid",
+        "CurrentUserId : Guid",
+        "Action : string",
+        "ReviewNotes : string?",
+        "FilterBySuggestionType : string?",
+        "FilterByTestType : string?",
+        "FilterByEndpointId : Guid?",
+        "Result : BulkReviewLlmSuggestionsResultModel"
+      ]
+    }
+  ],
+  "internalServices": [
+    {
+      "name": "ILlmSuggestionReviewService",
+      "purpose": "Shared review workflow for FE-15 single review and FE-17 bulk review.",
+      "expectedMethods": [
+        "Task RejectAsync(LlmSuggestion suggestion, Guid currentUserId, string reviewNotes, CancellationToken cancellationToken = default)",
+        "Task RejectManyAsync(IReadOnlyCollection<LlmSuggestion> suggestions, Guid currentUserId, string reviewNotes, CancellationToken cancellationToken = default)",
+        "Task<LlmSuggestionApprovalBatchResult> ApproveManyAsync(TestSuite suite, IReadOnlyCollection<LlmSuggestionApprovalItem> approvals, Guid currentUserId, CancellationToken cancellationToken = default)"
+      ]
+    }
+  ],
+  "selectionContracts": [
+    {
+      "name": "Bulk target selection",
+      "rules": [
+        "Always filter by `TestSuiteId`.",
+        "Always filter by `ReviewStatus = Pending`.",
+        "Apply optional `SuggestionType`, `TestType`, and `EndpointId` filters.",
+        "Order by `DisplayOrder` before processing."
+      ]
+    }
+  ],
+  "persistenceContracts": [
+    {
+      "entity": "LlmSuggestion",
+      "rules": [
+        "No new entity or migration should be required in the preferred FE-17 solution.",
+        "Review metadata updates continue to use `ReviewStatus`, `ReviewedById`, `ReviewedAt`, `ReviewNotes`, `AppliedTestCaseId`, `UpdatedDateTime`, and `RowVersion`."
+      ]
+    }
+  ]
+}

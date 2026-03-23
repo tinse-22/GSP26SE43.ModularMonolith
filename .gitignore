@@ -114,6 +114,7 @@ secrets.json
 .env.*.local
 *.env
 .env*
+!.env.render
 
 # Azure publish settings
 *.PublishSettings
@@ -193,6 +194,7 @@ docker-compose.override.yml
 docker-compose.local.yml
 .docker/
 *.dockerignore
+!.dockerignore
 
 # ========================================
 # Logs and Diagnostics
@@ -356,3 +358,4 @@ nul
 # ========================================
 # END
 # ========================================
+.gitnexus

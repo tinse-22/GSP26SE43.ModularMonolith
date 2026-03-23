@@ -31,6 +31,8 @@ public class N8nBoundaryEndpointPayload
 
     public string BusinessContext { get; set; }
 
+    public string FeedbackContext { get; set; }
+
     public N8nPromptPayload Prompt { get; set; }
 
     public List<string> ParameterSchemaPayloads { get; set; } = new();

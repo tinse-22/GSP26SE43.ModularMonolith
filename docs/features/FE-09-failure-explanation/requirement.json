@@ -1,0 +1,222 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-09-requirement",
+  "requirement": {
+    "id": "FE-09",
+    "title": "On-Demand LLM Failure Explanation",
+    "goal": "Cho phep user yeu cau giai thich test case that bai bang LLM dua tren output deterministic cua FE-07 va FE-08. Giai thich chi mang tinh advisory, khong duoc thay doi pass/fail.",
+    "priority": "P0",
+    "status": "planned",
+    "rationale": [
+      "FE-07 va FE-08 da cung cap failed result surface on dinh: failure reasons, actual status, response body preview, validation flags, dependency skip context.",
+      "ClassifiedAds.Modules.LlmAssistant da co san LlmInteraction va LlmSuggestionCache, co the reuse de audit va cache explanation ma khong can tao bang moi.",
+      "Codebase hien tai chua wire LlmAssistant vao host Background. API on-demand dong bo se cho gia tri nhanh nhat va it rui ro nhat cho FE-09 v1.",
+      "Workflow async queue trong docs/features/FE-09-acceptance-criteria/FE-09-01 duoc giu lam future extension sau khi API-first version da on dinh."
+    ]
+  },
+  "scope": {
+    "inScope": [
+      "Them API de GET cached explanation va POST yeu cau tao failure explanation cho mot failed test case.",
+      "Them cross-module read gateway tu TestExecution sang LlmAssistant de lay suite ownership, run summary, failed case result, va test case definition.",
+      "Reuse LlmInteraction voi InteractionType=FailureExplanation de luu audit thong tin LLM request/response.",
+      "Reuse LlmSuggestionCache de cache serialized failure explanation theo fingerprint co TTL 24h.",
+      "Build prompt tu deterministic inputs: test case definition, expectation, failure reasons, actual HTTP result, va endpoint metadata khi co.",
+      "Mask sensitive headers/variables/body values truoc khi gui sang LLM provider va truoc khi cache explanation.",
+      "Ho tro fallback graceful khi khong co endpoint metadata: van giai thich dua tren request/response va validation failures.",
+      "Su dung dedicated LlmAssistant runtime service va HTTP client de goi provider or n8n webhook.",
+      "Them unit tests cho gateway, fingerprinting, prompt builder, explainer service, command/query handlers."
+    ],
+    "outOfScope": [
+      "RabbitMQ consumer, dead-letter queue, Background worker, retry queue orchestration cho FE-09 v1.",
+      "Tu dong tao explanation ngay sau moi failed test run khong co user request.",
+      "Thay doi logic deterministic pass/fail hoac thay doi counters/status cua TestRun sau khi explanation duoc tao.",
+      "Them bang moi, entity moi, hoac migration moi cho FE-09 v1.",
+      "Bulk review, user feedback, bulk approve/reject cho LLM suggestions (FE-15, FE-16, FE-17).",
+      "Report export va coverage/report aggregation (FE-10)."
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": [
+      {
+        "id": "FE-07",
+        "reason": "Can test run summary va cache-backed per-case execution results."
+      },
+      {
+        "id": "FE-08",
+        "reason": "Can deterministic validation failures lam dau vao duy nhat cho giai thich."
+      },
+      {
+        "id": "FE-04",
+        "reason": "ExecutionEnvironment va suite ownership da ton tai tu luong execution."
+      },
+      {
+        "id": "FE-05B",
+        "reason": "Can request/expectation/test-case definition goc de so sanh expected vs actual."
+      },
+      {
+        "id": "FE-06",
+        "reason": "Can noi dung LlmAssistant audit/cache primitives da duoc dung cho LLM workflow truoc do."
+      }
+    ],
+    "requiredModules": [
+      {
+        "name": "ClassifiedAds.Modules.LlmAssistant",
+        "status": "partial",
+        "schema": "llmassistant",
+        "reusedEntities": [
+          "LlmInteraction",
+          "LlmSuggestionCache"
+        ]
+      },
+      {
+        "name": "ClassifiedAds.Modules.TestExecution",
+        "status": "implemented",
+        "schema": "testexecution",
+        "consumptionPattern": "LlmAssistant khong doc TestExecutionDbContext hoac RedisKey truc tiep. Phai di qua contract gateway moi trong ClassifiedAds.Contracts."
+      },
+      {
+        "name": "ClassifiedAds.Modules.TestGeneration",
+        "status": "implemented",
+        "consumptionPattern": "TestExecution gateway co the reuse ITestExecutionReadGatewayService de lay test case definition goc."
+      },
+      {
+        "name": "ClassifiedAds.Modules.ApiDocumentation",
+        "status": "implemented",
+        "consumptionPattern": "Dung IApiEndpointMetadataService de bo sung operation/path/response schema context cho prompt."
+      },
+      {
+        "name": "ClassifiedAds.Contracts.Identity",
+        "status": "implemented",
+        "usage": "ICurrentUser de validate ownership tren GET/POST explanation APIs."
+      }
+    ],
+    "newCrossModuleContracts": [
+      {
+        "name": "ITestFailureReadGatewayService",
+        "project": "ClassifiedAds.Contracts",
+        "purpose": "Expose failed test case explanation context tu TestExecution sang LlmAssistant ma khong vo modular boundary."
+      }
+    ],
+    "database": {
+      "testExecutionSchema": "testexecution",
+      "llmAssistantSchema": "llmassistant",
+      "noNewTablesRequired": true,
+      "noNewMigrationsRequired": true,
+      "reason": "Explanation cache co the tai su dung llmassistant.LlmSuggestionCaches. Audit co the tai su dung llmassistant.LlmInteractions."
+    }
+  },
+  "architectureDecisions": {
+    "primaryModule": "ClassifiedAds.Modules.LlmAssistant",
+    "secondaryModules": [
+      "ClassifiedAds.Modules.TestExecution",
+      "ClassifiedAds.Modules.ApiDocumentation"
+    ],
+    "executionMode": "Synchronous request-response, on-demand per failed test case, cache-backed.",
+    "resultStorage": {
+      "summary": "Khong tao summary moi. Explanation response duoc tra truc tiep qua API.",
+      "cache": "llmassistant.LlmSuggestionCaches",
+      "cacheKey": "SHA256 fingerprint truncated to hex prefix, combined voi endpointId va SuggestionType=FailureExplanation",
+      "cacheTtlHours": 24,
+      "audit": "llmassistant.LlmInteractions"
+    },
+    "designPrinciples": [
+      "LlmAssistant khong reference TestExecution DbContext, TestRun repository, hoac distributed cache implementation.",
+      "Failure explanation phai consume dau vao deterministic; no khong duoc sua status hoac validation failures da co.",
+      "Sensitive request/response data phai duoc sanitize truoc khi build prompt, audit, va cache.",
+      "Provider integration phai nam trong LlmAssistant, khong duoc reference truc tiep IN8nIntegrationService cua TestGeneration.",
+      "GET explanation chi doc cache; POST explanation co the generate live neu cache miss.",
+      "V1 cho phep TestExecution gateway load full execution context mot lan va filter test case, vi endpoint la on-demand va LLM latency lon hon chi phi read context."
+    ]
+  },
+  "nonFunctionalTargets": {
+    "latency": {
+      "cachedResponseP95Ms": 150,
+      "liveResponseP95Ms": 7000,
+      "liveResponseMaxMs": 15000
+    },
+    "security": {
+      "authorizationRequired": true,
+      "ownershipValidationRequired": true,
+      "permissions": [
+        "Permission:GetTestRuns"
+      ],
+      "sensitiveDataRules": [
+        "Mask Authorization, Cookie, Set-Cookie, X-Api-Key va cac key chua token, secret, password, apiKey.",
+        "Khong gui binary hoac body qua lon sang LLM; body previews phai duoc truncate hop ly truoc khi prompt.",
+        "Khong luu raw secrets vao LlmInteraction.InputContext hoac LlmSuggestionCache.Suggestions."
+      ]
+    },
+    "reliability": {
+      "cacheRequired": true,
+      "gracefulDegradation": [
+        "Neu endpoint metadata khong co, van tao explanation dua tren failure reasons + request/response context.",
+        "Neu save audit fail, log warning va van tra live explanation.",
+        "Neu cache save fail, log warning va van tra live explanation.",
+        "Neu provider fail, API tra loi co kiem soat va khong ghi cache rac."
+      ]
+    },
+    "observability": {
+      "requiredLogFields": [
+        "traceId",
+        "testSuiteId",
+        "testRunId",
+        "testCaseId",
+        "endpointId",
+        "explanationSource",
+        "cacheKey",
+        "provider",
+        "model",
+        "latencyMs"
+      ],
+      "metrics": [
+        "llm_failure_explanation_requests_total",
+        "llm_failure_explanation_cache_hit_total",
+        "llm_failure_explanation_cache_miss_total",
+        "llm_failure_explanation_latency_ms",
+        "llm_failure_explanation_failures_total"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    "AC-01: POST /api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation tra 200 voi FailureExplanationModel cho mot test case co Status=Failed.",
+    "AC-02: GET cung route tra cached explanation neu da ton tai; neu chua co thi tra 404 FAILURE_EXPLANATION_NOT_FOUND.",
+    "AC-03: Neu POST gap cung fingerprint trong thoi gian TTL thi he thong tra cached explanation va khong goi live LLM provider.",
+    "AC-04: Failure explanation context bao gom suite access info, test case definition, deterministic failure reasons, actual response info, va endpoint metadata khi co.",
+    "AC-05: Explanation khong duoc thay doi TestRun.Status, counters, hoac validation result cua FE-08.",
+    "AC-06: Moi live generation thanh cong deu luu 1 LlmInteraction voi InteractionType=FailureExplanation.",
+    "AC-07: Moi live generation thanh cong deu cache serialized explanation vao LlmSuggestionCache voi SuggestionType=FailureExplanation va TTL 24h.",
+    "AC-08: Neu test case khong phai Failed thi API tra conflict co code TEST_CASE_NOT_FAILED.",
+    "AC-09: Neu run results da het han cache thi API bubble controlled conflict RUN_RESULTS_EXPIRED.",
+    "AC-10: Prompt payload va cache payload khong chua secrets da biet trong headers, body previews, hoac extracted variables.",
+    "AC-11: He thong van tao explanation khi khong co endpoint metadata, mien la deterministic failure context van ton tai.",
+    "AC-12: Khong co migration moi, khong co direct TestExecution DbContext access xuyen module.",
+    "AC-13: Targeted unit tests moi cho LlmAssistant va TestExecution deu green."
+  ],
+  "implementationOrder": [
+    "1. Tao contract gateway moi trong ClassifiedAds.Contracts/TestExecution va implementation doc failed-context trong TestExecution.",
+    "2. Implement runtime layer trong LlmAssistant: fingerprint, sanitizer, prompt builder, provider client, cache/audit reuse.",
+    "3. Them command/query/controller surface va bind config cho WebAPI.",
+    "4. Them unit tests va targeted verification commands."
+  ],
+  "loggingPolicy": {
+    "ui": {
+      "language": "vi-VN",
+      "style": "human-readable"
+    },
+    "system": {
+      "language": "en-US",
+      "style": "structured",
+      "requiredFields": [
+        "traceId",
+        "testRunId",
+        "testCaseId",
+        "failureCodes",
+        "cacheKey",
+        "provider",
+        "model",
+        "latencyMs"
+      ]
+    }
+  }
+}

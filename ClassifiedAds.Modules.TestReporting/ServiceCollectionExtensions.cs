@@ -2,6 +2,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestReporting.ConfigurationOptions;
 using ClassifiedAds.Modules.TestReporting.Entities;
 using ClassifiedAds.Modules.TestReporting.Persistence;
+using ClassifiedAds.Modules.TestReporting.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +17,8 @@ public static class TestReportingServiceCollectionExtensions
     {
         var settings = new TestReportingModuleOptions();
         configureOptions(settings);
+        settings.ConnectionStrings ??= new ConnectionStringsOptions();
+        settings.ReportGeneration ??= new ReportGenerationOptions();
 
         services.Configure(configureOptions);
 
@@ -37,6 +40,19 @@ public static class TestReportingServiceCollectionExtensions
             .AddScoped<IRepository<CoverageMetric, Guid>, Repository<CoverageMetric, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
+
+        services
+            .AddScoped<ICoverageCalculator, CoverageCalculator>()
+            .AddScoped<IReportDataSanitizer, ReportDataSanitizer>()
+            .AddScoped<ITestReportGenerator, TestReportGenerator>()
+            .AddScoped<HtmlReportRenderer>()
+            .AddScoped<PdfReportRenderer>()
+            .AddScoped<CsvReportRenderer>()
+            .AddScoped<JsonReportRenderer>()
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<PdfReportRenderer>())
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<CsvReportRenderer>())
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<JsonReportRenderer>())
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<HtmlReportRenderer>());
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 

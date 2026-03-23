@@ -1,0 +1,90 @@
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+using ClassifiedAds.Contracts.TestExecution.DTOs;
+using ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions;
+using ClassifiedAds.Modules.LlmAssistant.Models;
+using Microsoft.Extensions.Options;
+using System.Text;
+using System.Text.Json;
+
+namespace ClassifiedAds.Modules.LlmAssistant.Services;
+
+public class FailureExplanationPromptBuilder : IFailureExplanationPromptBuilder
+{
+    private static readonly JsonSerializerOptions JsonOptions = new ()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true,
+    };
+
+    private readonly FailureExplanationOptions _options;
+
+    public FailureExplanationPromptBuilder(IOptions<LlmAssistantModuleOptions> options)
+    {
+        _options = options?.Value?.FailureExplanation ?? new FailureExplanationOptions();
+    }
+
+    public FailureExplanationPrompt Build(
+        TestFailureExplanationContextDto context,
+        ApiEndpointMetadataDto endpointMetadata)
+    {
+        return new FailureExplanationPrompt
+        {
+            Provider = _options.Provider,
+            Model = _options.Model,
+            Prompt = BuildPrompt(context, endpointMetadata),
+            SanitizedContextJson = JsonSerializer.Serialize(new
+            {
+                context,
+                endpointMetadata,
+            }, JsonOptions),
+            SanitizedContext = context,
+            EndpointMetadata = endpointMetadata,
+        };
+    }
+
+    private static string BuildPrompt(
+        TestFailureExplanationContextDto context,
+        ApiEndpointMetadataDto endpointMetadata)
+    {
+        var builder = new StringBuilder();
+
+        builder.AppendLine("Bạn là trợ lý giải thích nguyên nhân thất bại của test API.");
+        builder.AppendLine("Không được quyết định pass/fail. Chỉ giải thích các nguyên nhân có khả năng xảy ra.");
+        builder.AppendLine("Chỉ được trả về JSON hợp lệ, không thêm markdown, không thêm giải thích bên ngoài.");
+        builder.AppendLine("JSON bắt buộc đúng schema sau:");
+        builder.AppendLine("{");
+        builder.AppendLine("  \"summaryVi\": \"string\",");
+        builder.AppendLine("  \"possibleCauses\": [\"string\"],");
+        builder.AppendLine("  \"suggestedNextActions\": [\"string\"],");
+        builder.AppendLine("  \"confidence\": \"Low|Medium|High\",");
+        builder.AppendLine("  \"model\": \"string\",");
+        builder.AppendLine("  \"tokensUsed\": 0");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine("Failure reasons deterministic:");
+        builder.AppendLine(JsonSerializer.Serialize(new
+        {
+            suiteId = context.TestSuiteId,
+            runId = context.TestRunId,
+            testCaseId = context.Definition?.TestCaseId,
+            runNumber = context.RunNumber,
+            resolvedEnvironmentName = context.ResolvedEnvironmentName,
+            failureReasons = context.ActualResult?.FailureReasons,
+        }, JsonOptions));
+        builder.AppendLine();
+        builder.AppendLine("Original test definition:");
+        builder.AppendLine(JsonSerializer.Serialize(context.Definition, JsonOptions));
+        builder.AppendLine();
+        builder.AppendLine("Actual response and execution result:");
+        builder.AppendLine(JsonSerializer.Serialize(context.ActualResult, JsonOptions));
+
+        if (endpointMetadata != null)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Endpoint metadata:");
+            builder.AppendLine(JsonSerializer.Serialize(endpointMetadata, JsonOptions));
+        }
+
+        return builder.ToString();
+    }
+}
