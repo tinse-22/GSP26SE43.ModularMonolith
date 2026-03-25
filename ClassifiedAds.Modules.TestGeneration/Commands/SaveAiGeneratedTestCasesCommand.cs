@@ -1,10 +1,12 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -62,6 +64,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _testCaseExpectationRepository;
+    private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
@@ -69,17 +72,35 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestCase, Guid> testCaseRepository,
         IRepository<TestCaseRequest, Guid> testCaseRequestRepository,
         IRepository<TestCaseExpectation, Guid> testCaseExpectationRepository,
+        IRepository<TestSuiteVersion, Guid> versionRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
         _testCaseRepository = testCaseRepository;
         _testCaseRequestRepository = testCaseRequestRepository;
         _testCaseExpectationRepository = testCaseExpectationRepository;
+        _versionRepository = versionRepository;
         _logger = logger;
     }
 
     public async Task HandleAsync(SaveAiGeneratedTestCasesCommand command, CancellationToken cancellationToken = default)
     {
+        if (command.TestSuiteId == Guid.Empty)
+            throw new ValidationException("TestSuiteId is required.");
+
+        if (command.TestCases == null || command.TestCases.Count == 0)
+            throw new ValidationException("At least one AI-generated test case is required.");
+
+        var suite = await _suiteRepository.FirstOrDefaultAsync(
+            _suiteRepository.GetQueryableSet()
+                .Where(x => x.Id == command.TestSuiteId));
+
+        if (suite == null)
+            throw new NotFoundException($"Test suite '{command.TestSuiteId}' was not found.");
+
+        if (suite.Status == TestSuiteStatus.Archived)
+            throw new ValidationException("Cannot save AI-generated test cases for an archived test suite.");
+
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             // Replace any previously AI-generated test cases for this suite.
@@ -93,6 +114,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             }
 
             // Create new entities from the n8n payload.
+            var now = DateTimeOffset.UtcNow;
+            var actorUserId = suite.LastModifiedById ?? suite.CreatedById;
+            var persistedTestCases = new List<TestCase>(command.TestCases.Count);
             var orderIdx = 0;
             foreach (var dto in command.TestCases)
             {
@@ -109,9 +133,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     OrderIndex = dto.OrderIndex > 0 ? dto.OrderIndex : orderIdx,
                     Tags = dto.Tags,
                     Version = 1,
+                    LastModifiedById = actorUserId,
+                    CreatedDateTime = now,
                 };
 
                 await _testCaseRepository.AddAsync(testCase, ct);
+                persistedTestCases.Add(testCase);
 
                 if (dto.Request is not null)
                 {
@@ -127,6 +154,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         BodyType = ParseBodyType(dto.Request.BodyType),
                         Body = dto.Request.Body,
                         Timeout = dto.Request.Timeout > 0 ? dto.Request.Timeout : 30000,
+                        CreatedDateTime = now,
                     };
                     await _testCaseRequestRepository.AddAsync(req, ct);
                 }
@@ -144,12 +172,38 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         BodyNotContains = dto.Expectation.BodyNotContains,
                         JsonPathChecks = dto.Expectation.JsonPathChecks,
                         MaxResponseTime = dto.Expectation.MaxResponseTime,
+                        CreatedDateTime = now,
                     };
                     await _testCaseExpectationRepository.AddAsync(exp, ct);
                 }
 
                 orderIdx++;
             }
+
+            await _versionRepository.AddAsync(new TestSuiteVersion
+            {
+                Id = Guid.NewGuid(),
+                TestSuiteId = command.TestSuiteId,
+                VersionNumber = suite.Version + 1,
+                ChangedById = actorUserId,
+                ChangeType = VersionChangeType.TestCasesModified,
+                ChangeDescription = $"Saved {persistedTestCases.Count} AI-generated test case(s) from n8n callback.",
+                TestCaseOrderSnapshot = JsonSerializer.Serialize(
+                    persistedTestCases
+                        .OrderBy(tc => tc.OrderIndex)
+                        .Select(tc => new { tc.Id, tc.EndpointId, tc.Name, tc.OrderIndex, tc.TestType })
+                        .ToList(),
+                    JsonOpts),
+                ApprovalStatusSnapshot = suite.ApprovalStatus,
+                CreatedDateTime = now,
+            }, ct);
+
+            suite.Version += 1;
+            suite.Status = TestSuiteStatus.Ready;
+            suite.LastModifiedById = actorUserId;
+            suite.UpdatedDateTime = now;
+            suite.RowVersion = Guid.NewGuid().ToByteArray();
+            await _suiteRepository.UpdateAsync(suite, ct);
 
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
 
@@ -166,8 +220,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             }
 
             _logger.LogInformation(
-                "Saved {Count} AI-generated test cases for TestSuiteId={TestSuiteId}",
-                command.TestCases.Count, command.TestSuiteId);
+                "Saved {Count} AI-generated test cases and marked suite Ready for TestSuiteId={TestSuiteId}",
+                command.TestCases.Count,
+                command.TestSuiteId);
         }, cancellationToken: cancellationToken);
     }
 
