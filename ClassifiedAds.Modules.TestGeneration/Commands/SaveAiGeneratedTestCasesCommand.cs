@@ -213,6 +213,18 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
 
+            // Mark suite as ready once AI test cases are persisted successfully.
+            var suite = await _suiteRepository.FirstOrDefaultAsync(
+                _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
+            if (suite != null)
+            {
+                suite.Status = TestSuiteStatus.Ready;
+                suite.Version += 1;
+                suite.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suiteRepository.UpdateAsync(suite, ct);
+                await _suiteRepository.UnitOfWork.SaveChangesAsync(ct);
+            }
+
             _logger.LogInformation(
                 "Saved {Count} AI-generated test cases and marked suite Ready for TestSuiteId={TestSuiteId}",
                 command.TestCases.Count,
