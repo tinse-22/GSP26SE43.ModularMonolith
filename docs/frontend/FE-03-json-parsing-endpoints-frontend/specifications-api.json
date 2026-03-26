@@ -1,0 +1,592 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-03-specifications-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "SpecificationsController",
+  "baseRoute": "/api/projects/{projectId}/specifications",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "ListSpecifications": "Permission:GetSpecifications",
+    "GetSpecificationDetail": "Permission:GetSpecifications",
+    "GetUploadMethods": "Permission:AddSpecification",
+    "UploadSpecification": "Permission:AddSpecification",
+    "CreateManualSpecification": "Permission:AddSpecification",
+    "ImportCurlSpecification": "Permission:AddSpecification",
+    "ActivateSpecification": "Permission:ActivateSpecification",
+    "DeactivateSpecification": "Permission:ActivateSpecification",
+    "DeleteSpecification": "Permission:DeleteSpecification"
+  },
+  "enums": {
+    "SourceType": [
+      "OpenAPI",
+      "Postman",
+      "Manual",
+      "cURL"
+    ],
+    "UploadSourceType": [
+      "OpenAPI",
+      "Postman"
+    ],
+    "ParseStatus": [
+      "Pending",
+      "Success",
+      "Failed"
+    ],
+    "SpecificationUploadMethod": [
+      "StorageGatewayContract"
+    ],
+    "EndpointParameterDataTypeForJsonBodies": [
+      "string",
+      "integer",
+      "number",
+      "boolean",
+      "object",
+      "array",
+      "uuid"
+    ]
+  },
+  "models": {
+    "UploadMethodOptionModel": {
+      "properties": [
+        "method: string",
+        "uploadApi: string"
+      ]
+    },
+    "UploadSpecificationModel": {
+      "contentType": "multipart/form-data",
+      "properties": [
+        {
+          "name": "uploadMethod",
+          "type": "string or enum",
+          "required": true,
+          "allowedValues": [
+            "StorageGatewayContract",
+            0
+          ]
+        },
+        {
+          "name": "file",
+          "type": "binary",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "sourceType",
+          "type": "string or enum",
+          "required": true,
+          "allowedValues": [
+            "OpenAPI",
+            "Postman",
+            0,
+            1
+          ]
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        }
+      ]
+    },
+    "CreateManualSpecificationModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "endpoints",
+          "type": "ManualEndpointDefinition[]",
+          "required": true,
+          "minItems": 1
+        }
+      ]
+    },
+    "ManualEndpointDefinition": {
+      "properties": [
+        "httpMethod: string",
+        "path: string",
+        "operationId: string?",
+        "summary: string?",
+        "description: string?",
+        "tags: string[]?",
+        "isDeprecated: bool",
+        "parameters: ManualParameterDefinition[]",
+        "responses: ManualResponseDefinition[]"
+      ],
+      "notes": [
+        "Backend auto-creates missing Path parameters from {placeholders} in path.",
+        "Backend does not accept securityRequirements in manual create request."
+      ]
+    },
+    "ManualParameterDefinition": {
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "required": false,
+          "allowedValues": [
+            "Path",
+            "Query",
+            "Header",
+            "Body",
+            "Cookie"
+          ]
+        },
+        {
+          "name": "dataType",
+          "type": "string enum",
+          "required": false,
+          "allowedValues": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "object",
+            "array",
+            "uuid"
+          ]
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "isRequired",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "defaultValue",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "examples",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "notes": [
+        "For JSON request bodies, dataType should be lowercase strings because EndpointParameterDataType uses JsonStringEnumConverter with allowIntegerValues=false.",
+        "Path parameters are forced to IsRequired=true by backend."
+      ]
+    },
+    "ManualResponseDefinition": {
+      "properties": [
+        "statusCode: int",
+        "description: string?",
+        "schema: string?",
+        "examples: string?",
+        "headers: string?"
+      ]
+    },
+    "ImportCurlModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "curlCommand",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "notes": [
+        "Backend rejects @file syntax in cURL body payload.",
+        "If cURL has body and no explicit -X/--request, backend auto-switches method to POST."
+      ]
+    },
+    "SpecificationModel": {
+      "properties": [
+        "id: Guid",
+        "projectId: Guid",
+        "name: string",
+        "sourceType: string",
+        "version: string",
+        "isActive: bool",
+        "parseStatus: string",
+        "parsedAt: DateTimeOffset?",
+        "originalFileId: Guid?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ]
+    },
+    "SpecificationDetailModel": {
+      "extends": "SpecificationModel",
+      "properties": [
+        "endpointCount: int",
+        "parseErrors: string[]?",
+        "originalFileName: string?"
+      ],
+      "notes": [
+        "Backend currently does not populate originalFileName in GetSpecificationQuery. Treat as optional/null."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListSpecifications",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [
+        "parseStatus?: Pending | Success | Failed",
+        "sourceType?: OpenAPI | Postman | Manual | cURL"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "SpecificationModel[]"
+      },
+      "problemCases": [
+        "404 when project does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "GetSpecificationDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      },
+      "problemCases": [
+        "404 when project/specification does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "GetUploadMethods",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/upload-methods",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "UploadMethodOptionModel[]"
+      },
+      "notes": [
+        "Current implementation returns exactly one supported method.",
+        "Controller does not verify project existence or ownership for this endpoint."
+      ]
+    },
+    {
+      "name": "UploadSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/upload",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "UploadSpecificationModel",
+      "limits": [
+        "RequestSizeLimit = 10MB"
+      ],
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for invalid uploadMethod, empty file, file too large inside handler, invalid extension, invalid sourceType, invalid file content, subscription denial, or current user cannot modify the project.",
+        "404 when project does not exist.",
+        "413 can also be returned by ASP.NET when multipart body exceeds RequestSizeLimit."
+      ]
+    },
+    {
+      "name": "CreateManualSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/manual",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateManualSpecificationModel",
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for invalid body, empty endpoints list, invalid endpoint definitions, path parameter validation errors, subscription denial, or current user cannot modify the project.",
+        "404 when project does not exist."
+      ]
+    },
+    {
+      "name": "ImportCurlSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/curl-import",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "ImportCurlModel",
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for invalid body, empty curlCommand, invalid cURL syntax, subscription denial, or current user cannot modify the project.",
+        "404 when project does not exist."
+      ]
+    },
+    {
+      "name": "ActivateSpecification",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/activate",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      },
+      "problemCases": [
+        "400 when current user cannot modify the project.",
+        "404 when project or specification does not exist."
+      ]
+    },
+    {
+      "name": "DeactivateSpecification",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      },
+      "problemCases": [
+        "400 when current user cannot modify the project or when the target specification is not the currently active one.",
+        "404 when project or specification does not exist."
+      ]
+    },
+    {
+      "name": "DeleteSpecification",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 204,
+        "body": "empty"
+      },
+      "problemCases": [
+        "400 when current user cannot modify the project.",
+        "404 when project or specification does not exist."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Upload currently accepts only StorageGatewayContract.",
+    "Upload accepts only OpenAPI or Postman as sourceType.",
+    "File size must be <= 10MB.",
+    "Allowed extensions are .json, .yaml, .yml.",
+    "OpenAPI JSON must contain top-level openapi or swagger key.",
+    "OpenAPI YAML must contain openapi: or swagger: at top level.",
+    "Postman file must be JSON and contain top-level info and item.",
+    "Only OpenAPI JSON is parsed inline during upload. OpenAPI YAML and Postman uploads stay Pending.",
+    "Inline OpenAPI JSON parse may produce Success, Failed, or Success with zero endpoints.",
+    "If inline parse succeeds and finds endpoints, backend also consumes endpoint subscription quota before persisting.",
+    "AutoActivate=true deactivates previous active spec and updates Project.ActiveSpecId in the same transaction, regardless of ParseStatus.",
+    "Deleting an active specification clears Project.ActiveSpecId.",
+    "ListSpecifications supports filters only; there is no pagination parameter and no server-side sort parameter."
+  ],
+  "samples": {
+    "uploadSpecificationFormFields": {
+      "uploadMethod": "StorageGatewayContract",
+      "file": "(binary) commerce-openapi.json",
+      "name": "Commerce API v1",
+      "sourceType": "OpenAPI",
+      "version": "v1.0.0",
+      "autoActivate": true
+    },
+    "createManualSpecificationRequest": {
+      "name": "Manual Checkout Flow",
+      "version": "draft-1",
+      "autoActivate": false,
+      "endpoints": [
+        {
+          "httpMethod": "POST",
+          "path": "/api/orders/{orderId}/checkout",
+          "operationId": "checkoutOrder",
+          "summary": "Checkout order",
+          "description": "Create a checkout session for an order.",
+          "tags": [
+            "Orders",
+            "Checkout"
+          ],
+          "isDeprecated": false,
+          "parameters": [
+            {
+              "name": "orderId",
+              "location": "Path",
+              "dataType": "uuid",
+              "format": "uuid",
+              "isRequired": true,
+              "defaultValue": "d6e33f9d-4e12-4d9e-a80d-7f894e4a2f50",
+              "schema": "{\"type\":\"string\",\"format\":\"uuid\"}",
+              "examples": "[\"d6e33f9d-4e12-4d9e-a80d-7f894e4a2f50\"]"
+            },
+            {
+              "name": "body",
+              "location": "Body",
+              "dataType": "object",
+              "isRequired": true,
+              "schema": "{\"type\":\"object\",\"properties\":{\"paymentMethod\":{\"type\":\"string\"}}}"
+            }
+          ],
+          "responses": [
+            {
+              "statusCode": 200,
+              "description": "Checkout session created",
+              "schema": "{\"type\":\"object\",\"properties\":{\"checkoutUrl\":{\"type\":\"string\"}}}"
+            }
+          ]
+        }
+      ]
+    },
+    "importCurlRequest": {
+      "name": "Import Product Search cURL",
+      "version": "from-curl",
+      "autoActivate": false,
+      "curlCommand": "curl -X GET \"https://api.example.com/products?category=books&page=1\" -H \"Authorization: Bearer token-value\""
+    },
+    "specificationDetailResponse": {
+      "id": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Commerce API v1",
+      "sourceType": "OpenAPI",
+      "version": "v1.0.0",
+      "isActive": true,
+      "parseStatus": "Success",
+      "parsedAt": "2026-03-25T10:30:00+07:00",
+      "originalFileId": "db8f4d2c-79f0-4751-b0b3-e9df81a2b498",
+      "createdDateTime": "2026-03-25T10:30:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 4,
+      "parseErrors": null,
+      "originalFileName": null
+    },
+    "failedInlineUploadResponse": {
+      "id": "f4a9fa2e-2c41-430f-b0e4-b362d1a1c8c9",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Broken OpenAPI Import",
+      "sourceType": "OpenAPI",
+      "version": "draft",
+      "isActive": false,
+      "parseStatus": "Failed",
+      "parsedAt": "2026-03-25T11:00:00+07:00",
+      "originalFileId": "a4d3fe56-1ee5-47d0-9f52-87da92ec1dba",
+      "createdDateTime": "2026-03-25T11:00:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 0,
+      "parseErrors": [
+        "The JSON value could not be converted while reading paths."
+      ],
+      "originalFileName": null
+    },
+    "problemDetails400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Ten specification la bat buoc.",
+      "message": "Ten specification la bat buoc.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  },
+  "relatedNotes": [
+    "There is no dedicated parser-status polling endpoint. Re-fetch specification list/detail to observe ParseStatus changes.",
+    "The planning docs for FE-03-03 describe a future async parser flow, but the current FE-facing API surface is still the 9 endpoints documented here."
+  ]
+}

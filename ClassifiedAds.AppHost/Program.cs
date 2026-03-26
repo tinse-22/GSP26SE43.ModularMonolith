@@ -15,25 +15,33 @@ using Aspire.Hosting;
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 var builder = DistributedApplication.CreateBuilder(args);
+var cloudConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+var useCloudDatabase = !string.IsNullOrWhiteSpace(cloudConnectionString);
+Console.WriteLine(useCloudDatabase ? "[AppHost] Database mode: Cloud (ConnectionStrings__Default)" : "[AppHost] Database mode: Local PostgreSQL container");
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Infrastructure Resources
 // ═══════════════════════════════════════════════════════════════════════════════════
 
-// PostgreSQL - Main database server
-// Matches docker-compose: postgres:16, port 5432
-// Using fixed password to avoid mismatch issues with persisted volumes
-var postgresPassword = builder.AddParameter("postgres-password", secret: true);
-var postgres = builder.AddPostgres("postgres", password: postgresPassword)
-    .WithImage("postgres")
-    .WithImageTag("16")
-    .WithPgAdmin();                   // Adds PgAdmin UI for database management
-                                      // Note: Not using WithDataVolume to avoid password mismatch issues during development
+// In cloud mode, AppHost uses externally provided ConnectionStrings__Default (e.g. Supabase).
+// In local mode, AppHost provisions a local PostgreSQL container and injects ConnectionStrings__Default automatically.
+var postgres = default(IResourceBuilder<PostgresServerResource>);
+var classifiedAdsDb = default(IResourceBuilder<PostgresDatabaseResource>);
 
-// Add the main database
-// Using "Default" as database resource name so Aspire injects ConnectionStrings__Default
-// which matches the key used in appsettings.json
-var classifiedAdsDb = postgres.AddDatabase("Default", databaseName: "ClassifiedAds");
+if (!useCloudDatabase)
+{
+    var postgresPassword = builder.AddParameter("postgres-password", secret: true);
+    postgres = builder.AddPostgres("postgres", password: postgresPassword)
+        .WithImage("postgres")
+        .WithImageTag("16")
+        .WithPgAdmin();                   // Adds PgAdmin UI for database management
+                                          // Note: Not using WithDataVolume to avoid password mismatch issues during development
+
+    // Add the main database
+    // Using "Default" as database resource name so Aspire injects ConnectionStrings__Default
+    // which matches the key used in appsettings.json
+    classifiedAdsDb = postgres.AddDatabase("Default", databaseName: "ClassifiedAds");
+}
 
 // RabbitMQ - Message broker with management UI
 // Matches docker-compose: rabbitmq:3-management, ports 5672 (AMQP), 15672 (Management UI)
@@ -62,9 +70,18 @@ var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
 // Must complete successfully before WebAPI and Background services start
 // Ensures database schema is up-to-date before application processes requests
 var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj")
-    .WithReference(classifiedAdsDb)  // Injects connection string automatically
-    .WithEnvironment("CheckDependency__Enabled", "false") // Aspire handles dependencies, no need for manual port check
-    .WaitFor(postgres);  // Waits for PostgreSQL to be ready before starting
+    .WithEnvironment("CheckDependency__Enabled", "false"); // Aspire handles dependencies, no need for manual port check
+
+if (useCloudDatabase)
+{
+    migrator = migrator.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+}
+else
+{
+    migrator = migrator
+        .WithReference(classifiedAdsDb!) // Injects connection string automatically
+        .WaitFor(postgres!);  // Waits for PostgreSQL to be ready before starting
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Application Services
@@ -74,7 +91,6 @@ var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/Classif
 // Depends on: PostgreSQL, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
-    .WithReference(classifiedAdsDb)  // Injects ConnectionStrings__Default
     .WithReference(rabbitmq)         // Injects RabbitMQ connection details
     .WithReference(redis)            // Injects Redis connection details
                                      // Override appsettings for Aspire environment
@@ -86,12 +102,20 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WaitFor(redis)
     .WithExternalHttpEndpoints();  // Exposes to localhost for external access
 
+if (useCloudDatabase)
+{
+    webapi = webapi.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+}
+else
+{
+    webapi = webapi.WithReference(classifiedAdsDb!);  // Injects ConnectionStrings__Default
+}
+
 // Background - Background worker service
 // Depends on: PostgreSQL, RabbitMQ, MailHog, Redis
 // Waits for migrator to complete before starting
 // Responsibilities: Publish outbox messages, send emails/SMS, consume message bus events
 var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
-    .WithReference(classifiedAdsDb)
     .WithReference(rabbitmq)
     .WithReference(redis)
     // Override appsettings for Aspire environment
@@ -112,6 +136,15 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WaitFor(rabbitmq)
     .WaitFor(redis)
     .WaitFor(mailhog);
+
+if (useCloudDatabase)
+{
+    background = background.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+}
+else
+{
+    background = background.WithReference(classifiedAdsDb!);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Build and Run
