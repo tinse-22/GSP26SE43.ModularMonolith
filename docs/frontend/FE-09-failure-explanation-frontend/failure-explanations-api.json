@@ -1,0 +1,261 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-09-failure-explanations-api",
+  "validatedAgainstCodebaseOn": "2026-03-26",
+  "controller": "FailureExplanationsController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-runs/{runId}/failures",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GetFailureExplanation": "Permission:GetTestRuns",
+    "ExplainFailure": "Permission:GetTestRuns"
+  },
+  "prerequisiteDocs": [
+    "FE-07-08 test run APIs: docs/frontend/FE-07-08-test-execution-validation-frontend/test-runs-api.json",
+    "FE-05/FE-06 test case read models when UI can render original definition: docs/frontend/FE-05-test-generation-frontend and docs/frontend/FE-06-boundary-negative-generation-frontend"
+  ],
+  "enums": {
+    "ExplanationSourceResponse": [
+      "cache",
+      "live"
+    ],
+    "ExpectedConfidenceValues": [
+      "Low",
+      "Medium",
+      "High"
+    ],
+    "ConflictReasonCodes": [
+      "RUN_RESULTS_EXPIRED",
+      "TEST_CASE_NOT_FAILED",
+      "FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR"
+    ],
+    "NotFoundMessagePrefixes": [
+      "FAILURE_EXPLANATION_NOT_FOUND"
+    ],
+    "ValidationMessagePrefixes": [
+      "FAILURE_EXPLANATION_PROVIDER_INVALID_JSON",
+      "FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR"
+    ]
+  },
+  "models": {
+    "FailureExplanationModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "testRunId: Guid",
+        "testCaseId: Guid",
+        "endpointId: Guid?",
+        "summaryVi: string",
+        "possibleCauses: string[]",
+        "suggestedNextActions: string[]",
+        "confidence: string",
+        "source: string",
+        "provider: string",
+        "model: string",
+        "tokensUsed: int",
+        "latencyMs: int",
+        "generatedAt: DateTimeOffset",
+        "failureCodes: string[]"
+      ],
+      "notes": [
+        "Model nay chi tra explanation summary va metadata, khong tra lai full deterministic failure context.",
+        "source la cache hoac live; latencyMs = 0 tren cache hit.",
+        "endpointId co the null neu test case khong gan endpoint metadata.",
+        "confidence hien la string thuong; backend khong enforce enum sau khi parse.",
+        "provider/model la output runtime; appsettings hien tai dang cau hinh N8n + deepseek-chat cho WebAPI."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ],
+      "notes": [
+        "reasonCode chi xuat hien tren ConflictException va cac xung dot runtime khac; 404 Not Found hien khong co field nay.",
+        "detail va message deu lay truc tiep tu exception message cho NotFound, Validation, va Conflict."
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GetFailureExplanation",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid",
+        "testCaseId: Guid"
+      ],
+      "query": [],
+      "requestBody": null,
+      "response": {
+        "status": 200,
+        "body": "FailureExplanationModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails for non-owner access because query handler validates suite.CreatedById against CurrentUserId.",
+        "404 when suiteId does not exist, runId does not exist in the suite, testCaseId does not exist in cached run results, test case definition can no longer be found in the suite, or no cached explanation exists. Pure cache miss currently uses message prefix FAILURE_EXPLANATION_NOT_FOUND.",
+        "409 ProblemDetails with reasonCode=RUN_RESULTS_EXPIRED when run.RedisKey is empty, ResultsExpireAt is in the past, or distributed cache no longer contains the detailed run payload.",
+        "409 ProblemDetails with reasonCode=TEST_CASE_NOT_FAILED when the selected test case is Passed or Skipped."
+      ],
+      "notes": [
+        "GET luon build failure context truoc khi check explanation cache.",
+        "GET khong goi live provider, khong tao audit row, va khong ghi cache.",
+        "Vi GET van phai doc detailed run results, cached explanation se khong con truy cap duoc neu run results da het han."
+      ]
+    },
+    {
+      "name": "ExplainFailure",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid",
+        "testCaseId: Guid"
+      ],
+      "query": [],
+      "requestBody": null,
+      "response": {
+        "status": 200,
+        "body": "FailureExplanationModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails for non-owner access because command handler validates suite.CreatedById against CurrentUserId.",
+        "400 ProblemDetails with message prefix FAILURE_EXPLANATION_PROVIDER_INVALID_JSON when provider payload is missing required JSON fields such as summaryVi, possibleCauses, suggestedNextActions, confidence, model, or tokensUsed.",
+        "400 ProblemDetails with message prefix FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR when provider BaseUrl is not configured and the named HttpClient has no BaseAddress.",
+        "404 when suiteId does not exist, runId does not exist in the suite, testCaseId does not exist in cached run results, or test case definition can no longer be found in the suite.",
+        "409 ProblemDetails with reasonCode=RUN_RESULTS_EXPIRED when detailed run results are no longer available from distributed cache.",
+        "409 ProblemDetails with reasonCode=TEST_CASE_NOT_FAILED when the selected test case is Passed or Skipped.",
+        "409 ProblemDetails with reasonCode=FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR when the provider webhook returns non-2xx HTTP."
+      ],
+      "notes": [
+        "POST khong co request body.",
+        "POST check cache truoc; neu cache hit thi response van la 200 voi source=cache va khong goi provider.",
+        "Neu context co ApiSpecId va EndpointId thi backend se lay endpoint metadata de bo sung prompt; neu khong co thi van generate tiep.",
+        "Live generation thanh cong se co co gang luu audit + cache, nhung neu hai buoc nay fail backend van tra explanation source=live."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Ca GET va POST deu phu thuoc vao detailed run payload con han trong distributed cache cua FE-07/08.",
+    "Fingerprint cache duoc tao tu sanitized failure context, gom test definition, actual failed result, headers/body da duoc mask, va expectation payload.",
+    "Explanation cache duoc luu trong llmassistant.LlmSuggestionCaches voi TTL 24h; repeated POST trong TTL se thuong tra cache hit.",
+    "Live generation khong sua deterministic pass/fail, khong sua run counters, va khong thay doi TestRun status.",
+    "Sanitized context duoc gui sang provider va cung la co so de cache; FE khong nen ky vong explanation response chua raw secrets.",
+    "GET/POST chi tra FailureExplanationModel. Neu UI can render failureReasons chi tiet, responseBodyPreview, requestHeaders, hoac expectation goc, FE phai doc them tu FE-07/08 va FE-05/06.",
+    "Appsettings cua WebAPI hien dang dat FailureExplanation.Provider=N8n, FailureExplanation.Model=deepseek-chat, CacheTtlHours=24, TimeoutSeconds=30.",
+    "Provider response parser chap nhan root JSON object hoac wrapper data/result/response/output, nhung van yeu cau cac field summaryVi, possibleCauses, suggestedNextActions, confidence, model, va tokensUsed."
+  ],
+  "samples": {
+    "getFailureExplanationCacheHitResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+      "testCaseId": "0f1b09de-fbd5-4290-8544-a3990bf5595f",
+      "endpointId": "27a05c36-df79-4a58-bc04-17cb424fd22e",
+      "summaryVi": "Request da gui token hop le nhung backend van tra 403, kha nang cao la endpoint dang yeu cau role/quyen khac voi expectation [200].",
+      "possibleCauses": [
+        "Token da duoc inject nhung user hien tai khong co permission de truy cap tai nguyen nay.",
+        "Expectation cua test case dang lech so voi policy auth/authorization thuc te cua endpoint.",
+        "Moi truong staging co the dang tro toi data hoac role mapping khac so voi luong happy-path mong doi."
+      ],
+      "suggestedNextActions": [
+        "Kiem tra role/claim can co de truy cap endpoint nay va doi chieu voi tai khoan dang duoc login trong test dependency.",
+        "So sanh expectation expectedStatus voi tai lieu API va policy auth hien tai.",
+        "Mo log backend cho request traceId tu test run neu can xac dinh ly do bi forbid."
+      ],
+      "confidence": "Medium",
+      "source": "cache",
+      "provider": "N8n",
+      "model": "deepseek-chat",
+      "tokensUsed": 146,
+      "latencyMs": 0,
+      "generatedAt": "2026-03-26T09:45:00Z",
+      "failureCodes": [
+        "STATUS_CODE_MISMATCH"
+      ]
+    },
+    "postExplainFailureLiveResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+      "testCaseId": "0f1b09de-fbd5-4290-8544-a3990bf5595f",
+      "endpointId": "27a05c36-df79-4a58-bc04-17cb424fd22e",
+      "summaryVi": "Test fail chu yeu vi expectation mong 200 trong khi endpoint thuc te tra 403, cho thay loi nam o authorization hoac expectation da cu.",
+      "possibleCauses": [
+        "Role/quyen cua token hien tai khong du cho endpoint GET /api/profile.",
+        "Test case dang ke thua token tu dependency login nhung token do thuoc sai user/tenant.",
+        "Tai lieu API da thay doi yeu cau auth nhung expectation chua cap nhat."
+      ],
+      "suggestedNextActions": [
+        "Kiem tra claim/role trong token duoc extract tu test login va doi chieu voi authorization policy cua endpoint.",
+        "Xac minh expectedStatus hien tai co dung phai la [200] hay can bo sung case 403/401 rieng.",
+        "Neu can, rerun voi request header auth duoc quan sat va log backend bat theo traceId."
+      ],
+      "confidence": "High",
+      "source": "live",
+      "provider": "N8n",
+      "model": "deepseek-chat",
+      "tokensUsed": 182,
+      "latencyMs": 874,
+      "generatedAt": "2026-03-26T10:02:00Z",
+      "failureCodes": [
+        "STATUS_CODE_MISMATCH"
+      ]
+    },
+    "getFailureExplanationNotFound404": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.4",
+      "title": "Not Found",
+      "status": 404,
+      "detail": "FAILURE_EXPLANATION_NOT_FOUND: Khong tim thay cached explanation cho test case '0f1b09de-fbd5-4290-8544-a3990bf5595f'.",
+      "message": "FAILURE_EXPLANATION_NOT_FOUND: Khong tim thay cached explanation cho test case '0f1b09de-fbd5-4290-8544-a3990bf5595f'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "explainFailureRunResultsExpired409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chi tiet ket qua da het han luu tru trong cache.",
+      "message": "Chi tiet ket qua da het han luu tru trong cache.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "RUN_RESULTS_EXPIRED"
+    },
+    "explainFailureTestCaseNotFailed409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chi co the giai thich test case that bai.",
+      "message": "Chi co the giai thich test case that bai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "TEST_CASE_NOT_FAILED"
+    },
+    "explainFailureProviderInvalidJson400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thieu summaryVi.",
+      "message": "FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thieu summaryVi.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "explainFailureProviderHttp409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Failure explanation provider tra ve HTTP 500: Internal Server Error",
+      "message": "Failure explanation provider tra ve HTTP 500: Internal Server Error",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "FAILURE_EXPLANATION_PROVIDER_HTTP_ERROR"
+    }
+  },
+  "relatedNotes": [
+    "FE-09 chi la lop explanation bo sung tren failure result da co san; no khong thay the FE-07/08 validation output.",
+    "Neu UI muon regenerate sau khi vua POST thanh cong, thuong co the dung lai response vua nhan thay vi goi them GET ngay lap tuc.",
+    "Khi build UX, nen phan biet ro 404 cache miss voi 409 run-results-expired vi huong xu ly UI khac nhau."
+  ]
+}

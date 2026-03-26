@@ -1,0 +1,232 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-02-projects-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "ProjectsController",
+  "baseRoute": "/api/projects",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "enums": {
+    "ProjectStatus": [
+      "Active",
+      "Archived"
+    ]
+  },
+  "models": {
+    "CreateUpdateProjectModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "baseUrl",
+          "type": "string",
+          "required": false,
+          "notes": [
+            "If present, must be an absolute URL."
+          ]
+        }
+      ]
+    },
+    "ProjectModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "description: string",
+        "baseUrl: string",
+        "status: string",
+        "activeSpecId: Guid?",
+        "activeSpecName: string?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ]
+    },
+    "SpecSummaryModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "sourceType: string",
+        "version: string",
+        "parseStatus: string",
+        "endpointCount: int"
+      ]
+    },
+    "ProjectDetailModel": {
+      "extends": "ProjectModel",
+      "properties": [
+        "totalSpecifications: int",
+        "activeSpecSummary: SpecSummaryModel?"
+      ]
+    },
+    "PaginatedResult<ProjectModel>": {
+      "properties": [
+        "items: ProjectModel[]",
+        "totalCount: int",
+        "page: int",
+        "pageSize: int",
+        "totalPages: int"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListProjects",
+      "method": "GET",
+      "path": "/api/projects",
+      "pathParams": [],
+      "query": [
+        "status?: Active | Archived",
+        "search?: string",
+        "page?: number, default 1",
+        "pageSize?: number, default 20, backend clamps to 1..100"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PaginatedResult<ProjectModel>"
+      }
+    },
+    {
+      "name": "GetProjectDetail",
+      "method": "GET",
+      "path": "/api/projects/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "ProjectDetailModel"
+      }
+    },
+    {
+      "name": "CreateProject",
+      "method": "POST",
+      "path": "/api/projects",
+      "pathParams": [],
+      "query": [],
+      "requestBody": "CreateUpdateProjectModel",
+      "response": {
+        "status": 201,
+        "body": "ProjectDetailModel",
+        "headers": [
+          "Location"
+        ]
+      }
+    },
+    {
+      "name": "UpdateProject",
+      "method": "PUT",
+      "path": "/api/projects/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateUpdateProjectModel",
+      "response": {
+        "status": 200,
+        "body": "ProjectDetailModel"
+      }
+    },
+    {
+      "name": "ArchiveProject",
+      "method": "PUT",
+      "path": "/api/projects/{id}/archive",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "ProjectDetailModel"
+      }
+    },
+    {
+      "name": "UnarchiveProject",
+      "method": "PUT",
+      "path": "/api/projects/{id}/unarchive",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "ProjectDetailModel"
+      }
+    },
+    {
+      "name": "DeleteProject",
+      "method": "DELETE",
+      "path": "/api/projects/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "empty"
+      },
+      "notes": [
+        "This is a soft delete. Backend sets project status to Archived."
+      ]
+    },
+    {
+      "name": "GetProjectAuditLogs",
+      "method": "GET",
+      "path": "/api/projects/{id}/auditlogs",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "bodyShape": "Array<{ id, userName, action, createdDateTime, data, highLight }>"
+      },
+      "notes": [
+        "Response is reshaped inside ProjectsController and is not a plain AuditLog DTO list."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Duplicate active project name per owner is rejected.",
+    "Creating a project checks subscription quota MaxProjects.",
+    "Archiving or deleting a project clears ActiveSpecId and deactivates active specifications.",
+    "ListProjects supports filter + pagination only; there is no server-side sort parameter."
+  ],
+  "commonErrors": [
+    "400 for invalid input, duplicate name, invalid baseUrl, or quota denial.",
+    "404 when project does not exist.",
+    "400 when current user is not allowed to modify the target project."
+  ],
+  "sampleCreateResponse": {
+    "id": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+    "name": "E-Commerce API",
+    "description": "API cho ung dung thuong mai dien tu",
+    "baseUrl": "https://api.example.com/v1",
+    "status": "Active",
+    "activeSpecId": null,
+    "activeSpecName": null,
+    "createdDateTime": "2026-03-25T10:00:00+07:00",
+    "updatedDateTime": null,
+    "totalSpecifications": 0,
+    "activeSpecSummary": null
+  }
+}

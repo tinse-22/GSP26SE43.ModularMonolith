@@ -1,0 +1,517 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-07-08-test-runs-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "TestRunsController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-runs",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "StartTestRun": "Permission:StartTestRun",
+    "ListTestRuns": "Permission:GetTestRuns",
+    "GetTestRunDetail": "Permission:GetTestRuns",
+    "GetTestRunResults": "Permission:GetTestRuns"
+  },
+  "prerequisiteDocs": [
+    "FE-04 execution environments: docs/frontend/FE-04-test-configuration-frontend/execution-environments-api.json",
+    "FE-05/FE-06 test case read models: docs/frontend/FE-05-test-generation-frontend and docs/frontend/FE-06-boundary-negative-generation-frontend"
+  ],
+  "enums": {
+    "TestRunStatusQueryAcceptedValues": [
+      "Pending",
+      "Running",
+      "Completed",
+      "Failed",
+      "Cancelled"
+    ],
+    "TestRunStatusResponse": [
+      "Pending",
+      "Running",
+      "Completed",
+      "Failed",
+      "Cancelled"
+    ],
+    "TestCaseRunStatusResponse": [
+      "Passed",
+      "Failed",
+      "Skipped"
+    ],
+    "ValidationFailureCodesCommon": [
+      "HTTP_REQUEST_ERROR",
+      "UNRESOLVED_VARIABLE",
+      "DEPENDENCY_FAILED",
+      "STATUS_CODE_MISMATCH",
+      "RESPONSE_SCHEMA_MISMATCH",
+      "RESPONSE_NOT_JSON",
+      "HEADER_MISMATCH",
+      "BODY_CONTAINS_MISSING",
+      "BODY_NOT_CONTAINS_PRESENT",
+      "JSONPATH_ASSERTION_FAILED",
+      "RESPONSE_TIME_EXCEEDED"
+    ],
+    "ConflictReasonCodes": [
+      "ORDER_CONFIRMATION_REQUIRED",
+      "RUN_RESULTS_EXPIRED",
+      "CACHE_WRITE_FAILED",
+      "CONCURRENCY_CONFLICT",
+      "UNIQUE_CONSTRAINT_VIOLATION"
+    ]
+  },
+  "models": {
+    "StartTestRunRequest": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "environmentId",
+          "type": "Guid",
+          "required": false
+        },
+        {
+          "name": "selectedTestCaseIds",
+          "type": "Guid[]",
+          "required": false
+        }
+      ],
+      "notes": [
+        "environmentId omit => fallback sang default execution environment cua project.",
+        "selectedTestCaseIds omit hoac rong => run tat ca test case dang enabled.",
+        "Guid.Empty va duplicate trong selectedTestCaseIds bi loai bo truoc khi vao handler.",
+        "selectedTestCaseIds chi chon subset, khong dieu khien thu tu thuc thi."
+      ]
+    },
+    "PagedTestRunsResponse": {
+      "properties": [
+        "totalItems: long",
+        "items: TestRunModel[]",
+        "page: int",
+        "pageSize: int",
+        "totalPages: int",
+        "hasPreviousPage: bool",
+        "hasNextPage: bool"
+      ],
+      "notes": [
+        "Runtime list query pageNumber min 1 va pageSize clamp 1..100.",
+        "List response chi doc summary tu PostgreSQL, khong phu thuoc cache."
+      ]
+    },
+    "TestRunModel": {
+      "properties": [
+        "id: Guid",
+        "testSuiteId: Guid",
+        "environmentId: Guid",
+        "runNumber: int",
+        "status: string enum",
+        "startedAt: DateTimeOffset?",
+        "completedAt: DateTimeOffset?",
+        "totalTests: int",
+        "passedCount: int",
+        "failedCount: int",
+        "skippedCount: int",
+        "durationMs: long",
+        "resultsExpireAt: DateTimeOffset?",
+        "hasDetailedResults: bool",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "status la chuoi enum vi view model dung ToString().",
+        "runNumber tang dan theo tung suite, nhung list API sort theo CreatedDateTime desc roi moi tie-break Id desc.",
+        "hasDetailedResults duoc tinh tu resultsExpireAt > utcNow, khong phai cache probe.",
+        "durationMs hien la tong latency cua tung test case, khong phai wall-clock end-to-end duration."
+      ]
+    },
+    "TestRunResultModel": {
+      "properties": [
+        "run: TestRunModel",
+        "resultsSource: string",
+        "executedAt: DateTimeOffset",
+        "resolvedEnvironmentName: string?",
+        "cases: TestCaseRunResultModel[]"
+      ],
+      "notes": [
+        "Current implementation luon dat resultsSource = \"cache\".",
+        "POST /test-runs va GET /results deu dung cung shape nay.",
+        "executedAt hien lay theo run.StartedAt (fallback utcNow neu can).",
+        "Khong co pagination tren cases."
+      ]
+    },
+    "TestCaseRunResultModel": {
+      "properties": [
+        "testCaseId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "orderIndex: int",
+        "status: string enum",
+        "httpStatusCode: int?",
+        "durationMs: long",
+        "resolvedUrl: string?",
+        "requestHeaders: Dictionary<string,string>",
+        "responseHeaders: Dictionary<string,string>",
+        "responseBodyPreview: string?",
+        "failureReasons: ValidationFailureModel[]",
+        "extractedVariables: Dictionary<string,string>",
+        "dependencyIds: Guid[]",
+        "skippedBecauseDependencyIds: Guid[]",
+        "statusCodeMatched: bool",
+        "schemaMatched: bool?",
+        "headerChecksPassed: bool?",
+        "bodyContainsPassed: bool?",
+        "bodyNotContainsPassed: bool?",
+        "jsonPathChecksPassed: bool?",
+        "responseTimePassed: bool?"
+      ],
+      "notes": [
+        "orderIndex la thu tu execution runtime duoc reindex 0..N-1.",
+        "resolvedUrl khong kem query string runtime vi query params duoc append muon hon trong HttpTestExecutor.",
+        "Detailed result khong tra ve resolved body, resolved query params, hay bodyType.",
+        "requestHeaders la final headers sau env auth/default headers inject va request-level headers override; hien khong duoc mask.",
+        "responseBodyPreview bi truncate toi da 65536 ky tu va hien khong co field bao truncate.",
+        "extractedVariables chi duoc mask bang keyword-based rule tren ten bien chua token/secret/password/apikey."
+      ]
+    },
+    "ValidationFailureModel": {
+      "properties": [
+        "code: string",
+        "message: string",
+        "target: string?",
+        "expected: string?",
+        "actual: string?"
+      ],
+      "notes": [
+        "target/expected/actual chi xuat hien khi loai validation can so sanh chi tiet.",
+        "DEPENDENCY_FAILED va UNRESOLVED_VARIABLE thuong chi co code + message."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "StartTestRun",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [],
+      "requestBody": "StartTestRunRequest",
+      "response": {
+        "status": 201,
+        "body": "TestRunResultModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails for empty suiteId, non-owner access, suite not Ready, selected subset missing dependencies, selected disabled/missing test case, concurrent run limit denial, or monthly run quota denial.",
+        "404 when suiteId does not exist, explicit environmentId does not exist in the suite project, or project has no default environment while environmentId is omitted.",
+        "409 ProblemDetails with reasonCode=ORDER_CONFIRMATION_REQUIRED when FE-05A gate has no active applied order.",
+        "409 ProblemDetails with reasonCode=CACHE_WRITE_FAILED when run summary was saved but detailed results could not be written to cache."
+      ],
+      "notes": [
+        "Current implementation la synchronous request-response: response chi tra ve sau khi orchestrator da chay xong.",
+        "Success response da gom full detailed result, nen FE khong can poll ngay lap tuc.",
+        "Controller hien tai tra 201 khong kem Location header.",
+        "selectedTestCaseIds chi la tap subset; execution order duoc backend recompute theo approved endpoint order + testcase order rules.",
+        "Neu run chi tiet write cache that bai, backend van co the da persist summary va run status Failed trong DB truoc khi tra 409."
+      ]
+    },
+    {
+      "name": "ListTestRuns",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [
+        "pageNumber: int (optional, default 1, runtime min 1)",
+        "pageSize: int (optional, default 20, runtime clamp 1..100)",
+        "status: string enum (optional, case-insensitive)"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc, Id desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PagedTestRunsResponse"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when pageNumber/pageSize cannot be parsed as integers by ASP.NET model binding.",
+        "400 ProblemDetails for non-owner access.",
+        "404 when suiteId does not exist."
+      ],
+      "notes": [
+        "Invalid status values bi ignore silently vi controller chi set filter khi Enum.TryParse thanh cong.",
+        "List query khong can doc detailed cache payload.",
+        "hasDetailedResults co the false ngay ca khi summary van ton tai va doc duoc binh thuong."
+      ]
+    },
+    {
+      "name": "GetTestRunDetail",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "TestRunModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails for non-owner access.",
+        "404 when suiteId does not exist or runId does not exist inside the suite."
+      ],
+      "notes": [
+        "Day la summary-only endpoint; khong doc detailed result tu cache.",
+        "Dau ra van dung duoc ke ca khi detailed cache da het han."
+      ]
+    },
+    {
+      "name": "GetTestRunResults",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "TestRunResultModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails for non-owner access.",
+        "404 when suiteId does not exist or runId does not exist inside the suite.",
+        "409 ProblemDetails with reasonCode=RUN_RESULTS_EXPIRED when RedisKey is empty, ResultsExpireAt is in the past, or cache no longer contains the payload."
+      ],
+      "notes": [
+        "Results payload luon doc tu cache, sau do backend override field run bang summary moi nhat tu DB.",
+        "Current runtime tra 409 khi ket qua het han, khong tra 410.",
+        "Neu UI chi can summary sau khi het han cache, dung GET /test-runs hoac GET /test-runs/{runId}."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Start run can suite owner + suite.Status == Ready + FE-05A gate pass qua active proposal co AppliedOrder khong rong.",
+    "Execution environment runtime chi resolve auth mot lan moi run; OAuth2 client credentials khong xin token moi test case.",
+    "Variable bag precedence la env variables truoc, extracted run variables de sau nen extracted vars se override env vars.",
+    "Request-level headers override env default/auth headers, nen negative auth tests co the co chu y ghi de Authorization hoac header khac.",
+    "Absolute test-case URL duoc giu nguyen; relative URL moi ghep voi environment.baseUrl sau khi trim slash.",
+    "Timeout moi request bi clamp trong khoang 1000..60000 ms.",
+    "HTTP body chi duoc gui cho POST/PUT/PATCH; GET/DELETE co body trong source model hien se khong duoc send.",
+    "Transport errors duoc map thanh failed case voi code HTTP_REQUEST_ERROR va httpStatusCode = null.",
+    "Dependency fail khong lam dependent case Failed; no duoc mark Skipped va co skippedBecauseDependencyIds.",
+    "Validation engine khong goi LLM; no danh gia status code, JSON schema, header exact-match, body contains, body not contains, JSONPath equality, va max response time.",
+    "Schema validation fallback sang endpoint metadata schema dau tien khi expectation.responseSchema rong; neu van khong co schema thi bo qua check schema.",
+    "JSONPath equality co numeric/bool coercion nhe, nhung string compare van giu exact ordinal match.",
+    "Summary run status cuoi cung duoc set thanh Failed neu failedCount > 0, nguoc lai la Completed.",
+    "Detailed result payload luu trong distributed cache voi absolute expiration tu ResultsExpireAt; summary luu trong PostgreSQL.",
+    "responseBodyPreview va body doc tu HTTP executor deu bi gioi han toi da 65536 ky tu."
+  ],
+  "samples": {
+    "startTestRunRequest": {
+      "environmentId": "76e8525b-0a5c-4c73-aef7-56aeb7b74890",
+      "selectedTestCaseIds": [
+        "a48b7f1a-3dfa-469a-bc21-0f26d7ab9f9f",
+        "0f1b09de-fbd5-4290-8544-a3990bf5595f"
+      ]
+    },
+    "startTestRunAllEnabledRequest": {},
+    "startTestRunResponse": {
+      "run": {
+        "id": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+        "environmentId": "76e8525b-0a5c-4c73-aef7-56aeb7b74890",
+        "runNumber": 5,
+        "status": "Failed",
+        "startedAt": "2026-03-25T14:00:00Z",
+        "completedAt": "2026-03-25T14:00:03Z",
+        "totalTests": 3,
+        "passedCount": 1,
+        "failedCount": 1,
+        "skippedCount": 1,
+        "durationMs": 842,
+        "resultsExpireAt": "2026-04-01T14:00:03Z",
+        "hasDetailedResults": true,
+        "createdDateTime": "2026-03-25T14:00:00Z",
+        "updatedDateTime": "2026-03-25T14:00:03Z"
+      },
+      "resultsSource": "cache",
+      "executedAt": "2026-03-25T14:00:00Z",
+      "resolvedEnvironmentName": "Staging",
+      "cases": [
+        {
+          "testCaseId": "a48b7f1a-3dfa-469a-bc21-0f26d7ab9f9f",
+          "endpointId": "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+          "name": "POST /api/login - login and extract token",
+          "orderIndex": 0,
+          "status": "Passed",
+          "httpStatusCode": 200,
+          "durationMs": 221,
+          "resolvedUrl": "https://staging-api.example.com/api/login",
+          "requestHeaders": {
+            "Content-Type": "application/json"
+          },
+          "responseHeaders": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "responseBodyPreview": "{\"token\":\"jwt-123\"}",
+          "failureReasons": [],
+          "extractedVariables": {
+            "authToken": "******"
+          },
+          "dependencyIds": [],
+          "skippedBecauseDependencyIds": [],
+          "statusCodeMatched": true
+        },
+        {
+          "testCaseId": "0f1b09de-fbd5-4290-8544-a3990bf5595f",
+          "endpointId": "27a05c36-df79-4a58-bc04-17cb424fd22e",
+          "name": "GET /api/profile - must return current user",
+          "orderIndex": 1,
+          "status": "Failed",
+          "httpStatusCode": 403,
+          "durationMs": 311,
+          "resolvedUrl": "https://staging-api.example.com/api/profile",
+          "requestHeaders": {
+            "Authorization": "Bearer jwt-123"
+          },
+          "responseHeaders": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "responseBodyPreview": "{\"error\":\"forbidden\"}",
+          "failureReasons": [
+            {
+              "code": "STATUS_CODE_MISMATCH",
+              "message": "Ma trang thai khong khop. Mong doi: [200], thuc te: 403.",
+              "expected": "200",
+              "actual": "403"
+            }
+          ],
+          "extractedVariables": {},
+          "dependencyIds": [
+            "a48b7f1a-3dfa-469a-bc21-0f26d7ab9f9f"
+          ],
+          "skippedBecauseDependencyIds": [],
+          "statusCodeMatched": false
+        },
+        {
+          "testCaseId": "f4f24267-0eb6-4e7f-a6b8-e01d7ee9e812",
+          "endpointId": "b0cf374c-597c-4186-9132-7bd2864d6782",
+          "name": "GET /api/orders - list current user orders",
+          "orderIndex": 2,
+          "status": "Skipped",
+          "httpStatusCode": null,
+          "durationMs": 0,
+          "resolvedUrl": null,
+          "requestHeaders": {},
+          "responseHeaders": {},
+          "responseBodyPreview": null,
+          "failureReasons": [
+            {
+              "code": "DEPENDENCY_FAILED",
+              "message": "Test case bi bo qua vi dependency khong thanh cong."
+            }
+          ],
+          "extractedVariables": {},
+          "dependencyIds": [
+            "0f1b09de-fbd5-4290-8544-a3990bf5595f"
+          ],
+          "skippedBecauseDependencyIds": [
+            "0f1b09de-fbd5-4290-8544-a3990bf5595f"
+          ],
+          "statusCodeMatched": false,
+          "schemaMatched": null,
+          "headerChecksPassed": null,
+          "bodyContainsPassed": null,
+          "bodyNotContainsPassed": null,
+          "jsonPathChecksPassed": null,
+          "responseTimePassed": null
+        }
+      ]
+    },
+    "listTestRunsResponse": {
+      "totalItems": 5,
+      "items": [
+        {
+          "id": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+          "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+          "environmentId": "76e8525b-0a5c-4c73-aef7-56aeb7b74890",
+          "runNumber": 5,
+          "status": "Failed",
+          "startedAt": "2026-03-25T14:00:00Z",
+          "completedAt": "2026-03-25T14:00:03Z",
+          "totalTests": 3,
+          "passedCount": 1,
+          "failedCount": 1,
+          "skippedCount": 1,
+          "durationMs": 842,
+          "resultsExpireAt": "2026-04-01T14:00:03Z",
+          "hasDetailedResults": true,
+          "createdDateTime": "2026-03-25T14:00:00Z",
+          "updatedDateTime": "2026-03-25T14:00:03Z"
+        }
+      ],
+      "page": 1,
+      "pageSize": 20,
+      "totalPages": 1,
+      "hasPreviousPage": false,
+      "hasNextPage": false
+    },
+    "getTestRunResultsExpired409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chi tiet ket qua da het han luu tru trong cache.",
+      "message": "Chi tiet ket qua da het han luu tru trong cache.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "RUN_RESULTS_EXPIRED"
+    },
+    "startTestRunOrderGate409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "message": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED"
+    },
+    "startTestRunMissingDependency400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Danh sach test case duoc chon thieu cac dependency can thiet: 'Get profile' phu thuoc 'Login'.",
+      "message": "Danh sach test case duoc chon thieu cac dependency can thiet: 'Get profile' phu thuoc 'Login'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  },
+  "relatedNotes": [
+    "GET /test-runs/{runId}/results la endpoint cache-backed. Sau khi het han, FE van phai dung summary endpoints neu can lich su.",
+    "Neu UI can hien full source request/expectation/variables cua test case, can ghep them data tu FE-05/FE-06 shared test-case read endpoints.",
+    "Execution environment auth secret masking thuoc FE-04 CRUD response; detailed run results hien khong mask requestHeaders sau auth injection."
+  ]
+}

@@ -1,0 +1,703 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-03-endpoints-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "EndpointsController",
+  "baseRoute": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "ListEndpoints": "Permission:GetEndpoints",
+    "GetEndpointDetail": "Permission:GetEndpoints",
+    "CreateEndpoint": "Permission:AddEndpoint",
+    "UpdateEndpoint": "Permission:UpdateEndpoint",
+    "DeleteEndpoint": "Permission:DeleteEndpoint",
+    "GetResolvedUrl": "Permission:GetEndpoints",
+    "GetPathParamMutations": "Permission:GetEndpoints"
+  },
+  "enums": {
+    "HttpMethod": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "ParameterLocation": [
+      "Path",
+      "Query",
+      "Header",
+      "Body",
+      "Cookie"
+    ],
+    "EndpointParameterDataType": [
+      "string",
+      "integer",
+      "number",
+      "boolean",
+      "object",
+      "array",
+      "uuid"
+    ],
+    "SecurityType": [
+      "Bearer",
+      "ApiKey",
+      "OAuth2",
+      "Basic",
+      "OpenIdConnect"
+    ],
+    "PathMutationTypesAlwaysPresent": [
+      "empty",
+      "specialChars",
+      "sqlInjection",
+      "nonExistent"
+    ],
+    "PathMutationTypesByDataTypeOrFormat": [
+      "wrongType",
+      "boundary_zero",
+      "boundary_negative",
+      "boundary_float",
+      "boundary_max_int32",
+      "boundary_overflow_int32",
+      "boundary_max_int64",
+      "boundary_veryLarge",
+      "boundary_verySmall",
+      "numericBoolean",
+      "invalidFormat",
+      "partialUuid",
+      "allZerosUuid",
+      "missingDomain",
+      "veryLong",
+      "unicode",
+      "whitespace"
+    ]
+  },
+  "models": {
+    "CreateUpdateEndpointModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "httpMethod",
+          "type": "string",
+          "required": true,
+          "allowedValues": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "HEAD",
+            "OPTIONS"
+          ]
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "maxLength": 500
+        },
+        {
+          "name": "operationId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "type": "string[]",
+          "required": false
+        },
+        {
+          "name": "isDeprecated",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "parameters",
+          "type": "ManualParameterDefinition[]",
+          "required": false
+        },
+        {
+          "name": "responses",
+          "type": "ManualResponseDefinition[]",
+          "required": false
+        }
+      ],
+      "notes": [
+        "Backend does not accept securityRequirements in create/update request body.",
+        "Backend auto-creates missing Path parameters from placeholders in path."
+      ]
+    },
+    "ManualParameterDefinition": {
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "required": false,
+          "allowedValues": [
+            "Path",
+            "Query",
+            "Header",
+            "Body",
+            "Cookie"
+          ]
+        },
+        {
+          "name": "dataType",
+          "type": "string enum",
+          "required": false,
+          "allowedValues": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "object",
+            "array",
+            "uuid"
+          ]
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "isRequired",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "defaultValue",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "examples",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "notes": [
+        "For JSON request bodies, dataType should be lowercase strings because EndpointParameterDataType uses JsonStringEnumConverter with allowIntegerValues=false.",
+        "Unknown or missing location is normalized to Query by backend."
+      ]
+    },
+    "ManualResponseDefinition": {
+      "properties": [
+        "statusCode: int",
+        "description: string?",
+        "schema: string?",
+        "examples: string?",
+        "headers: string?"
+      ]
+    },
+    "EndpointModel": {
+      "properties": [
+        "id: Guid",
+        "apiSpecId: Guid",
+        "httpMethod: string",
+        "path: string",
+        "operationId: string?",
+        "summary: string?",
+        "description: string?",
+        "tags: string?",
+        "isDeprecated: bool",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "tags is a serialized JSON array string, not string[]. Example: [\"Orders\",\"Checkout\"]."
+      ]
+    },
+    "EndpointDetailModel": {
+      "extends": "EndpointModel",
+      "properties": [
+        "resolvedUrl: string?",
+        "parameters: ParameterModel[]",
+        "responses: ResponseModel[]",
+        "securityRequirements: SecurityReqModel[]"
+      ],
+      "notes": [
+        "resolvedUrl is computed from DefaultValue first, then Examples[0]; it can be null if not fully resolvable."
+      ]
+    },
+    "ParameterModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "location: string",
+        "dataType: string",
+        "format: string?",
+        "isRequired: bool",
+        "defaultValue: string?",
+        "schema: string?",
+        "examples: string?"
+      ]
+    },
+    "ResponseModel": {
+      "properties": [
+        "id: Guid",
+        "statusCode: int",
+        "description: string?",
+        "schema: string?",
+        "examples: string?",
+        "headers: string?"
+      ]
+    },
+    "SecurityReqModel": {
+      "properties": [
+        "id: Guid",
+        "securityType: string",
+        "schemeName: string?",
+        "scopes: string?"
+      ]
+    },
+    "ResolvedUrlResult": {
+      "properties": [
+        "originalTemplate: string",
+        "resolvedUrl: string?",
+        "resolvedParameters: Dictionary<string,string>",
+        "unresolvedParameters: string[]",
+        "isFullyResolved: bool"
+      ]
+    },
+    "PathParamMutationsResult": {
+      "properties": [
+        "endpointId: Guid",
+        "templatePath: string",
+        "totalMutations: int",
+        "parameterMutations: ParameterMutationGroup[]"
+      ]
+    },
+    "ParameterMutationGroup": {
+      "properties": [
+        "parameterName: string",
+        "dataType: string",
+        "format: string",
+        "originalValue: string",
+        "mutations: PathParameterMutationWithUrl[]"
+      ]
+    },
+    "PathParameterMutationWithUrl": {
+      "properties": [
+        "mutationType: string",
+        "label: string",
+        "value: string",
+        "expectedStatusCode: int",
+        "description: string",
+        "resolvedUrl: string?"
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListEndpoints",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "EndpointModel[]"
+      },
+      "problemCases": [
+        "404 when project/specification does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "GetEndpointDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "EndpointDetailModel"
+      },
+      "problemCases": [
+        "404 when project/specification/endpoint does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "CreateEndpoint",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateUpdateEndpointModel",
+      "response": {
+        "status": 201,
+        "body": "EndpointDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for invalid body, invalid HTTP method, empty path, path too long, path parameter validation errors, or subscription denial.",
+        "404 when project/specification does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "UpdateEndpoint",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateUpdateEndpointModel",
+      "response": {
+        "status": 200,
+        "body": "EndpointDetailModel"
+      },
+      "problemCases": [
+        "400 for invalid body, invalid HTTP method, empty path, path too long, or path parameter validation errors.",
+        "404 when project/specification/endpoint does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "DeleteEndpoint",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 204,
+        "body": "empty"
+      },
+      "problemCases": [
+        "404 when project/specification/endpoint does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "GetResolvedUrl",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [
+        "dynamic key=value pairs matching path parameter names, for example ?orderId=123&itemId=abc"
+      ],
+      "response": {
+        "status": 200,
+        "body": "ResolvedUrlResult"
+      },
+      "problemCases": [
+        "404 when project/specification/endpoint does not exist or current user is not the owner."
+      ]
+    },
+    {
+      "name": "GetPathParamMutations",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "PathParamMutationsResult"
+      },
+      "problemCases": [
+        "404 when project/specification/endpoint does not exist or current user is not the owner."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "ListEndpoints supports no filters, no pagination, and no client-provided sorting.",
+    "Backend normalizes unknown or missing parameter location to Query when creating/updating endpoint.",
+    "Backend auto-creates missing Path parameters from placeholders in path and forces Path parameters to IsRequired=true.",
+    "CreateEndpoint consumes endpoint subscription quota. UpdateEndpoint does not re-consume quota.",
+    "UpdateEndpoint replaces all existing parameters and responses with the new request payload in one transaction.",
+    "DeleteEndpoint relies on DB cascade delete for children.",
+    "GetEndpointDetail resolves URL using DefaultValue first, then Examples[0].",
+    "GetResolvedUrl reads raw query string pairs and only uses values matching path parameter names.",
+    "GetResolvedUrl precedence is explicit query value > DefaultValue > Examples[0].",
+    "GetResolvedUrl can return isFullyResolved=false and resolvedUrl=null when one or more path params are missing.",
+    "GetPathParamMutations returns zero mutations when endpoint has no Path parameters.",
+    "Mutation types are dynamic by dataType and format. FE must not hardcode a single fixed mutation list."
+  ],
+  "samples": {
+    "createEndpointRequest": {
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": "getOrderItem",
+      "summary": "Get order item detail",
+      "description": "Return one item inside an order.",
+      "tags": [
+        "Orders",
+        "Items"
+      ],
+      "isDeprecated": false,
+      "parameters": [
+        {
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "examples": "[\"6be3d962-8c03-4c14-bc4d-53b0c43f5a5e\"]"
+        },
+        {
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "integer",
+          "format": "int32",
+          "isRequired": true,
+          "defaultValue": "1001",
+          "examples": "[\"1001\"]"
+        },
+        {
+          "name": "includeInventory",
+          "location": "Query",
+          "dataType": "boolean",
+          "defaultValue": "true"
+        }
+      ],
+      "responses": [
+        {
+          "statusCode": 200,
+          "description": "Order item detail",
+          "schema": "{\"type\":\"object\",\"properties\":{\"itemId\":{\"type\":\"integer\"},\"sku\":{\"type\":\"string\"}}}"
+        },
+        {
+          "statusCode": 404,
+          "description": "Order item not found"
+        }
+      ]
+    },
+    "endpointDetailResponse": {
+      "id": "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9",
+      "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": "getOrderItem",
+      "summary": "Get order item detail",
+      "description": "Return one item inside an order.",
+      "tags": "[\"Orders\",\"Items\"]",
+      "isDeprecated": false,
+      "createdDateTime": "2026-03-25T10:40:00+07:00",
+      "updatedDateTime": null,
+      "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/1001",
+      "parameters": [
+        {
+          "id": "72c7a4b6-267f-4bf0-a158-d65ece1140cf",
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "schema": null,
+          "examples": "[\"6be3d962-8c03-4c14-bc4d-53b0c43f5a5e\"]"
+        },
+        {
+          "id": "2b3dde3f-f581-4d93-8f38-4d1bf557ca78",
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "integer",
+          "format": "int32",
+          "isRequired": true,
+          "defaultValue": "1001",
+          "schema": null,
+          "examples": "[\"1001\"]"
+        },
+        {
+          "id": "a295cb58-f5e8-48d8-834d-16ec1a580274",
+          "name": "includeInventory",
+          "location": "Query",
+          "dataType": "boolean",
+          "format": null,
+          "isRequired": false,
+          "defaultValue": "true",
+          "schema": null,
+          "examples": null
+        }
+      ],
+      "responses": [
+        {
+          "id": "d1c7ec22-6b6f-46de-9dd6-50ec53c71110",
+          "statusCode": 200,
+          "description": "Order item detail",
+          "schema": "{\"type\":\"object\",\"properties\":{\"itemId\":{\"type\":\"integer\"},\"sku\":{\"type\":\"string\"}}}",
+          "examples": null,
+          "headers": null
+        },
+        {
+          "id": "f0d6b8cd-6fef-46cd-95f5-23cb461fef51",
+          "statusCode": 404,
+          "description": "Order item not found",
+          "schema": null,
+          "examples": null,
+          "headers": null
+        }
+      ],
+      "securityRequirements": []
+    },
+    "resolvedUrlResponse": {
+      "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+      "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/2002",
+      "resolvedParameters": {
+        "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+        "itemId": "2002"
+      },
+      "unresolvedParameters": [],
+      "isFullyResolved": true
+    },
+    "partiallyResolvedUrlResponse": {
+      "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+      "resolvedUrl": null,
+      "resolvedParameters": {
+        "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e"
+      },
+      "unresolvedParameters": [
+        "itemId"
+      ],
+      "isFullyResolved": false
+    },
+    "pathParamMutationsResponse": {
+      "endpointId": "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9",
+      "templatePath": "/api/orders/{orderId}/items/{itemId}",
+      "totalMutations": 15,
+      "parameterMutations": [
+        {
+          "parameterName": "orderId",
+          "dataType": "uuid",
+          "format": "uuid",
+          "originalValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "mutations": [
+            {
+              "mutationType": "empty",
+              "label": "orderId - empty value",
+              "value": "",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui gia tri rong.",
+              "resolvedUrl": null
+            },
+            {
+              "mutationType": "invalidFormat",
+              "label": "orderId - invalid UUID format",
+              "value": "not-a-uuid",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui chuoi khong phai UUID.",
+              "resolvedUrl": "/api/orders/not-a-uuid/items/1001"
+            },
+            {
+              "mutationType": "allZerosUuid",
+              "label": "orderId - all-zeros UUID",
+              "value": "00000000-0000-0000-0000-000000000000",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'orderId' gui UUID zero.",
+              "resolvedUrl": "/api/orders/00000000-0000-0000-0000-000000000000/items/1001"
+            }
+          ]
+        },
+        {
+          "parameterName": "itemId",
+          "dataType": "integer",
+          "format": "int32",
+          "originalValue": "1001",
+          "mutations": [
+            {
+              "mutationType": "wrongType",
+              "label": "itemId - wrong type (text instead of integer)",
+              "value": "abc",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'itemId' gui text thay vi so nguyen.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/abc"
+            },
+            {
+              "mutationType": "boundary_zero",
+              "label": "itemId - boundary: zero",
+              "value": "0",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'itemId' = 0.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/0"
+            },
+            {
+              "mutationType": "nonExistent",
+              "label": "itemId - non-existent resource",
+              "value": "999999999",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'itemId' tro toi resource khong ton tai.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/999999999"
+            }
+          ]
+        }
+      ]
+    },
+    "problemDetails400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "HTTP method khong hop le. Chap nhan: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.",
+      "message": "HTTP method khong hop le. Chap nhan: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  },
+  "relatedNotes": [
+    "GetEndpointDetail can return securityRequirements, but create/update request bodies currently cannot write them.",
+    "If FE wants to render tags as chips, it should JSON.parse(tags ?? \"[]\") safely."
+  ]
+}
