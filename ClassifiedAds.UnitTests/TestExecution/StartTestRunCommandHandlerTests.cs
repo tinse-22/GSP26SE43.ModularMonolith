@@ -99,7 +99,7 @@ public class StartTestRunCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("quyen"));
+            .Where(ex => ex.Message.Contains("quyền"));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class StartTestRunCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("san sang"));
+            .Where(ex => ex.Message.Contains("sẵn sàng"));
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public class StartTestRunCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<NotFoundException>()
-            .Where(ex => ex.Message.Contains("mac dinh"));
+            .Where(ex => ex.Message.Contains("mặc định"));
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public class StartTestRunCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("dong thoi"));
+            .Where(ex => ex.Message.Contains("đồng thời"));
     }
 
     [Fact]
@@ -262,7 +262,7 @@ public class StartTestRunCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("thang"));
+            .Where(ex => ex.Message.Contains("tháng"));
     }
 
     [Fact]

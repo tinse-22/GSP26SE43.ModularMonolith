@@ -29,7 +29,12 @@ using System.Reflection;
 
 // Load .env for local parity with WebAPI/Background.
 // Prevents migrator from targeting a different DB than runtime hosts.
-if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
         probeForEnv: true,
@@ -48,6 +53,8 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
 .ConfigureServices((hostContext, services) =>
 {
     var configuration = hostContext.Configuration;
+
+    StartupDiagnostics.LogDatabaseTarget("Migrator", configuration, isRunningInContainer);
 
     // Optional: Wait for database to be available before attempting migrations
     // Enabled via CheckDependency:Enabled in appsettings (disabled under Aspire)
