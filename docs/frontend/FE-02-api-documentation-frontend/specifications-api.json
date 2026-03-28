@@ -1,0 +1,267 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-02-specifications-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "SpecificationsController",
+  "baseRoute": "/api/projects/{projectId}/specifications",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "enums": {
+    "SourceType": [
+      "OpenAPI",
+      "Postman",
+      "Manual",
+      "cURL"
+    ],
+    "ParseStatus": [
+      "Pending",
+      "Success",
+      "Failed"
+    ],
+    "SpecificationUploadMethod": [
+      "StorageGatewayContract"
+    ]
+  },
+  "models": {
+    "UploadMethodOptionModel": {
+      "properties": [
+        "method: string",
+        "uploadApi: string"
+      ]
+    },
+    "UploadSpecificationModel": {
+      "contentType": "multipart/form-data",
+      "properties": [
+        {
+          "name": "uploadMethod",
+          "type": "string or enum",
+          "required": true,
+          "allowedValues": [
+            "StorageGatewayContract",
+            0
+          ]
+        },
+        {
+          "name": "file",
+          "type": "binary",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sourceType",
+          "type": "string or enum",
+          "required": true,
+          "allowedValues": [
+            "OpenAPI",
+            "Postman",
+            0,
+            1
+          ]
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        }
+      ]
+    },
+    "SpecificationModel": {
+      "properties": [
+        "id: Guid",
+        "projectId: Guid",
+        "name: string",
+        "sourceType: string",
+        "version: string",
+        "isActive: bool",
+        "parseStatus: string",
+        "parsedAt: DateTimeOffset?",
+        "originalFileId: Guid?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ]
+    },
+    "SpecificationDetailModel": {
+      "extends": "SpecificationModel",
+      "properties": [
+        "endpointCount: int",
+        "parseErrors: string[]?",
+        "originalFileName: string?"
+      ],
+      "notes": [
+        "Backend currently does not populate originalFileName in GetSpecificationQuery. Treat as optional/null."
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListSpecifications",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [
+        "parseStatus?: Pending | Success | Failed",
+        "sourceType?: OpenAPI | Postman | Manual | cURL"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "SpecificationModel[]"
+      }
+    },
+    {
+      "name": "GetSpecificationDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      }
+    },
+    {
+      "name": "GetUploadMethods",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/upload-methods",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "UploadMethodOptionModel[]"
+      },
+      "notes": [
+        "Current implementation returns one supported method: StorageGatewayContract."
+      ]
+    },
+    {
+      "name": "UploadSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/upload",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "UploadSpecificationModel",
+      "limits": [
+        "RequestSizeLimit = 10MB"
+      ],
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      }
+    },
+    {
+      "name": "ActivateSpecification",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/activate",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      }
+    },
+    {
+      "name": "DeactivateSpecification",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "SpecificationDetailModel"
+      }
+    },
+    {
+      "name": "DeleteSpecification",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 204,
+        "body": "empty"
+      }
+    }
+  ],
+  "runtimeRules": [
+    "Upload currently accepts only StorageGatewayContract.",
+    "Upload accepts only OpenAPI or Postman as sourceType.",
+    "File size must be <= 10MB.",
+    "Allowed extensions are .json, .yaml, .yml.",
+    "Backend validates file content against declared sourceType.",
+    "OpenAPI JSON may be parsed inline immediately during upload, so parseStatus may be Success, Failed, or Pending.",
+    "Upload consumes storage quota; successful inline parsing may also consume endpoint quota.",
+    "AutoActivate=true deactivates previous active spec and updates Project.ActiveSpecId in the same transaction.",
+    "Deleting an active specification clears Project.ActiveSpecId.",
+    "ListSpecifications supports filters only; there is no pagination parameter and no server-side sort parameter."
+  ],
+  "commonErrors": [
+    "400 for invalid uploadMethod, invalid file, invalid extension, invalid sourceType, invalid file content, or quota denial.",
+    "404 when project or specification does not exist.",
+    "400 when current user is not allowed to modify the target project."
+  ],
+  "sampleUploadRequest": {
+    "uploadMethod": "StorageGatewayContract",
+    "file": "(binary) openapi.json",
+    "name": "E-Commerce API Spec v3.1",
+    "sourceType": "OpenAPI",
+    "version": "v3.1.0",
+    "autoActivate": true
+  },
+  "sampleUploadResponse": {
+    "id": "abc123-spec-id",
+    "projectId": "4b99cfd1-f2c5-4a5c-970e-e8d45a2d0011",
+    "name": "E-Commerce API Spec v3.1",
+    "sourceType": "OpenAPI",
+    "version": "v3.1.0",
+    "isActive": true,
+    "parseStatus": "Success",
+    "parsedAt": "2026-03-25T10:30:00+07:00",
+    "originalFileId": "file-entry-id-from-storage",
+    "createdDateTime": "2026-03-25T10:30:00+07:00",
+    "updatedDateTime": null,
+    "endpointCount": 12,
+    "parseErrors": null,
+    "originalFileName": null
+  },
+  "relatedButNotPrimaryInThisHandoff": [
+    "POST /api/projects/{projectId}/specifications/manual",
+    "POST /api/projects/{projectId}/specifications/curl-import",
+    "GET/POST/PUT/DELETE under /api/projects/{projectId}/specifications/{specId}/endpoints"
+  ]
+}

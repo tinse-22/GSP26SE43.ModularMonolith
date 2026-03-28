@@ -1,0 +1,364 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-04-test-suites-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "TestSuitesController",
+  "baseRoute": "/api/projects/{projectId}/test-suites",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "ListTestSuites": "Permission:GetTestSuites",
+    "GetTestSuiteDetail": "Permission:GetTestSuites",
+    "CreateTestSuite": "Permission:AddTestSuite",
+    "UpdateTestSuite": "Permission:UpdateTestSuite",
+    "ArchiveTestSuite": "Permission:DeleteTestSuite"
+  },
+  "enums": {
+    "GenerationTypeRequestAccepted": [
+      "Auto",
+      "Manual",
+      "LLMAssisted",
+      0,
+      1,
+      2
+    ],
+    "GenerationTypeResponseNumericMap": {
+      "0": "Auto",
+      "1": "Manual",
+      "2": "LLMAssisted"
+    },
+    "TestSuiteStatusResponseNumericMap": {
+      "0": "Draft",
+      "1": "Ready",
+      "2": "Archived"
+    },
+    "ApprovalStatusResponseNumericMap": {
+      "0": "NotApplicable",
+      "1": "PendingReview",
+      "2": "Approved",
+      "3": "Rejected",
+      "4": "ModifiedAndApproved"
+    }
+  },
+  "models": {
+    "CreateTestSuiteScopeRequest": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "maxLength": 4000
+        },
+        {
+          "name": "apiSpecId",
+          "type": "Guid",
+          "required": true
+        },
+        {
+          "name": "generationType",
+          "type": "string or integer enum",
+          "required": false,
+          "default": "Auto",
+          "allowedValues": [
+            "Auto",
+            "Manual",
+            "LLMAssisted",
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "selectedEndpointIds",
+          "type": "Guid[]",
+          "required": true,
+          "minItems": 1
+        },
+        {
+          "name": "endpointBusinessContexts",
+          "type": "Dictionary<Guid,string>",
+          "required": false
+        },
+        {
+          "name": "globalBusinessRules",
+          "type": "string",
+          "required": false,
+          "maxLength": 8000
+        }
+      ],
+      "notes": [
+        "Runtime requires apiSpecId plus at least one selectedEndpointId.",
+        "selectedEndpointIds are normalized by backend: empty GUIDs removed, duplicates removed, then sorted ascending.",
+        "endpointBusinessContexts keeps only selected endpoint keys with non-empty trimmed values."
+      ]
+    },
+    "UpdateTestSuiteScopeRequest": {
+      "contentType": "application/json",
+      "extends": "CreateTestSuiteScopeRequest",
+      "properties": [
+        {
+          "name": "rowVersion",
+          "type": "base64 string",
+          "required": true
+        }
+      ]
+    },
+    "TestSuiteScopeModel": {
+      "properties": [
+        "id: Guid",
+        "projectId: Guid",
+        "apiSpecId: Guid?",
+        "name: string",
+        "description: string?",
+        "generationType: integer enum",
+        "status: integer enum",
+        "approvalStatus: integer enum",
+        "selectedEndpointIds: Guid[]",
+        "endpointBusinessContexts: Dictionary<Guid,string>",
+        "globalBusinessRules: string?",
+        "selectedEndpointCount: int",
+        "testCaseCount: int",
+        "createdById: Guid",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: base64 string"
+      ],
+      "notes": [
+        "generationType, status, and approvalStatus are currently numeric in response JSON.",
+        "selectedEndpointCount is computed from selectedEndpointIds after backend normalization.",
+        "testCaseCount is populated in list query only. GetById/create/update currently return 0."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListTestSuites",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/test-suites",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "TestSuiteScopeModel[]"
+      },
+      "notes": [
+        "Archived suites are excluded from this list.",
+        "Current implementation does not perform a separate project existence lookup; no matches return 200 with an empty array."
+      ]
+    },
+    {
+      "name": "GetTestSuiteDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "pathParams": [
+        "projectId: Guid",
+        "suiteId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "TestSuiteScopeModel"
+      },
+      "problemCases": [
+        "404 when suiteId does not exist under the provided projectId."
+      ],
+      "notes": [
+        "Current implementation can still return an archived suite if caller knows the suiteId."
+      ]
+    },
+    {
+      "name": "CreateTestSuite",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/test-suites",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateTestSuiteScopeRequest",
+      "response": {
+        "status": 201,
+        "body": "TestSuiteScopeModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when required body fields are missing or fail DataAnnotations.",
+        "400 ProblemDetails for empty projectId/currentUserId, empty selectedEndpointIds after normalization, selected endpoints outside specification, or other handler validation failures.",
+        "404 when apiSpecId does not exist."
+      ]
+    },
+    {
+      "name": "UpdateTestSuite",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "pathParams": [
+        "projectId: Guid",
+        "suiteId: Guid"
+      ],
+      "query": [],
+      "requestBody": "UpdateTestSuiteScopeRequest",
+      "response": {
+        "status": 200,
+        "body": "TestSuiteScopeModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when rowVersion or other required body fields are missing.",
+        "400 ProblemDetails for invalid rowVersion format, non-owner update, archived suite update, empty selectedEndpointIds after normalization, or endpoint/spec validation failures.",
+        "404 when apiSpecId does not exist or suiteId does not exist under the provided projectId.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ]
+    },
+    {
+      "name": "ArchiveTestSuite",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "pathParams": [
+        "projectId: Guid",
+        "suiteId: Guid"
+      ],
+      "query": [
+        "rowVersion: base64 string (required)"
+      ],
+      "response": {
+        "status": 204,
+        "body": "empty"
+      },
+      "problemCases": [
+        "400 when rowVersion query is missing or invalid, or current user is not the suite owner.",
+        "404 when suiteId does not exist under the provided projectId.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ],
+      "notes": [
+        "This is a soft archive. Backend sets status to Archived instead of deleting the row."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Create/update requires apiSpecId and at least one selected endpoint.",
+    "selectedEndpointIds are normalized by backend and returned in normalized order.",
+    "Business contexts outside the selected scope are silently discarded instead of causing 400.",
+    "Create sets status=Draft and approvalStatus=NotApplicable.",
+    "Update and archive require rowVersion from the latest response.",
+    "List excludes archived suites, but GetById does not currently filter them out.",
+    "List is the only FE-04 test-suite endpoint that computes testCaseCount.",
+    "FE-05A order proposal falls back to persisted TestSuite.SelectedEndpointIds when request.SelectedEndpointIds is empty."
+  ],
+  "samples": {
+    "createTestSuiteRequest": {
+      "name": "Checkout Critical Paths",
+      "description": "Scope cho checkout va payment APIs",
+      "apiSpecId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "generationType": "LLMAssisted",
+      "selectedEndpointIds": [
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+        "ad0a1d57-481f-4d89-92ad-a6210a90c8b0"
+      ],
+      "endpointBusinessContexts": {
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53": "Guest checkout khong duoc ap dung voucher chi danh cho thanh vien.",
+        "ad0a1d57-481f-4d89-92ad-a6210a90c8b0": "Payment callback chi hop le sau khi order o trang thai PendingPayment."
+      },
+      "globalBusinessRules": "Don hang tren 5 trieu VND bat buoc xac minh OTP truoc khi xac nhan thanh toan."
+    },
+    "testSuiteListItemResponse": {
+      "id": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "projectId": "f3596048-0ad8-47cc-a4b4-443bd6514d04",
+      "apiSpecId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "name": "Checkout Critical Paths",
+      "description": "Scope cho checkout va payment APIs",
+      "generationType": 2,
+      "status": 0,
+      "approvalStatus": 0,
+      "selectedEndpointIds": [
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+        "ad0a1d57-481f-4d89-92ad-a6210a90c8b0"
+      ],
+      "endpointBusinessContexts": {
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53": "Guest checkout khong duoc ap dung voucher chi danh cho thanh vien."
+      },
+      "globalBusinessRules": "Don hang tren 5 trieu VND bat buoc xac minh OTP truoc khi xac nhan thanh toan.",
+      "selectedEndpointCount": 2,
+      "testCaseCount": 5,
+      "createdById": "fd86f126-48df-4f11-94eb-5362d1813d6d",
+      "createdDateTime": "2026-03-25T10:15:00+07:00",
+      "updatedDateTime": "2026-03-25T11:00:00+07:00",
+      "rowVersion": "9h1bEokj0kG4g4s8C1YfVQ=="
+    },
+    "testSuiteDetailResponse": {
+      "id": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "projectId": "f3596048-0ad8-47cc-a4b4-443bd6514d04",
+      "apiSpecId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "name": "Checkout Critical Paths",
+      "description": "Scope cho checkout va payment APIs",
+      "generationType": 2,
+      "status": 0,
+      "approvalStatus": 0,
+      "selectedEndpointIds": [
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+        "ad0a1d57-481f-4d89-92ad-a6210a90c8b0"
+      ],
+      "endpointBusinessContexts": {
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53": "Guest checkout khong duoc ap dung voucher chi danh cho thanh vien."
+      },
+      "globalBusinessRules": "Don hang tren 5 trieu VND bat buoc xac minh OTP truoc khi xac nhan thanh toan.",
+      "selectedEndpointCount": 2,
+      "testCaseCount": 0,
+      "createdById": "fd86f126-48df-4f11-94eb-5362d1813d6d",
+      "createdDateTime": "2026-03-25T10:15:00+07:00",
+      "updatedDateTime": "2026-03-25T11:00:00+07:00",
+      "rowVersion": "9h1bEokj0kG4g4s8C1YfVQ=="
+    },
+    "problemDetails409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Du lieu da bi thay doi boi nguoi khac. Vui long tai lai va thu lai.",
+      "message": "Du lieu da bi thay doi boi nguoi khac. Vui long tai lai va thu lai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "CONCURRENCY_CONFLICT"
+    }
+  },
+  "relatedNotes": [
+    "There is no FE-04 endpoint that returns project-wide scope or all endpoints automatically. FE must send the explicit endpoint selection.",
+    "The downstream FE-05A endpoint lives under /api/test-suites/{suiteId}/order-proposals and can reuse the persisted scope snapshot from FE-04."
+  ]
+}

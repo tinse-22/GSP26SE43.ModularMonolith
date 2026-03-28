@@ -1,0 +1,2977 @@
+{
+  "module": "Identity",
+  "source": {
+    "openapi": "swagger.json (OpenAPI 3.0.4) reconciled with current controller source on 2026-03-25",
+    "version": "1"
+  },
+  "auth": {
+    "scheme": "Bearer",
+    "tokenFlow": {
+      "loginEndpoint": "/api/Auth/login",
+      "refreshEndpoint": "/api/Auth/refresh-token",
+      "logoutEndpoint": "/api/Auth/logout"
+    },
+    "requiredHeaders": [
+      {
+        "name": "Authorization",
+        "format": "Bearer <token>",
+        "required": true
+      },
+      {
+        "name": "Cookie",
+        "format": "ca_refresh_token=<token>",
+        "required": false
+      }
+    ]
+  },
+  "features": [
+    {
+      "name": "Authentication",
+      "endpoints": [
+        {
+          "operationId": "Auth_Register",
+          "method": "POST",
+          "path": "/api/Auth/register",
+          "summary": "Self-register a new end-user account and send email confirmation.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:RegisterModel",
+            "requiredFields": [
+              "email",
+              "password",
+              "confirmPassword"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "password",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 6,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "confirmPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "must equal password",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 201,
+              "schemaRef": "source:RegisterResponseModel",
+              "notes": "Creates a user, assigns the default User role, creates a profile row, and sends a confirmation email."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Validation failure, duplicate email, or identity password policy failure."
+            },
+            {
+              "status": 429,
+              "schemaRef": "inline:RateLimitResponse",
+              "notes": "Auth rate limit exceeded."
+            },
+            {
+              "status": 500,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Unexpected server error."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAuthService.register",
+            "recommendedHook": "useRegisterMutation",
+            "cacheKey": "identity.auth.register",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {
+              "email": "new.user@example.com",
+              "password": "Secret123!",
+              "confirmPassword": "Secret123!"
+            },
+            "success": {
+              "userId": "11111111-1111-1111-1111-111111111111",
+              "email": "new.user@example.com",
+              "message": "Registration succeeded. Check email to confirm the account.",
+              "emailConfirmationRequired": true
+            },
+            "error": {
+              "error": "Email is already registered."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_Login",
+          "method": "POST",
+          "path": "/api/Auth/login",
+          "summary": "Authenticate by email and password, then return an access token and set the refresh-token cookie.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/LoginModel",
+            "requiredFields": [
+              "email",
+              "password"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "password",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "rememberMe",
+                "type": "boolean",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 0,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:LoginResponseModelWithoutRefreshToken",
+              "notes": "JSON body contains accessToken, tokenType, expiresIn, and user. Refresh token is stored only in the HttpOnly ca_refresh_token cookie because RefreshToken is marked JsonIgnore in source."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error }",
+              "notes": "Unconfirmed email, locked account, or invalid payload."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Invalid email or password."
+            },
+            {
+              "status": 429,
+              "schemaRef": "inline:RateLimitResponse",
+              "notes": "Auth rate limit exceeded."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAuthService.login",
+            "recommendedHook": "useLoginMutation",
+            "cacheKey": "identity.auth.session",
+            "invalidateOn": [
+              "Auth_GetCurrentUser",
+              "Auth_GetProfile"
+            ]
+          },
+          "examples": {
+            "request": {
+              "email": "user@example.com",
+              "password": "Secret123!",
+              "rememberMe": false
+            },
+            "success": {
+              "accessToken": "<jwt>",
+              "tokenType": "Bearer",
+              "expiresIn": 3600,
+              "user": {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "userName": "user@example.com",
+                "email": "user@example.com",
+                "emailConfirmed": true,
+                "roles": [
+                  "User"
+                ]
+              }
+            },
+            "error": {
+              "error": "Invalid email or password."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_RefreshToken",
+          "method": "POST",
+          "path": "/api/Auth/refresh-token",
+          "summary": "Rotate the refresh token and issue a new access token. Refresh token can come from the request body or HttpOnly cookie.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": false,
+            "schemaRef": "source:RefreshTokenModelOptional",
+            "requiredFields": [],
+            "fieldRules": [
+              {
+                "field": "refreshToken",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 2048,
+                "pattern": "",
+                "nullable": true
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Cookie",
+                "type": "string",
+                "required": false,
+                "default": null,
+                "allowedValues": [],
+                "description": "Optional ca_refresh_token cookie fallback when request body is empty."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:LoginResponseModelWithoutRefreshToken",
+              "notes": "Returns a new access token and overwrites the refresh-token cookie."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error }",
+              "notes": "Missing refresh token or invalid request payload."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Refresh token invalid, expired, or user no longer exists."
+            },
+            {
+              "status": 429,
+              "schemaRef": "inline:RateLimitResponse",
+              "notes": "Auth rate limit exceeded."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAuthService.refreshToken",
+            "recommendedHook": "useRefreshTokenMutation",
+            "cacheKey": "identity.auth.refresh",
+            "invalidateOn": [
+              "Auth_GetCurrentUser",
+              "Auth_GetProfile"
+            ]
+          },
+          "examples": {
+            "request": {
+              "refreshToken": "<refresh-token>"
+            },
+            "success": {
+              "accessToken": "<new-jwt>",
+              "tokenType": "Bearer",
+              "expiresIn": 3600,
+              "user": {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "userName": "user@example.com",
+                "email": "user@example.com",
+                "roles": [
+                  "User"
+                ]
+              }
+            },
+            "error": {
+              "error": "Refresh token is invalid or expired."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_Logout",
+          "method": "POST",
+          "path": "/api/Auth/logout",
+          "summary": "Revoke the active refresh token, blacklist the current access token, and clear the refresh-token cookie.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Refresh token revoked and access token blacklisted."
+            },
+            {
+              "status": 401,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Missing or invalid bearer token."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAuthService.logout",
+            "recommendedHook": "useLogoutMutation",
+            "cacheKey": "identity.auth.logout",
+            "invalidateOn": [
+              "Auth_GetCurrentUser",
+              "Auth_GetProfile",
+              "Users_GetUsers",
+              "Users_GetUser"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "message": "Logout succeeded."
+            },
+            "error": {
+              "message": "Unauthorized"
+            }
+          }
+        },
+        {
+          "operationId": "Auth_GetCurrentUser",
+          "method": "GET",
+          "path": "/api/Auth/me",
+          "summary": "Get the authenticated user's lightweight identity and role summary.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:UserInfoModel",
+              "notes": "Includes profile-derived displayName/avatar/timezone plus role names."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "No authenticated principal or user no longer exists."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAuthService.getCurrentUser",
+            "recommendedHook": "useCurrentUserQuery",
+            "cacheKey": "identity.me",
+            "invalidateOn": [
+              "Auth_Login",
+              "Auth_RefreshToken",
+              "Auth_Logout",
+              "Auth_UpdateProfile",
+              "Auth_UploadAvatar",
+              "Auth_ChangePassword"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "userName": "user@example.com",
+              "email": "user@example.com",
+              "emailConfirmed": true,
+              "displayName": "User",
+              "avatarUrl": "avatars/11111111-1111-1111-1111-111111111111/avatar.jpg",
+              "timezone": "Asia/Ho_Chi_Minh",
+              "roles": [
+                "User"
+              ]
+            },
+            "error": {
+              "error": "User is not authenticated."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "endpoints": [
+        {
+          "operationId": "Auth_GetProfile",
+          "method": "GET",
+          "path": "/api/Auth/me/profile",
+          "summary": "Get the authenticated user's full profile model.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:UserProfileModel",
+              "notes": "Current checked-in swagger does not expose this route; source controller is authoritative."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Missing or invalid bearer token."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Profile lookup failed."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityProfileService.getProfile",
+            "recommendedHook": "useProfileQuery",
+            "cacheKey": "identity.profile",
+            "invalidateOn": [
+              "Auth_UpdateProfile",
+              "Auth_UploadAvatar",
+              "Auth_Login",
+              "Auth_RefreshToken"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "userId": "11111111-1111-1111-1111-111111111111",
+              "email": "user@example.com",
+              "userName": "user@example.com",
+              "displayName": "User",
+              "avatarUrl": "avatars/11111111-1111-1111-1111-111111111111/avatar.jpg",
+              "timezone": "Asia/Ho_Chi_Minh",
+              "phoneNumber": "+84901234567",
+              "roles": [
+                "User"
+              ]
+            },
+            "error": {
+              "error": "User is not authenticated."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_UpdateProfile",
+          "method": "PUT",
+          "path": "/api/Auth/me/profile",
+          "summary": "Update the authenticated user's editable profile fields.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:UpdateProfileModel",
+            "requiredFields": [],
+            "fieldRules": [
+              {
+                "field": "displayName",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 200,
+                "pattern": "",
+                "nullable": true
+              },
+              {
+                "field": "timezone",
+                "type": "string",
+                "format": "iana-timezone",
+                "enum": [],
+                "min": 0,
+                "max": 50,
+                "pattern": "",
+                "nullable": true
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:UserProfileModel",
+              "notes": "Only displayName and timezone are currently bindable over JSON because UserName, Email, and PhoneNumber are marked JsonIgnore in source."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Validation failure or duplicate identity data if server-side source is changed later to bind more fields."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Missing or invalid bearer token."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityProfileService.updateProfile",
+            "recommendedHook": "useUpdateProfileMutation",
+            "cacheKey": "identity.profile.update",
+            "invalidateOn": [
+              "Auth_GetProfile",
+              "Auth_GetCurrentUser"
+            ]
+          },
+          "examples": {
+            "request": {
+              "displayName": "Updated Name",
+              "timezone": "Asia/Ho_Chi_Minh"
+            },
+            "success": {
+              "userId": "11111111-1111-1111-1111-111111111111",
+              "displayName": "Updated Name",
+              "timezone": "Asia/Ho_Chi_Minh"
+            },
+            "error": {
+              "errors": {
+                "displayName": [
+                  "Display name cannot exceed 200 characters."
+                ]
+              },
+              "traceId": "00-abc-xyz-00"
+            }
+          }
+        },
+        {
+          "operationId": "Auth_UploadAvatar",
+          "method": "POST",
+          "path": "/api/Auth/me/avatar",
+          "summary": "Upload an avatar image for the authenticated user.",
+          "authRequired": true,
+          "request": {
+            "contentType": "multipart/form-data",
+            "required": true,
+            "schemaRef": "source:AvatarUploadForm",
+            "requiredFields": [
+              "file"
+            ],
+            "fieldRules": [
+              {
+                "field": "file",
+                "type": "string",
+                "format": "binary",
+                "enum": [],
+                "min": 1,
+                "max": 2097152,
+                "pattern": "server validates magic bytes for jpeg|png|gif|webp",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:AvatarUploadResponseModel",
+              "notes": "Stores the file through IFileStorageManager and replaces the previous avatar if one exists."
+            },
+            {
+              "status": 400,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Missing file, unsupported file type, or file exceeds 2 MB hard limit."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Missing or invalid bearer token."
+            },
+            {
+              "status": 413,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Request body too large."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityProfileService.uploadAvatar",
+            "recommendedHook": "useUploadAvatarMutation",
+            "cacheKey": "identity.profile.avatar",
+            "invalidateOn": [
+              "Auth_GetProfile",
+              "Auth_GetCurrentUser"
+            ]
+          },
+          "examples": {
+            "request": {
+              "file": "<multipart binary image>"
+            },
+            "success": {
+              "avatarUrl": "avatars/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222.jpg",
+              "message": "Avatar uploaded successfully."
+            },
+            "error": {
+              "error": "Unsupported file format. Accepted: JPEG, PNG, GIF, WebP."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AccountLifecycle",
+      "endpoints": [
+        {
+          "operationId": "Auth_ForgotPassword",
+          "method": "POST",
+          "path": "/api/Auth/forgot-password",
+          "summary": "Request a password-reset email. Response is intentionally non-enumerating.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/ForgotPasswordModel",
+            "requiredFields": [
+              "email"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Always returns success-style text whether or not the email exists."
+            },
+            {
+              "status": 400,
+              "schemaRef": "ValidationProblemDetails",
+              "notes": "Invalid payload."
+            },
+            {
+              "status": 429,
+              "schemaRef": "inline:RateLimitResponse",
+              "notes": "Password flow rate limit exceeded."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAccountService.forgotPassword",
+            "recommendedHook": "useForgotPasswordMutation",
+            "cacheKey": "identity.password.forgot",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {
+              "email": "user@example.com"
+            },
+            "success": {
+              "message": "If the account exists, a reset email has been sent."
+            },
+            "error": {
+              "errors": {
+                "email": [
+                  "The Email field is not a valid e-mail address."
+                ]
+              },
+              "traceId": "00-abc-xyz-00"
+            }
+          }
+        },
+        {
+          "operationId": "Auth_ResetPassword",
+          "method": "POST",
+          "path": "/api/Auth/reset-password",
+          "summary": "Reset password with an emailed token.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/ResetPasswordModel",
+            "requiredFields": [
+              "email",
+              "token",
+              "newPassword",
+              "confirmPassword"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "token",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 4096,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "newPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 6,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "confirmPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "must equal newPassword",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Password changed successfully and confirmation email is sent."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Invalid token, unknown email, or password-policy failure."
+            },
+            {
+              "status": 429,
+              "schemaRef": "inline:RateLimitResponse",
+              "notes": "Password flow rate limit exceeded."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAccountService.resetPassword",
+            "recommendedHook": "useResetPasswordMutation",
+            "cacheKey": "identity.password.reset",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {
+              "email": "user@example.com",
+              "token": "<email-token>",
+              "newPassword": "NewSecret123!",
+              "confirmPassword": "NewSecret123!"
+            },
+            "success": {
+              "message": "Password reset succeeded."
+            },
+            "error": {
+              "errors": [
+                "Invalid token."
+              ]
+            }
+          }
+        },
+        {
+          "operationId": "Auth_ChangePassword",
+          "method": "POST",
+          "path": "/api/Auth/change-password",
+          "summary": "Change the authenticated user's password and force re-login.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/ChangePasswordModel",
+            "requiredFields": [
+              "currentPassword",
+              "newPassword",
+              "confirmPassword"
+            ],
+            "fieldRules": [
+              {
+                "field": "currentPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "newPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 6,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "confirmPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "must equal newPassword",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Refresh tokens are revoked and the current access token is blacklisted."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Current password incorrect or new password fails identity validation."
+            },
+            {
+              "status": 401,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "Missing or invalid bearer token."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAccountService.changePassword",
+            "recommendedHook": "useChangePasswordMutation",
+            "cacheKey": "identity.password.change",
+            "invalidateOn": [
+              "Auth_Logout",
+              "Auth_GetCurrentUser",
+              "Auth_GetProfile"
+            ]
+          },
+          "examples": {
+            "request": {
+              "currentPassword": "OldSecret123!",
+              "newPassword": "NewSecret123!",
+              "confirmPassword": "NewSecret123!"
+            },
+            "success": {
+              "message": "Password changed successfully. Please sign in again."
+            },
+            "error": {
+              "error": "Current password is incorrect."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_ConfirmEmail",
+          "method": "POST",
+          "path": "/api/Auth/confirm-email",
+          "summary": "Confirm a pending email address with token and email.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/ConfirmEmailModel",
+            "requiredFields": [
+              "email",
+              "token"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "token",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 4096,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Returns success if confirmation succeeds or if the email is already confirmed."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Invalid request, invalid token, or unknown email."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAccountService.confirmEmail",
+            "recommendedHook": "useConfirmEmailMutation",
+            "cacheKey": "identity.email.confirm",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {
+              "email": "user@example.com",
+              "token": "<email-token>"
+            },
+            "success": {
+              "message": "Email confirmed successfully."
+            },
+            "error": {
+              "error": "Invalid request."
+            }
+          }
+        },
+        {
+          "operationId": "Auth_ResendConfirmationEmail",
+          "method": "POST",
+          "path": "/api/Auth/resend-confirmation-email",
+          "summary": "Resend the email-confirmation message. Response is intentionally non-enumerating.",
+          "authRequired": false,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "#/components/schemas/ForgotPasswordModel",
+            "requiredFields": [
+              "email"
+            ],
+            "fieldRules": [
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": []
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Always returns success-style text if the account is missing or already confirmed."
+            },
+            {
+              "status": 400,
+              "schemaRef": "ValidationProblemDetails",
+              "notes": "Invalid payload."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityAccountService.resendConfirmationEmail",
+            "recommendedHook": "useResendConfirmationEmailMutation",
+            "cacheKey": "identity.email.resend",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {
+              "email": "user@example.com"
+            },
+            "success": {
+              "message": "If the account exists and is unconfirmed, a confirmation email has been sent."
+            },
+            "error": {
+              "errors": {
+                "email": [
+                  "The Email field is not a valid e-mail address."
+                ]
+              },
+              "traceId": "00-abc-xyz-00"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "UserAdministration",
+      "endpoints": [
+        {
+          "operationId": "Users_GetUsers",
+          "method": "GET",
+          "path": "/api/Users",
+          "summary": "List users with optional pagination, search, and filters. Declared policy is Permission:GetUsers.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [
+              {
+                "name": "page",
+                "type": "integer",
+                "required": false,
+                "default": 1,
+                "allowedValues": [],
+                "description": "1-based page index. If omitted together with pageSize, controller returns all users (legacy behavior)."
+              },
+              {
+                "name": "pageSize",
+                "type": "integer",
+                "required": false,
+                "default": 20,
+                "allowedValues": [],
+                "description": "Page size when page is provided. Server caps this at 100."
+              },
+              {
+                "name": "search",
+                "type": "string",
+                "required": false,
+                "default": null,
+                "allowedValues": [],
+                "description": "Searches email, username, and phone number."
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "required": false,
+                "default": null,
+                "allowedValues": [],
+                "description": "Filter by role name."
+              },
+              {
+                "name": "emailConfirmed",
+                "type": "boolean",
+                "required": false,
+                "default": null,
+                "allowedValues": [
+                  true,
+                  false
+                ],
+                "description": "Filter by email confirmation status."
+              },
+              {
+                "name": "isLocked",
+                "type": "boolean",
+                "required": false,
+                "default": null,
+                "allowedValues": [
+                  true,
+                  false
+                ],
+                "description": "Filter by lockout status."
+              }
+            ],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": true,
+            "pagination": {
+              "pageParam": "page",
+              "sizeParam": "pageSize",
+              "defaultSize": 20,
+              "maxSize": 100
+            },
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": true,
+            "searchParam": "search"
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:Paged<UserModel>",
+              "notes": "Server always sorts by email ascending."
+            },
+            {
+              "status": 401,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Missing or invalid bearer token."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.getUsers",
+            "recommendedHook": "useUsersQuery",
+            "cacheKey": "identity.users.list",
+            "invalidateOn": [
+              "Users_CreateUser",
+              "Users_UpdateUser",
+              "Users_DeleteUser",
+              "Users_AssignRole",
+              "Users_RemoveRole",
+              "Users_LockUser",
+              "Users_UnlockUser"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "totalItems": 1,
+              "items": [
+                {
+                  "id": "11111111-1111-1111-1111-111111111111",
+                  "email": "user@example.com",
+                  "userName": "user@example.com",
+                  "emailConfirmed": true
+                }
+              ],
+              "page": 1,
+              "pageSize": 20,
+              "totalPages": 1,
+              "hasPreviousPage": false,
+              "hasNextPage": false
+            },
+            "error": {
+              "message": "Unauthorized"
+            }
+          }
+        },
+        {
+          "operationId": "Users_GetUser",
+          "method": "GET",
+          "path": "/api/Users/{id}",
+          "summary": "Get one user by id. Declared policy is Permission:GetUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:UserModel",
+              "notes": "Returns the admin-facing user DTO."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.getUser",
+            "recommendedHook": "useUserDetailQuery",
+            "cacheKey": "identity.users.detail",
+            "invalidateOn": [
+              "Users_UpdateUser",
+              "Users_SetPassword",
+              "Users_DeleteUser",
+              "Users_AssignRole",
+              "Users_RemoveRole",
+              "Users_LockUser",
+              "Users_UnlockUser"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "userName": "user@example.com",
+              "email": "user@example.com",
+              "emailConfirmed": true,
+              "lockoutEnabled": true,
+              "accessFailedCount": 0
+            },
+            "error": {
+              "title": "Not Found",
+              "status": 404,
+              "message": "Entity User was not found."
+            }
+          }
+        },
+        {
+          "operationId": "Users_CreateUser",
+          "method": "POST",
+          "path": "/api/Users",
+          "summary": "Create a user from the admin side. Declared policy is Permission:AddUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:CreateUserModel",
+            "requiredFields": [
+              "email",
+              "password"
+            ],
+            "fieldRules": [
+              {
+                "field": "userName",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 256,
+                "pattern": "",
+                "nullable": true
+              },
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "password",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 6,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "phoneNumber",
+                "type": "string",
+                "format": "phone",
+                "enum": [],
+                "min": 0,
+                "max": 32,
+                "pattern": "",
+                "nullable": true
+              },
+              {
+                "field": "roles",
+                "type": "array",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 0,
+                "pattern": "array of role names; defaults to ['User']",
+                "nullable": true
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 201,
+              "schemaRef": "inline:CreatedUserResponse",
+              "notes": "Response shape is { user, roles, emailConfirmationRequired, message }. Checked-in swagger is stale here because it still models roleName instead of roles[]."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Unknown role, duplicate email, or identity creation failure."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.createUser",
+            "recommendedHook": "useCreateUserMutation",
+            "cacheKey": "identity.users.create",
+            "invalidateOn": [
+              "Users_GetUsers"
+            ]
+          },
+          "examples": {
+            "request": {
+              "userName": "admin.created",
+              "email": "created@example.com",
+              "password": "Secret123!",
+              "phoneNumber": "+84901234567",
+              "roles": [
+                "User"
+              ]
+            },
+            "success": {
+              "user": {
+                "id": "33333333-3333-3333-3333-333333333333",
+                "email": "created@example.com",
+                "userName": "admin.created"
+              },
+              "roles": [
+                "User"
+              ],
+              "emailConfirmationRequired": true,
+              "message": "User created successfully."
+            },
+            "error": {
+              "error": "Role 'PowerUser' does not exist."
+            }
+          }
+        },
+        {
+          "operationId": "Users_UpdateUser",
+          "method": "PUT",
+          "path": "/api/Users/{id}",
+          "summary": "Replace mutable admin-facing user fields. Declared policy is Permission:UpdateUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:UserModel",
+            "requiredFields": [
+              "userName",
+              "email"
+            ],
+            "fieldRules": [
+              {
+                "field": "userName",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "email",
+                "type": "string",
+                "format": "email",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "lockoutEnd",
+                "type": "string",
+                "format": "date-time",
+                "enum": [],
+                "min": 0,
+                "max": 0,
+                "pattern": "",
+                "nullable": true
+              },
+              {
+                "field": "accessFailedCount",
+                "type": "number",
+                "format": "int32",
+                "enum": [],
+                "min": 0,
+                "max": 2147483647,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:UserModel",
+              "notes": "Treat this as a full-object update. Omitted fields become null/default because controller assigns properties directly."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.updateUser",
+            "recommendedHook": "useUpdateUserMutation",
+            "cacheKey": "identity.users.update",
+            "invalidateOn": [
+              "Users_GetUsers",
+              "Users_GetUser"
+            ]
+          },
+          "examples": {
+            "request": {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "userName": "user@example.com",
+              "normalizedUserName": "USER@EXAMPLE.COM",
+              "email": "user@example.com",
+              "normalizedEmail": "USER@EXAMPLE.COM",
+              "emailConfirmed": true,
+              "phoneNumber": "+84901234567",
+              "phoneNumberConfirmed": false,
+              "twoFactorEnabled": false,
+              "concurrencyStamp": null,
+              "securityStamp": null,
+              "lockoutEnabled": true,
+              "lockoutEnd": null,
+              "accessFailedCount": 0,
+              "password": null
+            },
+            "success": {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "userName": "user@example.com",
+              "email": "user@example.com"
+            },
+            "error": {
+              "title": "Not Found",
+              "status": 404
+            }
+          }
+        },
+        {
+          "operationId": "Users_SetPassword",
+          "method": "PUT",
+          "path": "/api/Users/{id}/password",
+          "summary": "Admin-set a user's password. Declared policy is Permission:SetPassword.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:SetPasswordModel",
+            "requiredFields": [
+              "password"
+            ],
+            "fieldRules": [
+              {
+                "field": "password",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 1,
+                "max": 100,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "confirmPassword",
+                "type": "string",
+                "format": "password",
+                "enum": [],
+                "min": 0,
+                "max": 100,
+                "pattern": "not validated server-side in current controller",
+                "nullable": true
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:EmptySuccessResponse",
+              "notes": "Password reset token is generated internally and email notification is sent to the target user."
+            },
+            {
+              "status": 400,
+              "schemaRef": "inline:IdentityErrorsResponse",
+              "notes": "Identity reset-password failure."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.setPassword",
+            "recommendedHook": "useSetUserPasswordMutation",
+            "cacheKey": "identity.users.setPassword",
+            "invalidateOn": [
+              "Users_GetUser"
+            ]
+          },
+          "examples": {
+            "request": {
+              "password": "NewSecret123!",
+              "confirmPassword": "NewSecret123!"
+            },
+            "success": {},
+            "error": {
+              "errors": [
+                "Passwords must have at least one digit."
+              ]
+            }
+          }
+        },
+        {
+          "operationId": "Users_DeleteUser",
+          "method": "DELETE",
+          "path": "/api/Users/{id}",
+          "summary": "Delete a user. Declared policy is Permission:DeleteUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:EmptySuccessResponse",
+              "notes": "User deleted."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.deleteUser",
+            "recommendedHook": "useDeleteUserMutation",
+            "cacheKey": "identity.users.delete",
+            "invalidateOn": [
+              "Users_GetUsers"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {},
+            "error": {
+              "title": "Not Found",
+              "status": 404
+            }
+          }
+        },
+        {
+          "operationId": "Users_SendPasswordResetEmail",
+          "method": "POST",
+          "path": "/api/Users/{id}/password-reset-email",
+          "summary": "Admin-send a password-reset email to a user. Declared policy is Permission:SendResetPasswordEmail.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Source route name differs from checked-in swagger, which still shows /passwordresetemail."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.sendPasswordResetEmail",
+            "recommendedHook": "useSendPasswordResetEmailMutation",
+            "cacheKey": "identity.users.sendResetEmail",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "message": "Password reset email sent successfully."
+            },
+            "error": {
+              "error": "User not found."
+            }
+          }
+        },
+        {
+          "operationId": "Users_SendEmailConfirmation",
+          "method": "POST",
+          "path": "/api/Users/{id}/email-confirmation",
+          "summary": "Admin-send an email-confirmation message to a user. Declared policy is Permission:SendConfirmationEmailAddressEmail.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Source route name differs from checked-in swagger, which still shows /emailaddressconfirmation."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.sendEmailConfirmation",
+            "recommendedHook": "useSendEmailConfirmationMutation",
+            "cacheKey": "identity.users.sendConfirmation",
+            "invalidateOn": []
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "message": "Confirmation email sent successfully."
+            },
+            "error": {
+              "error": "User not found."
+            }
+          }
+        },
+        {
+          "operationId": "Users_LockUser",
+          "method": "POST",
+          "path": "/api/Users/{id}/lock",
+          "summary": "Lock or ban a user account. Declared policy is Permission:UpdateUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:LockUserModel",
+            "requiredFields": [],
+            "fieldRules": [
+              {
+                "field": "days",
+                "type": "number",
+                "format": "int32",
+                "enum": [],
+                "min": 1,
+                "max": 2147483647,
+                "pattern": "ignored when permanent is true",
+                "nullable": true
+              },
+              {
+                "field": "permanent",
+                "type": "boolean",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 0,
+                "pattern": "",
+                "nullable": false
+              },
+              {
+                "field": "reason",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 0,
+                "max": 500,
+                "pattern": "",
+                "nullable": true
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:LockUserResponse",
+              "notes": "Returns a message and lockoutEnd timestamp."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Invalid lock request or identity failure."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.lockUser",
+            "recommendedHook": "useLockUserMutation",
+            "cacheKey": "identity.users.lock",
+            "invalidateOn": [
+              "Users_GetUsers",
+              "Users_GetUser"
+            ]
+          },
+          "examples": {
+            "request": {
+              "days": 30,
+              "permanent": false,
+              "reason": "Repeated abuse reports"
+            },
+            "success": {
+              "message": "User locked until 2026-04-24 10:00:00 UTC.",
+              "lockoutEnd": "2026-04-24T10:00:00Z"
+            },
+            "error": {
+              "error": "User not found."
+            }
+          }
+        },
+        {
+          "operationId": "Users_UnlockUser",
+          "method": "POST",
+          "path": "/api/Users/{id}/unlock",
+          "summary": "Unlock a user account and reset access-failed count. Declared policy is Permission:UpdateUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Unlocks account and sends an email notification."
+            },
+            {
+              "status": 400,
+              "schemaRef": "inline:IdentityErrorsResponse",
+              "notes": "Identity unlock failure."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.unlockUser",
+            "recommendedHook": "useUnlockUserMutation",
+            "cacheKey": "identity.users.unlock",
+            "invalidateOn": [
+              "Users_GetUsers",
+              "Users_GetUser"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "message": "User has been unlocked."
+            },
+            "error": {
+              "error": "User not found."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RolePermissionManagement",
+      "endpoints": [
+        {
+          "operationId": "Roles_GetRoles",
+          "method": "GET",
+          "path": "/api/Roles",
+          "summary": "List roles. Declared policy is Permission:GetRoles.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:RoleModel[]",
+              "notes": "Controller returns mapped RoleModel items, not raw entity graphs."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityRoleService.getRoles",
+            "recommendedHook": "useRolesQuery",
+            "cacheKey": "identity.roles.list",
+            "invalidateOn": [
+              "Roles_CreateRole",
+              "Roles_UpdateRole",
+              "Roles_DeleteRole"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": [
+              {
+                "id": "44444444-4444-4444-4444-444444444444",
+                "name": "Admin",
+                "normalizedName": "ADMIN"
+              }
+            ],
+            "error": {}
+          }
+        },
+        {
+          "operationId": "Roles_GetRole",
+          "method": "GET",
+          "path": "/api/Roles/{id}",
+          "summary": "Get one role by id. Declared policy is Permission:GetRole.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Role id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:RoleModel",
+              "notes": "Role detail."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Role not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityRoleService.getRole",
+            "recommendedHook": "useRoleDetailQuery",
+            "cacheKey": "identity.roles.detail",
+            "invalidateOn": [
+              "Roles_UpdateRole",
+              "Roles_DeleteRole"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "Admin",
+              "normalizedName": "ADMIN"
+            },
+            "error": {
+              "title": "Not Found",
+              "status": 404
+            }
+          }
+        },
+        {
+          "operationId": "Roles_CreateRole",
+          "method": "POST",
+          "path": "/api/Roles",
+          "summary": "Create a role. Declared policy is Permission:AddRole.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:RoleModel",
+            "requiredFields": [
+              "name"
+            ],
+            "fieldRules": [
+              {
+                "field": "name",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 201,
+              "schemaRef": "source:RoleModel",
+              "notes": "Server computes normalizedName from name."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityRoleService.createRole",
+            "recommendedHook": "useCreateRoleMutation",
+            "cacheKey": "identity.roles.create",
+            "invalidateOn": [
+              "Roles_GetRoles"
+            ]
+          },
+          "examples": {
+            "request": {
+              "name": "Reviewer"
+            },
+            "success": {
+              "id": "55555555-5555-5555-5555-555555555555",
+              "name": "Reviewer",
+              "normalizedName": "REVIEWER"
+            },
+            "error": {}
+          }
+        },
+        {
+          "operationId": "Roles_UpdateRole",
+          "method": "PUT",
+          "path": "/api/Roles/{id}",
+          "summary": "Update a role name. Declared policy is Permission:UpdateRole.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:RoleModel",
+            "requiredFields": [
+              "name"
+            ],
+            "fieldRules": [
+              {
+                "field": "name",
+                "type": "string",
+                "format": "",
+                "enum": [],
+                "min": 1,
+                "max": 256,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Role id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:RoleModel",
+              "notes": "Server recomputes normalizedName from name."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Role not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityRoleService.updateRole",
+            "recommendedHook": "useUpdateRoleMutation",
+            "cacheKey": "identity.roles.update",
+            "invalidateOn": [
+              "Roles_GetRoles",
+              "Roles_GetRole"
+            ]
+          },
+          "examples": {
+            "request": {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "Support",
+              "normalizedName": "SUPPORT"
+            },
+            "success": {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "Support",
+              "normalizedName": "SUPPORT"
+            },
+            "error": {
+              "title": "Not Found",
+              "status": 404
+            }
+          }
+        },
+        {
+          "operationId": "Roles_DeleteRole",
+          "method": "DELETE",
+          "path": "/api/Roles/{id}",
+          "summary": "Delete a role. Declared policy is Permission:DeleteRole.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Role id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:EmptySuccessResponse",
+              "notes": "Role deleted."
+            },
+            {
+              "status": 404,
+              "schemaRef": "application/problem+json (ProblemDetails)",
+              "notes": "Role not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityRoleService.deleteRole",
+            "recommendedHook": "useDeleteRoleMutation",
+            "cacheKey": "identity.roles.delete",
+            "invalidateOn": [
+              "Roles_GetRoles"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {},
+            "error": {
+              "title": "Not Found",
+              "status": 404
+            }
+          }
+        },
+        {
+          "operationId": "Users_GetUserRoles",
+          "method": "GET",
+          "path": "/api/Users/{id}/roles",
+          "summary": "List roles assigned to a user. Declared policy is Permission:GetUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "source:RoleModel[]",
+              "notes": "Current checked-in swagger does not expose this route; source controller is authoritative."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.getUserRoles",
+            "recommendedHook": "useUserRolesQuery",
+            "cacheKey": "identity.users.roles",
+            "invalidateOn": [
+              "Users_AssignRole",
+              "Users_RemoveRole"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": [
+              {
+                "id": "44444444-4444-4444-4444-444444444444",
+                "name": "Admin",
+                "normalizedName": "ADMIN"
+              }
+            ],
+            "error": {
+              "error": "User not found."
+            }
+          }
+        },
+        {
+          "operationId": "Users_AssignRole",
+          "method": "POST",
+          "path": "/api/Users/{id}/roles",
+          "summary": "Assign one role to a user by roleId. Declared policy is Permission:UpdateUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "application/json",
+            "required": true,
+            "schemaRef": "source:AssignRoleModel",
+            "requiredFields": [
+              "roleId"
+            ],
+            "fieldRules": [
+              {
+                "field": "roleId",
+                "type": "string",
+                "format": "uuid",
+                "enum": [],
+                "min": 1,
+                "max": 36,
+                "pattern": "",
+                "nullable": false
+              }
+            ]
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Role assigned."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: ValidationProblemDetails | { error } | { errors[] }",
+              "notes": "Role not found, already assigned, or identity failure."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.assignRole",
+            "recommendedHook": "useAssignUserRoleMutation",
+            "cacheKey": "identity.users.assignRole",
+            "invalidateOn": [
+              "Users_GetUsers",
+              "Users_GetUser",
+              "Users_GetUserRoles"
+            ]
+          },
+          "examples": {
+            "request": {
+              "roleId": "44444444-4444-4444-4444-444444444444"
+            },
+            "success": {
+              "message": "Role assigned successfully."
+            },
+            "error": {
+              "error": "User already has this role."
+            }
+          }
+        },
+        {
+          "operationId": "Users_RemoveRole",
+          "method": "DELETE",
+          "path": "/api/Users/{id}/roles/{roleId}",
+          "summary": "Remove one role from a user. Declared policy is Permission:UpdateUser.",
+          "authRequired": true,
+          "request": {
+            "contentType": "none",
+            "required": false,
+            "schemaRef": null,
+            "requiredFields": [],
+            "fieldRules": []
+          },
+          "filters": {
+            "query": [],
+            "path": [
+              {
+                "name": "id",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "User id (uuid)."
+              },
+              {
+                "name": "roleId",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Role id (uuid)."
+              }
+            ],
+            "header": [
+              {
+                "name": "Authorization",
+                "type": "string",
+                "required": true,
+                "default": null,
+                "allowedValues": [],
+                "description": "Bearer access token."
+              }
+            ]
+          },
+          "listBehavior": {
+            "supportsPagination": false,
+            "pagination": null,
+            "supportsSort": false,
+            "sortParam": null,
+            "allowedSortFields": [],
+            "supportsSearch": false,
+            "searchParam": null
+          },
+          "responses": [
+            {
+              "status": 200,
+              "schemaRef": "inline:MessageResponse",
+              "notes": "Role removed."
+            },
+            {
+              "status": 400,
+              "schemaRef": "mixed: { error } | { errors[] }",
+              "notes": "Role not found, user does not have the role, or identity failure."
+            },
+            {
+              "status": 404,
+              "schemaRef": "inline:ErrorResponse",
+              "notes": "User not found."
+            }
+          ],
+          "frontendMapping": {
+            "serviceName": "identityUserAdminService.removeRole",
+            "recommendedHook": "useRemoveUserRoleMutation",
+            "cacheKey": "identity.users.removeRole",
+            "invalidateOn": [
+              "Users_GetUsers",
+              "Users_GetUser",
+              "Users_GetUserRoles"
+            ]
+          },
+          "examples": {
+            "request": {},
+            "success": {
+              "message": "Role removed successfully."
+            },
+            "error": {
+              "error": "User does not have this role."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "globalFilters": {
+    "namingConvention": "camelCase",
+    "dateFormat": "ISO-8601",
+    "booleanEncoding": "true/false",
+    "nullHandling": "explicit-null"
+  },
+  "integrationChecklist": [
+    "Use source: schema refs as the authority wherever checked-in swagger.json is stale or missing routes.",
+    "Do not read refreshToken from login or refresh JSON bodies on success; the live source hides it with JsonIgnore and stores it in the HttpOnly ca_refresh_token cookie.",
+    "Treat /api/Auth/refresh-token request body as optional; send the refresh token in the body only when cookie-based refresh is unavailable.",
+    "Current source exposes additional routes not present in checked-in swagger.json: /api/Auth/register, /api/Auth/me/profile (GET and PUT), /api/Auth/me/avatar, /api/Users/{id}/roles (GET and POST), /api/Users/{id}/roles/{roleId}, /api/Users/{id}/lock, and /api/Users/{id}/unlock.",
+    "Current source renamed admin email routes to /api/Users/{id}/password-reset-email and /api/Users/{id}/email-confirmation; checked-in swagger.json still uses older names.",
+    "Current source CreateUserModel uses roles[] while checked-in swagger.json still shows roleName.",
+    "Current source UpdateProfileModel only binds displayName and timezone over JSON because userName, email, and phoneNumber are marked JsonIgnore; do not build FE form submission around those hidden fields unless the backend is updated.",
+    "GET /api/Users supports page, pageSize, search, role, emailConfirmed, and isLocked. There is no client-controlled sort parameter; server sorts by email ascending.",
+    "Treat validation errors as mixed shapes: automatic model validation returns application/problem+json with traceId, while controller-authored failures often return { error } or { errors[] }.",
+    "Password-reset and resend-confirmation flows intentionally return success-style 200 responses even when the email does not exist. Do not build FE copy that reveals account existence.",
+    "Declared permission policy names exist on admin endpoints, but the current PermissionRequirementHandler succeeds for any authenticated user. FE should still model admin-only UX around the declared policies, but backend enforcement is currently weaker than the naming suggests."
+  ]
+}

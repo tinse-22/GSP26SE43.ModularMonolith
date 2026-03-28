@@ -1,0 +1,354 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-05-happy-path-test-cases-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "TestCasesController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-cases",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GenerateHappyPathTestCases": "Permission:GenerateTestCases",
+    "ListTestCases": "Permission:GetTestCases",
+    "GetTestCaseDetail": "Permission:GetTestCases"
+  },
+  "excludedControllerEndpoints": [
+    "POST /api/test-suites/{suiteId}/test-cases/generate-boundary-negative",
+    "POST /api/test-suites/{suiteId}/test-cases",
+    "PUT /api/test-suites/{suiteId}/test-cases/{testCaseId}",
+    "DELETE /api/test-suites/{suiteId}/test-cases/{testCaseId}",
+    "PATCH /api/test-suites/{suiteId}/test-cases/{testCaseId}/toggle",
+    "PATCH /api/test-suites/{suiteId}/test-cases/reorder"
+  ],
+  "enums": {
+    "TestTypeQueryAcceptedValues": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "TestTypeResponse": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "TestPriorityResponse": [
+      "Critical",
+      "High",
+      "Medium",
+      "Low"
+    ],
+    "HttpMethodResponse": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "BodyTypeResponse": [
+      "None",
+      "JSON",
+      "FormData",
+      "UrlEncoded",
+      "Raw",
+      "Binary"
+    ],
+    "ExtractFromResponse": [
+      "ResponseBody",
+      "ResponseHeader",
+      "Status"
+    ],
+    "ConflictReasonCodes": [
+      "ORDER_CONFIRMATION_REQUIRED",
+      "CONCURRENCY_CONFLICT",
+      "UNIQUE_CONSTRAINT_VIOLATION"
+    ]
+  },
+  "models": {
+    "GenerateHappyPathTestCasesRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "specificationId: Guid (required by runtime)",
+        "forceRegenerate: bool = false"
+      ],
+      "notes": [
+        "Current implementation does not verify specificationId matches suite.ApiSpecId before calling generation pipeline.",
+        "forceRegenerate only deletes existing HappyPath cases."
+      ]
+    },
+    "GenerateHappyPathResultModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "totalGenerated: int",
+        "endpointsCovered: int",
+        "llmModel: string?",
+        "tokensUsed: int?",
+        "generatedAt: DateTimeOffset",
+        "testCases: GeneratedTestCaseSummary[]"
+      ],
+      "notes": [
+        "When the generation pipeline returns zero test cases, backend still returns 201 with totalGenerated=0."
+      ]
+    },
+    "GeneratedTestCaseSummary": {
+      "properties": [
+        "testCaseId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "httpMethod: string?",
+        "path: string?",
+        "orderIndex: int",
+        "variableCount: int"
+      ]
+    },
+    "TestCaseModel": {
+      "properties": [
+        "id: Guid",
+        "testSuiteId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "description: string?",
+        "testType: string enum",
+        "priority: string enum",
+        "isEnabled: bool",
+        "dependsOnIds: Guid[]",
+        "orderIndex: int",
+        "customOrderIndex: int?",
+        "isOrderCustomized: bool",
+        "tags: string[]",
+        "version: int",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: base64 string?",
+        "request: TestCaseRequestModel?",
+        "expectation: TestCaseExpectationModel?",
+        "variables: TestCaseVariableModel[]"
+      ],
+      "notes": [
+        "dependsOnIds contains test case IDs, not endpoint IDs.",
+        "testType and priority are strings in response because the view model uses enum.ToString()."
+      ]
+    },
+    "TestCaseRequestModel": {
+      "properties": [
+        "id: Guid",
+        "httpMethod: string enum",
+        "url: string",
+        "headers: string? (JSON object encoded as string)",
+        "pathParams: string? (JSON object encoded as string)",
+        "queryParams: string? (JSON object encoded as string)",
+        "bodyType: string enum",
+        "body: string?",
+        "timeout: int"
+      ]
+    },
+    "TestCaseExpectationModel": {
+      "properties": [
+        "id: Guid",
+        "expectedStatus: string? (JSON int array encoded as string)",
+        "responseSchema: string?",
+        "headerChecks: string? (JSON object encoded as string)",
+        "bodyContains: string? (JSON string array encoded as string)",
+        "bodyNotContains: string? (JSON string array encoded as string)",
+        "jsonPathChecks: string? (JSON object encoded as string)",
+        "maxResponseTime: int?"
+      ],
+      "notes": [
+        "LLM generation defaults expectedStatus to [200] when source payload omits it."
+      ]
+    },
+    "TestCaseVariableModel": {
+      "properties": [
+        "id: Guid",
+        "variableName: string",
+        "extractFrom: string enum",
+        "jsonPath: string?",
+        "headerName: string?",
+        "regex: string?",
+        "defaultValue: string?"
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GenerateHappyPathTestCases",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases/generate-happy-path",
+      "requestBody": "GenerateHappyPathTestCasesRequest",
+      "response": {
+        "status": 201,
+        "body": "GenerateHappyPathResultModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 ProblemDetails for empty suiteId/specificationId/currentUserId, non-owner access, archived suite, existing happy-path cases without forceRegenerate, subscription limit denial, or generation validation failure.",
+        "404 when suiteId does not exist.",
+        "409 ProblemDetails with reasonCode=ORDER_CONFIRMATION_REQUIRED when FE-05A gate has not produced an applied order yet."
+      ],
+      "notes": [
+        "On non-empty success, backend persists generated cases and sets suite.Status=Ready.",
+        "If the generator returns zero cases, backend responds 201 but does not change suite.Status or suite.Version.",
+        "Generated cases are stored as testType=HappyPath and enabled=true."
+      ]
+    },
+    {
+      "name": "ListTestCases",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases",
+      "query": [
+        "testType: string enum (optional, case-insensitive)",
+        "includeDisabled: boolean (optional, default false)"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "OrderIndex asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "TestCaseModel[]"
+      },
+      "problemCases": [
+        "404 when suiteId does not exist."
+      ],
+      "notes": [
+        "Current query handler does not enforce suite ownership; only permission and suite existence are checked.",
+        "Invalid testType values are ignored silently because Enum.TryParse failure leaves filter unset.",
+        "When includeDisabled is false, disabled test cases are excluded."
+      ]
+    },
+    {
+      "name": "GetTestCaseDetail",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "response": {
+        "status": 200,
+        "body": "TestCaseModel"
+      },
+      "problemCases": [
+        "404 when testCaseId does not exist in the suite."
+      ],
+      "notes": [
+        "Current query handler does not enforce suite ownership; only permission and entity existence are checked."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Generate-happy-path requires FE-05A gate to pass via applied order, not just suite approvalStatus.",
+    "forceRegenerate only removes existing HappyPath cases before re-generating.",
+    "Generator auto-adds tags happy-path and auto-generated if missing from n8n output.",
+    "Read endpoints return serialized JSON-string fields inside request and expectation submodels.",
+    "List endpoint sorts by OrderIndex and has no pagination."
+  ],
+  "samples": {
+    "generateHappyPathRequest": {
+      "specificationId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "forceRegenerate": false
+    },
+    "generateHappyPathResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "totalGenerated": 2,
+      "endpointsCovered": 2,
+      "llmModel": "gpt-5.4",
+      "tokensUsed": 1842,
+      "generatedAt": "2026-03-25T10:05:00Z",
+      "testCases": [
+        {
+          "testCaseId": "56c5a19b-3508-4bd6-b1f7-b9c9a3d3af91",
+          "endpointId": "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+          "name": "Login with valid account",
+          "httpMethod": "POST",
+          "path": "/api/auth/login",
+          "orderIndex": 1,
+          "variableCount": 1
+        }
+      ]
+    },
+    "happyPathListItem": {
+      "id": "56c5a19b-3508-4bd6-b1f7-b9c9a3d3af91",
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "endpointId": "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+      "name": "Login with valid account",
+      "description": "Lay access token de mo khoa cac flow can auth.",
+      "testType": "HappyPath",
+      "priority": "High",
+      "isEnabled": true,
+      "dependsOnIds": [],
+      "orderIndex": 1,
+      "customOrderIndex": null,
+      "isOrderCustomized": false,
+      "tags": [
+        "happy-path",
+        "auto-generated",
+        "auth"
+      ],
+      "version": 1,
+      "createdDateTime": "2026-03-25T10:05:00Z",
+      "updatedDateTime": null,
+      "rowVersion": "k13J4uQhB0q+N+J4E+fYAg==",
+      "request": {
+        "id": "be3520bc-0d5f-4f10-aeb7-55a7c82a56d7",
+        "httpMethod": "POST",
+        "url": "/api/auth/login",
+        "headers": "{\"Content-Type\":\"application/json\"}",
+        "pathParams": null,
+        "queryParams": null,
+        "bodyType": "JSON",
+        "body": "{\"email\":\"tester@example.com\",\"password\":\"Password123!\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "id": "1d7c9a4b-f683-4db0-b4d6-d0c854e171f5",
+        "expectedStatus": "[200]",
+        "responseSchema": "{\"type\":\"object\"}",
+        "headerChecks": "{\"Content-Type\":\"application/json\"}",
+        "bodyContains": "[\"accessToken\"]",
+        "bodyNotContains": null,
+        "jsonPathChecks": "{\"$.accessToken\":\"exists\"}",
+        "maxResponseTime": 2000
+      },
+      "variables": [
+        {
+          "id": "6478a8ff-cd4a-4e08-b42e-62ebde8104c7",
+          "variableName": "accessToken",
+          "extractFrom": "ResponseBody",
+          "jsonPath": "$.accessToken",
+          "headerName": null,
+          "regex": null,
+          "defaultValue": null
+        }
+      ]
+    }
+  }
+}

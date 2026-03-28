@@ -84,7 +84,6 @@ public class LayeredArchitectureTests
         // Arrange
         var modules = new[]
         {
-            "ClassifiedAds.Modules.Product",
             "ClassifiedAds.Modules.Storage",
             "ClassifiedAds.Modules.Identity"
         };

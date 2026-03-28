@@ -47,7 +47,12 @@ using System.Threading.Tasks;
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Load .env file for private configuration (not committed to git)
 // Probes up parent directories to find .env at solution root
-if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
         probeForEnv: true,
@@ -65,6 +70,8 @@ builder.AddServiceDefaults();
 // Add services to the container.
 var services = builder.Services;
 var configuration = builder.Configuration;
+
+StartupDiagnostics.LogDatabaseTarget("WebAPI", configuration, isRunningInContainer);
 
 // Configure logging using custom Serilog setup
 builder.WebHost.UseClassifiedAdsLogger(configuration =>

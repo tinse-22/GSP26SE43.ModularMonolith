@@ -1,0 +1,644 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-15-llm-suggestions-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "LlmSuggestionsController",
+  "baseRoute": "/api/test-suites/{suiteId}/llm-suggestions",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GenerateLlmSuggestionPreview": "Permission:GenerateBoundaryNegativeTestCases",
+    "GetLlmSuggestions": "Permission:GetTestCases",
+    "GetLlmSuggestionDetail": "Permission:GetTestCases",
+    "ReviewLlmSuggestion": "Permission:UpdateTestCase"
+  },
+  "prerequisiteDocs": [
+    "FE-05 test order + test generation docs: docs/frontend/FE-05-test-generation-frontend/README.md",
+    "FE-06 boundary-negative generation docs: docs/frontend/FE-06-boundary-negative-generation-frontend/README.md",
+    "Backend planning package for FE-15: docs/features/FE-15-llm-suggestion-review"
+  ],
+  "enums": {
+    "ReviewActionRequest": [
+      "Approve",
+      "Reject",
+      "Modify"
+    ],
+    "ReviewStatusResponse": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "ModifiedAndApproved",
+      "Superseded"
+    ],
+    "SuggestionTypeResponse": [
+      "BoundaryNegative",
+      "HappyPath",
+      "Security",
+      "Performance"
+    ],
+    "TestTypeCommonValues": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "PriorityCommonValues": [
+      "Critical",
+      "High",
+      "Medium",
+      "Low"
+    ],
+    "FeedbackSignalResponse": [
+      "Helpful",
+      "NotHelpful"
+    ],
+    "ConflictReasonCodes": [
+      "ORDER_CONFIRMATION_REQUIRED",
+      "CONCURRENCY_CONFLICT"
+    ],
+    "ValidationMessageSnippets": [
+      "ForceRefresh=true",
+      "RowVersion la bat buoc",
+      "RowVersion khong hop le",
+      "ReviewNotes la bat buoc khi reject suggestion.",
+      "ModifiedContent la bat buoc khi Modify suggestion.",
+      "Da vuot qua gioi han LLM calls",
+      "Da vuot qua gioi han test case"
+    ]
+  },
+  "models": {
+    "GenerateLlmSuggestionPreviewRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "specificationId: Guid",
+        "forceRefresh: bool default false"
+      ],
+      "notes": [
+        "specificationId la bat buoc; Guid rong se bi runtime validation reject.",
+        "forceRefresh chi bo qua pending-preview guard va supersede bo Pending hien tai.",
+        "forceRefresh khong ep backend bo qua raw suggestion cache cua FE-06."
+      ]
+    },
+    "ReviewLlmSuggestionRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "action: string enum = Approve | Reject | Modify",
+        "rowVersion: string base64",
+        "reviewNotes: string? optional but required when action = Reject",
+        "modifiedContent: EditableLlmSuggestionInput? required when action = Modify"
+      ],
+      "notes": [
+        "action parse case-insensitive.",
+        "rowVersion la concurrency token bat buoc cho ca 3 action.",
+        "Approve retry tren suggestion da materialize se duoc xu ly idempotent."
+      ]
+    },
+    "EditableLlmSuggestionInput": {
+      "properties": [
+        "name: string?",
+        "description: string?",
+        "testType: string?",
+        "priority: string?",
+        "tags: string[]?",
+        "request: EditableSuggestionRequestInput?",
+        "expectation: EditableSuggestionExpectationInput?",
+        "variables: EditableSuggestionVariableInput[]?"
+      ],
+      "notes": [
+        "Top-level field null/omit se fallback ve original suggestion.",
+        "request/expectation/variables la whole-block replacement neu FE gui block do."
+      ]
+    },
+    "EditableSuggestionRequestInput": {
+      "properties": [
+        "httpMethod: string?",
+        "url: string?",
+        "headers: Dictionary<string,string>?",
+        "pathParams: Dictionary<string,string>?",
+        "queryParams: Dictionary<string,string>?",
+        "body: string?"
+      ]
+    },
+    "EditableSuggestionExpectationInput": {
+      "properties": [
+        "expectedStatus: int[]?",
+        "bodyContains: string[]?",
+        "bodyNotContains: string[]?",
+        "responseSchema: string?",
+        "headerChecks: Dictionary<string,string>?",
+        "jsonPathChecks: Dictionary<string,string>?",
+        "maxResponseTime: int?"
+      ]
+    },
+    "EditableSuggestionVariableInput": {
+      "properties": [
+        "variableName: string?",
+        "extractFrom: string?",
+        "jsonPath: string?",
+        "headerName: string?",
+        "regex: string?",
+        "defaultValue: string?"
+      ]
+    },
+    "GenerateLlmSuggestionPreviewResultModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "totalSuggestions: int",
+        "endpointsCovered: int",
+        "llmModel: string?",
+        "llmTokensUsed: int?",
+        "fromCache: bool",
+        "generatedAt: DateTimeOffset",
+        "suggestions: LlmSuggestionModel[]"
+      ],
+      "notes": [
+        "Response 201 van hop le ngay ca khi totalSuggestions = 0.",
+        "fromCache = true nghia la raw LLM scenario cache cua FE-06 duoc reuse.",
+        "suggestions[] trong generate response duoc map tu entity raw; currentUserFeedback va feedbackSummary hien tai thuong null."
+      ]
+    },
+    "LlmSuggestionModel": {
+      "properties": [
+        "id: Guid",
+        "testSuiteId: Guid",
+        "endpointId: Guid?",
+        "cacheKey: string?",
+        "displayOrder: int",
+        "suggestionType: string",
+        "testType: string",
+        "suggestedName: string",
+        "suggestedDescription: string?",
+        "suggestedRequest: string JSON document",
+        "suggestedExpectation: string JSON document",
+        "suggestedVariables: SuggestionVariableModel[]",
+        "suggestedTags: string[]",
+        "priority: string",
+        "reviewStatus: string",
+        "reviewedById: Guid?",
+        "reviewedAt: DateTimeOffset?",
+        "reviewNotes: string?",
+        "modifiedContent: string? JSON document",
+        "appliedTestCaseId: Guid?",
+        "llmModel: string?",
+        "tokensUsed: int?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: string base64",
+        "currentUserFeedback: LlmSuggestionFeedbackModel?",
+        "feedbackSummary: LlmSuggestionFeedbackSummaryModel?"
+      ],
+      "notes": [
+        "suggestedRequest, suggestedExpectation, va modifiedContent la string JSON; FE can JSON.parse neu muon render editor typed.",
+        "suggestedVariables va suggestedTags da duoc parse san.",
+        "cacheKey hien co trong model nhung generate path hien tai dang set null."
+      ]
+    },
+    "SuggestionRequestJsonDocument": {
+      "properties": [
+        "httpMethod: string?",
+        "url: string?",
+        "headers: Dictionary<string,string>?",
+        "pathParams: Dictionary<string,string>?",
+        "queryParams: Dictionary<string,string>?",
+        "bodyType: string?",
+        "body: string?",
+        "timeout: int?"
+      ],
+      "notes": [
+        "Day la shape ben trong chuoi suggestedRequest.",
+        "Preview-generated rows hien tai thuong de bodyType va timeout = null."
+      ]
+    },
+    "SuggestionExpectationJsonDocument": {
+      "properties": [
+        "expectedStatus: int[]?",
+        "responseSchema: string?",
+        "headerChecks: Dictionary<string,string>?",
+        "bodyContains: string[]?",
+        "bodyNotContains: string[]?",
+        "jsonPathChecks: Dictionary<string,string>?",
+        "maxResponseTime: int?"
+      ],
+      "notes": [
+        "Day la shape ben trong chuoi suggestedExpectation.",
+        "Preview-generated rows hien tai thuong chi fill expectedStatus va co the co bodyContains."
+      ]
+    },
+    "SuggestionVariableModel": {
+      "properties": [
+        "variableName: string?",
+        "extractFrom: string?",
+        "jsonPath: string?",
+        "headerName: string?",
+        "regex: string?",
+        "defaultValue: string?"
+      ]
+    },
+    "LlmSuggestionFeedbackModel": {
+      "properties": [
+        "id: Guid",
+        "suggestionId: Guid",
+        "testSuiteId: Guid",
+        "endpointId: Guid?",
+        "userId: Guid",
+        "signal: string",
+        "notes: string?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: string base64"
+      ],
+      "notes": [
+        "Read-only metadata nay di kem list/detail response du feedback write endpoint thuoc FE-16."
+      ]
+    },
+    "LlmSuggestionFeedbackSummaryModel": {
+      "properties": [
+        "helpfulCount: int",
+        "notHelpfulCount: int",
+        "lastFeedbackAt: DateTimeOffset?"
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ],
+      "notes": [
+        "reasonCode hien chi co tren ConflictException hoac DbUpdateConcurrencyException.",
+        "Non-owner access hien map ve 400 ProblemDetails thay vi 403."
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GenerateLlmSuggestionPreview",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/generate",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [],
+      "requestBody": "GenerateLlmSuggestionPreviewRequest",
+      "response": {
+        "status": 201,
+        "body": "GenerateLlmSuggestionPreviewResultModel",
+        "headers": [
+          "Location: /api/test-suites/{suiteId}/llm-suggestions"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails khi body malformed JSON hoac property type khong bind duoc.",
+        "400 ProblemDetails cho non-owner access, suite archived, specificationId = Guid.Empty, pending suggestions da ton tai khi forceRefresh = false, hoac vuot MaxLlmCallsPerMonth.",
+        "404 khi suiteId khong ton tai.",
+        "409 ProblemDetails voi reasonCode=ORDER_CONFIRMATION_REQUIRED khi suite chua co approved API order."
+      ],
+      "notes": [
+        "Current implementation la synchronous request-response va persist durable preview rows.",
+        "forceRefresh=true supersede cac row Pending cu nhung khong force live LLM call.",
+        "Neu LLM pipeline tra ve 0 scenario thi response van la 201 voi totalSuggestions = 0 va suggestions = [].",
+        "Current generate path set cacheKey = null tren tung suggestion row."
+      ]
+    },
+    {
+      "name": "GetLlmSuggestions",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [
+        "reviewStatus: string? optional",
+        "testType: string? optional",
+        "endpointId: Guid? optional"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "DisplayOrder asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "LlmSuggestionModel[]"
+      },
+      "problemCases": [
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi suiteId khong ton tai."
+      ],
+      "notes": [
+        "Khong co pagination, search, hay suggestionType filter.",
+        "reviewStatus/testType sai enum hien tai se bi ignore thay vi tra loi validation error.",
+        "Moi item da co currentUserFeedback va feedbackSummary; neu khong co feedback thi currentUserFeedback = null va feedbackSummary la object dem 0."
+      ]
+    },
+    {
+      "name": "GetLlmSuggestionDetail",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}",
+      "pathParams": [
+        "suiteId: Guid",
+        "suggestionId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "LlmSuggestionModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi suiteId khong ton tai hoac suggestionId khong thuoc suite hien tai."
+      ],
+      "notes": [
+        "Response dung cung model voi list route.",
+        "Detail route cung hydrate currentUserFeedback va feedbackSummary."
+      ]
+    },
+    {
+      "name": "ReviewLlmSuggestion",
+      "method": "PUT",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review",
+      "pathParams": [
+        "suiteId: Guid",
+        "suggestionId: Guid"
+      ],
+      "query": [],
+      "requestBody": "ReviewLlmSuggestionRequest",
+      "response": {
+        "status": 200,
+        "body": "LlmSuggestionModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails khi body malformed JSON hoac property type khong bind duoc.",
+        "400 ProblemDetails cho non-owner access, rowVersion rong, rowVersion khong phai base64 hop le, action khong hop le, reject khong co reviewNotes, modify khong co modifiedContent, suggestion khong con Pending, hoac vuot MaxTestCasesPerSuite.",
+        "404 khi suiteId khong ton tai hoac suggestionId khong thuoc suite hien tai.",
+        "409 ProblemDetails voi reasonCode=ORDER_CONFIRMATION_REQUIRED khi approve/modify nhung suite khong con approved API order.",
+        "409 ProblemDetails voi reasonCode=CONCURRENCY_CONFLICT khi rowVersion stale hoac co DbUpdateConcurrency conflict."
+      ],
+      "notes": [
+        "Approve retry sau khi suggestion da co appliedTestCaseId se duoc treat nhu idempotent success va tra suggestion hien tai.",
+        "Reject chi doi review state; approve/modify materialize real TestCase va set appliedTestCaseId.",
+        "modify la top-level partial fallback, nhung request/expectation/variables la whole-block replacement.",
+        "Review response hien tai duoc map tu entity raw; currentUserFeedback va feedbackSummary thuong null."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Generate preview reuse ILlmScenarioSuggester cua FE-06, bao gom raw cache 24h va feedback fingerprint trong cache key.",
+    "forceRefresh hien tai khong co co che bypass raw cache; no chi supersede durable Pending suggestions.",
+    "Owner check dua tren suite.CreatedById, khong dua tren reviewedById hay feedback user id.",
+    "Current generate path luon tao SuggestionType = BoundaryNegative va ReviewStatus = Pending.",
+    "Current generate path set CacheKey = null tren entity du model van expose field nay.",
+    "SuggestedRequest, SuggestedExpectation, va ModifiedContent duoc serialize camelCase JSON string.",
+    "SuggestedTags duoc auto-build voi source `llm-suggested`, co them `auto-generated` va tag theo test type, roi merge them tag tra ve tu LLM.",
+    "SuggestedVariables duoc map san thanh array object trong response; field extractFrom thuong la body/header/status.",
+    "List route sort theo DisplayOrder asc, la thu tu suggestion duoc persist khi generate.",
+    "Invalid reviewStatus/testType filter hien tai bi ignore trong list route.",
+    "Review reject khong tang suite version va khong tao TestCase.",
+    "Review approve/modify tao TestCase, TestCaseChangeLog, TestSuiteVersion, va tang suite.Version.",
+    "Generate preview check quota MaxLlmCallsPerMonth truoc cache/live pipeline; approve/modify check quota MaxTestCasesPerSuite truoc materialize.",
+    "Feedback write endpoint va bulk-review endpoint cung nam trong LlmSuggestionsController nhung khong nam trong file contract FE-15 nay."
+  ],
+  "samples": {
+    "generatePreviewRequest": {
+      "specificationId": "a467dd28-4a77-45a2-8f34-8be8900db1d8",
+      "forceRefresh": false
+    },
+    "generatePreview201": {
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "totalSuggestions": 2,
+      "endpointsCovered": 2,
+      "llmModel": "deepseek-chat",
+      "llmTokensUsed": 312,
+      "fromCache": false,
+      "generatedAt": "2026-03-28T09:15:00Z",
+      "suggestions": [
+        {
+          "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+          "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+          "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+          "cacheKey": null,
+          "displayOrder": 0,
+          "suggestionType": "BoundaryNegative",
+          "testType": "Negative",
+          "suggestedName": "POST /api/auth/register - email already exists",
+          "suggestedDescription": "Gui duplicated email va ky vong backend tra validation failure.",
+          "suggestedRequest": "{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"bodyType\":null,\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\",\"timeout\":null}",
+          "suggestedExpectation": "{\"expectedStatus\":[400],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[\"email\"],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null}",
+          "suggestedVariables": [],
+          "suggestedTags": [
+            "negative",
+            "auto-generated",
+            "llm-suggested",
+            "validation"
+          ],
+          "priority": "High",
+          "reviewStatus": "Pending",
+          "reviewedById": null,
+          "reviewedAt": null,
+          "reviewNotes": null,
+          "modifiedContent": null,
+          "appliedTestCaseId": null,
+          "llmModel": "deepseek-chat",
+          "tokensUsed": 312,
+          "createdDateTime": "2026-03-28T09:15:00Z",
+          "updatedDateTime": null,
+          "rowVersion": "AQIDBAUGBwg=",
+          "currentUserFeedback": null,
+          "feedbackSummary": null
+        }
+      ]
+    },
+    "listSuggestions200": [
+      {
+        "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+        "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+        "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+        "cacheKey": null,
+        "displayOrder": 0,
+        "suggestionType": "BoundaryNegative",
+        "testType": "Negative",
+        "suggestedName": "POST /api/auth/register - email already exists",
+        "suggestedDescription": "Gui duplicated email va ky vong backend tra validation failure.",
+        "suggestedRequest": "{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"bodyType\":null,\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\",\"timeout\":null}",
+        "suggestedExpectation": "{\"expectedStatus\":[400],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[\"email\"],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null}",
+        "suggestedVariables": [],
+        "suggestedTags": [
+          "negative",
+          "auto-generated",
+          "llm-suggested",
+          "validation"
+        ],
+        "priority": "High",
+        "reviewStatus": "Pending",
+        "reviewedById": null,
+        "reviewedAt": null,
+        "reviewNotes": null,
+        "modifiedContent": null,
+        "appliedTestCaseId": null,
+        "llmModel": "deepseek-chat",
+        "tokensUsed": 312,
+        "createdDateTime": "2026-03-28T09:15:00Z",
+        "updatedDateTime": null,
+        "rowVersion": "AQIDBAUGBwg=",
+        "currentUserFeedback": {
+          "id": "e8f8bde2-e9a8-4a27-8e14-e752a9fd7876",
+          "suggestionId": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+          "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+          "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+          "userId": "f04ec014-3e45-4504-b40d-93af0ef5f29f",
+          "signal": "Helpful",
+          "notes": "Mo ta nay dung voi bug da gap tren staging.",
+          "createdDateTime": "2026-03-28T09:20:00Z",
+          "updatedDateTime": null,
+          "rowVersion": "BQUFBQUFBQU="
+        },
+        "feedbackSummary": {
+          "helpfulCount": 2,
+          "notHelpfulCount": 1,
+          "lastFeedbackAt": "2026-03-28T09:20:00Z"
+        }
+      }
+    ],
+    "reviewApproveRequest": {
+      "action": "Approve",
+      "rowVersion": "AQIDBAUGBwg="
+    },
+    "reviewRejectRequest": {
+      "action": "Reject",
+      "rowVersion": "AQIDBAUGBwg=",
+      "reviewNotes": "Suite nay khong can cover duplicate-email o endpoint nay."
+    },
+    "reviewModifyRequest": {
+      "action": "Modify",
+      "rowVersion": "AQIDBAUGBwg=",
+      "reviewNotes": "Sua lai payload va expectation truoc khi apply.",
+      "modifiedContent": {
+        "name": "POST /api/auth/register - duplicate email returns 409",
+        "description": "Dong bo expectation voi runtime hien tai.",
+        "testType": "Negative",
+        "priority": "Critical",
+        "tags": [
+          "negative",
+          "register",
+          "conflict"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "pathParams": {},
+          "queryParams": {},
+          "body": "{\"email\":\"taken@example.com\",\"password\":\"Secret123!\"}"
+        },
+        "expectation": {
+          "expectedStatus": [
+            409
+          ],
+          "bodyContains": [
+            "already exists"
+          ],
+          "bodyNotContains": [],
+          "responseSchema": null,
+          "headerChecks": {},
+          "jsonPathChecks": {},
+          "maxResponseTime": 1000
+        },
+        "variables": []
+      }
+    },
+    "reviewModify200": {
+      "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "cacheKey": null,
+      "displayOrder": 0,
+      "suggestionType": "BoundaryNegative",
+      "testType": "Negative",
+      "suggestedName": "POST /api/auth/register - email already exists",
+      "suggestedDescription": "Gui duplicated email va ky vong backend tra validation failure.",
+      "suggestedRequest": "{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"bodyType\":null,\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\",\"timeout\":null}",
+      "suggestedExpectation": "{\"expectedStatus\":[400],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[\"email\"],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null}",
+      "suggestedVariables": [],
+      "suggestedTags": [
+        "negative",
+        "auto-generated",
+        "llm-suggested",
+        "validation"
+      ],
+      "priority": "High",
+      "reviewStatus": "ModifiedAndApproved",
+      "reviewedById": "f04ec014-3e45-4504-b40d-93af0ef5f29f",
+      "reviewedAt": "2026-03-28T09:25:10Z",
+      "reviewNotes": "Sua expectation 409 truoc khi apply.",
+      "modifiedContent": "{\"name\":\"POST /api/auth/register - duplicate email returns 409\",\"description\":\"Dong bo expectation voi runtime hien tai.\",\"testType\":\"Negative\",\"priority\":\"Critical\",\"tags\":[\"negative\",\"register\",\"conflict\"],\"request\":{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\"},\"expectation\":{\"expectedStatus\":[409],\"bodyContains\":[\"already exists\"],\"bodyNotContains\":[],\"responseSchema\":null,\"headerChecks\":{},\"jsonPathChecks\":{},\"maxResponseTime\":1000},\"variables\":[]}",
+      "appliedTestCaseId": "15f912df-95d9-4cc2-897c-273e8c054692",
+      "llmModel": "deepseek-chat",
+      "tokensUsed": 312,
+      "createdDateTime": "2026-03-28T09:15:00Z",
+      "updatedDateTime": "2026-03-28T09:25:10Z",
+      "rowVersion": "CQkJCQkJCQk=",
+      "currentUserFeedback": null,
+      "feedbackSummary": null
+    },
+    "pendingSuggestionsExist400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Da co suggestion preview dang cho review. Su dung ForceRefresh=true de tao moi.",
+      "message": "Da co suggestion preview dang cho review. Su dung ForceRefresh=true de tao moi.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "orderConfirmationRequired409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "message": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED"
+    },
+    "concurrency409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.",
+      "message": "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "CONCURRENCY_CONFLICT"
+    },
+    "suggestionNotFound404": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.4",
+      "title": "Not Found",
+      "status": 404,
+      "detail": "Khong tim thay suggestion voi ma '8acbca9f-27f7-467a-bd4a-4c3b3f8f1455'.",
+      "message": "Khong tim thay suggestion voi ma '8acbca9f-27f7-467a-bd4a-4c3b3f8f1455'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  },
+  "relatedNotes": [
+    "Neu FE vua goi POST /generate thanh cong, co the dung suggestions[] trong 201 response ngay thay vi refetch list lap tuc.",
+    "Neu FE muon cho user edit nested request/expectation/variables, hay hydrate editor state tu chuoi JSON trong suggestedRequest/suggestedExpectation truoc.",
+    "Feedback write va bulk review da ton tai o runtime hien tai, nhung nen duoc handoff rieng theo FE-16 va FE-17."
+  ]
+}

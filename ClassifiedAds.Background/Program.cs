@@ -29,7 +29,12 @@ using System;
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 // Load .env file for private configuration (not committed to git)
-if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
         probeForEnv: true,
@@ -49,6 +54,8 @@ Host.CreateDefaultBuilder(args)
 .ConfigureServices((hostContext, services) =>
 {
     var configuration = hostContext.Configuration;
+
+    StartupDiagnostics.LogDatabaseTarget("Background", configuration, isRunningInContainer);
 
     // Bind and validate AppSettings (fail-fast on misconfiguration)
     var appSettings = new AppSettings();

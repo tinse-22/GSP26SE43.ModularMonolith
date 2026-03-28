@@ -1,0 +1,313 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-17-llm-suggestions-bulk-review-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "LlmSuggestionsController",
+  "baseRoute": "/api/test-suites/{suiteId}/llm-suggestions",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "BulkReviewLlmSuggestions": "Permission:UpdateTestCase",
+    "ReadLlmSuggestionsForBulkScreen": "Permission:GetTestCases",
+    "ReadLlmSuggestionDetailAfterBulk": "Permission:GetTestCases"
+  },
+  "prerequisiteDocs": [
+    "FE-15 frontend handoff: docs/frontend/FE-15-llm-suggestion-review-frontend/README.md",
+    "FE-16 frontend handoff: docs/frontend/FE-16-llm-feedback-frontend/README.md",
+    "Backend planning package for FE-17: docs/features/FE-17-llm-suggestion-bulk-review"
+  ],
+  "enums": {
+    "BulkReviewActionRequest": [
+      "Approve",
+      "Reject"
+    ],
+    "SuggestionTypeFilterValues": [
+      "BoundaryNegative",
+      "HappyPath",
+      "Security",
+      "Performance"
+    ],
+    "TestTypeFilterValues": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "ReviewStatusResponse": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "ModifiedAndApproved",
+      "Superseded"
+    ],
+    "ConflictReasonCodes": [
+      "ORDER_CONFIRMATION_REQUIRED",
+      "CONCURRENCY_CONFLICT"
+    ],
+    "ValidationMessageSnippets": [
+      "Action phai la 'Approve' hoac 'Reject'.",
+      "ReviewNotes la bat buoc khi bulk reject suggestions.",
+      "FilterBySuggestionType khong hop le.",
+      "FilterByTestType khong hop le.",
+      "Da vuot qua gioi han test case"
+    ]
+  },
+  "models": {
+    "BulkReviewLlmSuggestionsRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "action: string enum = Approve | Reject",
+        "filterBySuggestionType: string? optional enum = BoundaryNegative | HappyPath | Security | Performance",
+        "filterByTestType: string? optional enum = HappyPath | Boundary | Negative | Performance | Security",
+        "filterByEndpointId: Guid? optional",
+        "reviewNotes: string? optional max length 4000 but required when action = Reject"
+      ],
+      "notes": [
+        "Khong co suggestionIds[] trong contract hien tai.",
+        "action parse case-insensitive nhung khong co trim whitespace rieng; FE nen gui exact enum value.",
+        "reviewNotes la mot gia tri dung chung cho ca batch.",
+        "Neu gui dong thoi nhieu filter, server ket hop theo logic AND.",
+        "Request khong co rowVersion."
+      ]
+    },
+    "BulkReviewLlmSuggestionsResultModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "action: string enum = Approve | Reject",
+        "matchedCount: int",
+        "processedCount: int",
+        "materializedCount: int",
+        "reviewedAt: DateTimeOffset",
+        "suggestionIds: Guid[]",
+        "appliedTestCaseIds: Guid[]"
+      ],
+      "notes": [
+        "matchedCount va processedCount giong nhau trong current all-or-nothing flow.",
+        "suggestionIds theo thu tu DisplayOrder asc cua batch duoc server chon.",
+        "appliedTestCaseIds rong khi action = Reject hoac khi matchedCount = 0.",
+        "reviewedAt la server UTC timestamp; zero-match path van co field nay."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ],
+      "notes": [
+        "reasonCode hien co tren ConflictException va mot so conflict infrastructure.",
+        "Non-owner access hien map thanh 400 ProblemDetails thay vi 403."
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "dependentReadSurface": [
+    {
+      "name": "RefreshLlmSuggestionListAfterBulkReview",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions",
+      "method": "GET",
+      "notes": [
+        "Dung endpoint FE-15 nay de refetch danh sach sau khi bulk approve/reject.",
+        "List route hydrate them currentUserFeedback va feedbackSummary theo FE-16."
+      ]
+    },
+    {
+      "name": "RefreshSingleLlmSuggestionAfterBulkReview",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}",
+      "method": "GET",
+      "notes": [
+        "Dung khi UI can rowVersion, appliedTestCaseId, hoac feedback metadata moi nhat cho 1 item cu the."
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "BulkReviewLlmSuggestions",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-review",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [],
+      "requestBody": "BulkReviewLlmSuggestionsRequest",
+      "response": {
+        "status": 200,
+        "body": "BulkReviewLlmSuggestionsResultModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails khi body malformed JSON, missing action, action vuot max length 20, filterBySuggestionType/filterByTestType vuot max length 50, reviewNotes vuot max length 4000, hoac filterByEndpointId khong bind duoc thanh Guid.",
+        "400 ProblemDetails cho action khong hop le, reject khong co reviewNotes, filter enum khong hop le, non-owner access, hoac vuot MaxTestCasesPerSuite trong approve path.",
+        "404 khi suiteId khong ton tai.",
+        "409 ProblemDetails voi reasonCode=ORDER_CONFIRMATION_REQUIRED khi bulk approve nhung suite chua co approved API order.",
+        "409 ProblemDetails voi reasonCode=CONCURRENCY_CONFLICT khi co concurrent update trong qua trinh ghi batch."
+      ],
+      "notes": [
+        "Matched set luon duoc server tinh lai tu durable suggestion rows, khong tu selected ids tren client.",
+        "Selection query luon filter them ReviewStatus = Pending va sort DisplayOrder asc.",
+        "Suggestions khong Pending se bi bo qua vi khong nam trong target set.",
+        "Khong co partial-success response hien tai: hoac 0-match no-op, hoac full success cho matched set.",
+        "Approve path materialize thanh TestCase graph, tao change logs, tao 1 TestSuiteVersion, va increment suite.Version 1 lan.",
+        "Reject path chi update metadata tren suggestion rows va khong tao TestCase/TestSuiteVersion moi.",
+        "Response chi la batch summary; FE nen refetch GET list/detail neu can suggestion state moi nhat."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Current generate path cua FE-15 van tao SuggestionType = BoundaryNegative, nen nhieu filter suggestionType hop le ve contract co the se tra 0 o runtime hien tai.",
+    "Bulk approve reuse ILlmSuggestionReviewService cung materialization path voi FE-15 single review.",
+    "Bulk reject reuse cung review service nhung chi ghi ReviewStatus, ReviewedById, ReviewedAt, ReviewNotes, UpdatedDateTime, va RowVersion tren tung suggestion.",
+    "Bulk approve check MaxTestCasesPerSuite cho tong so suggestion match batch truoc transaction, va increment usage 1 lan sau khi thanh cong.",
+    "Bulk approve van phu thuoc vao approved API order gate cua FE-05A/FE-15.",
+    "TestCase.OrderIndex moi duoc append sau max OrderIndex hien co trong suite.",
+    "1 batch approve tao 1 TestSuiteVersion moi, khong tao moi version cho tung suggestion.",
+    "reviewNotes trong approve path la optional va neu co se duoc copy vao tung suggestion duoc approve.",
+    "Bulk endpoint khong tra lai rowVersion moi cua tung suggestion; muon lay rowVersion moi phai refetch GET.",
+    "Bulk endpoint khong hydrate currentUserFeedback va feedbackSummary vi response khong phai LlmSuggestionModel.",
+    "No explicit archived-suite guard exists in current bulk handler/service.",
+    "No pagination, no search, no sort override, va khong co contract explicit ids[] tren bulk endpoint."
+  ],
+  "samples": {
+    "approveAllPendingRequest": {
+      "action": "Approve"
+    },
+    "approveByEndpointRequest": {
+      "action": "Approve",
+      "filterBySuggestionType": "BoundaryNegative",
+      "filterByTestType": "Negative",
+      "filterByEndpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "reviewNotes": "Bulk approve cac scenario negative da duoc review tren list."
+    },
+    "rejectByEndpointRequest": {
+      "action": "Reject",
+      "filterByEndpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "reviewNotes": "Endpoint nay hien tai chua can cover bo suggestion preview nay."
+    },
+    "approve200": {
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "action": "Approve",
+      "matchedCount": 3,
+      "processedCount": 3,
+      "materializedCount": 3,
+      "reviewedAt": "2026-03-28T10:05:00Z",
+      "suggestionIds": [
+        "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+        "0f2dc3a1-e4d0-4c39-98c8-b8ce7b6a2d15",
+        "f6f6c632-b1ea-4ae8-9444-c9f4dd60ea7c"
+      ],
+      "appliedTestCaseIds": [
+        "15f912df-95d9-4cc2-897c-273e8c054692",
+        "1de00fe6-4980-49e0-92da-0247dbf468d2",
+        "8509b255-22d6-4bb8-b02b-efc4edbe8a2d"
+      ]
+    },
+    "reject200": {
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "action": "Reject",
+      "matchedCount": 2,
+      "processedCount": 2,
+      "materializedCount": 0,
+      "reviewedAt": "2026-03-28T10:10:12Z",
+      "suggestionIds": [
+        "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+        "0f2dc3a1-e4d0-4c39-98c8-b8ce7b6a2d15"
+      ],
+      "appliedTestCaseIds": []
+    },
+    "zeroMatch200": {
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "action": "Approve",
+      "matchedCount": 0,
+      "processedCount": 0,
+      "materializedCount": 0,
+      "reviewedAt": "2026-03-28T10:15:30Z",
+      "suggestionIds": [],
+      "appliedTestCaseIds": []
+    },
+    "invalidAction400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Action phai la 'Approve' hoac 'Reject'.",
+      "message": "Action phai la 'Approve' hoac 'Reject'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "invalidFilter400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "FilterBySuggestionType khong hop le.",
+      "message": "FilterBySuggestionType khong hop le.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "rejectWithoutNotes400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "ReviewNotes la bat buoc khi bulk reject suggestions.",
+      "message": "ReviewNotes la bat buoc khi bulk reject suggestions.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "limitExceeded400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Da vuot qua gioi han test case cho goi subscription. Limit exceeded",
+      "message": "Da vuot qua gioi han test case cho goi subscription. Limit exceeded",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "validationProblem400MissingAction": {
+      "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+      "title": "One or more validation errors occurred.",
+      "status": 400,
+      "instance": "/api/test-suites/7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d/llm-suggestions/bulk-review",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "errors": {
+        "Action": [
+          "The Action field is required."
+        ]
+      }
+    },
+    "orderConfirmationRequired409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "message": "Chua co API order duoc xac nhan. Vui long review/approve thu tu API truoc khi tao test cases.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "ORDER_CONFIRMATION_REQUIRED"
+    },
+    "concurrency409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.",
+      "message": "Suggestion da duoc thay doi boi thao tac khac. Vui long tai lai va thu lai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "CONCURRENCY_CONFLICT"
+    }
+  },
+  "relatedNotes": [
+    "Sau 200, FE nen refetch GET /llm-suggestions neu UI can reviewStatus, rowVersion, appliedTestCaseId, currentUserFeedback, hoac feedbackSummary moi nhat.",
+    "Neu UI hien 'Approve all visible', bo visible filter do phai map duoc 1-1 sang filter body cua API; client-side search/selection khong duoc server hieu.",
+    "Neu can arbitrary multi-select ids, contract backend hien tai chua support va FE nen fallback sang single review hoac doi them API moi."
+  ]
+}

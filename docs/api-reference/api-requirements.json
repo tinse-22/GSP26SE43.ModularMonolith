@@ -1,0 +1,636 @@
+{
+  "meta": {
+    "version": "fe11-manual-entry-v1",
+    "generated_at": "2026-03-25T00:00:00+07:00",
+    "source": [
+      "docs/api-reference/api-projects-specifications-endpoints-param-guide.json",
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/SpecificationsController.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Controllers/EndpointsController.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/CreateManualSpecificationCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Commands/AddUpdateEndpointCommand.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/CreateManualSpecificationModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Models/CreateUpdateEndpointModel.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetSpecificationQuery.cs",
+      "ClassifiedAds.Modules.ApiDocumentation/Queries/GetEndpointQuery.cs"
+    ],
+    "module": "ApiDocumentation"
+  },
+  "auth": {
+    "type": "Bearer",
+    "token_header": "Authorization",
+    "notes": "Tat ca endpoint FE-11 deu can bearer token. Backend con verify project ownership va permission theo tung action."
+  },
+  "endpoints": [
+    {
+      "id": "apidoc.manual.specifications.create",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/manual",
+      "summary": "Tao manual specification voi inline endpoints",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": true
+          }
+        ],
+        "body_schema": {
+          "name": "string required <= 200",
+          "version": "string?",
+          "autoActivate": "boolean default false",
+          "endpoints": "ManualEndpointDefinition[] required, min 1",
+          "ManualEndpointDefinition": {
+            "httpMethod": "GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS",
+            "path": "string required <= 500",
+            "operationId": "string?",
+            "summary": "string?",
+            "description": "string?",
+            "tags": "string[]?",
+            "isDeprecated": "boolean default false",
+            "parameters": "ManualParameterDefinition[]?",
+            "responses": "ManualResponseDefinition[]?"
+          },
+          "ManualParameterDefinition": {
+            "name": "string?",
+            "location": "Path|Query|Header|Body|Cookie, invalid => Query",
+            "dataType": "string|integer|number|boolean|object|array|uuid",
+            "format": "string?",
+            "isRequired": "boolean default false",
+            "defaultValue": "string?",
+            "schema": "string?",
+            "examples": "string?"
+          },
+          "ManualResponseDefinition": {
+            "statusCode": "integer?",
+            "description": "string?",
+            "schema": "string?",
+            "examples": "string?",
+            "headers": "string?"
+          }
+        }
+      },
+      "response": {
+        "success_schema": {
+          "id": "guid",
+          "projectId": "guid",
+          "name": "string",
+          "sourceType": "Manual",
+          "version": "string|null",
+          "isActive": "boolean",
+          "parseStatus": "Success",
+          "parsedAt": "datetime",
+          "endpointCount": "number",
+          "parseErrors": "string[]|null"
+        },
+        "error_schema": {
+          "message_shape": [
+            "400 validation/business error",
+            "401 auth error",
+            "403 permission error",
+            "404 project not found"
+          ]
+        },
+        "status_codes": [
+          201,
+          400,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualSpecificationCreatePage",
+        "action": "createManualSpecification",
+        "state_shape": {
+          "manualSpecDraft": "CreateManualSpecificationModel",
+          "manualSpecResult": "SpecificationDetailModel"
+        }
+      },
+      "examples": {
+        "curl": "curl -X POST /api/projects/{projectId}/specifications/manual -H \"Authorization: Bearer <token>\" -H \"Content-Type: application/json\" -d '{\"name\":\"User API Manual Spec\",\"autoActivate\":true,\"endpoints\":[{\"httpMethod\":\"GET\",\"path\":\"/api/users/{userId}\"}]}'",
+        "request": {
+          "name": "User API Manual Spec",
+          "autoActivate": true,
+          "endpoints": [
+            {
+              "httpMethod": "GET",
+              "path": "/api/users/{userId}"
+            }
+          ]
+        },
+        "response": {
+          "id": "22222222-2222-2222-2222-222222222222",
+          "name": "User API Manual Spec",
+          "sourceType": "Manual",
+          "parseStatus": "Success",
+          "endpointCount": 1
+        }
+      }
+    },
+    {
+      "id": "apidoc.manual.specifications.getById",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}",
+      "summary": "Lay detail cua manual specification",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          }
+        ],
+        "body_schema": {}
+      },
+      "response": {
+        "success_schema": {
+          "id": "guid",
+          "projectId": "guid",
+          "name": "string",
+          "sourceType": "string",
+          "version": "string|null",
+          "isActive": "boolean",
+          "parseStatus": "string",
+          "parsedAt": "datetime|null",
+          "endpointCount": "number",
+          "parseErrors": "string[]|null"
+        },
+        "error_schema": {
+          "message_shape": [
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification not found"
+          ]
+        },
+        "status_codes": [
+          200,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualSpecificationDetailPage",
+        "action": "fetchManualSpecification",
+        "state_shape": {
+          "manualSpecDetail": "SpecificationDetailModel"
+        }
+      },
+      "examples": {
+        "curl": "curl -X GET /api/projects/{projectId}/specifications/{specId} -H \"Authorization: Bearer <token>\"",
+        "request": {},
+        "response": {
+          "id": "22222222-2222-2222-2222-222222222222",
+          "sourceType": "Manual",
+          "endpointCount": 1
+        }
+      }
+    },
+    {
+      "id": "apidoc.manual.endpoints.list",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "summary": "Lay danh sach endpoint cua manual specification",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          }
+        ],
+        "body_schema": {}
+      },
+      "response": {
+        "success_schema": [
+          {
+            "id": "guid",
+            "apiSpecId": "guid",
+            "httpMethod": "string",
+            "path": "string",
+            "operationId": "string|null",
+            "summary": "string|null",
+            "description": "string|null",
+            "tags": "string|null (JSON serialized)",
+            "isDeprecated": "boolean"
+          }
+        ],
+        "error_schema": {
+          "message_shape": [
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification not found"
+          ]
+        },
+        "status_codes": [
+          200,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualEndpointListPanel",
+        "action": "fetchEndpoints",
+        "state_shape": {
+          "manualEndpoints": "EndpointModel[]"
+        }
+      },
+      "examples": {
+        "curl": "curl -X GET /api/projects/{projectId}/specifications/{specId}/endpoints -H \"Authorization: Bearer <token>\"",
+        "request": {},
+        "response": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "httpMethod": "GET",
+            "path": "/api/users/{userId}",
+            "tags": "[\"Users\"]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "apidoc.manual.endpoints.getById",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "summary": "Lay detail cua endpoint manual",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "endpointId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          }
+        ],
+        "body_schema": {}
+      },
+      "response": {
+        "success_schema": {
+          "base": "EndpointModel",
+          "resolvedUrl": "string|null",
+          "parameters": "ParameterModel[]",
+          "responses": "ResponseModel[]",
+          "securityRequirements": "SecurityReqModel[]"
+        },
+        "error_schema": {
+          "message_shape": [
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification/endpoint not found"
+          ]
+        },
+        "status_codes": [
+          200,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualEndpointEditor",
+        "action": "fetchEndpointDetail",
+        "state_shape": {
+          "manualEndpointDetail": "EndpointDetailModel"
+        }
+      },
+      "examples": {
+        "curl": "curl -X GET /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId} -H \"Authorization: Bearer <token>\"",
+        "request": {},
+        "response": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "path": "/api/users/{userId}",
+          "resolvedUrl": "/api/users/33333333-3333-3333-3333-333333333333",
+          "parameters": [
+            {
+              "name": "userId",
+              "location": "Path",
+              "dataType": "uuid"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "apidoc.manual.endpoints.create",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "summary": "Them endpoint moi vao manual specification",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": true
+          }
+        ],
+        "body_schema": {
+          "httpMethod": "GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS",
+          "path": "string required <= 500",
+          "operationId": "string?",
+          "summary": "string?",
+          "description": "string?",
+          "tags": "string[]?",
+          "isDeprecated": "boolean default false",
+          "parameters": "ManualParameterDefinition[]?",
+          "responses": "ManualResponseDefinition[]?"
+        }
+      },
+      "response": {
+        "success_schema": {
+          "id": "guid",
+          "path": "string",
+          "httpMethod": "string",
+          "parameters": "ParameterModel[]",
+          "responses": "ResponseModel[]"
+        },
+        "error_schema": {
+          "message_shape": [
+            "400 validation/business error",
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification not found"
+          ]
+        },
+        "status_codes": [
+          201,
+          400,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualEndpointEditor",
+        "action": "createEndpoint",
+        "state_shape": {
+          "manualEndpointDraft": "CreateUpdateEndpointModel",
+          "manualEndpointCreateResult": "EndpointDetailModel"
+        }
+      },
+      "examples": {
+        "curl": "curl -X POST /api/projects/{projectId}/specifications/{specId}/endpoints -H \"Authorization: Bearer <token>\" -H \"Content-Type: application/json\" -d '{\"httpMethod\":\"POST\",\"path\":\"/api/users\"}'",
+        "request": {
+          "httpMethod": "POST",
+          "path": "/api/users"
+        },
+        "response": {
+          "id": "55555555-5555-5555-5555-555555555555",
+          "httpMethod": "POST",
+          "path": "/api/users"
+        }
+      }
+    },
+    {
+      "id": "apidoc.manual.endpoints.update",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "summary": "Cap nhat endpoint manual, replace-all children",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "endpointId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": true
+          }
+        ],
+        "body_schema": {
+          "sameAs": "apidoc.manual.endpoints.create.request.body_schema"
+        }
+      },
+      "response": {
+        "success_schema": {
+          "id": "guid",
+          "path": "string",
+          "httpMethod": "string",
+          "parameters": "ParameterModel[]",
+          "responses": "ResponseModel[]"
+        },
+        "error_schema": {
+          "message_shape": [
+            "400 validation/business error",
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification/endpoint not found"
+          ]
+        },
+        "status_codes": [
+          200,
+          400,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualEndpointEditor",
+        "action": "updateEndpoint",
+        "state_shape": {
+          "manualEndpointDraft": "CreateUpdateEndpointModel",
+          "manualEndpointUpdateResult": "EndpointDetailModel"
+        }
+      },
+      "examples": {
+        "curl": "curl -X PUT /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId} -H \"Authorization: Bearer <token>\" -H \"Content-Type: application/json\" -d '{\"httpMethod\":\"GET\",\"path\":\"/api/users/{userId}\"}'",
+        "request": {
+          "httpMethod": "GET",
+          "path": "/api/users/{userId}"
+        },
+        "response": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "httpMethod": "GET",
+          "path": "/api/users/{userId}"
+        }
+      }
+    },
+    {
+      "id": "apidoc.manual.endpoints.delete",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "summary": "Xoa endpoint manual",
+      "request": {
+        "query": [],
+        "path_params": [
+          {
+            "name": "projectId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "specId",
+            "type": "guid",
+            "required": true
+          },
+          {
+            "name": "endpointId",
+            "type": "guid",
+            "required": true
+          }
+        ],
+        "headers": [
+          {
+            "name": "Authorization",
+            "value": "Bearer <access_token>",
+            "required": true
+          }
+        ],
+        "body_schema": {}
+      },
+      "response": {
+        "success_schema": {},
+        "error_schema": {
+          "message_shape": [
+            "401 auth error",
+            "403 permission error",
+            "404 project/specification/endpoint not found"
+          ]
+        },
+        "status_codes": [
+          204,
+          401,
+          403,
+          404
+        ]
+      },
+      "frontend_mapping": {
+        "screen": "ManualEndpointListPanel",
+        "action": "deleteEndpoint",
+        "state_shape": {
+          "manualEndpointDelete": "AsyncState"
+        }
+      },
+      "examples": {
+        "curl": "curl -X DELETE /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId} -H \"Authorization: Bearer <token>\"",
+        "request": {},
+        "response": {}
+      }
+    }
+  ],
+  "cross_cutting": {
+    "permissions": {
+      "apidoc.manual.specifications.create": "Permission:AddSpecification",
+      "apidoc.manual.specifications.getById": "Permission:GetSpecifications",
+      "apidoc.manual.endpoints.list": "Permission:GetEndpoints",
+      "apidoc.manual.endpoints.getById": "Permission:GetEndpoints",
+      "apidoc.manual.endpoints.create": "Permission:AddEndpoint",
+      "apidoc.manual.endpoints.update": "Permission:UpdateEndpoint",
+      "apidoc.manual.endpoints.delete": "Permission:DeleteEndpoint"
+    },
+    "manual_entry_behavior": {
+      "manual_spec_source_type": "Manual",
+      "manual_spec_parse_status": "Success",
+      "auto_activate": "Neu autoActivate=true, spec moi duoc activate va spec active cu bi deactivate.",
+      "subscription_limit": "Create manual spec consume MaxEndpointsPerProject theo so endpoint; create endpoint consume them 1.",
+      "path_placeholder_note": "Behavior hien tai da gom FE-12 auto-sync path params."
+    },
+    "response_shape_quirks": {
+      "endpoint_tags_response": "tags dang tra ve string JSON serialized, khong phai string[].",
+      "manual_body_modeling": "Request body hien tai duoc mo ta qua parameters co location=Body + schema/examples, khong co field contentType rieng."
+    },
+    "rate_limit": {
+      "default_policy": "ApiDocumentation.DefaultPolicy"
+    }
+  },
+  "open_questions": [
+    "FE co nen parse tags response tu JSON string sang string[] o client khong?",
+    "Co can them metadata content-type o client cho manual body vi API hien tai chua co field rieng?",
+    "Neu can resolved-url va path-param-mutations, nen tach tai lieu FE-12 rieng thay vi tron vao FE-11."
+  ]
+}

@@ -11,7 +11,6 @@ public class ModuleBoundaryTests
 {
     private static readonly string[] ModuleAssemblies = new[]
     {
-        "ClassifiedAds.Modules.Product",
         "ClassifiedAds.Modules.Storage",
         "ClassifiedAds.Modules.Identity",
         "ClassifiedAds.Modules.Notification",
@@ -20,7 +19,6 @@ public class ModuleBoundaryTests
     };
 
     [Theory]
-    [InlineData("ClassifiedAds.Modules.Product")]
     [InlineData("ClassifiedAds.Modules.Storage")]
     [InlineData("ClassifiedAds.Modules.Identity")]
     [InlineData("ClassifiedAds.Modules.Notification")]
@@ -75,7 +73,6 @@ public class ModuleBoundaryTests
     }
 
     [Theory]
-    [InlineData("ClassifiedAds.Modules.Product")]
     [InlineData("ClassifiedAds.Modules.Storage")]
     [InlineData("ClassifiedAds.Modules.Identity")]
     public void Modules_Can_Reference_Domain_And_Application_Layers(string moduleName)

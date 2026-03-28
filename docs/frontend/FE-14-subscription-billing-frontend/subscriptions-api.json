@@ -1,0 +1,657 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-14-subscription-billing-subscriptions-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "SubscriptionsController",
+  "baseRoute": "/api/subscriptions",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GetSubscription": "Permission:GetSubscription",
+    "GetPlans": "Permission:GetPlans",
+    "GetCurrentSubscriptionByUser": "Permission:GetCurrentSubscription",
+    "GetCurrentSubscriptionMe": "Permission:GetCurrentSubscription",
+    "CreateSubscription": "Permission:AddSubscription",
+    "UpdateSubscription": "Permission:UpdateSubscription",
+    "CancelSubscription": "Permission:CancelSubscription",
+    "GetSubscriptionHistory": "Permission:GetSubscriptionHistory",
+    "GetPaymentTransactions": "Permission:GetPaymentTransactions",
+    "AddPaymentTransaction": "Permission:AddPaymentTransaction",
+    "GetUsageTracking": "Permission:GetUsageTracking",
+    "UpdateUsageTracking": "Permission:UpdateUsageTracking"
+  },
+  "prerequisiteDocs": [
+    "docs/frontend/FE-14-subscription-billing-frontend/plans-api.json",
+    "docs/frontend/FE-14-subscription-billing-frontend/payments-api.json",
+    "docs/guides/SUBSCRIPTION_WORKFLOW_GUIDE.md"
+  ],
+  "enums": {
+    "BillingCycleNumeric": {
+      "0": "Monthly",
+      "1": "Yearly"
+    },
+    "SubscriptionStatusNumeric": {
+      "0": "Trial",
+      "1": "Active",
+      "2": "PastDue",
+      "3": "Cancelled",
+      "4": "Expired"
+    },
+    "ChangeTypeNumeric": {
+      "0": "Created",
+      "1": "Upgraded",
+      "2": "Downgraded",
+      "3": "Cancelled",
+      "4": "Reactivated"
+    },
+    "PaymentStatusNumeric": {
+      "0": "Pending",
+      "1": "Succeeded",
+      "2": "Failed",
+      "3": "Refunded"
+    },
+    "LimitTypeStringEnum": [
+      "MaxProjects",
+      "MaxEndpointsPerProject",
+      "MaxTestCasesPerSuite",
+      "MaxTestRunsPerMonth",
+      "MaxConcurrentRuns",
+      "RetentionDays",
+      "MaxLlmCallsPerMonth",
+      "MaxStorageMB"
+    ]
+  },
+  "models": {
+    "CreateUpdateSubscriptionModel": {
+      "contentType": "application/json",
+      "properties": [
+        "planId: Guid required",
+        "billingCycle: int? enum 0=Monthly, 1=Yearly",
+        "isTrial: bool",
+        "trialDays: int default 14, range 1..365",
+        "autoRenew: bool default true",
+        "startDate: DateOnly? format YYYY-MM-DD"
+      ],
+      "notes": [
+        "userId, externalSubId, externalCustId, changeReason deu JsonIgnore va khong nhan tu FE.",
+        "isTrial = true se bypass yeu cau billingCycle va set status = Trial.",
+        "Neu plan tra phi ma isTrial = false thi billingCycle la bat buoc.",
+        "Response/handler dung UTC today neu startDate bi omit."
+      ]
+    },
+    "SubscriptionModel": {
+      "properties": [
+        "id: Guid",
+        "userId: Guid",
+        "planId: Guid",
+        "planName: string",
+        "planDisplayName: string",
+        "status: int enum",
+        "billingCycle: int? enum",
+        "startDate: DateOnly",
+        "endDate: DateOnly?",
+        "nextBillingDate: DateOnly?",
+        "trialEndsAt: DateTimeOffset?",
+        "cancelledAt: DateTimeOffset?",
+        "autoRenew: bool",
+        "externalSubId: string?",
+        "externalCustId: string?",
+        "snapshotPriceMonthly: decimal?",
+        "snapshotPriceYearly: decimal?",
+        "snapshotCurrency: string?",
+        "snapshotPlanName: string?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "status va billingCycle serialise thanh so, khong phai string.",
+        "planName/planDisplayName uu tien snapshot truoc, sau do moi fallback ve plan hien tai.",
+        "externalSubId/externalCustId co the xuat hien trong response neu du lieu server co, nhung FE khong set duoc qua create/update route."
+      ]
+    },
+    "CancelSubscriptionModel": {
+      "contentType": "application/json",
+      "properties": [
+        "effectiveDate: DateOnly? format YYYY-MM-DD",
+        "changeReason: string? max 500"
+      ],
+      "notes": [
+        "Neu omit effectiveDate, handler dung ngay hien tai UTC."
+      ]
+    },
+    "SubscriptionHistoryModel": {
+      "properties": [
+        "id: Guid",
+        "subscriptionId: Guid",
+        "oldPlanId: Guid?",
+        "oldPlanName: string?",
+        "newPlanId: Guid",
+        "newPlanName: string?",
+        "changeType: int enum",
+        "changeReason: string?",
+        "effectiveDate: DateOnly",
+        "createdDateTime: DateTimeOffset"
+      ],
+      "notes": [
+        "changeType serialise thanh so.",
+        "oldPlanName/newPlanName duoc join theo plan lookup hien tai va co the null neu plan cu khong con."
+      ]
+    },
+    "PlanLimitModel": {
+      "properties": [
+        "id: Guid?",
+        "limitType: string enum",
+        "limitValue: int?",
+        "isUnlimited: bool"
+      ]
+    },
+    "PlanModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "displayName: string",
+        "description: string?",
+        "priceMonthly: decimal?",
+        "priceYearly: decimal?",
+        "currency: string",
+        "isActive: bool",
+        "sortOrder: int",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "limits: PlanLimitModel[]"
+      ],
+      "notes": [
+        "Duoc tra boi GET /api/subscriptions/plans va dung cung model voi PlansController."
+      ]
+    },
+    "PaymentTransactionModel": {
+      "properties": [
+        "id: Guid",
+        "userId: Guid",
+        "subscriptionId: Guid",
+        "paymentIntentId: Guid?",
+        "amount: decimal",
+        "currency: string",
+        "status: int enum",
+        "paymentMethod: string",
+        "provider: string",
+        "providerRef: string?",
+        "externalTxnId: string?",
+        "invoiceUrl: string?",
+        "failureReason: string?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "status serialise thanh so.",
+        "POST /api/subscriptions/{id}/payments tao transaction Pending local, khong tu dong tao PayOS checkout."
+      ]
+    },
+    "AddPaymentTransactionModel": {
+      "contentType": "application/json",
+      "properties": [
+        "providerRef: string? max 200",
+        "externalTxnId: string? max 200"
+      ],
+      "notes": [
+        "Body co the omit hoan toan; controller cho phep empty body."
+      ]
+    },
+    "UsageTrackingModel": {
+      "properties": [
+        "id: Guid",
+        "userId: Guid",
+        "periodStart: DateOnly",
+        "periodEnd: DateOnly",
+        "projectCount: int",
+        "endpointCount: int",
+        "testSuiteCount: int",
+        "testCaseCount: int",
+        "testRunCount: int",
+        "llmCallCount: int",
+        "storageUsedMB: decimal",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ]
+    },
+    "UpsertUsageTrackingModel": {
+      "contentType": "application/json",
+      "properties": [
+        "periodStart: DateOnly required",
+        "periodEnd: DateOnly required",
+        "replaceValues: bool",
+        "projectCount: int >= 0",
+        "endpointCount: int >= 0",
+        "testSuiteCount: int >= 0",
+        "testCaseCount: int >= 0",
+        "testRunCount: int >= 0",
+        "llmCallCount: int >= 0",
+        "storageUsedMB: decimal >= 0"
+      ],
+      "notes": [
+        "replaceValues = true => overwrite toan bo metric cho period.",
+        "replaceValues = false => cong don vao gia tri hien co cua cung period."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GetSubscription",
+      "method": "GET",
+      "path": "/api/subscriptions/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu subscription khong ton tai.",
+        "404 ProblemDetails neu current user khong phai admin va subscription thuoc user khac."
+      ],
+      "notes": [
+        "Ownership rule duoc thuc hien bang cach tra ve 404, khong phai 403."
+      ]
+    },
+    {
+      "name": "GetPlansForSubscriptionScreens",
+      "method": "GET",
+      "path": "/api/subscriptions/plans",
+      "query": [
+        "isActive: bool? optional, default true",
+        "search: string optional"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "SortOrder asc, Name asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PlanModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu isActive khong parse duoc."
+      ],
+      "notes": [
+        "Route nay duplicate logic plan list de phuc vu FE subscription screens.",
+        "Mac dinh chi tra plan active."
+      ]
+    },
+    {
+      "name": "GetCurrentSubscriptionByUser",
+      "method": "GET",
+      "path": "/api/subscriptions/users/{userId}/current",
+      "pathParams": [
+        "userId: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu user do khong co current subscription status Trial/Active/PastDue."
+      ],
+      "notes": [
+        "Neu current token khong phai admin, backend ignore userId tren path va dung current user.",
+        "Neu admin gui Guid.Empty tren path, backend cung fallback current user."
+      ]
+    },
+    {
+      "name": "GetCurrentSubscriptionMe",
+      "method": "GET",
+      "path": "/api/subscriptions/me/current",
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu current user khong co current subscription status Trial/Active/PastDue."
+      ],
+      "notes": [
+        "Day la route don gian nhat de FE refresh subscription sau khi mua goi."
+      ]
+    },
+    {
+      "name": "CreateSubscription",
+      "method": "POST",
+      "path": "/api/subscriptions",
+      "requestBody": "CreateUpdateSubscriptionModel",
+      "response": {
+        "status": 201,
+        "body": "SubscriptionModel",
+        "headers": [
+          "Location: /api/subscriptions/{id}"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac vi pham DataAnnotations.",
+        "400 ProblemDetails neu body null, plan inactive, billingCycle thieu cho paid non-trial, hoac chu ky yeu cau khong duoc plan ho tro.",
+        "404 ProblemDetails neu planId khong ton tai."
+      ],
+      "notes": [
+        "Controller inject model.userId = current user truoc khi dispatch command.",
+        "Handler lay latest subscription cua current user neu da ton tai va update no, nhung action van tra 201 Created.",
+        "isTrial = true se tao/cap nhat status = Trial va set TrialEndsAt, EndDate, NextBillingDate = ngay ket thuc trial."
+      ]
+    },
+    {
+      "name": "UpdateSubscription",
+      "method": "PUT",
+      "path": "/api/subscriptions/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "requestBody": "CreateUpdateSubscriptionModel",
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac vi pham DataAnnotations.",
+        "400 ProblemDetails neu body null, plan inactive, billingCycle khong hop le, hoac co gang doi owner.",
+        "404 ProblemDetails neu subscription khong ton tai, user khong duoc so huu subscription, hoac planId khong ton tai."
+      ],
+      "notes": [
+        "Controller doc subscription truoc de enforce ownership va tu gan model.userId = existingSubscription.userId.",
+        "Update luon ghi them 1 dong history voi changeType Created/Upgraded/Downgraded/Reactivated tuy context."
+      ]
+    },
+    {
+      "name": "CancelSubscription",
+      "method": "POST",
+      "path": "/api/subscriptions/{id}/cancel",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "requestBody": "CancelSubscriptionModel",
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body JSON sai shape.",
+        "404 ProblemDetails neu subscription khong ton tai hoac current user khong so huu subscription."
+      ],
+      "notes": [
+        "Neu subscription da status Cancelled, command return som va controller van tra snapshot hien tai voi 200.",
+        "Cancel set AutoRenew = false, NextBillingDate = null, TrialEndsAt = null."
+      ]
+    },
+    {
+      "name": "GetSubscriptionHistory",
+      "method": "GET",
+      "path": "/api/subscriptions/{id}/history",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "EffectiveDate desc, CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "SubscriptionHistoryModel[]"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu subscription khong ton tai hoac current user khong so huu subscription."
+      ],
+      "notes": [
+        "Response co the la 200 [] neu subscription hop le nhung chua co history."
+      ]
+    },
+    {
+      "name": "GetSubscriptionPayments",
+      "method": "GET",
+      "path": "/api/subscriptions/{id}/payments",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "query": [
+        "status: int? enum 0=Pending, 1=Succeeded, 2=Failed, 3=Refunded"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PaymentTransactionModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu query status khong parse duoc.",
+        "404 ProblemDetails neu subscription khong ton tai hoac current user khong so huu subscription."
+      ],
+      "notes": [
+        "Khong co pagination.",
+        "Admin co the xem payment transactions cua subscription bat ky neu vuot qua ownership precheck."
+      ]
+    },
+    {
+      "name": "AddPaymentTransaction",
+      "method": "POST",
+      "path": "/api/subscriptions/{id}/payments",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "requestBody": "AddPaymentTransactionModel",
+      "response": {
+        "status": 201,
+        "body": "PaymentTransactionModel",
+        "headers": [
+          "Location: /api/subscriptions/{id}/payments/{transactionId}"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape.",
+        "400 ProblemDetails neu snapshot/plan amount resolve ra <= 0.",
+        "404 ProblemDetails neu subscription khong ton tai hoac current user khong so huu subscription."
+      ],
+      "notes": [
+        "Action nay la helper tao pending transaction local, khong tao PayOS checkout link.",
+        "Neu body omit hoan toan, backend van tao duoc transaction moi neu amount hop le.",
+        "Neu externalTxnId hoac providerRef bi trung, handler tra lai transaction da ton tai thay vi tao moi.",
+        "Location header tro toi route hien tai chua co GET endpoint corresponding."
+      ]
+    },
+    {
+      "name": "GetUsageTracking",
+      "method": "GET",
+      "path": "/api/subscriptions/users/{userId}/usage",
+      "pathParams": [
+        "userId: Guid"
+      ],
+      "query": [
+        "periodStart: DateOnly? format YYYY-MM-DD",
+        "periodEnd: DateOnly? format YYYY-MM-DD"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "PeriodStart desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "UsageTrackingModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu periodStart/periodEnd khong parse duoc."
+      ],
+      "notes": [
+        "Neu current token khong phai admin, backend ignore userId tren path va doc usage cua current user.",
+        "Filter la PeriodStart >= query.periodStart va PeriodEnd <= query.periodEnd.",
+        "Khong co validation start <= end o route GET."
+      ]
+    },
+    {
+      "name": "UpsertUsageTracking",
+      "method": "PUT",
+      "path": "/api/subscriptions/users/{userId}/usage",
+      "pathParams": [
+        "userId: Guid"
+      ],
+      "requestBody": "UpsertUsageTrackingModel",
+      "response": {
+        "status": 200,
+        "body": "UsageTrackingModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac DataAnnotations fail.",
+        "400 ProblemDetails neu periodStart > periodEnd hoac co metric am."
+      ],
+      "notes": [
+        "Neu current token khong phai admin, backend ignore userId tren path va update usage cho current user.",
+        "Response duoc query lai theo chinh model.periodStart/model.periodEnd, vi vay thuong la mang 1 phan tu.",
+        "Route nay khong validate nguoi dung co current subscription hay khong; no thao tac truc tiep tren UsageTracking."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Create/Update subscription su dung enum so cho BillingCycle, SubscriptionStatus, ChangeType, PaymentStatus.",
+    "POST /api/subscriptions co the update latest subscription cua current user thay vi tao row moi.",
+    "isTrial = true se bo qua billing validation va tao status Trial, TrialEndsAt = now + TrialDays, EndDate = NextBillingDate = ngay ket thuc trial.",
+    "isTrial = false va plan free cho phep billingCycle null; subscription active ngay voi EndDate/NextBillingDate = null.",
+    "Current subscription query chi nhin status Trial/Active/PastDue va lay ban ghi moi nhat theo CreatedDateTime desc.",
+    "Ownership cho non-admin duoc map thanh 404 o GET/PUT/cancel/history/payment routes.",
+    "POST /api/subscriptions/{id}/payments mac dinh tao PaymentMethod=payos, Provider=PAYOS, Status=Pending.",
+    "AddPaymentTransaction dedupe theo externalTxnId trong cung subscription hoac providerRef global PAYOS.",
+    "Usage upsert dung unique pair UserId + PeriodStart + PeriodEnd de update/create.",
+    "replaceValues = false cua usage se cong don tung metric vao ban ghi hien co."
+  ],
+  "samples": {
+    "createTrialSubscriptionRequest": {
+      "planId": "1d2422db-05dc-4bf6-b9a5-540d9d6b93b3",
+      "billingCycle": 0,
+      "isTrial": true,
+      "trialDays": 14,
+      "autoRenew": true,
+      "startDate": "2026-03-28"
+    },
+    "createSubscription201": {
+      "id": "91a3f9b2-7e46-4a95-972d-2ce3627ab5bd",
+      "userId": "4a0ef506-8f25-412e-86be-995e6d9b33b8",
+      "planId": "1d2422db-05dc-4bf6-b9a5-540d9d6b93b3",
+      "planName": "Pro Plan",
+      "planDisplayName": "Pro Plan",
+      "status": 0,
+      "billingCycle": 0,
+      "startDate": "2026-03-28",
+      "endDate": "2026-04-11",
+      "nextBillingDate": "2026-04-11",
+      "trialEndsAt": "2026-04-11T08:00:00Z",
+      "cancelledAt": null,
+      "autoRenew": true,
+      "externalSubId": null,
+      "externalCustId": null,
+      "snapshotPriceMonthly": 29.99,
+      "snapshotPriceYearly": 299.99,
+      "snapshotCurrency": "USD",
+      "snapshotPlanName": "Pro Plan",
+      "createdDateTime": "2026-03-28T08:00:00Z",
+      "updatedDateTime": null
+    },
+    "cancelRequest": {
+      "effectiveDate": "2026-03-31",
+      "changeReason": "User requested cancellation"
+    },
+    "history200": [
+      {
+        "id": "b09d5e3e-2d8c-4568-842b-260be9e17606",
+        "subscriptionId": "91a3f9b2-7e46-4a95-972d-2ce3627ab5bd",
+        "oldPlanId": "9cddf8c3-c3df-4621-9ed0-2ca77c6afd56",
+        "oldPlanName": "Starter",
+        "newPlanId": "1d2422db-05dc-4bf6-b9a5-540d9d6b93b3",
+        "newPlanName": "Pro Plan",
+        "changeType": 1,
+        "changeReason": "Plan upgrade",
+        "effectiveDate": "2026-03-28",
+        "createdDateTime": "2026-03-28T08:00:00Z"
+      }
+    ],
+    "subscriptionPayments200": [
+      {
+        "id": "776df4d3-c9d0-42d5-a3f3-f2e20f6098d4",
+        "userId": "4a0ef506-8f25-412e-86be-995e6d9b33b8",
+        "subscriptionId": "91a3f9b2-7e46-4a95-972d-2ce3627ab5bd",
+        "paymentIntentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+        "amount": 29.99,
+        "currency": "USD",
+        "status": 1,
+        "paymentMethod": "bank_transfer",
+        "provider": "PAYOS",
+        "providerRef": "plink_123456",
+        "externalTxnId": "txn_987654",
+        "invoiceUrl": "https://pay.payos.vn/web/123456",
+        "failureReason": null,
+        "createdDateTime": "2026-03-28T08:11:00Z",
+        "updatedDateTime": "2026-03-28T08:12:00Z"
+      }
+    ],
+    "upsertUsageRequest": {
+      "periodStart": "2026-03-01",
+      "periodEnd": "2026-03-31",
+      "replaceValues": false,
+      "projectCount": 1,
+      "endpointCount": 5,
+      "testSuiteCount": 0,
+      "testCaseCount": 0,
+      "testRunCount": 0,
+      "llmCallCount": 2,
+      "storageUsedMB": 12.5
+    },
+    "upsertUsage200": [
+      {
+        "id": "f3ceb6dd-aacf-4f4e-a338-88d29cf8b4c1",
+        "userId": "4a0ef506-8f25-412e-86be-995e6d9b33b8",
+        "periodStart": "2026-03-01",
+        "periodEnd": "2026-03-31",
+        "projectCount": 3,
+        "endpointCount": 18,
+        "testSuiteCount": 1,
+        "testCaseCount": 6,
+        "testRunCount": 14,
+        "llmCallCount": 20,
+        "storageUsedMB": 245.5,
+        "createdDateTime": "2026-03-01T00:05:00Z",
+        "updatedDateTime": "2026-03-28T08:30:00Z"
+      }
+    ],
+    "unsupportedPaidCycle400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Goi cuoc nay khong ho tro thanh toan theo nam.",
+      "message": "Goi cuoc nay khong ho tro thanh toan theo nam.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  },
+  "relatedNotes": [
+    "Neu FE can mua goi, uu tien PaymentsController thay vi tu goi create subscription + add payment transaction thu cong.",
+    "Neu FE can man hinh admin usage, can hien ro userId path se bi ignore voi token non-admin.",
+    "Can parse cac enum numeric ve label client-side de UI de doc hon."
+  ]
+}
