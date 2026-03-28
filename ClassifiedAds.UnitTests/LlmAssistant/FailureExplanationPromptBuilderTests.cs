@@ -26,7 +26,7 @@ public class FailureExplanationPromptBuilderTests
         prompt.Prompt.Should().Contain("Endpoint metadata:");
         prompt.Prompt.Should().Contain(context.TestSuiteId.ToString());
         prompt.Prompt.Should().Contain(context.Definition.TestCaseId.ToString());
-        prompt.Prompt.Should().Contain("Khong duoc quyet dinh pass/fail.");
+        prompt.Prompt.Should().Contain("Không được quyết định pass/fail.");
     }
 
     [Fact]

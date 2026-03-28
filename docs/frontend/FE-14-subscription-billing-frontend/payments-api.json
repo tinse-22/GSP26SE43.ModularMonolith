@@ -1,0 +1,490 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-14-subscription-billing-payments-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "PaymentsController",
+  "baseRoute": "/api/payments",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer",
+    "anonymousEndpoints": [
+      "POST /api/payments/payos/webhook",
+      "GET /api/payments/payos/return"
+    ]
+  },
+  "permissions": {
+    "SubscribeToPlan": "Permission:CreateSubscriptionPayment",
+    "GetPlans": "Permission:GetPlans",
+    "GetPaymentIntent": "Permission:GetPaymentIntent",
+    "CreatePayOsCheckout": "Permission:CreatePayOsCheckout",
+    "CheckPaymentStatus": "Permission:GetPaymentIntent",
+    "SyncPaymentFromPayOs": "Permission:SyncPayment"
+  },
+  "prerequisiteDocs": [
+    "docs/frontend/FE-14-subscription-billing-frontend/plans-api.json",
+    "docs/frontend/FE-14-subscription-billing-frontend/subscriptions-api.json",
+    "docs/guides/SUBSCRIPTION_WORKFLOW_GUIDE.md"
+  ],
+  "enums": {
+    "BillingCycleNumeric": {
+      "0": "Monthly",
+      "1": "Yearly"
+    },
+    "PaymentPurposeNumeric": {
+      "0": "SubscriptionPurchase",
+      "1": "SubscriptionUpgrade",
+      "2": "SubscriptionRenewal"
+    },
+    "PaymentIntentStatusNumeric": {
+      "0": "RequiresPayment",
+      "1": "Processing",
+      "2": "Succeeded",
+      "3": "Canceled",
+      "4": "Expired"
+    },
+    "WebhookProcessedStatuses": [
+      "PAID",
+      "SUCCESS",
+      "COMPLETED"
+    ],
+    "ReturnSuccessStatuses": [
+      "PAID",
+      "SUCCESS",
+      "COMPLETED"
+    ]
+  },
+  "models": {
+    "CreateSubscriptionPaymentModel": {
+      "contentType": "application/json",
+      "properties": [
+        "billingCycle: int required, enum 0=Monthly, 1=Yearly"
+      ],
+      "notes": [
+        "Khong co JsonStringEnumConverter global, FE nen gui billingCycle dang so.",
+        "Body null se bi handler reject 400."
+      ]
+    },
+    "SubscriptionModel": {
+      "properties": [
+        "id: Guid",
+        "userId: Guid",
+        "planId: Guid",
+        "planName: string",
+        "planDisplayName: string",
+        "status: int enum",
+        "billingCycle: int? enum",
+        "startDate: DateOnly",
+        "endDate: DateOnly?",
+        "nextBillingDate: DateOnly?",
+        "trialEndsAt: DateTimeOffset?",
+        "cancelledAt: DateTimeOffset?",
+        "autoRenew: bool",
+        "snapshotPriceMonthly: decimal?",
+        "snapshotPriceYearly: decimal?",
+        "snapshotCurrency: string?",
+        "snapshotPlanName: string?"
+      ]
+    },
+    "SubscriptionPurchaseResultModel": {
+      "properties": [
+        "requiresPayment: bool",
+        "paymentIntentId: Guid?",
+        "subscription: SubscriptionModel?"
+      ],
+      "notes": [
+        "Free plan flow => requiresPayment = false, subscription != null, paymentIntentId = null.",
+        "Paid flow => requiresPayment = true, paymentIntentId != null, subscription = null."
+      ]
+    },
+    "PlanLimitModel": {
+      "properties": [
+        "id: Guid?",
+        "limitType: string enum",
+        "limitValue: int?",
+        "isUnlimited: bool"
+      ]
+    },
+    "PlanModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "displayName: string",
+        "description: string?",
+        "priceMonthly: decimal?",
+        "priceYearly: decimal?",
+        "currency: string",
+        "isActive: bool",
+        "sortOrder: int",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "limits: PlanLimitModel[]"
+      ]
+    },
+    "PaymentIntentModel": {
+      "properties": [
+        "id: Guid",
+        "userId: Guid",
+        "amount: decimal",
+        "currency: string",
+        "purpose: int enum",
+        "planId: Guid",
+        "planName: string?",
+        "billingCycle: int enum",
+        "subscriptionId: Guid?",
+        "status: int enum",
+        "checkoutUrl: string?",
+        "expiresAt: DateTimeOffset",
+        "orderCode: long?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "purpose, billingCycle, status serialise thanh so.",
+        "checkoutUrl null cho den khi FE goi POST /api/payments/payos/create thanh cong.",
+        "GET /api/payments/{intentId} chi tra payment intent cua current user, khong co admin bypass."
+      ]
+    },
+    "PayOsCheckoutRequestModel": {
+      "contentType": "application/json",
+      "properties": [
+        "intentId: Guid required",
+        "returnUrl: string? max 500"
+      ],
+      "notes": [
+        "Neu returnUrl rong/null, PayOsService fallback sang Modules:Subscription:PayOS:ReturnUrl.",
+        "Neu FE gui thang frontend URL vao returnUrl, backend /api/payments/payos/return co the bi bypass hoan toan.",
+        "CancelUrl frontend khong truyen o request nay; service se dung config CancelUrl neu co, neu khong se fallback ve returnUrl."
+      ]
+    },
+    "PayOsCheckoutResponseModel": {
+      "properties": [
+        "checkoutUrl: string",
+        "orderCode: long"
+      ],
+      "notes": [
+        "orderCode duoc tao 1 lan va co the duoc reuse neu goi create lai cho cung intent.",
+        "checkoutUrl la URL tuyet doi do PayOS tra ve."
+      ]
+    },
+    "CheckPaymentStatusResponse": {
+      "properties": [
+        "intentId: Guid",
+        "status: int enum",
+        "orderCode: long?",
+        "amount: decimal",
+        "purpose: int enum",
+        "createdAt: DateTimeOffset"
+      ]
+    },
+    "SyncPaymentResponse": {
+      "properties": [
+        "status: string",
+        "payOsStatus: string?"
+      ],
+      "notes": [
+        "status co the la already_succeeded | synced | ignored | updated | pending."
+      ]
+    },
+    "WebhookAckResponse": {
+      "properties": [
+        "status: string",
+        "message: string?",
+        "error: string?"
+      ],
+      "notes": [
+        "Webhook route luon tra 200 JSON ack, ke ca khi payload sai hay xu ly fail."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "SubscribeToPlan",
+      "method": "POST",
+      "path": "/api/payments/subscribe/{planId}",
+      "pathParams": [
+        "planId: Guid"
+      ],
+      "requestBody": "CreateSubscriptionPaymentModel",
+      "response": {
+        "status": 200,
+        "body": "SubscriptionPurchaseResultModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac billingCycle khong parse duoc.",
+        "400 ProblemDetails neu body null, plan inactive, hoac plan khong ho tro chu ky yeu cau.",
+        "404 ProblemDetails neu planId khong ton tai."
+      ],
+      "notes": [
+        "Neu current user da co subscription status Active/Trial, paid flow se set payment intent purpose = SubscriptionUpgrade.",
+        "Neu price <= 0, backend active subscription ngay va tao them history, khong tao payment intent."
+      ]
+    },
+    {
+      "name": "GetPlansForPaymentScreens",
+      "method": "GET",
+      "path": "/api/payments/plans",
+      "query": [
+        "isActive: bool? optional, default true",
+        "search: string optional"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "SortOrder asc, Name asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PlanModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu isActive khong parse duoc."
+      ],
+      "notes": [
+        "Duplicate route phuc vu purchase UI, mac dinh chi tra plan active."
+      ]
+    },
+    {
+      "name": "GetPaymentIntent",
+      "method": "GET",
+      "path": "/api/payments/{intentId}",
+      "pathParams": [
+        "intentId: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "PaymentIntentModel"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu intentId khong ton tai hoac intent khong thuoc current token user."
+      ],
+      "notes": [
+        "Khong co admin bypass.",
+        "PlanName trong response duoc join qua SubscriptionPlan luc query."
+      ]
+    },
+    {
+      "name": "CreatePayOsCheckout",
+      "method": "POST",
+      "path": "/api/payments/payos/create",
+      "requestBody": "PayOsCheckoutRequestModel",
+      "response": {
+        "status": 200,
+        "body": "PayOsCheckoutResponseModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac returnUrl qua 500 ky tu.",
+        "400 ProblemDetails neu intent da Succeeded, intent da Canceled/Expired, intent het han, PayOS chua duoc config, hoac PayOS tra loi.",
+        "404 ProblemDetails neu intentId khong ton tai hoac khong thuoc current user."
+      ],
+      "notes": [
+        "Neu intent.ExpiresAt <= now, handler se update status sang Expired truoc khi throw 400.",
+        "orderCode reuse neu intent da co san orderCode; neu chua co thi se tao moi dang yyMMddHHmmss + 3 chu so ngau nhien.",
+        "Handler co the goi lai PayOS de tao payment link moi cho cung intent/orderCode."
+      ]
+    },
+    {
+      "name": "PayOsWebhook",
+      "method": "POST",
+      "path": "/api/payments/payos/webhook",
+      "authentication": "anonymous",
+      "requestBody": "raw JSON body from PayOS",
+      "response": {
+        "status": 200,
+        "body": "WebhookAckResponse"
+      },
+      "problemCases": [],
+      "notes": [
+        "Body rong, {} hoac [] => 200 { status: ok, message: Test webhook received successfully }.",
+        "JSON sai format => 200 { status: error, message: Invalid JSON format }.",
+        "Handler verify payload.signature trong JSON body; x-signature header hien tai duoc doc nhung khong duoc dung de quyet dinh pass/fail.",
+        "Payload khong co data hoac signature fail hoac orderCode khong match => 200 { status: ignored } hoac { status: ok } tuy nhanh code.",
+        "Webhook duoc xu ly idempotent theo Provider=PAYOS + providerRef."
+      ]
+    },
+    {
+      "name": "PayOsReturn",
+      "method": "GET",
+      "path": "/api/payments/payos/return",
+      "authentication": "anonymous",
+      "query": [
+        "status: string",
+        "orderCode: long"
+      ],
+      "response": {
+        "status": 302,
+        "body": "redirect"
+      },
+      "problemCases": [],
+      "notes": [
+        "Neu status query la PAID/SUCCESS/COMPLETED va orderCode map duoc intent, redirect toi /payment/result?status=success&intentId={intentId}.",
+        "Moi truong hop con lai redirect toi /payment/result?status=failed.",
+        "Neu Modules:Subscription:PayOS:FrontendBaseUrl la absolute URL hop le, redirect se dung absolute base do + /payment/result."
+      ]
+    },
+    {
+      "name": "CheckPaymentStatus",
+      "method": "POST",
+      "path": "/api/payments/debug/check-payment/{intentId}",
+      "pathParams": [
+        "intentId: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "CheckPaymentStatusResponse"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu intentId khong ton tai hoac khong thuoc current user."
+      ],
+      "notes": [
+        "Route debug nay khong goi PayOS; no chi doc snapshot local tu database."
+      ]
+    },
+    {
+      "name": "SyncPaymentFromPayOs",
+      "method": "POST",
+      "path": "/api/payments/debug/sync-payment/{intentId}",
+      "pathParams": [
+        "intentId: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "SyncPaymentResponse"
+      },
+      "problemCases": [
+        "400 ProblemDetails neu intent chua co orderCode.",
+        "404 ProblemDetails neu intentId khong ton tai hoac khong thuoc current user."
+      ],
+      "notes": [
+        "Neu PayOS bao PAID/SUCCESS/COMPLETED, route nay se reuse webhook flow voi SkipSignatureVerification = true.",
+        "Neu PayOS bao CANCELED/CANCELLED hoac EXPIRED/TIMEOUT, route cap nhat local intent status roi tra 200."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Subscribe free-plan flow active subscription ngay va khong tao PaymentIntent.",
+    "Subscribe paid-plan flow tao PaymentIntent status RequiresPayment va ExpiresAt = now + IntentExpirationMinutes (default 15).",
+    "PaymentIntent purpose = SubscriptionUpgrade neu current user da co subscription Active/Trial, nguoc lai = SubscriptionPurchase.",
+    "CreatePayOsCheckout se reuse orderCode neu intent da co, neu chua co thi generate orderCode 15 chu so.",
+    "PayOsService fallback returnUrl tu request ve config ReturnUrl; cancelUrl fallback config CancelUrl, neu khong co thi = returnUrl.",
+    "Neu FE tu truyen returnUrl direct toi frontend, flow backend /api/payments/payos/return se khong duoc chay.",
+    "PayOS API yeu cau ClientId + ApiKey + SecretKey; thieu 1 trong 3 gia tri se bi reject 400 truoc khi tao link/query status.",
+    "Webhook signature sai khong tra 4xx; handler simply ignored. Runtime hien verify payload.signature, khong verify x-signature header.",
+    "Webhook payment success se upsert subscription Active, tao SubscriptionHistory va PaymentTransaction Succeeded, roi set intent status = Succeeded.",
+    "Webhook failure se set intent status = Canceled hoac Expired; transaction Failed chi duoc tao neu intent da co SubscriptionId.",
+    "GET /api/payments/{intentId}, debug/check-payment, debug/sync-payment deu chi allow current token owner, khong co admin override.",
+    "ReconcilePayOsCheckoutWorker delay 10 giay luc start, sau do chay theo CheckoutReconcileIntervalSeconds (default 30), batch size default 50, lookback default 24h.",
+    "Worker co the tu update status Expired/Canceled, backfill CheckoutUrl, hoac trigger sync paid neu webhook bi miss."
+  ],
+  "samples": {
+    "subscribePaidRequest": {
+      "billingCycle": 0
+    },
+    "subscribePaid200": {
+      "requiresPayment": true,
+      "paymentIntentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+      "subscription": null
+    },
+    "subscribeFree200": {
+      "requiresPayment": false,
+      "paymentIntentId": null,
+      "subscription": {
+        "id": "91a3f9b2-7e46-4a95-972d-2ce3627ab5bd",
+        "userId": "4a0ef506-8f25-412e-86be-995e6d9b33b8",
+        "planId": "0e928f5b-67f8-4481-b912-c8144050f087",
+        "planName": "Free Plan",
+        "planDisplayName": "Free Plan",
+        "status": 1,
+        "billingCycle": 0,
+        "startDate": "2026-03-28",
+        "endDate": null,
+        "nextBillingDate": null,
+        "trialEndsAt": null,
+        "cancelledAt": null,
+        "autoRenew": true,
+        "snapshotPriceMonthly": 0,
+        "snapshotPriceYearly": 0,
+        "snapshotCurrency": "USD",
+        "snapshotPlanName": "Free Plan"
+      }
+    },
+    "paymentIntent200": {
+      "id": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+      "userId": "4a0ef506-8f25-412e-86be-995e6d9b33b8",
+      "amount": 29.99,
+      "currency": "USD",
+      "purpose": 0,
+      "planId": "1d2422db-05dc-4bf6-b9a5-540d9d6b93b3",
+      "planName": "Pro Plan",
+      "billingCycle": 0,
+      "subscriptionId": null,
+      "status": 1,
+      "checkoutUrl": "https://pay.payos.vn/web/4c7cc1b2",
+      "expiresAt": "2026-03-28T08:25:00Z",
+      "orderCode": 260328081512345,
+      "createdDateTime": "2026-03-28T08:10:00Z",
+      "updatedDateTime": "2026-03-28T08:11:00Z"
+    },
+    "createCheckoutRequest": {
+      "intentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+      "returnUrl": "https://frontend.example.com/payment/result"
+    },
+    "createCheckout200": {
+      "checkoutUrl": "https://pay.payos.vn/web/4c7cc1b2",
+      "orderCode": 260328081512345
+    },
+    "checkoutExpired400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Yeu cau thanh toan da het han.",
+      "message": "Yeu cau thanh toan da het han.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "webhookProcessed200": {
+      "status": "ok"
+    },
+    "webhookIgnored200": {
+      "status": "ignored"
+    },
+    "returnRedirectSuccess": "/payment/result?status=success&intentId=a80a548f-ef25-4598-9fe6-0d6859f0cead",
+    "debugCheckPayment200": {
+      "intentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+      "status": 1,
+      "orderCode": 260328081512345,
+      "amount": 29.99,
+      "purpose": 0,
+      "createdAt": "2026-03-28T08:10:00Z"
+    },
+    "syncPayment200": {
+      "status": "synced",
+      "payOsStatus": "PAID"
+    }
+  },
+  "relatedNotes": [
+    "Frontend purchase flow nen coi GET /api/payments/{intentId} la API read chinh sau checkout, khong phai webhook ack.",
+    "Neu FE can poll, hay poll GET /api/payments/{intentId} voi timeout ngan va stop khi status vao Succeeded/Canceled/Expired.",
+    "Khong nen tu parse query PayOS tren frontend de quyet dinh thanh cong that su; return route server da map ve success/failed va worker/webhook van co the thay doi local status muon hon."
+  ]
+}

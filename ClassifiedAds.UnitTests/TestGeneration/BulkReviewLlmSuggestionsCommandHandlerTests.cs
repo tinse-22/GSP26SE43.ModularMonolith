@@ -482,7 +482,7 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
 
         var act = () => _handler.HandleAsync(command);
         await act.Should().ThrowAsync<ValidationException>()
-            .WithMessage("*chu so huu*");
+            .WithMessage("*chủ sở hữu*");
     }
 
     private static readonly Guid DefaultUserId = Guid.NewGuid();

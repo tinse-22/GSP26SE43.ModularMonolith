@@ -1,0 +1,335 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-16-llm-suggestion-feedback-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "LlmSuggestionsController",
+  "baseRoute": "/api/test-suites/{suiteId}/llm-suggestions",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "UpsertLlmSuggestionFeedback": "Permission:UpdateTestCase",
+    "ReadLlmSuggestionFeedbackFromList": "Permission:GetTestCases",
+    "ReadLlmSuggestionFeedbackFromDetail": "Permission:GetTestCases"
+  },
+  "prerequisiteDocs": [
+    "FE-15 frontend handoff: docs/frontend/FE-15-llm-suggestion-review-frontend/README.md",
+    "Backend planning package for FE-16: docs/features/FE-16-llm-feedback",
+    "FE-06 generation context docs: docs/frontend/FE-06-boundary-negative-generation-frontend/README.md"
+  ],
+  "enums": {
+    "FeedbackSignalRequest": [
+      "Helpful",
+      "NotHelpful"
+    ],
+    "FeedbackSignalResponse": [
+      "Helpful",
+      "NotHelpful"
+    ],
+    "SuggestionStatesThatAllowFeedback": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "ModifiedAndApproved"
+    ],
+    "SuggestionStatesThatRejectFeedback": [
+      "Superseded"
+    ],
+    "ValidationMessageSnippets": [
+      "Signal phai la 'Helpful' hoac 'NotHelpful'.",
+      "Notes khong duoc vuot qua 4000 ky tu.",
+      "Ban khong phai chu so huu cua test suite nay.",
+      "Khong the feedback suggestion cho test suite da archived.",
+      "Khong the feedback suggestion da superseded."
+    ]
+  },
+  "models": {
+    "UpsertLlmSuggestionFeedbackRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "signal: string enum = Helpful | NotHelpful",
+        "notes: string? optional max length 4000"
+      ],
+      "notes": [
+        "signal parse case-insensitive va duoc trim whitespace truoc khi validate enum.",
+        "notes duoc trim dau/cuoi; chuoi rong hoac whitespace-only se thanh null khi luu.",
+        "Khong co rowVersion trong request."
+      ]
+    },
+    "LlmSuggestionFeedbackModel": {
+      "properties": [
+        "id: Guid",
+        "suggestionId: Guid",
+        "testSuiteId: Guid",
+        "endpointId: Guid?",
+        "userId: Guid",
+        "signal: string",
+        "notes: string?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: string base64"
+      ],
+      "notes": [
+        "rowVersion nay thuoc feedback row, khong phai suggestion row.",
+        "updatedDateTime = null tren lan tao dau tien; se co gia tri sau cac lan overwrite tiep theo."
+      ]
+    },
+    "LlmSuggestionFeedbackSummaryModel": {
+      "properties": [
+        "helpfulCount: int",
+        "notHelpfulCount: int",
+        "lastFeedbackAt: DateTimeOffset?"
+      ],
+      "notes": [
+        "lastFeedbackAt lay theo max cua UpdatedDateTime ?? CreatedDateTime tren tat ca feedback rows cua suggestion.",
+        "Neu chua co feedback nao thi backend tra object voi 2 count = 0 va lastFeedbackAt = null."
+      ]
+    },
+    "LlmSuggestionModelFeedbackFields": {
+      "properties": [
+        "currentUserFeedback: LlmSuggestionFeedbackModel?",
+        "feedbackSummary: LlmSuggestionFeedbackSummaryModel"
+      ],
+      "appliesTo": [
+        "GET /api/test-suites/{suiteId}/llm-suggestions",
+        "GET /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}"
+      ],
+      "notes": [
+        "currentUserFeedback = null neu user hien tai chua tung feedback suggestion do.",
+        "Generate/review response cua FE-15 hien tai thuong de 2 field nay = null do khong qua query hydration."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ],
+      "notes": [
+        "FE-16 write flow hien tai khong co conflict reason code rieng.",
+        "Non-owner access hien map thanh 400 thay vi 403."
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "readSurfaceExtensions": [
+    {
+      "name": "LlmSuggestionFeedbackReadModel",
+      "appliesTo": [
+        "GET /api/test-suites/{suiteId}/llm-suggestions",
+        "GET /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}"
+      ],
+      "fields": [
+        "currentUserFeedback",
+        "feedbackSummary"
+      ],
+      "notes": [
+        "FE nen doc feedback state tu 2 route GET nay; khong co GET feedback route rieng.",
+        "feedbackSummary aggregate theo tat ca user feedback rows tren suggestion hien tai."
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "UpsertLlmSuggestionFeedback",
+      "method": "PUT",
+      "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/feedback",
+      "pathParams": [
+        "suiteId: Guid",
+        "suggestionId: Guid"
+      ],
+      "query": [],
+      "requestBody": "UpsertLlmSuggestionFeedbackRequest",
+      "response": {
+        "status": 200,
+        "body": "LlmSuggestionFeedbackModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails khi body malformed JSON, missing signal, signal vuot max length 20, hoac notes vuot max length 4000 theo data annotation bind-time.",
+        "400 ProblemDetails khi signal khong nam trong Helpful|NotHelpful, non-owner access, suite archived, hoac suggestion da Superseded.",
+        "404 khi suiteId khong ton tai hoac suggestionId khong thuoc suite hien tai.",
+        "Khong co 409 concurrency contract tren FE-16 write path hien tai."
+      ],
+      "notes": [
+        "Request khong can rowVersion.",
+        "Server luon upsert theo current user; khong co userId trong request.",
+        "Neu feedback row da ton tai thi backend overwrite signal/notes, cap nhat UpdatedDateTime, va tao RowVersion moi.",
+        "Response chi tra feedback row sau khi write, khong tra lai feedbackSummary moi."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Owner check dua tren suite.CreatedById, khong dua tren reviewedById hay feedback.userId trong request.",
+    "Feedback write duoc phep cho moi suggestion trong suite mien la suggestion chua bi Superseded.",
+    "Khong co delete endpoint; cung mot PUT duoc dung de tao moi, overwrite signal, sua note, hoac clear note bang chuoi rong/whitespace.",
+    "List/detail query cua FE-15 hydrate currentUserFeedback bang feedback row cua user hien tai va feedbackSummary bang aggregate cua tat ca user.",
+    "Generate/review response cua FE-15 khong hydrate 2 field feedback nay vi map truc tiep tu entity raw.",
+    "Feedback aggregate duoc dua vao feedback context theo endpoint va feedback fingerprint de thay doi cache key cho cac lan generate boundary/negative suggestions ve sau.",
+    "Feedback moi khong tu dong mutate suggestion content hien co; muon thay doi suggestion list thi FE van phai theo generate/list flow cua FE-15."
+  ],
+  "samples": {
+    "helpfulRequest": {
+      "signal": "Helpful",
+      "notes": "Scenario nay bat trung bug da thay tren staging."
+    },
+    "notHelpfulRequest": {
+      "signal": "NotHelpful",
+      "notes": "Expectation hien tai khong phu hop voi business rule moi."
+    },
+    "clearNoteButKeepSignalRequest": {
+      "signal": "Helpful",
+      "notes": "   "
+    },
+    "create200": {
+      "id": "9aefaa7d-5f0f-4c66-b82d-71f8af2d8d3d",
+      "suggestionId": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "userId": "f04ec014-3e45-4504-b40d-93af0ef5f29f",
+      "signal": "Helpful",
+      "notes": "Scenario nay bat trung bug da thay tren staging.",
+      "createdDateTime": "2026-03-28T09:20:00Z",
+      "updatedDateTime": null,
+      "rowVersion": "BQUFBQUFBQU="
+    },
+    "update200": {
+      "id": "9aefaa7d-5f0f-4c66-b82d-71f8af2d8d3d",
+      "suggestionId": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "userId": "f04ec014-3e45-4504-b40d-93af0ef5f29f",
+      "signal": "NotHelpful",
+      "notes": "Expectation can sua lai theo runtime 409 moi.",
+      "createdDateTime": "2026-03-28T09:20:00Z",
+      "updatedDateTime": "2026-03-28T09:27:00Z",
+      "rowVersion": "CQkJCQkJCQk="
+    },
+    "listSuggestionWithFeedback": {
+      "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "cacheKey": null,
+      "displayOrder": 0,
+      "suggestionType": "BoundaryNegative",
+      "testType": "Negative",
+      "suggestedName": "POST /api/auth/register - email already exists",
+      "suggestedDescription": "Gui duplicated email va ky vong backend tra validation failure.",
+      "suggestedRequest": "{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"bodyType\":null,\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\",\"timeout\":null}",
+      "suggestedExpectation": "{\"expectedStatus\":[400],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[\"email\"],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null}",
+      "suggestedVariables": [],
+      "suggestedTags": [
+        "negative",
+        "auto-generated",
+        "llm-suggested",
+        "validation"
+      ],
+      "priority": "High",
+      "reviewStatus": "Pending",
+      "reviewedById": null,
+      "reviewedAt": null,
+      "reviewNotes": null,
+      "modifiedContent": null,
+      "appliedTestCaseId": null,
+      "llmModel": "deepseek-chat",
+      "tokensUsed": 312,
+      "createdDateTime": "2026-03-28T09:15:00Z",
+      "updatedDateTime": null,
+      "rowVersion": "AQIDBAUGBwg=",
+      "currentUserFeedback": {
+        "id": "9aefaa7d-5f0f-4c66-b82d-71f8af2d8d3d",
+        "suggestionId": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+        "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+        "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+        "userId": "f04ec014-3e45-4504-b40d-93af0ef5f29f",
+        "signal": "Helpful",
+        "notes": "Scenario nay bat trung bug da thay tren staging.",
+        "createdDateTime": "2026-03-28T09:20:00Z",
+        "updatedDateTime": null,
+        "rowVersion": "BQUFBQUFBQU="
+      },
+      "feedbackSummary": {
+        "helpfulCount": 2,
+        "notHelpfulCount": 1,
+        "lastFeedbackAt": "2026-03-28T09:27:00Z"
+      }
+    },
+    "listSuggestionWithoutFeedback": {
+      "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
+      "reviewStatus": "Pending",
+      "currentUserFeedback": null,
+      "feedbackSummary": {
+        "helpfulCount": 0,
+        "notHelpfulCount": 0,
+        "lastFeedbackAt": null
+      }
+    },
+    "invalidSignal400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Signal phai la 'Helpful' hoac 'NotHelpful'.",
+      "message": "Signal phai la 'Helpful' hoac 'NotHelpful'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "archivedSuite400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Khong the feedback suggestion cho test suite da archived.",
+      "message": "Khong the feedback suggestion cho test suite da archived.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "suggestionSuperseded400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Khong the feedback suggestion da superseded.",
+      "message": "Khong the feedback suggestion da superseded.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "suggestionNotFound404": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.4",
+      "title": "Not Found",
+      "status": 404,
+      "detail": "Khong tim thay suggestion voi ma '8acbca9f-27f7-467a-bd4a-4c3b3f8f1455'.",
+      "message": "Khong tim thay suggestion voi ma '8acbca9f-27f7-467a-bd4a-4c3b3f8f1455'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "validationProblem400MissingSignal": {
+      "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+      "title": "One or more validation errors occurred.",
+      "status": 400,
+      "instance": "/api/test-suites/7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d/llm-suggestions/8acbca9f-27f7-467a-bd4a-4c3b3f8f1455/feedback",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "errors": {
+        "Signal": [
+          "The Signal field is required."
+        ]
+      }
+    }
+  },
+  "relatedNotes": [
+    "Neu UI dang o FE-15 list/detail screen, FE-16 co the duoc implement ma khong can them read endpoint moi.",
+    "Sau feedback write, neu can summary chinh xac ngay lap tuc thi refetch list/detail la cach don gian va an toan nhat.",
+    "Feedback nay co anh huong toi nhung lan generate suggestion moi thong qua feedback fingerprint, nhung khong thay doi suggestion rows hien co."
+  ]
+}
