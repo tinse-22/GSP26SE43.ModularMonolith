@@ -44,4 +44,11 @@ public class ApiEndpointMetadataDto
     /// Optional: only populated when advanced dependency analysis is needed.
     /// </summary>
     public IReadOnlyCollection<string> ResponseSchemaPayloads { get; set; }
+
+    /// <summary>
+    /// Parameter names from this operation (path, query, body parameters).
+    /// Used by SemanticTokenMatcher (SPDG paper) for semantic token dependency analysis.
+    /// Optional: only populated when advanced dependency analysis is needed.
+    /// </summary>
+    public IReadOnlyCollection<string> ParameterNames { get; set; }
 }
