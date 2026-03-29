@@ -118,29 +118,52 @@ public class AuthController : ControllerBase
             AccessFailedCount = 0,
         };
 
-        // Create user with password
-        var result = await _userManager.CreateAsync(user, model.Password);
-        if (!result.Succeeded)
-        {
-            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
-        }
+        UserProfile profile = null;
 
-        // Assign default "User" role
-        var userRole = await _roleManager.FindByNameAsync("User");
-        if (userRole != null)
+        var executionStrategy = _dbContext.Database.CreateExecutionStrategy();
+        var transactionFailureResult = await executionStrategy.ExecuteAsync(async () =>
         {
-            await _userManager.AddToRoleAsync(user, "User");
-        }
+            await _dbContext.BeginTransactionAsync();
+            try
+            {
+                // Create user with password
+                var result = await _userManager.CreateAsync(user, model.Password);
+                if (!result.Succeeded)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+                }
 
-        // Create user profile
-        var profile = new UserProfile
+                var userRole = await _roleManager.FindByNameAsync("User");
+                if (userRole == null)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return StatusCode(StatusCodes.Status500InternalServerError, new { Error = "Vai trò mặc định 'User' không tồn tại." });
+                }
+
+                var roleResult = await _userManager.AddToRoleAsync(user, "User");
+                if (!roleResult.Succeeded)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = roleResult.Errors.Select(e => e.Description) });
+                }
+
+                profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
+                await _dbContext.SaveChangesAsync();
+                await _dbContext.CommitTransactionAsync();
+                return null;
+            }
+            catch
+            {
+                await _dbContext.RollbackTransactionAsync();
+                throw;
+            }
+        });
+
+        if (transactionFailureResult != null)
         {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            DisplayName = model.Email.Split('@')[0], // Default display name from email
-        };
-        _dbContext.UserProfiles.Add(profile);
-        await _dbContext.SaveChangesAsync();
+            return transactionFailureResult;
+        }
 
         // Send confirmation email
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
@@ -859,6 +882,12 @@ public class AuthController : ControllerBase
         }
 
         var defaultDisplayName = user.UserName;
+        if (!string.IsNullOrWhiteSpace(defaultDisplayName) &&
+            string.Equals(defaultDisplayName, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            defaultDisplayName = null;
+        }
+
         if (string.IsNullOrWhiteSpace(defaultDisplayName) && !string.IsNullOrWhiteSpace(user.Email))
         {
             defaultDisplayName = user.Email.Split('@')[0];
