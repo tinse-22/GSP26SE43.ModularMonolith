@@ -26,6 +26,8 @@ public class IdentityDbContext : DbContextUnitOfWork<IdentityDbContext>, IDataPr
 
     public DbSet<UserProfile> UserProfiles { get; set; }
 
+    public DbSet<PasswordHistory> PasswordHistories { get; set; }
+
     public IdentityDbContext(DbContextOptions<IdentityDbContext> options)
         : base(options)
     {
