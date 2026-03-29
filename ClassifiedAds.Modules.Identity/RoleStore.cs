@@ -30,7 +30,7 @@ public class RoleStore : IRoleStore<Role>
         }
 
         role.ConcurrencyStamp ??= Guid.NewGuid().ToString();
-        return PersistRoleAsync(role, cancellationToken);
+        return PersistRoleAsync(role, cancellationToken, isCreate: true);
     }
 
     public Task<IdentityResult> DeleteAsync(Role role, CancellationToken cancellationToken)
@@ -95,13 +95,21 @@ public class RoleStore : IRoleStore<Role>
             throw new ArgumentNullException(nameof(role));
         }
 
-        role.ConcurrencyStamp ??= Guid.NewGuid().ToString();
-        return PersistRoleAsync(role, cancellationToken);
+        role.ConcurrencyStamp = Guid.NewGuid().ToString();
+        return PersistRoleAsync(role, cancellationToken, isCreate: false);
     }
 
-    private async Task<IdentityResult> PersistRoleAsync(Role role, CancellationToken cancellationToken)
+    private async Task<IdentityResult> PersistRoleAsync(Role role, CancellationToken cancellationToken, bool isCreate)
     {
-        await _roleRepository.AddOrUpdateAsync(role, cancellationToken);
+        if (isCreate)
+        {
+            await _roleRepository.AddAsync(role, cancellationToken);
+        }
+        else
+        {
+            await _roleRepository.UpdateAsync(role, cancellationToken);
+        }
+
         return await SaveChangesAsync(cancellationToken);
     }
 

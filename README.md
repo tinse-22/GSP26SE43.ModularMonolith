@@ -90,38 +90,42 @@ GSP26SE43.ModularMonolith/
 
 ## Quick Start
 
-### Option A: .NET Aspire (Recommended)
-
-```bash
-# Run the Aspire AppHost (starts everything)
-dotnet run --project ClassifiedAds.AppHost
-
-# Open Aspire Dashboard (URL shown in console)
-```
-
-### Option B: Docker Compose + .NET CLI
+### Option A: Docker Compose + .NET CLI (Recommended for local persistence)
 
 ```bash
 # 1. Start infrastructure
-docker-compose up -d db rabbitmq redis
+docker compose up -d db rabbitmq redis mailhog
 
-# 2. Run migrations
+# 2. Apply migrations
 dotnet run --project ClassifiedAds.Migrator
 
-# 3. Start Web API
+# 3. Start the API host
 dotnet run --project ClassifiedAds.WebAPI
 
-# 4. (Optional) Start Background Worker
+# 4. Start the background worker in a second terminal
 dotnet run --project ClassifiedAds.Background
 ```
+
+### Option B: .NET Aspire AppHost (Optional orchestration mode)
+
+```bash
+# Starts PostgreSQL, RabbitMQ, Redis, MailHog, Migrator, WebAPI, and Background
+dotnet run --project ClassifiedAds.AppHost
+```
+
+AppHost now persists its local PostgreSQL data in Docker volume `classifiedads_apphost_postgres_data`.
+In local mode, AppHost binds PostgreSQL to `localhost:5432` so pgAdmin/DBeaver can reuse one stable connection.
+Do not run AppHost and the standalone hosts at the same time unless you intentionally point both modes to the same `ConnectionStrings__Default`.
 
 ## Service URLs
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| WebAPI (Scalar) | http://localhost:9002/docs | REST API documentation |
+| WebAPI (standalone) | https://localhost:44312/docs | REST API documentation when running `ClassifiedAds.WebAPI` locally |
+| WebAPI (full Docker) | http://localhost:9002/docs | REST API documentation when running the full compose stack |
 | RabbitMQ | http://localhost:15672 | guest / guest |
-| PostgreSQL | localhost:5432 | postgres / Postgres123@ |
+| PostgreSQL (AppHost local) | localhost:5432 | postgres / postgres |
+| PostgreSQL (standalone compose) | localhost:55432 | postgres / value from `POSTGRES_PASSWORD` |
 | Redis | localhost:6379 | Distributed cache |
 
 ## Project Documentation

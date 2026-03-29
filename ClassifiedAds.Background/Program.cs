@@ -4,6 +4,7 @@ using ClassifiedAds.Background.Identity;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Infrastructure.FeatureToggles.OutboxPublishingToggle;
+using ClassifiedAds.Infrastructure.HealthChecks;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Modules.Identity.Persistence;
@@ -41,6 +42,15 @@ if (!isRunningInContainer)
         probeLevelsToSearch: 6,
         trimValues: true,
         overwriteExistingVars: false));
+}
+
+var shouldWaitForDependency = bool.TryParse(
+    Environment.GetEnvironmentVariable("CheckDependency__Enabled"),
+    out var checkDependencyEnabled) && checkDependencyEnabled;
+
+if (shouldWaitForDependency)
+{
+    NetworkPortCheck.Wait(Environment.GetEnvironmentVariable("CheckDependency__Host"), 5);
 }
 
 Host.CreateDefaultBuilder(args)
