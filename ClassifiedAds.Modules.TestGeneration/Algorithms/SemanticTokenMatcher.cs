@@ -54,6 +54,82 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
         ["sess"] = new[] { "session", "sessions" },
         ["tx"] = new[] { "transaction", "transactions" },
         ["svc"] = new[] { "service", "services" },
+        // Additional common API abbreviations
+        ["id"] = new[] { "identifier", "identifiers", "identity", "identities" },
+        ["num"] = new[] { "number", "numbers" },
+        ["qty"] = new[] { "quantity", "quantities" },
+        ["amt"] = new[] { "amount", "amounts" },
+        ["pwd"] = new[] { "password", "passwords" },
+        ["cred"] = new[] { "credential", "credentials" },
+        ["creds"] = new[] { "credentials" },
+        ["loc"] = new[] { "location", "locations" },
+        ["pos"] = new[] { "position", "positions" },
+        ["src"] = new[] { "source", "sources" },
+        ["dst"] = new[] { "destination", "destinations" },
+        ["dest"] = new[] { "destination", "destinations" },
+        ["tmp"] = new[] { "temporary", "temp" },
+        ["temp"] = new[] { "temporary", "temperature" },
+        ["prev"] = new[] { "previous" },
+        ["curr"] = new[] { "current" },
+        ["max"] = new[] { "maximum" },
+        ["min"] = new[] { "minimum" },
+        ["avg"] = new[] { "average" },
+        ["cnt"] = new[] { "count", "counter" },
+        ["len"] = new[] { "length" },
+        ["sz"] = new[] { "size" },
+        ["buf"] = new[] { "buffer", "buffers" },
+        ["err"] = new[] { "error", "errors" },
+        ["warn"] = new[] { "warning", "warnings" },
+        ["val"] = new[] { "value", "values", "validation" },
+        ["ver"] = new[] { "version", "versions" },
+        ["ts"] = new[] { "timestamp", "timestamps" },
+        ["dt"] = new[] { "datetime", "date" },
+        ["str"] = new[] { "string", "strings" },
+        ["obj"] = new[] { "object", "objects" },
+        ["arr"] = new[] { "array", "arrays" },
+        ["attr"] = new[] { "attribute", "attributes" },
+        ["prop"] = new[] { "property", "properties" },
+        ["pkg"] = new[] { "package", "packages" },
+        ["lib"] = new[] { "library", "libraries" },
+        ["fn"] = new[] { "function", "functions" },
+        ["func"] = new[] { "function", "functions" },
+        ["proc"] = new[] { "process", "processes", "procedure", "procedures" },
+        ["op"] = new[] { "operation", "operations" },
+        ["cmd"] = new[] { "command", "commands" },
+        ["exec"] = new[] { "execute", "execution" },
+        ["init"] = new[] { "initialize", "initialization" },
+        ["impl"] = new[] { "implementation", "implement" },
+        ["ext"] = new[] { "extension", "extensions", "external" },
+        ["int"] = new[] { "internal", "integer" },
+        ["pub"] = new[] { "public", "publish", "publication" },
+        ["priv"] = new[] { "private" },
+        ["mgr"] = new[] { "manager", "managers" },
+        ["svc"] = new[] { "service", "services" },
+        ["srv"] = new[] { "server", "servers" },
+        ["ctx"] = new[] { "context", "contexts" },
+        ["conn"] = new[] { "connection", "connections" },
+        ["db"] = new[] { "database", "databases" },
+        ["tbl"] = new[] { "table", "tables" },
+        ["col"] = new[] { "column", "columns" },
+        ["rec"] = new[] { "record", "records" },
+        ["fld"] = new[] { "field", "fields" },
+        ["lbl"] = new[] { "label", "labels" },
+        ["btn"] = new[] { "button", "buttons" },
+        ["chk"] = new[] { "check", "checkbox" },
+        ["dlg"] = new[] { "dialog", "dialogs" },
+        ["frm"] = new[] { "form", "forms" },
+        ["nav"] = new[] { "navigation", "navigate" },
+        ["pg"] = new[] { "page", "pages" },
+        ["sec"] = new[] { "section", "sections", "security" },
+        ["hdr"] = new[] { "header", "headers" },
+        ["ftr"] = new[] { "footer", "footers" },
+        ["cmt"] = new[] { "comment", "comments" },
+        ["txt"] = new[] { "text", "texts" },
+        ["fmt"] = new[] { "format", "formats" },
+        ["lnk"] = new[] { "link", "links" },
+        ["url"] = new[] { "uniform resource locator" },
+        ["uri"] = new[] { "uniform resource identifier" },
+        ["api"] = new[] { "application programming interface" },
     };
 
     /// <summary>
@@ -63,13 +139,19 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
     private static readonly Dictionary<string, string> ReverseAbbreviations;
 
     /// <summary>
-    /// Common English suffixes for stem matching.
+    /// Common English suffixes for stem matching (pre-sorted by length descending for greedy match).
     /// </summary>
     private static readonly string[] CommonSuffixes =
     {
-        "tion", "sion", "ment", "ness", "ity", "ing", "ous", "ive", "ful",
-        "less", "able", "ible", "ance", "ence", "ated", "ting", "ted", "ed",
+        "tion", "sion", "ment", "ness", "ated", "ting", "ance", "ence",
+        "able", "ible", "less", "ity", "ing", "ous", "ive", "ful", "ted", "ed",
     };
+
+    /// <summary>
+    /// Pre-sorted suffixes by length descending for greedy matching (cached for performance).
+    /// </summary>
+    private static readonly string[] SortedSuffixesByLengthDesc =
+        CommonSuffixes.OrderByDescending(s => s.Length).ToArray();
 
     /// <summary>
     /// Irregular plural → singular mappings common in APIs.
@@ -313,6 +395,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
 
     /// <summary>
     /// Strip common English suffixes for stem comparison.
+    /// Uses pre-sorted suffixes by length descending for greedy matching.
     /// </summary>
     private static string StripCommonSuffix(string word)
     {
@@ -321,7 +404,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
             return word;
         }
 
-        foreach (var suffix in CommonSuffixes.OrderByDescending(s => s.Length))
+        foreach (var suffix in SortedSuffixesByLengthDesc)
         {
             if (word.Length > suffix.Length + 2
                 && word.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
