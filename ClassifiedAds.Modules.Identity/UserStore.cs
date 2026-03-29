@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,7 +23,8 @@ public class UserStore : IUserStore<User>,
                          IUserAuthenticationTokenStore<User>,
                          IUserAuthenticatorKeyStore<User>,
                          IUserTwoFactorRecoveryCodeStore<User>,
-                         IUserRoleStore<User>
+                         IUserRoleStore<User>,
+                         IUserClaimStore<User>
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IUserRepository _userRepository;
@@ -438,5 +440,94 @@ public class UserStore : IUserStore<User>,
         user.Claims ??= new List<UserClaim>();
         user.UserRoles ??= new List<UserRole>();
         user.UserLogins ??= new List<UserLogin>();
+    }
+
+    // IUserClaimStore<User> implementation
+    public async Task<IList<Claim>> GetClaimsAsync(User user, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var claims = await _dbContext.Set<UserClaim>()
+            .Where(uc => uc.UserId == user.Id)
+            .Select(uc => new Claim(uc.Type, uc.Value))
+            .ToListAsync(cancellationToken);
+
+        return claims;
+    }
+
+    public async Task AddClaimsAsync(User user, IEnumerable<Claim> claims, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(claims);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        foreach (var claim in claims)
+        {
+            var userClaim = new UserClaim
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                Type = claim.Type,
+                Value = claim.Value,
+            };
+            await _dbContext.Set<UserClaim>().AddAsync(userClaim, cancellationToken);
+        }
+
+        await PersistChangesAsync();
+    }
+
+    public async Task ReplaceClaimAsync(User user, Claim claim, Claim newClaim, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(claim);
+        ArgumentNullException.ThrowIfNull(newClaim);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var matchedClaims = await _dbContext.Set<UserClaim>()
+            .Where(uc => uc.UserId == user.Id && uc.Type == claim.Type && uc.Value == claim.Value)
+            .ToListAsync(cancellationToken);
+
+        foreach (var matchedClaim in matchedClaims)
+        {
+            matchedClaim.Type = newClaim.Type;
+            matchedClaim.Value = newClaim.Value;
+        }
+
+        await PersistChangesAsync();
+    }
+
+    public async Task RemoveClaimsAsync(User user, IEnumerable<Claim> claims, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(claims);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        foreach (var claim in claims)
+        {
+            var matchedClaims = await _dbContext.Set<UserClaim>()
+                .Where(uc => uc.UserId == user.Id && uc.Type == claim.Type && uc.Value == claim.Value)
+                .ToListAsync(cancellationToken);
+
+            _dbContext.Set<UserClaim>().RemoveRange(matchedClaims);
+        }
+
+        await PersistChangesAsync();
+    }
+
+    public async Task<IList<User>> GetUsersForClaimAsync(Claim claim, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var userIds = await _dbContext.Set<UserClaim>()
+            .Where(uc => uc.Type == claim.Type && uc.Value == claim.Value)
+            .Select(uc => uc.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return await _dbContext.Set<User>()
+            .Where(u => userIds.Contains(u.Id))
+            .ToListAsync(cancellationToken);
     }
 }
