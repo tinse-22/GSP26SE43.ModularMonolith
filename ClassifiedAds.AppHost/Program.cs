@@ -1,4 +1,6 @@
 using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Configuration;
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ClassifiedAds.AppHost - .NET Aspire Orchestration
@@ -14,33 +16,64 @@ using Aspire.Hosting;
 // Dashboard: https://localhost:17274 (or URL shown in console)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+const string AppHostPostgresVolumeName = "classifiedads_apphost_postgres_data";
+const string AppHostPostgresDatabaseName = "ClassifiedAds";
+const int AppHostPostgresHostPort = 5432;
+
 var builder = DistributedApplication.CreateBuilder(args);
-var cloudConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
-var useCloudDatabase = !string.IsNullOrWhiteSpace(cloudConnectionString);
-Console.WriteLine(useCloudDatabase ? "[AppHost] Database mode: Cloud (ConnectionStrings__Default)" : "[AppHost] Database mode: Local PostgreSQL container");
+var externalConnectionString = builder.Configuration.GetConnectionString("Default");
+var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
+Console.WriteLine(
+    useExternalDatabase
+        ? "[AppHost] Database mode: External (ConnectionStrings__Default)"
+        : $"[AppHost] Database mode: Local PostgreSQL container with persistent volume '{AppHostPostgresVolumeName}'");
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Infrastructure Resources
 // ═══════════════════════════════════════════════════════════════════════════════════
 
-// In cloud mode, AppHost uses externally provided ConnectionStrings__Default (e.g. Supabase).
+// In external mode, AppHost uses externally provided ConnectionStrings__Default (e.g. standalone docker-compose DB).
 // In local mode, AppHost provisions a local PostgreSQL container and injects ConnectionStrings__Default automatically.
 var postgres = default(IResourceBuilder<PostgresServerResource>);
 var classifiedAdsDb = default(IResourceBuilder<PostgresDatabaseResource>);
 
-if (!useCloudDatabase)
+if (!useExternalDatabase)
 {
-    var postgresPassword = builder.AddParameter("postgres-password", secret: true);
+    var postgresPassword = builder.AddParameter(
+        "postgres-password",
+        new GenerateParameterDefault
+        {
+            MinLength = 24,
+            Lower = true,
+            Upper = true,
+            Numeric = true,
+            Special = false,
+            MinLower = 1,
+            MinUpper = 1,
+            MinNumeric = 1,
+        },
+        secret: true,
+        persist: true);
+
     postgres = builder.AddPostgres("postgres", password: postgresPassword)
         .WithImage("postgres")
         .WithImageTag("16")
+        .WithHostPort(AppHostPostgresHostPort)
+        .WithDataVolume(AppHostPostgresVolumeName)
         .WithPgAdmin();                   // Adds PgAdmin UI for database management
-                                          // Note: Not using WithDataVolume to avoid password mismatch issues during development
 
     // Add the main database
     // Using "Default" as database resource name so Aspire injects ConnectionStrings__Default
     // which matches the key used in appsettings.json
-    classifiedAdsDb = postgres.AddDatabase("Default", databaseName: "ClassifiedAds");
+    classifiedAdsDb = postgres.AddDatabase("Default", databaseName: AppHostPostgresDatabaseName);
+
+    Console.WriteLine($"[AppHost] Local PostgreSQL database: {AppHostPostgresDatabaseName}");
+    Console.WriteLine($"[AppHost] Local PostgreSQL host port: {AppHostPostgresHostPort}");
+    Console.WriteLine($"[AppHost] Local PostgreSQL volume: {AppHostPostgresVolumeName}");
+}
+else
+{
+    Console.WriteLine("[AppHost] Local PostgreSQL container is disabled because ConnectionStrings__Default was supplied.");
 }
 
 // RabbitMQ - Message broker with management UI
@@ -72,9 +105,9 @@ var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
 var migrator = builder.AddProject("migrator", "../ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj")
     .WithEnvironment("CheckDependency__Enabled", "false"); // Aspire handles dependencies, no need for manual port check
 
-if (useCloudDatabase)
+if (useExternalDatabase)
 {
-    migrator = migrator.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+    migrator = migrator.WithEnvironment("ConnectionStrings__Default", externalConnectionString!);
 }
 else
 {
@@ -102,9 +135,9 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WaitFor(redis)
     .WithExternalHttpEndpoints();  // Exposes to localhost for external access
 
-if (useCloudDatabase)
+if (useExternalDatabase)
 {
-    webapi = webapi.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+    webapi = webapi.WithEnvironment("ConnectionStrings__Default", externalConnectionString!);
 }
 else
 {
@@ -137,9 +170,9 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WaitFor(redis)
     .WaitFor(mailhog);
 
-if (useCloudDatabase)
+if (useExternalDatabase)
 {
-    background = background.WithEnvironment("ConnectionStrings__Default", cloudConnectionString!);
+    background = background.WithEnvironment("ConnectionStrings__Default", externalConnectionString!);
 }
 else
 {
