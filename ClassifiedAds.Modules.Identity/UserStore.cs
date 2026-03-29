@@ -41,15 +41,26 @@ public class UserStore : IUserStore<User>,
 
     public async Task<IdentityResult> CreateAsync(User user, CancellationToken cancellationToken)
     {
-        await _userRepository.AddOrUpdateAsync(user, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        ArgumentNullException.ThrowIfNull(user);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        EnsureCollectionsInitialized(user);
+        user.ConcurrencyStamp ??= Guid.NewGuid().ToString();
+        user.SecurityStamp ??= Guid.NewGuid().ToString();
+
+        await _userRepository.AddAsync(user, cancellationToken);
+        await PersistChangesAsync();
         return IdentityResult.Success;
     }
 
-    public Task<IdentityResult> DeleteAsync(User user, CancellationToken cancellationToken)
+    public async Task<IdentityResult> DeleteAsync(User user, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(user);
+        cancellationToken.ThrowIfCancellationRequested();
+
         _userRepository.Delete(user);
-        return Task.FromResult(IdentityResult.Success);
+        await PersistChangesAsync();
+        return IdentityResult.Success;
     }
 
     public Task<User> FindByEmailAsync(string normalizedEmail, CancellationToken cancellationToken)
@@ -228,8 +239,14 @@ public class UserStore : IUserStore<User>,
 
     public async Task<IdentityResult> UpdateAsync(User user, CancellationToken cancellationToken)
     {
-        await _userRepository.AddOrUpdateAsync(user, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        ArgumentNullException.ThrowIfNull(user);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        EnsureCollectionsInitialized(user);
+        user.ConcurrencyStamp = Guid.NewGuid().ToString();
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        await PersistChangesAsync();
         return IdentityResult.Success;
     }
 
@@ -246,6 +263,8 @@ public class UserStore : IUserStore<User>,
 
     public async Task SetTokenAsync(User user, string loginProvider, string name, string value, CancellationToken cancellationToken)
     {
+        EnsureCollectionsInitialized(user);
+
         var tokenEntity = user.Tokens.SingleOrDefault(
                 l => l.TokenName == name && l.LoginProvider == loginProvider);
         if (tokenEntity != null)
@@ -263,17 +282,22 @@ public class UserStore : IUserStore<User>,
             });
         }
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await PersistChangesAsync();
     }
 
     public async Task RemoveTokenAsync(User user, string loginProvider, string name, CancellationToken cancellationToken)
     {
+        if (user.Tokens == null || user.Tokens.Count == 0)
+        {
+            return;
+        }
+
         var tokenEntity = user.Tokens.SingleOrDefault(
                 l => l.TokenName == name && l.LoginProvider == loginProvider);
         if (tokenEntity != null)
         {
             user.Tokens.Remove(tokenEntity);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await PersistChangesAsync();
         }
     }
 
@@ -328,8 +352,16 @@ public class UserStore : IUserStore<User>,
             throw new InvalidOperationException($"Role '{roleName}' not found.");
         }
 
+        var existingUserRole = await _dbContext.Set<UserRole>()
+            .AnyAsync(ur => ur.UserId == user.Id && ur.RoleId == role.Id, cancellationToken);
+        if (existingUserRole)
+        {
+            return;
+        }
+
         var userRole = new UserRole { UserId = user.Id, RoleId = role.Id };
         await _dbContext.Set<UserRole>().AddAsync(userRole, cancellationToken);
+        await PersistChangesAsync();
     }
 
     public async Task RemoveFromRoleAsync(User user, string roleName, CancellationToken cancellationToken)
@@ -342,6 +374,7 @@ public class UserStore : IUserStore<User>,
             if (userRole != null)
             {
                 _dbContext.Set<UserRole>().Remove(userRole);
+                await PersistChangesAsync();
             }
         }
     }
@@ -390,5 +423,20 @@ public class UserStore : IUserStore<User>,
         return await _dbContext.Set<User>()
             .Where(u => userIds.Contains(u.Id))
             .ToListAsync(cancellationToken);
+    }
+
+    private Task PersistChangesAsync()
+    {
+        // Identity write flows can re-enter the store (create -> add role -> update user).
+        // Persist without propagating request cancellation so Npgsql keeps the write durable.
+        return _unitOfWork.SaveChangesAsync(CancellationToken.None);
+    }
+
+    private static void EnsureCollectionsInitialized(User user)
+    {
+        user.Tokens ??= new List<UserToken>();
+        user.Claims ??= new List<UserClaim>();
+        user.UserRoles ??= new List<UserRole>();
+        user.UserLogins ??= new List<UserLogin>();
     }
 }
