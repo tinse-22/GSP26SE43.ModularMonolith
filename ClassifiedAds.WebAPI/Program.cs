@@ -72,6 +72,7 @@ var services = builder.Services;
 var configuration = builder.Configuration;
 
 StartupDiagnostics.LogDatabaseTarget("WebAPI", configuration, isRunningInContainer);
+StartupDiagnostics.LogCacheTarget("WebAPI", configuration);
 
 // Configure logging using custom Serilog setup
 builder.WebHost.UseClassifiedAdsLogger(configuration =>
@@ -427,7 +428,7 @@ services.AddAuthentication(options =>
                 }
             }
 
-            Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
+            Console.WriteLine($"JWT bearer accepted. Path={context.HttpContext.Request.Path} User={context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }
     };

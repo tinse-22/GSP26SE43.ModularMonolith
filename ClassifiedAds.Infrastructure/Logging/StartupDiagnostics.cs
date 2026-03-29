@@ -21,6 +21,27 @@ public static class StartupDiagnostics
         Console.WriteLine($"[{hostName}] RuntimeMode={runtimeMode} DBTarget={BuildConnectionSummary(connectionString)}");
     }
 
+    public static void LogCacheTarget(string hostName, IConfiguration configuration)
+    {
+        var provider = configuration["Caching:Distributed:Provider"];
+
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            Console.WriteLine($"[{hostName}] CacheProvider=missing");
+            return;
+        }
+
+        if (string.Equals(provider, "Redis", StringComparison.OrdinalIgnoreCase))
+        {
+            var redisConfiguration = configuration["Caching:Distributed:Redis:Configuration"];
+            var instanceName = configuration["Caching:Distributed:Redis:InstanceName"];
+            Console.WriteLine($"[{hostName}] CacheProvider=Redis RedisTarget={redisConfiguration ?? "missing"} InstanceName={instanceName ?? "missing"}");
+            return;
+        }
+
+        Console.WriteLine($"[{hostName}] CacheProvider={provider}");
+    }
+
     private static string BuildConnectionSummary(string connectionString)
     {
         try
