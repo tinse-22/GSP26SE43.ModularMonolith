@@ -9,8 +9,8 @@
 - [3. Cài đặt .NET SDK 10](#3-cài-đặt-net-sdk-10)
 - [4. Cài đặt Docker Desktop](#4-cài-đặt-docker-desktop)
 - [5. Cấu hình Environment Variables](#5-cấu-hình-environment-variables)
-- [6. Cách A — Chạy bằng .NET Aspire (Khuyến nghị)](#6-cách-a--chạy-bằng-net-aspire-khuyến-nghị)
-- [7. Cách B — Chạy bằng Docker Compose + .NET CLI](#7-cách-b--chạy-bằng-docker-compose--net-cli)
+- [6. Cách A — Chạy bằng Docker Compose + .NET CLI (Khuyến nghị)](#6-cách-a--chạy-bằng-docker-compose--net-cli-khuyến-nghị)
+- [7. Cách B — Chạy bằng .NET Aspire AppHost](#7-cách-b--chạy-bằng-net-aspire-apphost)
 - [8. Cách C — Chạy toàn bộ bằng Docker Compose](#8-cách-c--chạy-toàn-bộ-bằng-docker-compose)
 - [9. Kiểm tra dự án đã chạy thành công](#9-kiểm-tra-dự-án-đã-chạy-thành-công)
 - [10. Chạy Test](#10-chạy-test)
@@ -112,15 +112,15 @@ Mở file `.env` bằng editor và cập nhật các giá trị quan trọng:
 # Database (giá trị mặc định OK cho local dev)
 # ==============================
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
+POSTGRES_PASSWORD=your_local_postgres_password
 POSTGRES_DB=ClassifiedAds
 
 # ==============================
 # Connection String
-# - Host=127.0.0.1 cho local dev (Aspire hoặc .NET CLI)
-# - Host=db         cho Docker Compose (toàn bộ chạy trong Docker)
+# - Host=127.0.0.1;Port=55432 cho local standalone (docker compose + .NET CLI)
+# - Host=db;Port=5432         cho Docker Compose (toàn bộ chạy trong Docker)
 # ==============================
-ConnectionStrings__Default=Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres
+ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=your_local_postgres_password
 
 # ==============================
 # JWT Secret Key (>= 32 ký tự)
@@ -159,72 +159,17 @@ Messaging__RabbitMQ__HostName=rabbitmq
 
 ---
 
-## 6. Cách A — Chạy bằng .NET Aspire (Khuyến nghị)
+## 6. Cách A — Chạy bằng Docker Compose + .NET CLI (Khuyến nghị)
 
-> Đây là cách **đơn giản nhất** — chỉ cần **1 lệnh duy nhất**. Aspire tự động khởi động tất cả infrastructure (PostgreSQL, RabbitMQ, Redis, MailHog), chạy migration, và khởi động ứng dụng.
+> Đây là flow local nên dùng mặc định nếu mục tiêu là CRUD ổn định và dữ liệu không bị đổi database sau khi restart.
 
-### Bước 6.1: Restore packages
+### Nguyên tắc của mode này
 
-```powershell
-cd GSP26SE43.ModularMonolith
-dotnet restore
-```
+- chỉ dùng một database local từ `docker compose`
+- `ConnectionStrings__Default` trong `.env` là source of truth
+- không chạy `ClassifiedAds.AppHost` cùng lúc với WebAPI/Background standalone
 
-### Bước 6.2: Trust HTTPS dev certificate
-
-```powershell
-dotnet dev-certs https --trust
-```
-
-> Chỉ cần chạy 1 lần. Giúp truy cập Aspire Dashboard qua HTTPS mà không bị lỗi certificate.
-
-### Bước 6.3: Chạy Aspire AppHost
-
-```powershell
-dotnet run --project ClassifiedAds.AppHost
-```
-
-### Bước 6.4: Kiểm tra kết quả
-
-Khi thấy log như sau nghĩa là đã chạy thành công:
-
-```
-info: Aspire.Hosting.DistributedApplication[0]
-      Now listening on: https://localhost:17280
-info: Aspire.Hosting.DistributedApplication[0]
-      Login to the dashboard at https://localhost:17280/login?t=<token>
-```
-
-### Bước 6.5: Truy cập các service
-
-| Service              | Cách truy cập                                                               |
-| -------------------- | ---------------------------------------------------------------------------- |
-| **Aspire Dashboard** | Mở URL `https://localhost:17280` (hiện trong console output)                 |
-| **WebAPI Docs**      | Trong Aspire Dashboard → click endpoint của **webapi** → thêm `/docs`       |
-| **PgAdmin**          | Tự động khởi động, truy cập qua Aspire Dashboard                            |
-| **RabbitMQ UI**      | Truy cập qua Aspire Dashboard                                               |
-
-### Thứ tự khởi động (Aspire tự quản lý)
-
-```
-PostgreSQL ──→ Migrator ──→ WebAPI
-                         ──→ Background Worker
-RabbitMQ   ─────────────────→ WebAPI + Background
-Redis      ─────────────────→ WebAPI + Background
-MailHog    ─────────────────→ Background
-```
-
-### Dừng dự án
-
-Nhấn `Ctrl + C` trong terminal đang chạy Aspire. Tất cả services sẽ tự động dừng.
-
----
-
-## 7. Cách B — Chạy bằng Docker Compose + .NET CLI
-
-> Cách này chạy **infrastructure** trong Docker, còn **ứng dụng .NET** chạy trực tiếp trên máy. Phù hợp khi muốn debug code.
-
-### Bước 7.1: Khởi động Infrastructure
+### Bước 6.1: Khởi động infrastructure
 
 ```powershell
 cd GSP26SE43.ModularMonolith
@@ -237,63 +182,126 @@ Kiểm tra các container đã chạy:
 docker compose ps
 ```
 
-Kết quả mong đợi: 4 container ở trạng thái `Up`.
-
-### Bước 7.2: Đợi PostgreSQL sẵn sàng (~5-10 giây)
-
-```powershell
-docker compose logs db
-# Đợi thấy: "database system is ready to accept connections"
-```
-
-### Bước 7.3: Chạy Database Migration
+### Bước 6.2: Chạy Database Migration
 
 ```powershell
 dotnet run --project ClassifiedAds.Migrator
 ```
 
-> Migration tạo/cập nhật schema database cho tất cả modules. Chạy xong sẽ tự thoát.
+> Database của mode này được persist bởi Docker volume `postgres_data`, nên dữ liệu sẽ còn sau restart nếu bạn không chạy `docker compose down -v`.
 
-### Bước 7.4: Chạy Web API
+### Bước 6.3: Chạy Web API
 
 ```powershell
 dotnet run --project ClassifiedAds.WebAPI
 ```
 
-WebAPI sẽ chạy tại `https://localhost:44312` (hoặc `http://localhost:5099`).
+### Bước 6.4: Chạy Background Worker
 
-### Bước 7.5 (Tuỳ chọn): Chạy Background Worker
-
-Mở **terminal mới** (giữ terminal WebAPI đang chạy):
+Mở terminal mới rồi chạy:
 
 ```powershell
 cd GSP26SE43.ModularMonolith
 dotnet run --project ClassifiedAds.Background
 ```
 
-> Background Worker xử lý: gửi email, publish outbox messages, consume message bus events.
+### Bước 6.5: Truy cập các service
 
-### Truy cập các service
+| Service            | Cách truy cập |
+| ------------------ | ------------- |
+| **WebAPI Docs**    | `https://localhost:44312/docs` |
+| **RabbitMQ UI**    | `http://localhost:15672` |
+| **MailHog**        | `http://localhost:8025` |
+| **PostgreSQL**     | `localhost:55432` |
+| **Redis**          | `localhost:6379` |
 
-| Service          | URL                          | Credentials        |
-| ---------------- | ---------------------------- | ------------------- |
-| **WebAPI Docs**  | `https://localhost:44312/docs` | —                 |
-| **RabbitMQ UI**  | `http://localhost:15672`     | guest / guest       |
-| **MailHog**      | `http://localhost:8025`      | — (xem email test)  |
-| **PostgreSQL**   | `localhost:5432`             | postgres / postgres  |
-| **Redis**        | `localhost:6379`             | —                   |
+### Thứ tự khởi động và dừng dự án
 
-### Dừng dự án
+```
+PostgreSQL ──→ Migrator ──→ WebAPI
+                         ──→ Background Worker
+RabbitMQ   ─────────────────→ WebAPI + Background
+Redis      ─────────────────→ WebAPI + Background
+MailHog    ─────────────────→ Background
+```
 
 ```powershell
 # Dừng WebAPI/Background: Ctrl + C trong terminal tương ứng
 
-# Dừng Docker containers
+# Dừng Docker containers nhưng giữ data
 docker compose down
 
-# Dừng containers VÀ xoá data (reset database hoàn toàn)
+# Dừng Docker containers và xoá data
 docker compose down -v
 ```
+
+---
+
+## 7. Cách B — Chạy bằng .NET Aspire AppHost
+
+> Dùng mode này khi bạn cần Aspire Dashboard hoặc orchestration toàn bộ service bằng một lệnh.
+
+### Điều quan trọng cần nhớ
+
+- AppHost mặc định dùng PostgreSQL local riêng của nó
+- PostgreSQL local của AppHost nay được persist trong Docker volume `classifiedads_apphost_postgres_data`
+- PostgreSQL local của AppHost bind cố định tại `localhost:5432`
+- khi chạy qua Aspire, `docker ps` vẫn có thể hiện port container ngẫu nhiên; host tools như pgAdmin/DBeaver nên luôn trỏ vào `localhost:5432`
+- không chạy AppHost cùng lúc với WebAPI/Background standalone nếu chưa chủ động ép cả hai mode dùng cùng `ConnectionStrings__Default`
+
+### Bước 7.1: Restore packages
+
+```powershell
+cd GSP26SE43.ModularMonolith
+dotnet restore
+```
+
+### Bước 7.2: Trust HTTPS dev certificate
+
+```powershell
+dotnet dev-certs https --trust
+```
+
+### Bước 7.3: Chạy AppHost
+
+```powershell
+dotnet run --project ClassifiedAds.AppHost
+```
+
+### Bước 7.4: Khi nào AppHost dùng cùng DB với standalone?
+
+Chỉ khi bạn export `ConnectionStrings__Default` trong chính shell đang chạy AppHost:
+
+```powershell
+$env:ConnectionStrings__Default = "Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=<same value as .env>"
+dotnet run --project ClassifiedAds.AppHost
+```
+
+Nếu không set biến trên, AppHost sẽ tạo database local riêng, bind nó tại `localhost:5432`, và dữ liệu của nó vẫn được giữ lại qua restart nhờ volume `classifiedads_apphost_postgres_data`.
+
+### Bước 7.5: Kiểm tra kết quả
+
+Khi thấy log như sau nghĩa là đã chạy thành công:
+
+```
+info: Aspire.Hosting.DistributedApplication[0]
+      Now listening on: https://localhost:17280
+info: Aspire.Hosting.DistributedApplication[0]
+      Login to the dashboard at https://localhost:17280/login?t=<token>
+```
+
+### Truy cập các service
+
+| Service              | Cách truy cập |
+| -------------------- | ------------ |
+| **Aspire Dashboard** | `https://localhost:17280` |
+| **WebAPI Docs**      | Trong Aspire Dashboard → click endpoint của **webapi** → thêm `/docs` |
+| **PgAdmin**          | Truy cập qua Aspire Dashboard |
+| **RabbitMQ UI**      | Truy cập qua Aspire Dashboard |
+
+### Dừng dự án
+
+Nhấn `Ctrl + C` trong terminal đang chạy Aspire. Tất cả services sẽ tự động dừng.
 
 ---
 
@@ -333,7 +341,7 @@ docker compose logs -f migrator
 | **WebAPI Docs**  | `http://localhost:9002/docs` | —                  |
 | **RabbitMQ UI**  | `http://localhost:15672`    | guest / guest        |
 | **MailHog**      | `http://localhost:8025`     | — (xem email test)   |
-| **PostgreSQL**   | `localhost:5432`            | Theo `.env.docker`   |
+| **PostgreSQL**   | `localhost:55432`            | Theo `.env.docker`   |
 | **Redis**        | `localhost:6379`            | —                    |
 
 ### Dừng dự án
@@ -352,8 +360,8 @@ docker compose down -v
 ### 9.1. Kiểm tra API Health
 
 Truy cập URL API docs:
-- **Aspire**: Xem endpoint trong Aspire Dashboard → thêm `/docs`
-- **Cách B**: `https://localhost:44312/docs`
+- **Cách A**: `https://localhost:44312/docs`
+- **Cách B**: Xem endpoint trong Aspire Dashboard → thêm `/docs`
 - **Cách C**: `http://localhost:9002/docs`
 
 Nếu thấy trang **Scalar API Documentation** hiện danh sách endpoints → dự án đã chạy thành công.
@@ -376,12 +384,14 @@ Content-Type: application/json
 Kết nối PostgreSQL bằng tool (PgAdmin, DBeaver, hoặc pgcli):
 
 ```
-Host: localhost (hoặc xem trong Aspire Dashboard)
-Port: 5432
+Host: localhost
+Port: 55432
 Database: ClassifiedAds
 Username: postgres
-Password: postgres
+Password: giá trị `POSTGRES_PASSWORD` trong `.env`
 ```
+
+> Với AppHost, PostgreSQL local là container riêng nhưng host-side connection cố định là `localhost:5432`; đừng lấy port random trong `docker ps`.
 
 Kiểm tra migration đã chạy:
 
@@ -417,7 +427,8 @@ dotnet test --collect:"XPlat Code Coverage"
 
 | Mục đích                        | Lệnh                                                     |
 | -------------------------------- | --------------------------------------------------------- |
-| **Chạy toàn bộ (nhanh nhất)**  | `dotnet run --project ClassifiedAds.AppHost`              |
+| **Chạy local chuẩn**          | `docker compose up -d db rabbitmq redis mailhog`          |
+| **Chạy AppHost**              | `dotnet run --project ClassifiedAds.AppHost`              |
 | **Build kiểm tra lỗi**         | `dotnet build`                                            |
 | **Restore packages**            | `dotnet restore`                                          |
 | **Chạy tất cả test**           | `dotnet test`                                             |
@@ -505,8 +516,8 @@ docker compose logs db
 **Nguyên nhân**: Port đã bị chiếm bởi process khác.
 
 ```powershell
-# Tìm process chiếm port (VD: port 5432)
-netstat -ano | findstr :5432
+# Tìm process chiếm port (VD: port 55432)
+netstat -ano | findstr :55432
 
 # Dừng tất cả containers cũ
 docker compose down
@@ -560,7 +571,9 @@ Get-CimInstance Win32_Process -Filter "Name = 'dotnet.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 # 2. Chọn 1 mode duy nhất và chạy lại
-dotnet run --project ClassifiedAds.AppHost
+docker compose up -d db rabbitmq redis mailhog
+dotnet run --project ClassifiedAds.Migrator
+dotnet run --project ClassifiedAds.WebAPI
 ```
 
 ### 13.8. Docker build thất bại
@@ -585,8 +598,9 @@ Chỉ chọn **1 trong 3 cách** (Aspire / Docker Compose + CLI / Full Docker) t
 ### Single Source of Truth cho Database
 
 - Connection string luôn lấy từ biến `ConnectionStrings__Default` trong file `.env` (hoặc `.env.docker`).
-- Khi chạy **Aspire**, connection string được Aspire tự inject — không cần cấu hình thủ công.
-- Khi chạy **standalone**, đảm bảo `Host=127.0.0.1` trong `.env`.
+- Khi chạy **standalone**, đảm bảo `Host=127.0.0.1` trong `.env`. Đây là flow local nên dùng mặc định.
+- Khi chạy **AppHost** mà không set `ConnectionStrings__Default`, AppHost sẽ tạo PostgreSQL local riêng và persist nó trong volume `classifiedads_apphost_postgres_data`.
+- Nếu muốn AppHost dùng cùng DB với standalone, phải export đúng `ConnectionStrings__Default` trong shell trước khi chạy `ClassifiedAds.AppHost`.
 - Khi chạy **full Docker**, đảm bảo `Host=db` trong `.env.docker`.
 
 ### Database Schema
@@ -614,13 +628,14 @@ File `.env` và `.env.docker` chứa thông tin nhạy cảm → đã được t
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    QUICK START (1 LỆNH DUY NHẤT)                │
+│               QUICK START (FLOW LOCAL KHUYẾN NGHỊ)              │
 │                                                                  │
 │   1. git clone https://github.com/tinse-22/GSP26SE43.ModularMonolith.git │
 │   2. cd GSP26SE43.ModularMonolith                                │
 │   3. copy .env.example .env                                      │
-│   4. dotnet run --project ClassifiedAds.AppHost                  │
-│   5. Mở link Aspire Dashboard hiện trong console                 │
+│   4. docker compose up -d db rabbitmq redis mailhog             │
+│   5. dotnet run --project ClassifiedAds.Migrator                │
+│   6. dotnet run --project ClassifiedAds.WebAPI                  │
 │                                                                  │
 │   Nhấn Ctrl + C để dừng.                                         │
 └─────────────────────────────────────────────────────────────────┘

@@ -1,0 +1,602 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-10-reports-export-api",
+  "validatedAgainstCodebaseOn": "2026-03-26",
+  "controller": "TestReportsController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-runs/{runId}/reports",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GenerateTestRunReport": "Permission:GetTestRuns",
+    "GetTestRunReports": "Permission:GetTestRuns",
+    "GetTestRunReport": "Permission:GetTestRuns",
+    "DownloadTestRunReport": "Permission:GetTestRuns"
+  },
+  "prerequisiteDocs": [
+    "FE-07/08 test run results: docs/frontend/FE-07-08-test-execution-validation-frontend/test-runs-api.json",
+    "Backend planning package for FE-10: docs/features/FE-10-reports-export"
+  ],
+  "enums": {
+    "ReportTypeRequestAndResponse": [
+      "Summary",
+      "Detailed",
+      "Coverage"
+    ],
+    "ReportFormatRequestAndResponse": [
+      "PDF",
+      "CSV",
+      "JSON",
+      "HTML"
+    ],
+    "ConflictReasonCodes": [
+      "RUN_RESULTS_EXPIRED",
+      "REPORT_RUN_NOT_READY"
+    ],
+    "NotFoundMessagePrefixes": [
+      "REPORT_NOT_FOUND",
+      "REPORT_FILE_NOT_FOUND"
+    ],
+    "ValidationMessagePrefixes": [
+      "REPORT_FORMAT_NOT_SUPPORTED"
+    ]
+  },
+  "models": {
+    "GenerateTestReportRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "reportType: string enum = Summary | Detailed | Coverage",
+        "format: string enum = PDF | CSV | JSON | HTML",
+        "recentHistoryLimit: int? optional"
+      ],
+      "notes": [
+        "reportType va format duoc backend trim + parse case-insensitive.",
+        "recentHistoryLimit omit => fallback config DefaultHistoryLimit, hien tai la 5.",
+        "recentHistoryLimit runtime cho phep 1..20 theo config WebAPI hien tai."
+      ]
+    },
+    "TestReportModel": {
+      "properties": [
+        "id: Guid",
+        "testSuiteId: Guid",
+        "testRunId: Guid",
+        "reportType: string enum",
+        "format: string enum",
+        "downloadUrl: string relative route",
+        "generatedAt: DateTimeOffset",
+        "expiresAt: DateTimeOffset?",
+        "coverage: CoverageMetricModel?"
+      ],
+      "notes": [
+        "downloadUrl duoc build server-side theo mau /api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download.",
+        "coverage la snapshot coverage cua run, khong phu thuoc reportType dang la Summary/Detailed/Coverage."
+      ]
+    },
+    "CoverageMetricModel": {
+      "properties": [
+        "testRunId: Guid",
+        "totalEndpoints: int",
+        "testedEndpoints: int",
+        "coveragePercent: decimal",
+        "byMethod: Dictionary<string, decimal>",
+        "byTag: Dictionary<string, decimal>",
+        "uncoveredPaths: string[]",
+        "calculatedAt: DateTimeOffset"
+      ],
+      "notes": [
+        "testedEndpoints dem endpoint co case runtime khong bi Skipped.",
+        "byMethod key thuong la GET/POST/...; byTag la tag suy ra tu metadata path hoac fallback path."
+      ]
+    },
+    "DownloadBinaryResponse": {
+      "body": "binary bytes",
+      "headers": [
+        "Content-Type: application/pdf | text/csv; charset=utf-8 | application/json; charset=utf-8 | text/html; charset=utf-8",
+        "Content-Disposition: attachment; filename=<stored file name>"
+      ],
+      "notes": [
+        "Controller tra File(...) truc tiep, khong co JSON envelope.",
+        "Ten file la ten da luu trong Storage va duoc HTML-encode truoc khi return."
+      ]
+    },
+    "JsonReportDownloadPayload": {
+      "properties": [
+        "testSuiteId: Guid",
+        "projectId: Guid",
+        "apiSpecId: Guid?",
+        "suiteName: string",
+        "reportType: string enum",
+        "generatedAt: DateTimeOffset",
+        "fileBaseName: string",
+        "run: TestRunReportRunDto",
+        "coverage: CoverageMetricModel",
+        "failureDistribution: Dictionary<string,int>",
+        "recentRuns: TestRunHistoryItemDto[]",
+        "cases: TestRunReportCaseDocumentModel[]"
+      ],
+      "notes": [
+        "Chi xuat hien ben trong file download khi format = JSON.",
+        "Summary va Coverage report van co top-level shape giong nhau, nhung Summary/Coverage co the khong co case-level details day du."
+      ]
+    },
+    "TestRunReportRunDto": {
+      "properties": [
+        "testRunId: Guid",
+        "runNumber: int",
+        "environmentId: Guid",
+        "triggeredById: Guid",
+        "status: string",
+        "startedAt: DateTimeOffset?",
+        "completedAt: DateTimeOffset?",
+        "durationMs: long",
+        "totalTests: int",
+        "passedCount: int",
+        "failedCount: int",
+        "skippedCount: int",
+        "resolvedEnvironmentName: string?",
+        "executedAt: DateTimeOffset"
+      ]
+    },
+    "TestRunHistoryItemDto": {
+      "properties": [
+        "testRunId: Guid",
+        "runNumber: int",
+        "status: string",
+        "completedAt: DateTimeOffset?",
+        "durationMs: long",
+        "passedCount: int",
+        "failedCount: int",
+        "skippedCount: int"
+      ]
+    },
+    "TestRunReportCaseDocumentModel": {
+      "properties": [
+        "testCaseId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "description: string?",
+        "testType: string?",
+        "orderIndex: int",
+        "dependencyIds: Guid[]",
+        "request: ExecutionTestCaseRequestDto?",
+        "expectation: ExecutionTestCaseExpectationDto?",
+        "status: string?",
+        "httpStatusCode: int?",
+        "durationMs: long",
+        "resolvedUrl: string?",
+        "requestHeaders: Dictionary<string,string>",
+        "responseHeaders: Dictionary<string,string>",
+        "responseBodyPreview: string?",
+        "failureReasons: ReportValidationFailureDto[]",
+        "extractedVariables: Dictionary<string,string>",
+        "skippedBecauseDependencyIds: Guid[]",
+        "statusCodeMatched: bool",
+        "schemaMatched: bool?",
+        "headerChecksPassed: bool?",
+        "bodyContainsPassed: bool?",
+        "bodyNotContainsPassed: bool?",
+        "jsonPathChecksPassed: bool?",
+        "responseTimePassed: bool?"
+      ],
+      "notes": [
+        "Case-level section chi duoc render day du khi reportType = Detailed.",
+        "request/expectation field ben trong file JSON van giu dang chuoi JSON, khong phai object typed."
+      ]
+    },
+    "ReportValidationFailureDto": {
+      "properties": [
+        "code: string",
+        "message: string",
+        "target: string?",
+        "expected: string?",
+        "actual: string?"
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ],
+      "notes": [
+        "reasonCode hien chi co voi ConflictException va mot so conflict tu infrastructure.",
+        "404 report/report-file not found hien dung detail/message prefix, khong co field reasonCode rieng."
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GenerateTestRunReport",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/reports",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid"
+      ],
+      "query": [],
+      "requestBody": "GenerateTestReportRequest",
+      "response": {
+        "status": 201,
+        "body": "TestReportModel",
+        "headers": [
+          "Location: /api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails khi body JSON sai shape hoac ASP.NET model binding fail.",
+        "400 ProblemDetails cho reportType/format rong, enum sai, recentHistoryLimit < 1 hoac > 20, non-owner access, hoac runtime khong co renderer cho format da yeu cau.",
+        "404 khi suiteId khong ton tai hoac runId khong ton tai trong suite.",
+        "409 ProblemDetails voi reasonCode=REPORT_RUN_NOT_READY khi run chua Completed/Failed.",
+        "409 ProblemDetails voi reasonCode=RUN_RESULTS_EXPIRED khi detailed run results da het han cache."
+      ],
+      "notes": [
+        "Current implementation la synchronous request-response; backend khong tao queue/polling job.",
+        "Moi lan success se tao report moi, upload file moi, va upsert CoverageMetric cho run.",
+        "Filename runtime theo mau test-run-{runNumber}-{reportTypeLower}-{formatLower}-{yyyyMMddTHHmmssZ}.{ext}.",
+        "PDF/HTML luu fileCategory = Report; CSV/JSON luu fileCategory = Export, nhung FE khong nhin thay field nay."
+      ]
+    },
+    {
+      "name": "GetTestRunReports",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/reports",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "GeneratedAt desc, Id desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "TestReportModel[]"
+      },
+      "problemCases": [
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi suiteId khong ton tai."
+      ],
+      "notes": [
+        "Khong co pagination va khong co filter theo reportType/format.",
+        "Neu run hien tai chua co report nao thi response la 200 voi mang rong.",
+        "Backend khong validate rieng runId co ton tai hay khong o list route; no chi doc report metadata theo runId sau khi suite access pass."
+      ]
+    },
+    {
+      "name": "GetTestRunReport",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid",
+        "reportId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "TestReportModel"
+      },
+      "problemCases": [
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi suiteId khong ton tai hoac khong tim thay report metadata khop reportId + runId."
+      ],
+      "notes": [
+        "Response metadata co cung coverage snapshot nhu list endpoint.",
+        "NotFound hien la ProblemDetails voi detail/message prefix REPORT_NOT_FOUND."
+      ]
+    },
+    {
+      "name": "DownloadTestRunReport",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download",
+      "pathParams": [
+        "suiteId: Guid",
+        "runId: Guid",
+        "reportId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "DownloadBinaryResponse"
+      },
+      "problemCases": [
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi suiteId khong ton tai, khong tim thay report metadata, hoac storage khong con file binary cua report."
+      ],
+      "notes": [
+        "Response body la byte stream, khong co id/fileId/storage metadata trong body.",
+        "Neu format la JSON hoac HTML va FE muon preview, co the fetch nhu blob/text thay vi bat browser download truc tiep.",
+        "Report file missing trong storage hien duoc map thanh REPORT_FILE_NOT_FOUND o detail/message."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Generate report lay run context qua ITestRunReportReadGatewayService, nghia la no dung cung deterministic detailed results payload cua FE-07/08.",
+    "recentHistoryLimit current host config: DefaultHistoryLimit=5, MaxHistoryLimit=20.",
+    "Report retention current host config: ReportRetentionHours=168.",
+    "Response body preview current host config: MaxResponseBodyPreviewChars=4000.",
+    "Coverage duoc tinh tren ordered endpoint scope cua suite; failed case van tinh la tested neu endpoint da duoc thuc thi va status khong phai Skipped.",
+    "Recent run history loai tru current run va lay theo RunNumber desc.",
+    "Api endpoint metadata la optional; khi metadata thieu, coverage calculator fallback sang request/resolved URL va co the sinh tag untagged.",
+    "JSON export serialize enum thanh string, camelCase property names, va bo qua field null.",
+    "CSV export la bang phang voi cac section summary/failure_distribution/recent_runs/cases/coverage_by_method/coverage_by_tag/uncovered_paths tuy theo reportType.",
+    "HTML export va PDF export dung cung template HTML; PDF la ban convert tu HTML thong qua DinkToPdf.",
+    "Generate report sanitize Authorization/Cookie/token/secret/password/api key truoc khi render va truncate body preview sau sanitize.",
+    "Storage upload fail se bubble loi va khong persist report metadata/coverage.",
+    "Download route khong verify them run summary; no chi owner-check suite, tim report theo reportId + runId, roi download file tu Storage."
+  ],
+  "samples": {
+    "generateDetailedJsonRequest": {
+      "reportType": "Detailed",
+      "format": "JSON",
+      "recentHistoryLimit": 5
+    },
+    "generateSummaryPdfRequest": {
+      "reportType": "Summary",
+      "format": "PDF"
+    },
+    "generateReport201": {
+      "id": "8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54",
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+      "reportType": "Detailed",
+      "format": "JSON",
+      "downloadUrl": "/api/test-suites/9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8/test-runs/43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c/reports/8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54/download",
+      "generatedAt": "2026-03-26T14:30:45Z",
+      "expiresAt": "2026-04-02T14:30:45Z",
+      "coverage": {
+        "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "totalEndpoints": 5,
+        "testedEndpoints": 4,
+        "coveragePercent": 80.0,
+        "byMethod": {
+          "GET": 66.67,
+          "POST": 100.0
+        },
+        "byTag": {
+          "auth": 100.0,
+          "orders": 50.0
+        },
+        "uncoveredPaths": [
+          "/api/orders/{id}/cancel"
+        ],
+        "calculatedAt": "2026-03-26T14:30:45Z"
+      }
+    },
+    "listReports200": [
+      {
+        "id": "8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54",
+        "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+        "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "reportType": "Detailed",
+        "format": "JSON",
+        "downloadUrl": "/api/test-suites/9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8/test-runs/43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c/reports/8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54/download",
+        "generatedAt": "2026-03-26T14:30:45Z",
+        "expiresAt": "2026-04-02T14:30:45Z",
+        "coverage": {
+          "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+          "totalEndpoints": 5,
+          "testedEndpoints": 4,
+          "coveragePercent": 80.0,
+          "byMethod": {
+            "GET": 66.67,
+            "POST": 100.0
+          },
+          "byTag": {
+            "auth": 100.0,
+            "orders": 50.0
+          },
+          "uncoveredPaths": [
+            "/api/orders/{id}/cancel"
+          ],
+          "calculatedAt": "2026-03-26T14:30:45Z"
+        }
+      },
+      {
+        "id": "b4f86f67-5edb-45f8-8203-5f1a2e6a0212",
+        "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+        "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "reportType": "Summary",
+        "format": "PDF",
+        "downloadUrl": "/api/test-suites/9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8/test-runs/43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c/reports/b4f86f67-5edb-45f8-8203-5f1a2e6a0212/download",
+        "generatedAt": "2026-03-26T14:25:10Z",
+        "expiresAt": "2026-04-02T14:25:10Z",
+        "coverage": {
+          "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+          "totalEndpoints": 5,
+          "testedEndpoints": 4,
+          "coveragePercent": 80.0,
+          "byMethod": {
+            "GET": 66.67,
+            "POST": 100.0
+          },
+          "byTag": {
+            "auth": 100.0,
+            "orders": 50.0
+          },
+          "uncoveredPaths": [
+            "/api/orders/{id}/cancel"
+          ],
+          "calculatedAt": "2026-03-26T14:30:45Z"
+        }
+      }
+    ],
+    "runNotReady409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chi co the tao report sau khi test run da Completed hoac Failed.",
+      "message": "Chi co the tao report sau khi test run da Completed hoac Failed.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "REPORT_RUN_NOT_READY"
+    },
+    "resultsExpired409": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Chi tiet ket qua da het han luu tru trong cache.",
+      "message": "Chi tiet ket qua da het han luu tru trong cache.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "RUN_RESULTS_EXPIRED"
+    },
+    "reportNotFound404": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.4",
+      "title": "Not Found",
+      "status": 404,
+      "detail": "REPORT_NOT_FOUND: Khong tim thay report metadata voi ma '8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54'.",
+      "message": "REPORT_NOT_FOUND: Khong tim thay report metadata voi ma '8f602daa-6ec6-4b9e-b2a3-f97e30fc9f54'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "invalidRecentHistoryLimit400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "RecentHistoryLimit khong duoc vuot qua 20.",
+      "message": "RecentHistoryLimit khong duoc vuot qua 20.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "downloadJsonPayloadSample": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "projectId": "fe1372cc-b2b4-4d22-8b62-7219ab24e4cd",
+      "apiSpecId": "af4b6a50-38f1-49b9-a2b9-477cbc8ebfb5",
+      "suiteName": "Checkout regression suite",
+      "reportType": "Detailed",
+      "generatedAt": "2026-03-26T14:30:45Z",
+      "fileBaseName": "test-run-5-detailed-json-20260326T143045Z",
+      "run": {
+        "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "runNumber": 5,
+        "environmentId": "76e8525b-0a5c-4c73-aef7-56aeb7b74890",
+        "triggeredById": "31cedd13-12d4-45e0-8eb1-7b61eac50c9a",
+        "status": "Failed",
+        "startedAt": "2026-03-26T14:29:55Z",
+        "completedAt": "2026-03-26T14:30:03Z",
+        "durationMs": 842,
+        "totalTests": 3,
+        "passedCount": 1,
+        "failedCount": 1,
+        "skippedCount": 1,
+        "resolvedEnvironmentName": "Staging",
+        "executedAt": "2026-03-26T14:29:55Z"
+      },
+      "coverage": {
+        "testRunId": "43b3ee49-d8b8-4c9a-8934-1f15c5e3e29c",
+        "totalEndpoints": 5,
+        "testedEndpoints": 4,
+        "coveragePercent": 80.0,
+        "byMethod": {
+          "GET": 66.67,
+          "POST": 100.0
+        },
+        "byTag": {
+          "auth": 100.0,
+          "orders": 50.0
+        },
+        "uncoveredPaths": [
+          "/api/orders/{id}/cancel"
+        ],
+        "calculatedAt": "2026-03-26T14:30:45Z"
+      },
+      "failureDistribution": {
+        "STATUS_CODE_MISMATCH": 1
+      },
+      "recentRuns": [
+        {
+          "testRunId": "a6409cc5-84d8-4107-a93d-cf5148426a1a",
+          "runNumber": 4,
+          "status": "Completed",
+          "completedAt": "2026-03-25T15:00:03Z",
+          "durationMs": 799,
+          "passedCount": 3,
+          "failedCount": 0,
+          "skippedCount": 0
+        }
+      ],
+      "cases": [
+        {
+          "testCaseId": "0f1b09de-fbd5-4290-8544-a3990bf5595f",
+          "endpointId": "27a05c36-df79-4a58-bc04-17cb424fd22e",
+          "name": "GET /api/profile - must return current user",
+          "description": "Read current user profile after login.",
+          "testType": "HappyPath",
+          "orderIndex": 1,
+          "dependencyIds": [
+            "a48b7f1a-3dfa-469a-bc21-0f26d7ab9f9f"
+          ],
+          "request": {
+            "httpMethod": "GET",
+            "url": "/api/profile",
+            "headers": "{\"Authorization\":\"Bearer ***MASKED***\"}",
+            "pathParams": "{}",
+            "queryParams": "{}",
+            "bodyType": "None",
+            "body": null,
+            "timeout": 30000
+          },
+          "expectation": {
+            "expectedStatus": "200",
+            "responseSchema": "{\"type\":\"object\"}",
+            "headerChecks": "{\"Content-Type\":\"application/json\"}",
+            "bodyContains": "[\"id\"]",
+            "bodyNotContains": "[]",
+            "jsonPathChecks": "{\"$.id\":\"exists\"}",
+            "maxResponseTime": 1000
+          },
+          "status": "Failed",
+          "httpStatusCode": 403,
+          "durationMs": 311,
+          "resolvedUrl": "https://staging-api.example.com/api/profile",
+          "requestHeaders": {
+            "Authorization": "***MASKED***"
+          },
+          "responseHeaders": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "responseBodyPreview": "{\"error\":\"forbidden\"}",
+          "failureReasons": [
+            {
+              "code": "STATUS_CODE_MISMATCH",
+              "message": "Ma trang thai khong khop. Mong doi: [200], thuc te: 403.",
+              "target": "statusCode",
+              "expected": "200",
+              "actual": "403"
+            }
+          ],
+          "extractedVariables": {},
+          "skippedBecauseDependencyIds": [],
+          "statusCodeMatched": false,
+          "schemaMatched": null,
+          "headerChecksPassed": null,
+          "bodyContainsPassed": null,
+          "bodyNotContainsPassed": null,
+          "jsonPathChecksPassed": null,
+          "responseTimePassed": null
+        }
+      ]
+    }
+  },
+  "relatedNotes": [
+    "Neu FE chi can hien lich su report va nut download, chi can GET list + GET download; khong can parse file payload.",
+    "Neu FE muon preview inline JSON/HTML, can tai file binary roi parse/nhung noi dung client-side.",
+    "Hien chua co endpoint xoa report hoac revoke file, nen UX nen coi report history la append-only."
+  ]
+}

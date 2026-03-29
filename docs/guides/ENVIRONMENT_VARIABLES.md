@@ -35,13 +35,25 @@ This project uses environment variables to manage sensitive configuration data, 
 2. Update `.env` with your actual credentials:
    ```dotenv
    POSTGRES_PASSWORD=your_actual_password
-   ConnectionStrings__Default=Host=db;Port=5432;Database=ClassifiedAds;Username=postgres;Password=your_actual_password
+   ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=your_actual_password
    ```
 
-3. Start the application:
+3. Start the recommended local flow:
    ```bash
-   docker-compose up -d
+   docker compose up -d db rabbitmq redis mailhog
+   dotnet run --project ClassifiedAds.Migrator
+   dotnet run --project ClassifiedAds.WebAPI
+   dotnet run --project ClassifiedAds.Background
    ```
+
+### Mode Separation
+
+- `.env` is the source of truth for the standalone local flow (`docker compose` + `dotnet run`)
+- `ClassifiedAds.AppHost` uses its own local PostgreSQL container by default
+- AppHost local PostgreSQL now persists in Docker volume `classifiedads_apphost_postgres_data`
+- AppHost local PostgreSQL binds to `localhost:5432` for a stable pgAdmin/DBeaver connection
+- `docker ps` may still show a random container port under Aspire; use `localhost:5432` from host-side tools
+- Do not run AppHost and standalone hosts at the same time unless you intentionally set the same `ConnectionStrings__Default` for AppHost in the current shell
 
 ## Environment Variables Reference
 
@@ -119,11 +131,11 @@ Use AWS Secrets Manager or Parameter Store
 To verify environment variables are loaded correctly:
 
 ```bash
-# Check docker-compose config
-docker-compose config
+# Check docker compose config
+docker compose config
 
 # View environment variables in a container
-docker-compose exec webapi env | grep POSTGRES
+docker compose exec webapi env | grep POSTGRES
 ```
 
 ## Troubleshooting
@@ -132,7 +144,7 @@ docker-compose exec webapi env | grep POSTGRES
 **Solution**: Ensure `.env` file is in the same directory as `docker-compose.yml`
 
 ### Issue: Connection refused
-**Solution**: Verify database credentials in `.env` match those in `ConnectionStrings__Default`
+**Solution**: Verify database credentials in `.env` match those in `ConnectionStrings__Default`, and that local standalone mode uses `localhost:55432`
 
 ### Issue: Permission denied
 **Solution**: Check file permissions on `.env` file:

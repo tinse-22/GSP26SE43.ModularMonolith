@@ -1,0 +1,454 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-06-boundary-negative-test-cases-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "TestCasesController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-cases",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GenerateBoundaryNegativeTestCases": "Permission:GenerateBoundaryNegativeTestCases",
+    "ListTestCases": "Permission:GetTestCases",
+    "GetTestCaseDetail": "Permission:GetTestCases"
+  },
+  "excludedControllerEndpoints": [
+    "POST /api/test-suites/{suiteId}/test-cases/generate-happy-path",
+    "POST /api/test-suites/{suiteId}/test-cases",
+    "PUT /api/test-suites/{suiteId}/test-cases/{testCaseId}",
+    "DELETE /api/test-suites/{suiteId}/test-cases/{testCaseId}",
+    "PATCH /api/test-suites/{suiteId}/test-cases/{testCaseId}/toggle",
+    "PATCH /api/test-suites/{suiteId}/test-cases/reorder"
+  ],
+  "relatedButOutOfScopeControllers": [
+    "LlmSuggestionsController (/api/test-suites/{suiteId}/llm-suggestions) belongs to FE-15/FE-17 preview/review flow, not FE-06 direct generation."
+  ],
+  "enums": {
+    "TestTypeQueryAcceptedValues": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "TestTypeResponse": [
+      "HappyPath",
+      "Boundary",
+      "Negative",
+      "Performance",
+      "Security"
+    ],
+    "TestPriorityResponse": [
+      "Critical",
+      "High",
+      "Medium",
+      "Low"
+    ],
+    "HttpMethodResponse": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "BodyTypeResponse": [
+      "None",
+      "JSON",
+      "FormData",
+      "UrlEncoded",
+      "Raw",
+      "Binary"
+    ],
+    "ExtractFromResponse": [
+      "ResponseBody",
+      "ResponseHeader",
+      "Status"
+    ],
+    "ConflictReasonCodes": [
+      "ORDER_CONFIRMATION_REQUIRED",
+      "CONCURRENCY_CONFLICT",
+      "UNIQUE_CONSTRAINT_VIOLATION"
+    ]
+  },
+  "models": {
+    "GenerateBoundaryNegativeTestCasesRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "specificationId: Guid (required by runtime)",
+        "forceRegenerate: bool = false",
+        "includePathMutations: bool = true",
+        "includeBodyMutations: bool = true",
+        "includeLlmSuggestions: bool = true"
+      ],
+      "notes": [
+        "Current implementation only validates specificationId != Guid.Empty before generation.",
+        "Current implementation does not verify specificationId matches suite.ApiSpecId or the approved proposal spec.",
+        "At least one of includePathMutations/includeBodyMutations/includeLlmSuggestions must be true."
+      ]
+    },
+    "GenerateBoundaryNegativeResultModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "totalGenerated: int",
+        "pathMutationCount: int",
+        "bodyMutationCount: int",
+        "llmSuggestionCount: int",
+        "endpointsCovered: int",
+        "llmModel: string?",
+        "llmTokensUsed: int?",
+        "generatedAt: DateTimeOffset",
+        "testCases: GeneratedTestCaseSummary[]"
+      ],
+      "notes": [
+        "When the generation pipeline returns zero test cases, backend still returns 201 with totalGenerated=0.",
+        "On LLM cache hit, llmSuggestionCount may be > 0 while llmModel and llmTokensUsed remain null.",
+        "Generated summaries expose the runtime orderIndex assigned after all pipeline outputs are merged."
+      ]
+    },
+    "GeneratedTestCaseSummary": {
+      "properties": [
+        "testCaseId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "httpMethod: string?",
+        "path: string?",
+        "orderIndex: int",
+        "variableCount: int"
+      ],
+      "notes": [
+        "Current FE-06 generator assigns orderIndex sequentially starting at 0."
+      ]
+    },
+    "TestCaseModel": {
+      "properties": [
+        "id: Guid",
+        "testSuiteId: Guid",
+        "endpointId: Guid?",
+        "name: string",
+        "description: string?",
+        "testType: string enum",
+        "priority: string enum",
+        "isEnabled: bool",
+        "dependsOnIds: Guid[]",
+        "orderIndex: int",
+        "customOrderIndex: int?",
+        "isOrderCustomized: bool",
+        "tags: string[]",
+        "version: int",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: base64 string?",
+        "request: TestCaseRequestModel?",
+        "expectation: TestCaseExpectationModel?",
+        "variables: TestCaseVariableModel[]"
+      ],
+      "notes": [
+        "dependsOnIds contains test case IDs, not endpoint IDs.",
+        "testType and priority are strings in response because the view model uses enum.ToString().",
+        "Generated FE-06 cases are enabled=true by default.",
+        "Rule-based tags are auto-added by backend; frontend should not assume user-authored tags only."
+      ]
+    },
+    "TestCaseRequestModel": {
+      "properties": [
+        "id: Guid",
+        "httpMethod: string enum",
+        "url: string",
+        "headers: string? (JSON object encoded as string)",
+        "pathParams: string? (JSON object encoded as string)",
+        "queryParams: string? (JSON object encoded as string)",
+        "bodyType: string enum",
+        "body: string?",
+        "timeout: int"
+      ],
+      "notes": [
+        "Path mutation cases usually populate pathParams and leave body null.",
+        "Body mutation cases set bodyType=JSON even when body is null or empty string.",
+        "LLM-suggested request headers/path params/query params are also serialized into JSON strings."
+      ]
+    },
+    "TestCaseExpectationModel": {
+      "properties": [
+        "id: Guid",
+        "expectedStatus: string? (JSON int array encoded as string)",
+        "responseSchema: string?",
+        "headerChecks: string? (JSON object encoded as string)",
+        "bodyContains: string? (JSON string array encoded as string)",
+        "bodyNotContains: string? (JSON string array encoded as string)",
+        "jsonPathChecks: string? (JSON object encoded as string)",
+        "maxResponseTime: int?"
+      ],
+      "notes": [
+        "Path mutation cases may expect [200], [400], or [404] depending on the mutation.",
+        "Body mutation cases default expectedStatus to [400].",
+        "LLM suggestions default expectedStatus to [400] when the upstream payload omits or leaves the list empty."
+      ]
+    },
+    "TestCaseVariableModel": {
+      "properties": [
+        "id: Guid",
+        "variableName: string",
+        "extractFrom: string enum",
+        "jsonPath: string?",
+        "headerName: string?",
+        "regex: string?",
+        "defaultValue: string?"
+      ],
+      "notes": [
+        "Rule-based FE-06 cases usually have no variables; variableCount is commonly > 0 only for LLM-suggested cases."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GenerateBoundaryNegativeTestCases",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases/generate-boundary-negative",
+      "requestBody": "GenerateBoundaryNegativeTestCasesRequest",
+      "response": {
+        "status": 201,
+        "body": "GenerateBoundaryNegativeResultModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 ProblemDetails for empty suiteId/specificationId, all pipeline flags false, non-owner access, archived suite, existing boundary/negative cases without forceRegenerate, subscription limit denial, or LLM call limit denial.",
+        "404 when suiteId does not exist.",
+        "409 ProblemDetails with reasonCode=ORDER_CONFIRMATION_REQUIRED when FE-05A gate has not produced an applied order yet."
+      ],
+      "notes": [
+        "On non-empty success, backend persists generated cases, adds change logs, increments suite.Version, and sets suite.Status=Ready.",
+        "If forceRegenerate=true, backend deletes existing Boundary/Negative cases before generating new ones.",
+        "If the generator returns zero cases, backend still responds 201 but does not update suite.Status or suite.Version; when forceRegenerate=true this can leave the suite with zero Boundary/Negative cases.",
+        "Path mutation, body mutation, and LLM suggestion cases are merged into one sequential orderIndex stream starting at 0.",
+        "LLM cache hits still contribute to llmSuggestionCount, but llmModel and llmTokensUsed stay null in the current response shape."
+      ]
+    },
+    {
+      "name": "ListTestCases",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases",
+      "query": [
+        "testType: string enum (optional, case-insensitive)",
+        "includeDisabled: boolean (optional, default false)"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "OrderIndex asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "TestCaseModel[]"
+      },
+      "problemCases": [
+        "404 when suiteId does not exist."
+      ],
+      "notes": [
+        "Use testType=Boundary or testType=Negative to isolate FE-06 results.",
+        "Current query handler does not enforce suite ownership; only permission and suite existence are checked.",
+        "Invalid testType values are ignored silently because Enum.TryParse failure leaves filter unset.",
+        "When includeDisabled is false, disabled test cases are excluded."
+      ]
+    },
+    {
+      "name": "GetTestCaseDetail",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "response": {
+        "status": 200,
+        "body": "TestCaseModel"
+      },
+      "problemCases": [
+        "404 when testCaseId does not exist in the suite."
+      ],
+      "notes": [
+        "This is a shared detail endpoint for all test types, not FE-06-only.",
+        "Current query handler does not enforce suite ownership; only permission and entity existence are checked."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Generate-boundary-negative requires FE-05A gate to pass via an active proposal with non-empty AppliedOrder, not just suite approvalStatus.",
+    "Current implementation does not verify specificationId matches suite.ApiSpecId or the approved proposal spec before generation.",
+    "forceRegenerate only removes existing Boundary and Negative cases before re-generating.",
+    "Path mutation classification maps mutationType containing boundary/zero/max/overflow to TestType=Boundary; other path mutations become TestType=Negative.",
+    "Generated cases are tagged with boundary/negative, auto-generated, and a source tag; rule-based cases also add path-mutation or body-mutation.",
+    "Body mutation engine returns no cases for non-POST/PUT/PATCH endpoints.",
+    "Read endpoints return serialized JSON-string fields inside request and expectation submodels.",
+    "List endpoint sorts by OrderIndex and has no pagination.",
+    "LLM cache is all-or-nothing per ordered endpoint set and current feedback fingerprint; current response shape has no explicit fromCache flag."
+  ],
+  "samples": {
+    "generateBoundaryNegativeRequest": {
+      "specificationId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "forceRegenerate": false,
+      "includePathMutations": true,
+      "includeBodyMutations": true,
+      "includeLlmSuggestions": true
+    },
+    "generateBoundaryNegativeResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "totalGenerated": 5,
+      "pathMutationCount": 2,
+      "bodyMutationCount": 2,
+      "llmSuggestionCount": 1,
+      "endpointsCovered": 2,
+      "llmModel": "gpt-5.4",
+      "llmTokensUsed": 948,
+      "generatedAt": "2026-03-25T10:15:00Z",
+      "testCases": [
+        {
+          "testCaseId": "0e5fd374-4638-4563-b34b-8df970a8b032",
+          "endpointId": "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+          "name": "GET /api/users/{id} - id - max int32",
+          "httpMethod": "GET",
+          "path": "/api/users/{id}",
+          "orderIndex": 0,
+          "variableCount": 0
+        }
+      ]
+    },
+    "generateBoundaryNegativeCachedLlmResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "totalGenerated": 3,
+      "pathMutationCount": 0,
+      "bodyMutationCount": 0,
+      "llmSuggestionCount": 3,
+      "endpointsCovered": 2,
+      "llmModel": null,
+      "llmTokensUsed": null,
+      "generatedAt": "2026-03-25T10:20:00Z",
+      "testCases": [
+        {
+          "testCaseId": "6b8f623f-f351-4895-8fd2-6b2250b4165d",
+          "endpointId": "ad0a1d57-481f-4d89-92ad-a6210a90c8b0",
+          "name": "POST /api/orders - duplicate idempotency key with stale payload",
+          "httpMethod": "POST",
+          "path": "/api/orders",
+          "orderIndex": 0,
+          "variableCount": 1
+        }
+      ]
+    },
+    "boundaryListItem": {
+      "id": "0e5fd374-4638-4563-b34b-8df970a8b032",
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "endpointId": "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+      "name": "GET /api/users/{id} - id - max int32",
+      "description": "Boundary max int32 cho path param id.",
+      "testType": "Boundary",
+      "priority": "High",
+      "isEnabled": true,
+      "dependsOnIds": [],
+      "orderIndex": 0,
+      "customOrderIndex": null,
+      "isOrderCustomized": false,
+      "tags": [
+        "boundary",
+        "auto-generated",
+        "rule-based",
+        "path-mutation"
+      ],
+      "version": 1,
+      "createdDateTime": "2026-03-25T10:15:00Z",
+      "updatedDateTime": null,
+      "rowVersion": "k13J4uQhB0q+N+J4E+fYAg==",
+      "request": {
+        "id": "10f99979-6a9d-4822-a3b8-01f48f1fb8dc",
+        "httpMethod": "GET",
+        "url": "/api/users/{id}",
+        "headers": null,
+        "pathParams": "{\"id\":\"2147483647\"}",
+        "queryParams": null,
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "id": "eb48dbd3-a047-426c-bf83-73fc43d70211",
+        "expectedStatus": "[200]",
+        "responseSchema": null,
+        "headerChecks": null,
+        "bodyContains": null,
+        "bodyNotContains": null,
+        "jsonPathChecks": null,
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    "negativeBodyMutationListItem": {
+      "id": "81b6b8b9-bfa8-49ca-af2b-0e8192457f91",
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "endpointId": "ad0a1d57-481f-4d89-92ad-a6210a90c8b0",
+      "name": "POST /api/orders - empty body (null)",
+      "description": "POST /api/orders - gui body null.",
+      "testType": "Negative",
+      "priority": "High",
+      "isEnabled": true,
+      "dependsOnIds": [],
+      "orderIndex": 2,
+      "customOrderIndex": null,
+      "isOrderCustomized": false,
+      "tags": [
+        "negative",
+        "auto-generated",
+        "rule-based",
+        "body-mutation"
+      ],
+      "version": 1,
+      "createdDateTime": "2026-03-25T10:15:00Z",
+      "updatedDateTime": null,
+      "rowVersion": "HNeQwD2jWEy8d0X8IM8rOQ==",
+      "request": {
+        "id": "14652a67-ab0a-49a3-a748-a68d32606574",
+        "httpMethod": "POST",
+        "url": "/api/orders",
+        "headers": null,
+        "pathParams": null,
+        "queryParams": null,
+        "bodyType": "JSON",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "id": "7238e3c4-82c9-4209-b280-980c7b1c85b5",
+        "expectedStatus": "[400]",
+        "responseSchema": null,
+        "headerChecks": null,
+        "bodyContains": null,
+        "bodyNotContains": null,
+        "jsonPathChecks": null,
+        "maxResponseTime": null
+      },
+      "variables": []
+    }
+  }
+}

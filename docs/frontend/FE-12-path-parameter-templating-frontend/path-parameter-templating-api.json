@@ -1,0 +1,903 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-12-path-parameter-templating-api",
+  "validatedAgainstCodebaseOn": "2026-03-27",
+  "feature": "FE-12 Path Parameter Templating",
+  "controllers": [
+    "SpecificationsController",
+    "EndpointsController"
+  ],
+  "baseRoutes": [
+    "/api/projects/{projectId}/specifications",
+    "/api/projects/{projectId}/specifications/{specId}/endpoints"
+  ],
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "CreateManualSpecification": "Permission:AddSpecification",
+    "ImportCurlSpecification": "Permission:AddSpecification",
+    "ListEndpoints": "Permission:GetEndpoints",
+    "GetEndpointDetail": "Permission:GetEndpoints",
+    "CreateEndpoint": "Permission:AddEndpoint",
+    "UpdateEndpoint": "Permission:UpdateEndpoint",
+    "GetResolvedUrl": "Permission:GetEndpoints",
+    "GetPathParamMutations": "Permission:GetEndpoints"
+  },
+  "placeholderRules": {
+    "syntax": "{paramName}",
+    "acceptedNameRegex": "^\\w+$",
+    "maxPathParametersPerEndpoint": 10,
+    "duplicateNameCheck": "case-insensitive",
+    "resolvedUrlQueryLookup": "case-insensitive"
+  },
+  "enums": {
+    "HttpMethod": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "ParameterLocation": [
+      "Path",
+      "Query",
+      "Header",
+      "Body",
+      "Cookie"
+    ],
+    "EndpointParameterDataType": [
+      "string",
+      "integer",
+      "number",
+      "boolean",
+      "object",
+      "array",
+      "uuid"
+    ],
+    "MutationTypesCommon": [
+      "empty",
+      "specialChars",
+      "sqlInjection",
+      "nonExistent"
+    ],
+    "MutationTypesByTypeOrFormat": [
+      "wrongType",
+      "boundary_zero",
+      "boundary_negative",
+      "boundary_float",
+      "boundary_max_int32",
+      "boundary_overflow_int32",
+      "boundary_max_int64",
+      "boundary_veryLarge",
+      "boundary_verySmall",
+      "numericBoolean",
+      "invalidFormat",
+      "partialUuid",
+      "allZerosUuid",
+      "missingDomain",
+      "veryLong",
+      "unicode",
+      "whitespace"
+    ]
+  },
+  "models": {
+    "CreateManualSpecificationModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "endpoints",
+          "type": "ManualEndpointDefinition[]",
+          "required": true,
+          "minItems": 1
+        }
+      ]
+    },
+    "ImportCurlModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "curlCommand",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "autoActivate",
+          "type": "boolean",
+          "required": false
+        }
+      ]
+    },
+    "CreateUpdateEndpointModel": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "httpMethod",
+          "type": "string",
+          "required": true,
+          "allowedValues": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "HEAD",
+            "OPTIONS"
+          ]
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "maxLength": 500
+        },
+        {
+          "name": "operationId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "type": "string[]",
+          "required": false
+        },
+        {
+          "name": "isDeprecated",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "parameters",
+          "type": "ManualParameterDefinition[]",
+          "required": false
+        },
+        {
+          "name": "responses",
+          "type": "ManualResponseDefinition[]",
+          "required": false
+        }
+      ],
+      "notes": [
+        "Backend auto-creates missing Path parameters from placeholders in path.",
+        "Backend does not accept securityRequirements in create/update request body.",
+        "PUT replaces all existing parameters and responses with the new payload."
+      ]
+    },
+    "ManualEndpointDefinition": {
+      "sameShapeAs": "CreateUpdateEndpointModel"
+    },
+    "ManualParameterDefinition": {
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "required": false,
+          "allowedValues": [
+            "Path",
+            "Query",
+            "Header",
+            "Body",
+            "Cookie"
+          ]
+        },
+        {
+          "name": "dataType",
+          "type": "string enum",
+          "required": false,
+          "allowedValues": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "object",
+            "array",
+            "uuid"
+          ]
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "isRequired",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "defaultValue",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "examples",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "notes": [
+        "dataType uses a JsonStringEnumConverter with camelCase and allowIntegerValues=false.",
+        "Path parameters are validated by placeholder name and forced to isRequired=true.",
+        "Unknown or missing location is normalized to Query when persisted."
+      ]
+    },
+    "ManualResponseDefinition": {
+      "properties": [
+        "statusCode: int",
+        "description: string?",
+        "schema: string?",
+        "examples: string?",
+        "headers: string?"
+      ]
+    },
+    "SpecificationDetailModel": {
+      "properties": [
+        "id: Guid",
+        "projectId: Guid",
+        "name: string",
+        "sourceType: string",
+        "version: string?",
+        "isActive: bool",
+        "parseStatus: string",
+        "parsedAt: DateTimeOffset?",
+        "originalFileId: Guid?",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "endpointCount: int",
+        "parseErrors: string[]?",
+        "originalFileName: string?"
+      ],
+      "notes": [
+        "Manual and cURL create responses stop at specification detail and do not inline endpoint details."
+      ]
+    },
+    "EndpointModel": {
+      "properties": [
+        "id: Guid",
+        "apiSpecId: Guid",
+        "httpMethod: string",
+        "path: string",
+        "operationId: string?",
+        "summary: string?",
+        "description: string?",
+        "tags: string?",
+        "isDeprecated: bool",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?"
+      ],
+      "notes": [
+        "tags is a serialized JSON array string, not string[]."
+      ]
+    },
+    "EndpointDetailModel": {
+      "extends": "EndpointModel",
+      "properties": [
+        "resolvedUrl: string?",
+        "parameters: ParameterModel[]",
+        "responses: ResponseModel[]",
+        "securityRequirements: SecurityReqModel[]"
+      ],
+      "notes": [
+        "resolvedUrl is computed from persisted values only and can be null.",
+        "parameters are ordered by Name ascending in the query handler."
+      ]
+    },
+    "ParameterModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "location: string",
+        "dataType: string",
+        "format: string?",
+        "isRequired: bool",
+        "defaultValue: string?",
+        "schema: string?",
+        "examples: string?"
+      ]
+    },
+    "ResponseModel": {
+      "properties": [
+        "id: Guid",
+        "statusCode: int",
+        "description: string?",
+        "schema: string?",
+        "examples: string?",
+        "headers: string?"
+      ]
+    },
+    "SecurityReqModel": {
+      "properties": [
+        "id: Guid",
+        "securityType: string",
+        "schemeName: string?",
+        "scopes: string?"
+      ]
+    },
+    "ResolvedUrlResult": {
+      "properties": [
+        "originalTemplate: string",
+        "resolvedUrl: string?",
+        "resolvedParameters: Dictionary<string,string>",
+        "unresolvedParameters: string[]",
+        "isFullyResolved: bool"
+      ],
+      "notes": [
+        "resolvedParameters contains raw values before URI encoding.",
+        "resolvedUrl is null when any placeholder stays unresolved."
+      ]
+    },
+    "PathParamMutationsResult": {
+      "properties": [
+        "endpointId: Guid",
+        "templatePath: string",
+        "totalMutations: int",
+        "parameterMutations: ParameterMutationGroup[]"
+      ]
+    },
+    "ParameterMutationGroup": {
+      "properties": [
+        "parameterName: string",
+        "dataType: string",
+        "format: string",
+        "originalValue: string",
+        "mutations: PathParameterMutationWithUrl[]"
+      ]
+    },
+    "PathParameterMutationWithUrl": {
+      "properties": [
+        "mutationType: string",
+        "label: string",
+        "value: string",
+        "expectedStatusCode: int",
+        "description: string",
+        "resolvedUrl: string?"
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ]
+    }
+  },
+  "frontendFlows": [
+    {
+      "name": "ManualSpecWithPathTemplates",
+      "steps": [
+        "POST /api/projects/{projectId}/specifications/manual",
+        "GET /api/projects/{projectId}/specifications/{specId}/endpoints",
+        "GET /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+        "Optional: GET /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url?...",
+        "Optional: GET /api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations"
+      ]
+    },
+    {
+      "name": "SingleEndpointCreateOrUpdate",
+      "steps": [
+        "POST or PUT /api/projects/{projectId}/specifications/{specId}/endpoints",
+        "Use returned EndpointDetailModel as the new source of truth for auto-created path params",
+        "Call GET resolved-url only when FE needs override values beyond persisted DefaultValue or Examples"
+      ]
+    },
+    {
+      "name": "CurlImportThenEnrich",
+      "steps": [
+        "POST /api/projects/{projectId}/specifications/curl-import",
+        "GET endpoints to find the imported endpoint",
+        "GET endpoint detail to inspect auto-detected path params",
+        "PUT endpoint to add dataType, format, defaultValue, or examples for path params"
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "CreateManualSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/manual",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateManualSpecificationModel",
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for empty name, name > 200 chars, empty endpoints, invalid HTTP method, empty path, path > 500 chars, invalid path parameter placeholder, duplicate placeholder, extra Path param not present in path, or subscription denial.",
+        "404 when project does not exist."
+      ],
+      "notes": [
+        "Validation errors for a specific endpoint are prefixed as Endpoint #n: ...",
+        "Response does not include endpoint details. FE must follow up with GET endpoints/detail."
+      ]
+    },
+    {
+      "name": "ImportCurlSpecification",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/curl-import",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "ImportCurlModel",
+      "response": {
+        "status": 201,
+        "body": "SpecificationDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for empty name, name > 200 chars, empty curlCommand, malformed cURL, unsupported @file body reference, invalid URL, or subscription denial.",
+        "404 when project does not exist."
+      ],
+      "notes": [
+        "Import creates one specification and one endpoint.",
+        "Path params are auto-detected from the imported path, but defaultValue/examples are not populated."
+      ]
+    },
+    {
+      "name": "ListEndpoints",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "CreatedDateTime desc"
+      },
+      "response": {
+        "status": 200,
+        "body": "EndpointModel[]"
+      },
+      "notes": [
+        "Use this right after manual/cURL creation to discover endpointId values."
+      ]
+    },
+    {
+      "name": "GetEndpointDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "EndpointDetailModel"
+      },
+      "notes": [
+        "resolvedUrl uses DefaultValue first, then Examples[0] only.",
+        "If Examples JSON is malformed, it is ignored and resolvedUrl can become null."
+      ]
+    },
+    {
+      "name": "CreateEndpoint",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateUpdateEndpointModel",
+      "response": {
+        "status": 201,
+        "body": "EndpointDetailModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 for invalid body, invalid HTTP method, empty path, path too long, invalid placeholder name, duplicate placeholder, extra Path parameter not present in path, or subscription denial.",
+        "404 when project/specification does not exist."
+      ],
+      "notes": [
+        "Missing path params are auto-created with location=Path, dataType=string, isRequired=true.",
+        "Returned body already reflects the merged parameter list from runtime."
+      ]
+    },
+    {
+      "name": "UpdateEndpoint",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateUpdateEndpointModel",
+      "response": {
+        "status": 200,
+        "body": "EndpointDetailModel"
+      },
+      "problemCases": [
+        "400 for invalid body, invalid HTTP method, empty path, path too long, invalid placeholder name, duplicate placeholder, or extra Path parameter not present in path.",
+        "404 when project/specification/endpoint does not exist."
+      ],
+      "notes": [
+        "Update fully replaces existing parameters and responses.",
+        "Any path placeholders still missing after FE payload is sent are auto-created before persistence."
+      ]
+    },
+    {
+      "name": "GetResolvedUrl",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [
+        "dynamic key=value pairs matching path parameter names, for example ?userId=42&orderId=abc-123"
+      ],
+      "response": {
+        "status": 200,
+        "body": "ResolvedUrlResult"
+      },
+      "notes": [
+        "Explicit query values override persisted defaults when they are non-empty.",
+        "Fallback order is explicit query value > DefaultValue > first non-empty example.",
+        "Unrelated query keys are ignored."
+      ]
+    },
+    {
+      "name": "GetPathParamMutations",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations",
+      "pathParams": [
+        "projectId: Guid",
+        "specId: Guid",
+        "endpointId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "PathParamMutationsResult"
+      },
+      "notes": [
+        "Returns totalMutations=0 and an empty list when endpoint has no Path parameters.",
+        "resolvedUrl inside each mutation only uses DefaultValue for sibling path params and can be null."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Backend parses placeholders from the path itself and validates them before create/update persistence.",
+    "Auto-created path parameters default to dataType=string and do not receive defaultValue or examples.",
+    "Known path params keep FE-provided metadata such as dataType, format, defaultValue, and examples.",
+    "Path parameter names are trimmed and validated only for location=Path definitions.",
+    "GetEndpointDetail computes resolvedUrl from persisted endpoint parameters only.",
+    "GetResolvedUrl computes a temporary preview without mutating the database.",
+    "GetResolvedUrl URI-encodes values in resolvedUrl but leaves resolvedParameters as raw strings.",
+    "GetPathParamMutations returns mutation groups per persisted path parameter and does not guarantee a special FE-friendly sort order.",
+    "Mutation expectedStatusCode values are heuristics from runtime service and should be rendered as backend-provided metadata.",
+    "Manual and cURL creation consume endpoint quota because they create endpoints.",
+    "CreateEndpoint consumes one endpoint quota; UpdateEndpoint does not re-consume quota.",
+    "ValidationException responses are exposed as 400 application/problem+json with traceId."
+  ],
+  "samples": {
+    "manualCreateRequest": {
+      "name": "User Management API",
+      "version": "v2",
+      "autoActivate": true,
+      "endpoints": [
+        {
+          "httpMethod": "GET",
+          "path": "/api/users/{userId}",
+          "operationId": "getUserById",
+          "summary": "Get user by id",
+          "parameters": [
+            {
+              "name": "userId",
+              "location": "Path",
+              "dataType": "integer",
+              "format": "int64",
+              "isRequired": true,
+              "defaultValue": "1",
+              "examples": "[\"1\",\"42\"]"
+            }
+          ],
+          "responses": [
+            {
+              "statusCode": 200,
+              "description": "User found"
+            },
+            {
+              "statusCode": 404,
+              "description": "User not found"
+            }
+          ]
+        },
+        {
+          "httpMethod": "DELETE",
+          "path": "/api/users/{userId}/sessions/{sessionId}",
+          "summary": "Delete one session",
+          "parameters": [
+            {
+              "name": "userId",
+              "location": "Path",
+              "dataType": "integer",
+              "format": "int64",
+              "isRequired": true,
+              "defaultValue": "1"
+            }
+          ],
+          "responses": [
+            {
+              "statusCode": 204,
+              "description": "Deleted"
+            }
+          ]
+        }
+      ]
+    },
+    "manualCreateResponse": {
+      "id": "76f4c83a-e875-4fb6-bb4d-d286fd48b1ad",
+      "projectId": "10ca5d5b-bd2a-4dc1-b2fb-b2efc9e35709",
+      "name": "User Management API",
+      "sourceType": "Manual",
+      "version": "v2",
+      "isActive": true,
+      "parseStatus": "Success",
+      "parsedAt": "2026-03-27T10:15:00+07:00",
+      "originalFileId": null,
+      "createdDateTime": "2026-03-27T10:15:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 2,
+      "parseErrors": null,
+      "originalFileName": null
+    },
+    "createEndpointAutoDetectRequest": {
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "summary": "Get one order item",
+      "parameters": [
+        {
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "examples": "[\"6be3d962-8c03-4c14-bc4d-53b0c43f5a5e\"]"
+        }
+      ],
+      "responses": [
+        {
+          "statusCode": 200,
+          "description": "OK"
+        }
+      ]
+    },
+    "createEndpointAutoDetectResponse": {
+      "id": "eb15a88f-712a-4955-a350-991d27d8158f",
+      "apiSpecId": "b4cb48d2-7f0c-45ac-9381-1bf67dfd5cd0",
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": null,
+      "summary": "Get one order item",
+      "description": null,
+      "tags": null,
+      "isDeprecated": false,
+      "createdDateTime": "2026-03-27T10:30:00+07:00",
+      "updatedDateTime": null,
+      "resolvedUrl": null,
+      "parameters": [
+        {
+          "id": "ed7e0018-47f4-49ea-82fd-62c1b6016f14",
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "string",
+          "format": null,
+          "isRequired": true,
+          "defaultValue": null,
+          "schema": null,
+          "examples": null
+        },
+        {
+          "id": "fb7d6a7c-663b-4a7a-a357-561a4adb23da",
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "schema": null,
+          "examples": "[\"6be3d962-8c03-4c14-bc4d-53b0c43f5a5e\"]"
+        }
+      ],
+      "responses": [
+        {
+          "id": "50f43c9d-0990-4ef6-baf3-8054dbe6fdb7",
+          "statusCode": 200,
+          "description": "OK",
+          "schema": null,
+          "examples": null,
+          "headers": null
+        }
+      ],
+      "securityRequirements": []
+    },
+    "resolvedUrlPreviewResponse": {
+      "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+      "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/abc%20123%2Fxyz",
+      "resolvedParameters": {
+        "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+        "itemId": "abc 123/xyz"
+      },
+      "unresolvedParameters": [],
+      "isFullyResolved": true
+    },
+    "resolvedUrlPartialResponse": {
+      "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+      "resolvedUrl": null,
+      "resolvedParameters": {
+        "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e"
+      },
+      "unresolvedParameters": [
+        "itemId"
+      ],
+      "isFullyResolved": false
+    },
+    "pathParamMutationsResponse": {
+      "endpointId": "eb15a88f-712a-4955-a350-991d27d8158f",
+      "templatePath": "/api/orders/{orderId}/items/{itemId}",
+      "totalMutations": 5,
+      "parameterMutations": [
+        {
+          "parameterName": "orderId",
+          "dataType": "uuid",
+          "format": "uuid",
+          "originalValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "mutations": [
+            {
+              "mutationType": "empty",
+              "label": "orderId - empty value",
+              "value": "",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui gia tri rong.",
+              "resolvedUrl": null
+            },
+            {
+              "mutationType": "invalidFormat",
+              "label": "orderId - invalid UUID format",
+              "value": "not-a-uuid",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui chuoi khong phai UUID.",
+              "resolvedUrl": null
+            },
+            {
+              "mutationType": "allZerosUuid",
+              "label": "orderId - all-zeros UUID",
+              "value": "00000000-0000-0000-0000-000000000000",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'orderId' gui UUID zero (resource khong ton tai).",
+              "resolvedUrl": null
+            }
+          ]
+        },
+        {
+          "parameterName": "itemId",
+          "dataType": "string",
+          "format": "",
+          "originalValue": "",
+          "mutations": [
+            {
+              "mutationType": "specialChars",
+              "label": "itemId - special characters",
+              "value": "<script>alert(1)</script>",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'itemId' chua ky tu dac biet/XSS payload.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/%3Cscript%3Ealert%281%29%3C%2Fscript%3E"
+            },
+            {
+              "mutationType": "nonExistent",
+              "label": "itemId - non-existent resource",
+              "value": "nonexistent-resource-id-99999",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'itemId' tro toi resource khong ton tai.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/nonexistent-resource-id-99999"
+            }
+          ]
+        }
+      ]
+    },
+    "curlImportRequest": {
+      "name": "Orders API from cURL",
+      "version": "1.0",
+      "curlCommand": "curl -X GET 'https://api.example.com/api/orders/{orderId}/items/{itemId}?includeInventory=true' -H 'Authorization: Bearer token123'",
+      "autoActivate": false
+    },
+    "curlImportResponse": {
+      "id": "f0e41770-fae1-4353-88ea-8f4d8b6db5c8",
+      "projectId": "10ca5d5b-bd2a-4dc1-b2fb-b2efc9e35709",
+      "name": "Orders API from cURL",
+      "sourceType": "cURL",
+      "version": "1.0",
+      "isActive": false,
+      "parseStatus": "Success",
+      "parsedAt": "2026-03-27T10:40:00+07:00",
+      "originalFileId": null,
+      "createdDateTime": "2026-03-27T10:40:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 1,
+      "parseErrors": null,
+      "originalFileName": null
+    },
+    "validationProblem400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Path parameter 'wrongName' khong ton tai trong path '/api/users/{userId}'. Cac placeholder hop le: userId.",
+      "message": "Path parameter 'wrongName' khong ton tai trong path '/api/users/{userId}'. Cac placeholder hop le: userId.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  }
+}

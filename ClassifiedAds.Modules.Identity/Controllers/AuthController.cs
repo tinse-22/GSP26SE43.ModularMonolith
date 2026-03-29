@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
@@ -50,6 +51,7 @@ public class AuthController : ControllerBase
     private readonly Dispatcher _dispatcher;
     private readonly IFileStorageManager _fileStorageManager;
     private readonly ITokenBlacklistService _tokenBlacklistService;
+    private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         UserManager<User> userManager,
@@ -62,7 +64,8 @@ public class AuthController : ControllerBase
         IdentityDbContext dbContext,
         Dispatcher dispatcher,
         IFileStorageManager fileStorageManager,
-        ITokenBlacklistService tokenBlacklistService)
+        ITokenBlacklistService tokenBlacklistService,
+        ILogger<AuthController> logger)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -75,6 +78,7 @@ public class AuthController : ControllerBase
         _dispatcher = dispatcher;
         _fileStorageManager = fileStorageManager;
         _tokenBlacklistService = tokenBlacklistService;
+        _logger = logger;
     }
 
     /// <summary>
@@ -114,29 +118,52 @@ public class AuthController : ControllerBase
             AccessFailedCount = 0,
         };
 
-        // Create user with password
-        var result = await _userManager.CreateAsync(user, model.Password);
-        if (!result.Succeeded)
-        {
-            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
-        }
+        UserProfile profile = null;
 
-        // Assign default "User" role
-        var userRole = await _roleManager.FindByNameAsync("User");
-        if (userRole != null)
+        var executionStrategy = _dbContext.Database.CreateExecutionStrategy();
+        var transactionFailureResult = await executionStrategy.ExecuteAsync(async () =>
         {
-            await _userManager.AddToRoleAsync(user, "User");
-        }
+            await _dbContext.BeginTransactionAsync();
+            try
+            {
+                // Create user with password
+                var result = await _userManager.CreateAsync(user, model.Password);
+                if (!result.Succeeded)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+                }
 
-        // Create user profile
-        var profile = new UserProfile
+                var userRole = await _roleManager.FindByNameAsync("User");
+                if (userRole == null)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return StatusCode(StatusCodes.Status500InternalServerError, new { Error = "Vai trò mặc định 'User' không tồn tại." });
+                }
+
+                var roleResult = await _userManager.AddToRoleAsync(user, "User");
+                if (!roleResult.Succeeded)
+                {
+                    await _dbContext.RollbackTransactionAsync();
+                    return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = roleResult.Errors.Select(e => e.Description) });
+                }
+
+                profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
+                await _dbContext.SaveChangesAsync();
+                await _dbContext.CommitTransactionAsync();
+                return null;
+            }
+            catch
+            {
+                await _dbContext.RollbackTransactionAsync();
+                throw;
+            }
+        });
+
+        if (transactionFailureResult != null)
         {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            DisplayName = model.Email.Split('@')[0], // Default display name from email
-        };
-        _dbContext.UserProfiles.Add(profile);
-        await _dbContext.SaveChangesAsync();
+            return transactionFailureResult;
+        }
 
         // Send confirmation email
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
@@ -181,19 +208,22 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(model.Email);
         if (user == null)
         {
-            return Unauthorized(new { Error = "Email hoặc mật khẩu không đúng." });
+            _logger.LogInformation("Login failed: user not found. Email={Email}", model.Email);
+            return Unauthorized(new { Code = "invalid_credentials", Error = "Email hoặc mật khẩu không đúng." });
         }
 
         // Check if email is confirmed
         if (!user.EmailConfirmed)
         {
-            return BadRequest(new { Error = "Vui lòng xác nhận địa chỉ email trước khi đăng nhập." });
+            _logger.LogInformation("Login blocked: email not confirmed. UserId={UserId} Email={Email}", user.Id, model.Email);
+            return BadRequest(new { Code = "email_not_confirmed", Error = "Vui lòng xác nhận địa chỉ email trước khi đăng nhập." });
         }
 
         // Check if user is locked out
         if (await _userManager.IsLockedOutAsync(user))
         {
-            return BadRequest(new { Error = "Tài khoản đã bị khóa. Vui lòng thử lại sau." });
+            _logger.LogWarning("Login blocked: account locked out. UserId={UserId} Email={Email}", user.Id, model.Email);
+            return BadRequest(new { Code = "account_locked", Error = "Tài khoản đã bị khóa. Vui lòng thử lại sau." });
         }
 
         // Verify password
@@ -202,11 +232,19 @@ public class AuthController : ControllerBase
         {
             if (result.IsLockedOut)
             {
-                return BadRequest(new { Error = "Tài khoản bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau." });
+                _logger.LogWarning("Login failed and account locked due to invalid attempts. UserId={UserId} Email={Email}", user.Id, model.Email);
+                return BadRequest(new { Code = "account_locked", Error = "Tài khoản bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau." });
             }
 
-            return Unauthorized(new { Error = "Email hoặc mật khẩu không đúng." });
+            var failedCount = await _userManager.GetAccessFailedCountAsync(user);
+            _logger.LogInformation("Login failed: password mismatch. UserId={UserId} Email={Email} AccessFailedCount={AccessFailedCount}",
+                user.Id,
+                model.Email,
+                failedCount);
+            return Unauthorized(new { Code = "invalid_credentials", Error = "Email hoặc mật khẩu không đúng." });
         }
+
+        _logger.LogInformation("Login succeeded. UserId={UserId} Email={Email}", user.Id, model.Email);
 
         // Get user roles
         var roles = await _userManager.GetRolesAsync(user);
@@ -844,6 +882,12 @@ public class AuthController : ControllerBase
         }
 
         var defaultDisplayName = user.UserName;
+        if (!string.IsNullOrWhiteSpace(defaultDisplayName) &&
+            string.Equals(defaultDisplayName, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            defaultDisplayName = null;
+        }
+
         if (string.IsNullOrWhiteSpace(defaultDisplayName) && !string.IsNullOrWhiteSpace(user.Email))
         {
             defaultDisplayName = user.Email.Split('@')[0];

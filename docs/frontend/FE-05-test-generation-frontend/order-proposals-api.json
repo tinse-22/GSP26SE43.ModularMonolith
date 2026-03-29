@@ -1,0 +1,319 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-05-order-proposals-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "TestOrderController",
+  "baseRoute": "/api/test-suites/{suiteId}",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer",
+    "nonFrontendCallbackException": "POST /api/test-suites/{suiteId}/test-cases/from-ai uses x-callback-api-key and is omitted here."
+  },
+  "permissions": {
+    "ProposeApiTestOrder": "Permission:ProposeTestOrder",
+    "GetLatestApiTestOrderProposal": "Permission:GetTestOrderProposal",
+    "ReorderApiTestOrder": "Permission:ReorderTestOrder",
+    "ApproveApiTestOrder": "Permission:ApproveTestOrder",
+    "RejectApiTestOrder": "Permission:ApproveTestOrder",
+    "GetApiTestOrderGateStatus": "Permission:GetTestOrderProposal",
+    "GenerateTestsLegacyAsync": "Permission:GenerateTestCases"
+  },
+  "enums": {
+    "ProposalSourceRequestAndResponse": [
+      "Ai",
+      "User",
+      "System",
+      "Imported"
+    ],
+    "ProposalStatusResponse": [
+      "Pending",
+      "Approved",
+      "Rejected",
+      "ModifiedAndApproved",
+      "Superseded",
+      "Applied",
+      "Expired"
+    ],
+    "ProposalStatusNumericMapUsedByOrderGateStatus": {
+      "0": "Pending",
+      "1": "Approved",
+      "2": "Rejected",
+      "3": "ModifiedAndApproved",
+      "4": "Superseded",
+      "5": "Applied",
+      "6": "Expired"
+    },
+    "ConflictReasonCodes": [
+      "INVALID_ORDER_SET",
+      "CONCURRENCY_CONFLICT",
+      "ORDER_CONFIRMATION_REQUIRED"
+    ]
+  },
+  "models": {
+    "ProposeApiTestOrderRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "specificationId: Guid (required by runtime)",
+        "selectedEndpointIds: Guid[] (optional, default [])",
+        "source: string enum = Ai | User | System | Imported",
+        "llmModel: string? max 100",
+        "reasoningNote: string? max 2000"
+      ],
+      "notes": [
+        "If selectedEndpointIds is empty or omitted, backend falls back to TestSuite.SelectedEndpointIds.",
+        "Backend validates specificationId must equal suite.ApiSpecId."
+      ]
+    },
+    "ReorderApiTestOrderRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "rowVersion: base64 string (required)",
+        "orderedEndpointIds: Guid[] (required)",
+        "reviewNotes: string? max 4000"
+      ]
+    },
+    "ApproveApiTestOrderRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "rowVersion: base64 string (required)",
+        "reviewNotes: string? max 4000"
+      ],
+      "notes": [
+        "Approve has an idempotent fast-path for already approved/applied proposals with AppliedOrder."
+      ]
+    },
+    "RejectApiTestOrderRequest": {
+      "contentType": "application/json",
+      "properties": [
+        "rowVersion: base64 string (required)",
+        "reviewNotes: string (required, max 4000)"
+      ]
+    },
+    "ApiOrderItemModel": {
+      "properties": [
+        "endpointId: Guid",
+        "httpMethod: string",
+        "path: string",
+        "orderIndex: int (1-based)",
+        "dependsOnEndpointIds: Guid[]",
+        "reasonCodes: string[]",
+        "isAuthRelated: bool"
+      ],
+      "notes": [
+        "Backend rewrites orderIndex into consecutive 1..N whenever proposal JSON is serialized/deserialized."
+      ]
+    },
+    "ApiTestOrderProposalModel": {
+      "properties": [
+        "proposalId: Guid",
+        "testSuiteId: Guid",
+        "proposalNumber: int",
+        "status: string enum",
+        "source: string enum",
+        "proposedOrder: ApiOrderItemModel[]",
+        "userModifiedOrder: ApiOrderItemModel[]?",
+        "appliedOrder: ApiOrderItemModel[]?",
+        "aiReasoning: string?",
+        "consideredFactors: object|string|null",
+        "reviewedById: Guid?",
+        "reviewedAt: DateTimeOffset?",
+        "reviewNotes: string?",
+        "appliedAt: DateTimeOffset?",
+        "rowVersion: base64 string"
+      ],
+      "notes": [
+        "status and source are string enums in this response model.",
+        "Entity fields LlmModel and TokensUsed are not exposed here."
+      ]
+    },
+    "ApiTestOrderGateStatusModel": {
+      "properties": [
+        "testSuiteId: Guid",
+        "isGatePassed: bool",
+        "reasonCode: string?",
+        "activeProposalId: Guid?",
+        "activeProposalStatus: integer enum?",
+        "orderSize: int",
+        "evaluatedAt: DateTimeOffset"
+      ],
+      "notes": [
+        "activeProposalStatus is numeric in current JSON response."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ProposeApiTestOrder",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/order-proposals",
+      "requestBody": "ProposeApiTestOrderRequest",
+      "response": {
+        "status": 201,
+        "body": "ApiTestOrderProposalModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 ProblemDetails for empty suiteId/specificationId, suite ownership failure, suite/spec mismatch, or invalid endpoint scope.",
+        "404 when suiteId does not exist."
+      ],
+      "notes": [
+        "Creating a new proposal supersedes previous Pending, Approved, and ModifiedAndApproved proposals."
+      ]
+    },
+    {
+      "name": "GetLatestApiTestOrderProposal",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/order-proposals/latest",
+      "response": {
+        "status": 200,
+        "body": "ApiTestOrderProposalModel"
+      },
+      "problemCases": [
+        "404 when suiteId does not exist or the suite has no proposal yet.",
+        "400 ProblemDetails when caller is not the suite owner."
+      ],
+      "notes": [
+        "Returns the newest proposal by ProposalNumber desc, regardless of status."
+      ]
+    },
+    {
+      "name": "ReorderApiTestOrder",
+      "method": "PUT",
+      "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+      "requestBody": "ReorderApiTestOrderRequest",
+      "response": {
+        "status": 200,
+        "body": "ApiTestOrderProposalModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when rowVersion or orderedEndpointIds is missing.",
+        "400 ProblemDetails for invalid base64 rowVersion, non-owner access, non-Pending proposal, or invalid endpoint set.",
+        "404 when suiteId or proposalId does not exist in the suite.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ]
+    },
+    {
+      "name": "ApproveApiTestOrder",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+      "requestBody": "ApproveApiTestOrderRequest",
+      "response": {
+        "status": 200,
+        "body": "ApiTestOrderProposalModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when rowVersion is missing.",
+        "400 ProblemDetails for invalid base64 rowVersion, non-owner access, invalid proposal state, or empty final order.",
+        "404 when suiteId or proposalId does not exist in the suite.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ],
+      "notes": [
+        "Approve writes AppliedOrder and updates suite.ApprovalStatus in the same transaction."
+      ]
+    },
+    {
+      "name": "RejectApiTestOrder",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reject",
+      "requestBody": "RejectApiTestOrderRequest",
+      "response": {
+        "status": 200,
+        "body": "ApiTestOrderProposalModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when rowVersion or reviewNotes is missing.",
+        "400 ProblemDetails for invalid base64 rowVersion, blank reviewNotes after trim, non-owner access, or non-Pending proposal.",
+        "404 when suiteId or proposalId does not exist in the suite.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ]
+    },
+    {
+      "name": "GetApiTestOrderGateStatus",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/order-gate-status",
+      "response": {
+        "status": 200,
+        "body": "ApiTestOrderGateStatusModel"
+      },
+      "problemCases": [
+        "404 when suiteId does not exist.",
+        "400 ProblemDetails when caller is not the suite owner."
+      ],
+      "notes": [
+        "This endpoint returns 200 even when gate fails. FE must inspect isGatePassed and reasonCode."
+      ]
+    },
+    {
+      "name": "GenerateTestsLegacyAsync",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/generate-tests",
+      "response": {
+        "status": 202,
+        "body": "empty"
+      },
+      "problemCases": [
+        "400 ProblemDetails when suiteId is empty, caller is not the suite owner, there is no approved proposal, or the resolved order is empty.",
+        "404 when suiteId does not exist."
+      ],
+      "notes": [
+        "Legacy async n8n trigger still exists but is not the primary FE-05B frontend route.",
+        "Unlike order-gate-status, this legacy command only searches proposal status Approved or ModifiedAndApproved."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "All FE-05A endpoints are permission-protected and also enforce suite ownership in handlers.",
+    "Proposal creation falls back to persisted suite scope when selectedEndpointIds is empty.",
+    "Latest proposal query does not filter out Superseded or Rejected statuses.",
+    "Reorder only works when proposal status is Pending.",
+    "Approve/reject updates proposal and suite together in one transaction.",
+    "Gate pass depends on active proposal status in [Approved, ModifiedAndApproved, Applied] plus AppliedOrder != empty."
+  ],
+  "samples": {
+    "proposeRequest": {
+      "specificationId": "3ef2e2fb-aac0-4a5b-8f0d-6709b2ff0d21",
+      "selectedEndpointIds": [
+        "1f83f5ff-15c2-4f11-bfee-f1453a625c53",
+        "ad0a1d57-481f-4d89-92ad-a6210a90c8b0"
+      ],
+      "source": "Ai",
+      "llmModel": "gpt-5.4",
+      "reasoningNote": "Auth va create-order nen di truoc payment-status de giam dependency conflict."
+    },
+    "gateStatusPassedResponse": {
+      "testSuiteId": "9ad66fd2-3d4a-4b57-8996-e2b7b6c7c2e8",
+      "isGatePassed": true,
+      "reasonCode": null,
+      "activeProposalId": "d0a6d8fe-0869-4680-b1b2-c6fd85931f55",
+      "activeProposalStatus": 3,
+      "orderSize": 2,
+      "evaluatedAt": "2026-03-25T09:15:00Z"
+    }
+  }
+}

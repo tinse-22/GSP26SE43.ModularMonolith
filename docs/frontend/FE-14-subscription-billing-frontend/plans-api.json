@@ -1,0 +1,399 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-14-subscription-billing-plans-api",
+  "validatedAgainstCodebaseOn": "2026-03-28",
+  "controller": "PlansController",
+  "baseRoute": "/api/plans",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "GetPlans": "Permission:GetPlans",
+    "GetPlan": "Permission:GetPlans",
+    "CreatePlan": "Permission:AddPlan",
+    "UpdatePlan": "Permission:UpdatePlan",
+    "DeletePlan": "Permission:DeletePlan",
+    "GetPlanAuditLogs": "Permission:GetPlanAuditLogs"
+  },
+  "prerequisiteDocs": [
+    "docs/guides/SUBSCRIPTION_WORKFLOW_GUIDE.md",
+    "docs/features/FE-14-subscription-billing"
+  ],
+  "enums": {
+    "LimitTypeStringEnum": [
+      "MaxProjects",
+      "MaxEndpointsPerProject",
+      "MaxTestCasesPerSuite",
+      "MaxTestRunsPerMonth",
+      "MaxConcurrentRuns",
+      "RetentionDays",
+      "MaxLlmCallsPerMonth",
+      "MaxStorageMB"
+    ],
+    "ActiveSubscriberBlockingStatusesNumeric": {
+      "0": "Trial",
+      "1": "Active",
+      "2": "PastDue"
+    },
+    "AuditHighlightFields": [
+      "Name",
+      "DisplayName",
+      "Description",
+      "PriceMonthly",
+      "PriceYearly",
+      "IsActive"
+    ]
+  },
+  "models": {
+    "CreateUpdatePlanModel": {
+      "contentType": "application/json",
+      "properties": [
+        "name: string required, max 50",
+        "displayName: string required, max 100",
+        "description: string? max 500",
+        "priceMonthly: decimal? >= 0",
+        "priceYearly: decimal? >= 0",
+        "currency: string default USD, regex ^[A-Za-z]{3}$",
+        "isActive: bool default true",
+        "sortOrder: int >= 0",
+        "limits: PlanLimitModel[] default []"
+      ],
+      "notes": [
+        "name uniqueness duoc check case-insensitive o runtime.",
+        "currency duoc trim + upper-case truoc khi luu.",
+        "priceMonthly/priceYearly = 0 hop le va co nghia plan free cho chu ky do.",
+        "priceMonthly/priceYearly = null co nghia chu ky do khong duoc ho tro."
+      ]
+    },
+    "PlanLimitModel": {
+      "properties": [
+        "id: Guid? null cho item moi",
+        "limitType: string enum",
+        "limitValue: int? > 0 khi isUnlimited = false",
+        "isUnlimited: bool"
+      ],
+      "notes": [
+        "limitType dung JsonStringEnumConverter rieng, allowIntegerValues = false.",
+        "Neu isUnlimited = true, backend se tu set limitValue = null truoc khi save.",
+        "Moi limitType chi duoc xuat hien 1 lan trong cung mot plan."
+      ]
+    },
+    "PlanModel": {
+      "properties": [
+        "id: Guid",
+        "name: string",
+        "displayName: string",
+        "description: string?",
+        "priceMonthly: decimal?",
+        "priceYearly: decimal?",
+        "currency: string",
+        "isActive: bool",
+        "sortOrder: int",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "limits: PlanLimitModel[]"
+      ],
+      "notes": [
+        "limits duoc map tu query rieng va khong co order guarantee.",
+        "Response khong co thong tin subscriber count hay usage."
+      ]
+    },
+    "PlanAuditLogEntryModel": {
+      "properties": [
+        "id: Guid",
+        "userName: string",
+        "action: string",
+        "createdDateTime: DateTimeOffset",
+        "data: PlanModel",
+        "highLight: { name: bool, displayName: bool, description: bool, priceMonthly: bool, priceYearly: bool, isActive: bool }"
+      ],
+      "notes": [
+        "action duoc build bang cach replace suffix _PLAN khoi audit action goc.",
+        "highLight chi cover 6 field o tren; khong bao gom currency, sortOrder, hay limits.",
+        "highLight duoc tinh theo thu tu thoi gian tang dan roi moi sort nguoc lai khi response."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string"
+      ],
+      "notes": [
+        "ValidationException trong Subscription module tra 400 ProblemDetails.",
+        "NotFoundException tra 404 ProblemDetails."
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ],
+      "notes": [
+        "Dung cho loi model binding/DataAnnotations tu ASP.NET Core.",
+        "Missing field required, bool/query parse sai, hoac body sai JSON shape deu co the vao shape nay."
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "GetPlans",
+      "method": "GET",
+      "path": "/api/plans",
+      "query": [
+        "isActive: bool? optional",
+        "search: string optional"
+      ],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "SortOrder asc, Name asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "PlanModel[]"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu query isActive khong parse duoc thanh bool."
+      ],
+      "notes": [
+        "search duoc trim + lower-case o query handler va chi match Name/DisplayName.",
+        "Khong co pagination, khong co search theo Description.",
+        "Neu khong co ban ghi hop le thi response la 200 voi mang rong."
+      ]
+    },
+    {
+      "name": "GetPlan",
+      "method": "GET",
+      "path": "/api/plans/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "PlanModel"
+      },
+      "problemCases": [
+        "404 ProblemDetails neu plan id khong ton tai."
+      ],
+      "notes": [
+        "Response luon include danh sach limits cua plan.",
+        "Backend khong tra subscriber count hay audit summary trong detail route."
+      ]
+    },
+    {
+      "name": "CreatePlan",
+      "method": "POST",
+      "path": "/api/plans",
+      "requestBody": "CreateUpdatePlanModel",
+      "response": {
+        "status": 201,
+        "body": "PlanModel",
+        "headers": [
+          "Location: /api/plans/{id}"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac vi pham DataAnnotations.",
+        "400 ProblemDetails neu name trung case-insensitive, limitType bi trung, limitValue <= 0 khi isUnlimited = false, hoac loi business rule khac."
+      ],
+      "notes": [
+        "Runtime save plan truoc, sau do query lai GetPlanQuery de tra body day du limits.",
+        "Create plan khong gui email; side effect email chi xay ra o update khi gia thay doi va plan da co active subscribers."
+      ]
+    },
+    {
+      "name": "UpdatePlan",
+      "method": "PUT",
+      "path": "/api/plans/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "requestBody": "CreateUpdatePlanModel",
+      "response": {
+        "status": 200,
+        "body": "PlanModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails neu body sai shape hoac vi pham DataAnnotations.",
+        "400 ProblemDetails neu name trung, limitType bi trung, limitValue khong hop le, hoac co gang doi isActive tu true sang false trong khi van con subscriber Trial/Active/PastDue.",
+        "404 ProblemDetails neu plan id khong ton tai."
+      ],
+      "notes": [
+        "Update se replace toan bo plan limits: xoa het limits cu roi insert lai danh sach moi.",
+        "Neu gia hoac currency doi va plan dang co active subscribers, backend co side effect gui email thong bao gia moi."
+      ]
+    },
+    {
+      "name": "DeletePlan",
+      "method": "DELETE",
+      "path": "/api/plans/{id}",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "empty"
+      },
+      "problemCases": [
+        "400 ProblemDetails neu plan van con subscriber Trial/Active/PastDue.",
+        "404 ProblemDetails neu plan id khong ton tai."
+      ],
+      "notes": [
+        "Delete la soft delete: set isActive = false.",
+        "Neu plan da inactive san thi command return som va controller van tra 200 OK.",
+        "Khong co response body va khong co route hard delete."
+      ]
+    },
+    {
+      "name": "GetPlanAuditLogs",
+      "method": "GET",
+      "path": "/api/plans/{id}/auditlogs",
+      "pathParams": [
+        "id: Guid"
+      ],
+      "response": {
+        "status": 200,
+        "body": "PlanAuditLogEntryModel[]"
+      },
+      "problemCases": [],
+      "notes": [
+        "Route nay khong validate plan ton tai. Neu khong co log nao thi response la 200 [].",
+        "Response cuoi cung sort CreatedDateTime desc."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "Plan name duoc normalize trim roi so sanh case-insensitive khi create/update.",
+    "Create/Update cho phep de limits rong; module khong bat buoc plan phai co du 8 loai limit.",
+    "Plan deactivation duoc check o ca PUT (toggle isActive) va DELETE.",
+    "DELETE plan va PUT disable deu dung ValidationException => HTTP 400, khong dung ConflictException.",
+    "Plan queries chi sort plan, khong sort limits.",
+    "GET audit logs join them thong tin user name va deserialize log snapshot thanh PlanModel.",
+    "Audit highlight hien chi map 6 field va khong diff chi tiet nested limits.",
+    "Unique constraint database co the van bao ve name, nhung handler da bat duplicate name som va throw ValidationException 400."
+  ],
+  "samples": {
+    "createPlanRequest": {
+      "name": "Pro",
+      "displayName": "Pro Plan",
+      "description": "For growing teams",
+      "priceMonthly": 29.99,
+      "priceYearly": 299.99,
+      "currency": "usd",
+      "isActive": true,
+      "sortOrder": 2,
+      "limits": [
+        {
+          "limitType": "MaxProjects",
+          "limitValue": 10,
+          "isUnlimited": false
+        },
+        {
+          "limitType": "MaxStorageMB",
+          "limitValue": 1024,
+          "isUnlimited": false
+        },
+        {
+          "limitType": "MaxConcurrentRuns",
+          "limitValue": null,
+          "isUnlimited": true
+        }
+      ]
+    },
+    "plan201": {
+      "id": "f8c17334-cb5f-4e85-a7a4-0139f61a8396",
+      "name": "Pro",
+      "displayName": "Pro Plan",
+      "description": "For growing teams",
+      "priceMonthly": 29.99,
+      "priceYearly": 299.99,
+      "currency": "USD",
+      "isActive": true,
+      "sortOrder": 2,
+      "createdDateTime": "2026-03-28T08:30:00Z",
+      "updatedDateTime": null,
+      "limits": [
+        {
+          "id": "4db796b2-f66d-41ee-8f27-bf67d24f20ea",
+          "limitType": "MaxProjects",
+          "limitValue": 10,
+          "isUnlimited": false
+        },
+        {
+          "id": "c6b67974-a193-45c1-b04a-89c04f51af9e",
+          "limitType": "MaxStorageMB",
+          "limitValue": 1024,
+          "isUnlimited": false
+        },
+        {
+          "id": "d0a1317b-5f22-42b1-b06f-640205c3980a",
+          "limitType": "MaxConcurrentRuns",
+          "limitValue": null,
+          "isUnlimited": true
+        }
+      ]
+    },
+    "duplicateName400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Ten goi cuoc 'Pro' da ton tai.",
+      "message": "Ten goi cuoc 'Pro' da ton tai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "planDeactivationBlocked400": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "Khong the ngung kich hoat goi 'Pro Plan' vi van con 5 thue bao dang hoat dong. Vui long chuyen thue bao sang goi khac truoc.",
+      "message": "Khong the ngung kich hoat goi 'Pro Plan' vi van con 5 thue bao dang hoat dong. Vui long chuyen thue bao sang goi khac truoc.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "auditLogs200": [
+      {
+        "id": "2ecf92cd-5c6d-4cc4-b51c-b274f0d3decb",
+        "userName": "admin",
+        "action": "UPDATE",
+        "createdDateTime": "2026-03-28T09:15:00Z",
+        "data": {
+          "id": "f8c17334-cb5f-4e85-a7a4-0139f61a8396",
+          "name": "Pro",
+          "displayName": "Pro Plan",
+          "description": "For growing teams",
+          "priceMonthly": 39.99,
+          "priceYearly": 359.99,
+          "currency": "USD",
+          "isActive": true,
+          "sortOrder": 2,
+          "createdDateTime": "2026-03-28T08:30:00Z",
+          "updatedDateTime": "2026-03-28T09:15:00Z",
+          "limits": []
+        },
+        "highLight": {
+          "name": false,
+          "displayName": false,
+          "description": false,
+          "priceMonthly": true,
+          "priceYearly": true,
+          "isActive": false
+        }
+      }
+    ]
+  },
+  "relatedNotes": [
+    "Self-service frontend nen uu tien GET /api/subscriptions/plans hoac GET /api/payments/plans thay vi route admin /api/plans.",
+    "Neu FE can diff plan revision chi tiet hon auditlogs highLight, can tu diff data snapshots client-side.",
+    "Khong nen dua vao order cua limits khi render editor; hay sort client-side theo enum name hoac thu tu mong muon."
+  ]
+}

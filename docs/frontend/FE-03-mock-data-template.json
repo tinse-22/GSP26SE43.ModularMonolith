@@ -1,0 +1,488 @@
+{
+  "project": {
+    "id": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+    "name": "Commerce API Workspace"
+  },
+  "listSpecifications": [
+    {
+      "id": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Commerce API v1",
+      "sourceType": "OpenAPI",
+      "version": "v1.0.0",
+      "isActive": true,
+      "parseStatus": "Success",
+      "parsedAt": "2026-03-25T10:30:00+07:00",
+      "originalFileId": "db8f4d2c-79f0-4751-b0b3-e9df81a2b498",
+      "createdDateTime": "2026-03-25T10:30:00+07:00",
+      "updatedDateTime": null
+    },
+    {
+      "id": "0f0a5f62-f55e-4d53-84ca-4ed0a4a818ea",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Partner Postman Collection",
+      "sourceType": "Postman",
+      "version": "2026.03",
+      "isActive": false,
+      "parseStatus": "Pending",
+      "parsedAt": null,
+      "originalFileId": "9151d4c2-f9d3-4f70-b6aa-0e8e63686b8a",
+      "createdDateTime": "2026-03-25T11:15:00+07:00",
+      "updatedDateTime": null
+    },
+    {
+      "id": "f4a9fa2e-2c41-430f-b0e4-b362d1a1c8c9",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Broken OpenAPI Import",
+      "sourceType": "OpenAPI",
+      "version": "draft",
+      "isActive": false,
+      "parseStatus": "Failed",
+      "parsedAt": "2026-03-25T11:00:00+07:00",
+      "originalFileId": "a4d3fe56-1ee5-47d0-9f52-87da92ec1dba",
+      "createdDateTime": "2026-03-25T11:00:00+07:00",
+      "updatedDateTime": null
+    }
+  ],
+  "specificationDetails": {
+    "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d": {
+      "id": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Commerce API v1",
+      "sourceType": "OpenAPI",
+      "version": "v1.0.0",
+      "isActive": true,
+      "parseStatus": "Success",
+      "parsedAt": "2026-03-25T10:30:00+07:00",
+      "originalFileId": "db8f4d2c-79f0-4751-b0b3-e9df81a2b498",
+      "createdDateTime": "2026-03-25T10:30:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 4,
+      "parseErrors": null,
+      "originalFileName": null
+    },
+    "0f0a5f62-f55e-4d53-84ca-4ed0a4a818ea": {
+      "id": "0f0a5f62-f55e-4d53-84ca-4ed0a4a818ea",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Partner Postman Collection",
+      "sourceType": "Postman",
+      "version": "2026.03",
+      "isActive": false,
+      "parseStatus": "Pending",
+      "parsedAt": null,
+      "originalFileId": "9151d4c2-f9d3-4f70-b6aa-0e8e63686b8a",
+      "createdDateTime": "2026-03-25T11:15:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 0,
+      "parseErrors": null,
+      "originalFileName": null
+    },
+    "f4a9fa2e-2c41-430f-b0e4-b362d1a1c8c9": {
+      "id": "f4a9fa2e-2c41-430f-b0e4-b362d1a1c8c9",
+      "projectId": "84af8c2a-c9d4-4c84-af4d-30cf4adf1375",
+      "name": "Broken OpenAPI Import",
+      "sourceType": "OpenAPI",
+      "version": "draft",
+      "isActive": false,
+      "parseStatus": "Failed",
+      "parsedAt": "2026-03-25T11:00:00+07:00",
+      "originalFileId": "a4d3fe56-1ee5-47d0-9f52-87da92ec1dba",
+      "createdDateTime": "2026-03-25T11:00:00+07:00",
+      "updatedDateTime": null,
+      "endpointCount": 0,
+      "parseErrors": [
+        "The JSON value could not be converted while reading paths."
+      ],
+      "originalFileName": null
+    }
+  },
+  "uploadMethods": [
+    {
+      "method": "StorageGatewayContract",
+      "uploadApi": "/api/projects/84af8c2a-c9d4-4c84-af4d-30cf4adf1375/specifications/upload"
+    }
+  ],
+  "listEndpoints": {
+    "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d": [
+      {
+        "id": "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9",
+        "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+        "httpMethod": "GET",
+        "path": "/api/orders/{orderId}/items/{itemId}",
+        "operationId": "getOrderItem",
+        "summary": "Get order item detail",
+        "description": "Return one item inside an order.",
+        "tags": "[\"Orders\",\"Items\"]",
+        "isDeprecated": false,
+        "createdDateTime": "2026-03-25T10:40:00+07:00",
+        "updatedDateTime": null
+      },
+      {
+        "id": "8ff5dcc9-37a7-48e9-870b-d27e9bdaf4d5",
+        "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+        "httpMethod": "POST",
+        "path": "/api/orders",
+        "operationId": "createOrder",
+        "summary": "Create order",
+        "description": "Create a new order.",
+        "tags": "[\"Orders\"]",
+        "isDeprecated": false,
+        "createdDateTime": "2026-03-25T10:39:00+07:00",
+        "updatedDateTime": null
+      },
+      {
+        "id": "5f01f32d-33fd-46fe-b34c-8cf1c12a9aab",
+        "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+        "httpMethod": "GET",
+        "path": "/api/orders/{orderId}",
+        "operationId": "getOrder",
+        "summary": "Get order detail",
+        "description": "Return one order.",
+        "tags": "[\"Orders\"]",
+        "isDeprecated": false,
+        "createdDateTime": "2026-03-25T10:38:00+07:00",
+        "updatedDateTime": null
+      },
+      {
+        "id": "0f892bb8-a8d6-4b92-8c58-e7379a1cf34a",
+        "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+        "httpMethod": "DELETE",
+        "path": "/api/orders/{orderId}/items/{itemId}",
+        "operationId": "deleteOrderItem",
+        "summary": "Delete order item",
+        "description": "Remove one item from an order.",
+        "tags": "[\"Orders\",\"Items\"]",
+        "isDeprecated": false,
+        "createdDateTime": "2026-03-25T10:37:00+07:00",
+        "updatedDateTime": null
+      }
+    ]
+  },
+  "endpointDetails": {
+    "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9": {
+      "id": "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9",
+      "apiSpecId": "9a1f0f5d-7d07-4b76-b368-9b93d1801f9d",
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": "getOrderItem",
+      "summary": "Get order item detail",
+      "description": "Return one item inside an order.",
+      "tags": "[\"Orders\",\"Items\"]",
+      "isDeprecated": false,
+      "createdDateTime": "2026-03-25T10:40:00+07:00",
+      "updatedDateTime": null,
+      "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/1001",
+      "parameters": [
+        {
+          "id": "72c7a4b6-267f-4bf0-a158-d65ece1140cf",
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "schema": null,
+          "examples": "[\"6be3d962-8c03-4c14-bc4d-53b0c43f5a5e\"]"
+        },
+        {
+          "id": "2b3dde3f-f581-4d93-8f38-4d1bf557ca78",
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "integer",
+          "format": "int32",
+          "isRequired": true,
+          "defaultValue": "1001",
+          "schema": null,
+          "examples": "[\"1001\"]"
+        },
+        {
+          "id": "a295cb58-f5e8-48d8-834d-16ec1a580274",
+          "name": "includeInventory",
+          "location": "Query",
+          "dataType": "boolean",
+          "format": null,
+          "isRequired": false,
+          "defaultValue": "true",
+          "schema": null,
+          "examples": null
+        }
+      ],
+      "responses": [
+        {
+          "id": "d1c7ec22-6b6f-46de-9dd6-50ec53c71110",
+          "statusCode": 200,
+          "description": "Order item detail",
+          "schema": "{\"type\":\"object\",\"properties\":{\"itemId\":{\"type\":\"integer\"},\"sku\":{\"type\":\"string\"}}}",
+          "examples": "{\"itemId\":1001,\"sku\":\"BOOK-001\"}",
+          "headers": null
+        },
+        {
+          "id": "f0d6b8cd-6fef-46cd-95f5-23cb461fef51",
+          "statusCode": 404,
+          "description": "Order item not found",
+          "schema": null,
+          "examples": null,
+          "headers": null
+        }
+      ],
+      "securityRequirements": [
+        {
+          "id": "1e0d2f6c-c1fe-4509-a21f-84ed29331e8c",
+          "securityType": "Bearer",
+          "schemeName": "BearerAuth",
+          "scopes": null
+        }
+      ]
+    }
+  },
+  "resolvedUrlScenarios": {
+    "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9": {
+      "success": {
+        "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+        "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/2002",
+        "resolvedParameters": {
+          "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "itemId": "2002"
+        },
+        "unresolvedParameters": [],
+        "isFullyResolved": true
+      },
+      "partial": {
+        "originalTemplate": "/api/orders/{orderId}/items/{itemId}",
+        "resolvedUrl": null,
+        "resolvedParameters": {
+          "orderId": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e"
+        },
+        "unresolvedParameters": [
+          "itemId"
+        ],
+        "isFullyResolved": false
+      }
+    }
+  },
+  "pathParamMutationScenarios": {
+    "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9": {
+      "endpointId": "9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9",
+      "templatePath": "/api/orders/{orderId}/items/{itemId}",
+      "totalMutations": 15,
+      "parameterMutations": [
+        {
+          "parameterName": "orderId",
+          "dataType": "uuid",
+          "format": "uuid",
+          "originalValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e",
+          "mutations": [
+            {
+              "mutationType": "empty",
+              "label": "orderId - empty value",
+              "value": "",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui gia tri rong.",
+              "resolvedUrl": null
+            },
+            {
+              "mutationType": "invalidFormat",
+              "label": "orderId - invalid UUID format",
+              "value": "not-a-uuid",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'orderId' gui chuoi khong phai UUID.",
+              "resolvedUrl": "/api/orders/not-a-uuid/items/1001"
+            },
+            {
+              "mutationType": "allZerosUuid",
+              "label": "orderId - all-zeros UUID",
+              "value": "00000000-0000-0000-0000-000000000000",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'orderId' gui UUID zero.",
+              "resolvedUrl": "/api/orders/00000000-0000-0000-0000-000000000000/items/1001"
+            }
+          ]
+        },
+        {
+          "parameterName": "itemId",
+          "dataType": "integer",
+          "format": "int32",
+          "originalValue": "1001",
+          "mutations": [
+            {
+              "mutationType": "wrongType",
+              "label": "itemId - wrong type (text instead of integer)",
+              "value": "abc",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'itemId' gui text thay vi so nguyen.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/abc"
+            },
+            {
+              "mutationType": "boundary_zero",
+              "label": "itemId - boundary: zero",
+              "value": "0",
+              "expectedStatusCode": 400,
+              "description": "Path parameter 'itemId' = 0.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/0"
+            },
+            {
+              "mutationType": "nonExistent",
+              "label": "itemId - non-existent resource",
+              "value": "999999999",
+              "expectedStatusCode": 404,
+              "description": "Path parameter 'itemId' tro toi resource khong ton tai.",
+              "resolvedUrl": "/api/orders/6be3d962-8c03-4c14-bc4d-53b0c43f5a5e/items/999999999"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "requestSamples": {
+    "uploadSpecificationForm": {
+      "uploadMethod": "StorageGatewayContract",
+      "file": "(binary) commerce-openapi.json",
+      "name": "Commerce API v1",
+      "sourceType": "OpenAPI",
+      "version": "v1.0.0",
+      "autoActivate": true
+    },
+    "createManualSpecification": {
+      "name": "Manual Checkout Flow",
+      "version": "draft-1",
+      "autoActivate": false,
+      "endpoints": [
+        {
+          "httpMethod": "POST",
+          "path": "/api/orders/{orderId}/checkout",
+          "operationId": "checkoutOrder",
+          "summary": "Checkout order",
+          "description": "Create a checkout session for an order.",
+          "tags": [
+            "Orders",
+            "Checkout"
+          ],
+          "isDeprecated": false,
+          "parameters": [
+            {
+              "name": "orderId",
+              "location": "Path",
+              "dataType": "uuid",
+              "format": "uuid",
+              "isRequired": true,
+              "defaultValue": "d6e33f9d-4e12-4d9e-a80d-7f894e4a2f50"
+            }
+          ],
+          "responses": [
+            {
+              "statusCode": 200,
+              "description": "Checkout session created"
+            }
+          ]
+        }
+      ]
+    },
+    "importCurl": {
+      "name": "Import Product Search cURL",
+      "version": "from-curl",
+      "autoActivate": false,
+      "curlCommand": "curl -X GET \"https://api.example.com/products?category=books&page=1\" -H \"Authorization: Bearer token-value\""
+    },
+    "createEndpoint": {
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": "getOrderItem",
+      "summary": "Get order item detail",
+      "description": "Return one item inside an order.",
+      "tags": [
+        "Orders",
+        "Items"
+      ],
+      "isDeprecated": false,
+      "parameters": [
+        {
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e"
+        },
+        {
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "integer",
+          "format": "int32",
+          "isRequired": true,
+          "defaultValue": "1001"
+        }
+      ],
+      "responses": [
+        {
+          "statusCode": 200,
+          "description": "Order item detail"
+        }
+      ]
+    },
+    "updateEndpoint": {
+      "httpMethod": "GET",
+      "path": "/api/orders/{orderId}/items/{itemId}",
+      "operationId": "getOrderItem",
+      "summary": "Get order item detail",
+      "description": "Return one item inside an order with inventory state.",
+      "tags": [
+        "Orders",
+        "Items",
+        "Inventory"
+      ],
+      "isDeprecated": false,
+      "parameters": [
+        {
+          "name": "orderId",
+          "location": "Path",
+          "dataType": "uuid",
+          "format": "uuid",
+          "isRequired": true,
+          "defaultValue": "6be3d962-8c03-4c14-bc4d-53b0c43f5a5e"
+        },
+        {
+          "name": "itemId",
+          "location": "Path",
+          "dataType": "integer",
+          "format": "int32",
+          "isRequired": true,
+          "defaultValue": "1001"
+        },
+        {
+          "name": "includeInventory",
+          "location": "Query",
+          "dataType": "boolean",
+          "defaultValue": "true"
+        }
+      ],
+      "responses": [
+        {
+          "statusCode": 200,
+          "description": "Order item detail"
+        },
+        {
+          "statusCode": 404,
+          "description": "Order item not found"
+        }
+      ]
+    }
+  },
+  "problemDetailsSamples": {
+    "badRequest": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.1",
+      "title": "Bad Request",
+      "status": 400,
+      "detail": "HTTP method khong hop le. Chap nhan: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.",
+      "message": "HTTP method khong hop le. Chap nhan: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    },
+    "notFound": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.4",
+      "title": "Not Found",
+      "status": 404,
+      "detail": "Khong tim thay endpoint voi ma '9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9'.",
+      "message": "Khong tim thay endpoint voi ma '9c1f7f5a-1af4-4788-b9a1-6507d0af5ad9'.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    }
+  }
+}

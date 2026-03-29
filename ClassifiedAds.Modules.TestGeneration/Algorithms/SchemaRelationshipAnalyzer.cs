@@ -43,6 +43,57 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, HashSet<string>> BuildSchemaReferenceGraph(
+        IReadOnlyDictionary<string, string> schemaNameToPayload)
+    {
+        var graph = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        if (schemaNameToPayload == null || schemaNameToPayload.Count == 0)
+        {
+            return graph;
+        }
+
+        // For each schema, extract all $refs it contains and create UNIDIRECTIONAL edges.
+        // If schema A's payload contains $ref to B, then A → B.
+        foreach (var (schemaName, payload) in schemaNameToPayload)
+        {
+            if (string.IsNullOrWhiteSpace(schemaName) || string.IsNullOrWhiteSpace(payload))
+            {
+                continue;
+            }
+
+            // Ensure the schema exists in the graph (even if it has no refs).
+            if (!graph.ContainsKey(schemaName))
+            {
+                graph[schemaName] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            // Extract all $refs from this schema's payload.
+            var refsInPayload = ExtractSchemaRefsFromPayload(payload);
+
+            // Create directed edges: schemaName → each referenced schema.
+            foreach (var refName in refsInPayload)
+            {
+                // Skip self-references.
+                if (string.Equals(schemaName, refName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                graph[schemaName].Add(refName);
+
+                // Ensure the referenced schema also exists in the graph.
+                if (!graph.ContainsKey(refName))
+                {
+                    graph[refName] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                }
+            }
+        }
+
+        return graph;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, HashSet<string>> BuildSchemaReferenceGraphLegacy(
         IReadOnlyCollection<string> schemaPayloads)
     {
         if (schemaPayloads == null || schemaPayloads.Count == 0)

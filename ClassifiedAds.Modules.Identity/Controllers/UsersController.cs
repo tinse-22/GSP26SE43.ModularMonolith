@@ -147,8 +147,8 @@ public class UsersController : ControllerBase
             return BadRequest(new { Error = "Email đã được đăng ký." });
         }
 
-        // Admin role: EmailConfirmed = true (no email verification)
-        // User role: EmailConfirmed = false (requires email verification)
+        // Users created from the admin screen are considered trusted input,
+        // so their email is confirmed immediately regardless of assigned role.
         var isAdmin = roleNames.Any(x => x.Equals("Admin", StringComparison.OrdinalIgnoreCase));
 
         var user = new User
@@ -157,7 +157,7 @@ public class UsersController : ControllerBase
             NormalizedUserName = (model.UserName ?? model.Email).ToUpper(),
             Email = model.Email,
             NormalizedEmail = model.Email.ToUpper(),
-            EmailConfirmed = isAdmin,
+            EmailConfirmed = true,
             PhoneNumber = model.PhoneNumber,
             PhoneNumberConfirmed = false,
             TwoFactorEnabled = false,
@@ -176,24 +176,8 @@ public class UsersController : ControllerBase
         var roleResult = await _userManager.AddToRolesAsync(user, roleNames);
         if (!roleResult.Succeeded)
         {
-            return BadRequest(new { Errors = roleResult.Errors.Select(e => e.Description) });
-        }
-
-        // If User role, send confirmation email
-        if (!isAdmin)
-        {
-            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-            var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
-            var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
-
-            var displayName = user.UserName ?? user.Email.Split('@')[0];
-            await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
-            {
-                From = "noreply@classifiedads.com",
-                Tos = user.Email,
-                Subject = "Chào mừng bạn! Vui lòng xác nhận email",
-                Body = _emailTemplates.WelcomeConfirmEmail(displayName, confirmationUrl),
-            });
+            await _userManager.DeleteAsync(user);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = roleResult.Errors.Select(e => e.Description) });
         }
 
         var userModel = user.ToModel();
@@ -201,10 +185,10 @@ public class UsersController : ControllerBase
         {
             User = userModel,
             Roles = roleNames,
-            EmailConfirmationRequired = !isAdmin,
+            EmailConfirmationRequired = false,
             Message = isAdmin
                 ? "Tạo quản trị viên thành công."
-                : "Tạo người dùng thành công. Vui lòng kiểm tra email để xác nhận tài khoản."
+                : "Tạo người dùng thành công. Email đã được xác nhận tự động."
         });
     }
 

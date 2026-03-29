@@ -47,7 +47,12 @@ using System.Threading.Tasks;
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Load .env file for private configuration (not committed to git)
 // Probes up parent directories to find .env at solution root
-if (!string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
         probeForEnv: true,
@@ -65,6 +70,9 @@ builder.AddServiceDefaults();
 // Add services to the container.
 var services = builder.Services;
 var configuration = builder.Configuration;
+
+StartupDiagnostics.LogDatabaseTarget("WebAPI", configuration, isRunningInContainer);
+StartupDiagnostics.LogCacheTarget("WebAPI", configuration);
 
 // Configure logging using custom Serilog setup
 builder.WebHost.UseClassifiedAdsLogger(configuration =>
@@ -427,7 +435,7 @@ services.AddAuthentication(options =>
                 }
             }
 
-            Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
+            Console.WriteLine($"JWT bearer accepted. Path={context.HttpContext.Request.Path} User={context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }
     };

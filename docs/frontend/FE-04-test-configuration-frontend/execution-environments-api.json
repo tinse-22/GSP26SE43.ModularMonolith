@@ -1,0 +1,428 @@
+{
+  "$schema": "frontend-api-contract",
+  "version": "1.0.0",
+  "documentId": "fe-04-execution-environments-api",
+  "validatedAgainstCodebaseOn": "2026-03-25",
+  "controller": "ExecutionEnvironmentsController",
+  "baseRoute": "/api/projects/{projectId}/execution-environments",
+  "authentication": {
+    "required": true,
+    "scheme": "Bearer"
+  },
+  "permissions": {
+    "ListExecutionEnvironments": "Permission:GetExecutionEnvironments",
+    "GetExecutionEnvironmentDetail": "Permission:GetExecutionEnvironments",
+    "CreateExecutionEnvironment": "Permission:AddExecutionEnvironment",
+    "UpdateExecutionEnvironment": "Permission:UpdateExecutionEnvironment",
+    "DeleteExecutionEnvironment": "Permission:DeleteExecutionEnvironment"
+  },
+  "enums": {
+    "AuthType": [
+      "None",
+      "BearerToken",
+      "Basic",
+      "ApiKey",
+      "OAuth2ClientCredentials"
+    ],
+    "ApiKeyLocation": [
+      "Header",
+      "Query"
+    ]
+  },
+  "models": {
+    "ExecutionAuthConfigModel": {
+      "properties": [
+        {
+          "name": "authType",
+          "type": "string enum",
+          "required": false,
+          "default": "None",
+          "allowedValues": [
+            "None",
+            "BearerToken",
+            "Basic",
+            "ApiKey",
+            "OAuth2ClientCredentials"
+          ]
+        },
+        {
+          "name": "headerName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "apiKeyName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "apiKeyValue",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "apiKeyLocation",
+          "type": "string enum",
+          "required": false,
+          "default": "Header",
+          "allowedValues": [
+            "Header",
+            "Query"
+          ]
+        },
+        {
+          "name": "tokenUrl",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "clientId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "clientSecret",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "scopes",
+          "type": "string[]",
+          "required": false
+        }
+      ],
+      "notes": [
+        "Response always masks token, password, apiKeyValue, and clientSecret as ******.",
+        "BearerToken requires token.",
+        "Basic requires username plus password.",
+        "ApiKey requires apiKeyName plus apiKeyValue.",
+        "OAuth2ClientCredentials requires tokenUrl, clientId, and clientSecret."
+      ]
+    },
+    "CreateExecutionEnvironmentRequest": {
+      "contentType": "application/json",
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "maxLength": 100
+        },
+        {
+          "name": "baseUrl",
+          "type": "string",
+          "required": true,
+          "maxLength": 500,
+          "notes": [
+            "Must be an absolute http/https URL."
+          ]
+        },
+        {
+          "name": "variables",
+          "type": "Dictionary<string,string>",
+          "required": false
+        },
+        {
+          "name": "headers",
+          "type": "Dictionary<string,string>",
+          "required": false
+        },
+        {
+          "name": "authConfig",
+          "type": "ExecutionAuthConfigModel",
+          "required": false
+        },
+        {
+          "name": "isDefault",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "notes": [
+        "Header keys and variable keys must not be empty or whitespace.",
+        "variables and headers may be omitted; response normalizes missing data to empty objects."
+      ]
+    },
+    "UpdateExecutionEnvironmentRequest": {
+      "contentType": "application/json",
+      "extends": "CreateExecutionEnvironmentRequest",
+      "properties": [
+        {
+          "name": "rowVersion",
+          "type": "base64 string",
+          "required": true
+        }
+      ]
+    },
+    "ExecutionEnvironmentModel": {
+      "properties": [
+        "id: Guid",
+        "projectId: Guid",
+        "name: string",
+        "baseUrl: string",
+        "variables: Dictionary<string,string>",
+        "headers: Dictionary<string,string>",
+        "authConfig: ExecutionAuthConfigModel?",
+        "isDefault: bool",
+        "createdDateTime: DateTimeOffset",
+        "updatedDateTime: DateTimeOffset?",
+        "rowVersion: base64 string"
+      ],
+      "notes": [
+        "Response authConfig is masked, not the raw secret values.",
+        "variables and headers are returned as empty objects when stored value is null or empty."
+      ]
+    },
+    "ProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "detail: string",
+        "message: string",
+        "traceId: string",
+        "reasonCode: string?"
+      ]
+    },
+    "ValidationProblemDetails": {
+      "contentType": "application/problem+json",
+      "properties": [
+        "type: string",
+        "title: string",
+        "status: int",
+        "instance: string",
+        "traceId: string",
+        "errors: Dictionary<string,string[]>"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "name": "ListExecutionEnvironments",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/execution-environments",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "sorting": {
+        "supportsClientProvidedSort": false,
+        "serverOrder": "IsDefault desc, Name asc"
+      },
+      "response": {
+        "status": 200,
+        "body": "ExecutionEnvironmentModel[]"
+      },
+      "notes": [
+        "Current implementation does not perform a separate project existence lookup; no matches return 200 with an empty array."
+      ]
+    },
+    {
+      "name": "GetExecutionEnvironmentDetail",
+      "method": "GET",
+      "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "pathParams": [
+        "projectId: Guid",
+        "environmentId: Guid"
+      ],
+      "query": [],
+      "response": {
+        "status": 200,
+        "body": "ExecutionEnvironmentModel"
+      },
+      "problemCases": [
+        "404 when environmentId does not exist under the provided projectId."
+      ]
+    },
+    {
+      "name": "CreateExecutionEnvironment",
+      "method": "POST",
+      "path": "/api/projects/{projectId}/execution-environments",
+      "pathParams": [
+        "projectId: Guid"
+      ],
+      "query": [],
+      "requestBody": "CreateExecutionEnvironmentRequest",
+      "response": {
+        "status": 201,
+        "body": "ExecutionEnvironmentModel",
+        "headers": [
+          "Location"
+        ]
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when required body fields are missing.",
+        "400 ProblemDetails for invalid baseUrl, empty header key, empty variable key, invalid authConfig payload, or missing auth secrets required by the selected authType.",
+        "409 ProblemDetails with reasonCode=DEFAULT_ENVIRONMENT_CONFLICT when concurrent default switching conflicts."
+      ]
+    },
+    {
+      "name": "UpdateExecutionEnvironment",
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "pathParams": [
+        "projectId: Guid",
+        "environmentId: Guid"
+      ],
+      "query": [],
+      "requestBody": "UpdateExecutionEnvironmentRequest",
+      "response": {
+        "status": 200,
+        "body": "ExecutionEnvironmentModel"
+      },
+      "problemCases": [
+        "400 ValidationProblemDetails when rowVersion or other required body fields are missing.",
+        "400 ProblemDetails for invalid rowVersion format, invalid baseUrl, empty header key, empty variable key, or invalid authConfig data.",
+        "404 when environmentId does not exist under the provided projectId.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale.",
+        "409 ProblemDetails with reasonCode=DEFAULT_ENVIRONMENT_CONFLICT when concurrent default switching conflicts."
+      ]
+    },
+    {
+      "name": "DeleteExecutionEnvironment",
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+      "pathParams": [
+        "projectId: Guid",
+        "environmentId: Guid"
+      ],
+      "query": [
+        "rowVersion: base64 string (required)"
+      ],
+      "response": {
+        "status": 204,
+        "body": "empty"
+      },
+      "problemCases": [
+        "400 when rowVersion query is missing or invalid.",
+        "404 when environmentId does not exist under the provided projectId.",
+        "409 ProblemDetails with reasonCode=CONCURRENCY_CONFLICT when rowVersion is stale."
+      ],
+      "notes": [
+        "Current implementation allows deleting the default environment and does not auto-select a replacement."
+      ]
+    }
+  ],
+  "runtimeRules": [
+    "List is sorted with default environments first, then by environment name ascending.",
+    "Response authConfig is masked on list, detail, create response, and update response.",
+    "Do not send masked secrets back unchanged on update unless you intentionally want to overwrite the stored secret with ******.",
+    "Backend enforces at most one default environment per project, but it does not require a project to always keep one default.",
+    "Setting isDefault=true uses a serializable transaction to unset other defaults in the same project.",
+    "Setting isDefault=false on the current default environment is allowed and can leave the project without any default environment.",
+    "Delete requires rowVersion via query string instead of request body."
+  ],
+  "samples": {
+    "createExecutionEnvironmentRequest": {
+      "name": "Staging",
+      "baseUrl": "https://staging-api.example.com/v1",
+      "variables": {
+        "tenantId": "tenant-stg-01",
+        "defaultOrderId": "SO-10001"
+      },
+      "headers": {
+        "X-Tenant-Id": "{{tenantId}}",
+        "X-Client-App": "frontend-handoff"
+      },
+      "authConfig": {
+        "authType": "BearerToken",
+        "headerName": "Authorization",
+        "token": "eyJhbGciOi..."
+      },
+      "isDefault": true
+    },
+    "executionEnvironmentResponse": {
+      "id": "76e8525b-0a5c-4c73-aef7-56aeb7b74890",
+      "projectId": "f3596048-0ad8-47cc-a4b4-443bd6514d04",
+      "name": "Staging",
+      "baseUrl": "https://staging-api.example.com/v1",
+      "variables": {
+        "tenantId": "tenant-stg-01",
+        "defaultOrderId": "SO-10001"
+      },
+      "headers": {
+        "X-Tenant-Id": "{{tenantId}}",
+        "X-Client-App": "frontend-handoff"
+      },
+      "authConfig": {
+        "authType": "BearerToken",
+        "headerName": "Authorization",
+        "token": "******",
+        "username": null,
+        "password": null,
+        "apiKeyName": null,
+        "apiKeyValue": null,
+        "apiKeyLocation": "Header",
+        "tokenUrl": null,
+        "clientId": null,
+        "clientSecret": null,
+        "scopes": null
+      },
+      "isDefault": true,
+      "createdDateTime": "2026-03-25T12:10:00+07:00",
+      "updatedDateTime": null,
+      "rowVersion": "S7bVCZ4Gx0q2Zc7gWQO1lw=="
+    },
+    "oauth2EnvironmentRequest": {
+      "name": "Production",
+      "baseUrl": "https://api.example.com",
+      "variables": {
+        "tenantId": "tenant-prod-01"
+      },
+      "headers": {
+        "X-Tenant-Id": "{{tenantId}}"
+      },
+      "authConfig": {
+        "authType": "OAuth2ClientCredentials",
+        "tokenUrl": "https://auth.example.com/oauth/token",
+        "clientId": "client-prod",
+        "clientSecret": "super-secret",
+        "scopes": [
+          "orders.read",
+          "orders.write"
+        ]
+      },
+      "isDefault": false
+    },
+    "problemDetails409DefaultConflict": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Khong the dat default environment do xung dot dong thoi. Vui long thu lai.",
+      "message": "Khong the dat default environment do xung dot dong thoi. Vui long thu lai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "DEFAULT_ENVIRONMENT_CONFLICT"
+    },
+    "problemDetails409Concurrency": {
+      "type": "https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.8",
+      "title": "Conflict",
+      "status": 409,
+      "detail": "Du lieu da bi thay doi boi nguoi khac. Vui long tai lai va thu lai.",
+      "message": "Du lieu da bi thay doi boi nguoi khac. Vui long tai lai va thu lai.",
+      "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00",
+      "reasonCode": "CONCURRENCY_CONFLICT"
+    }
+  },
+  "relatedNotes": [
+    "FE-07 runtime trims trailing slash from baseUrl before composing request URLs.",
+    "BearerToken uses headerName when present, otherwise Authorization.",
+    "ApiKey with apiKeyLocation=Query injects a default query parameter instead of a header.",
+    "During FE-07 execution, env variables are resolved with {{variableName}} placeholders and can be overridden by run-extracted variables."
+  ]
+}

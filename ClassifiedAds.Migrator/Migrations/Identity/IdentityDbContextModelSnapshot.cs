@@ -23,6 +23,41 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("ClassifiedAds.Modules.Identity.Entities.PasswordHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "CreatedDateTime");
+
+                    b.ToTable("PasswordHistories", "identity");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.Identity.Entities.Role", b =>
                 {
                     b.Property<Guid>("Id")
@@ -577,6 +612,17 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                     b.HasKey("Id");
 
                     b.ToTable("DataProtectionKeys", "identity");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.Identity.Entities.PasswordHistory", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.Identity.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.Identity.Entities.RoleClaim", b =>

@@ -21,10 +21,10 @@ internal class CustomAuthorizationPolicyProvider : DefaultAuthorizationPolicyPro
 
             policyBuilder.RequireAuthenticatedUser();
 
-            policyBuilder.AddRequirements(new PermissionRequirement
-            {
-                PermissionName = policyName
-            });
+            // Extract the permission name from the policy name
+            // e.g., "Permission:Users.Read" -> "Users.Read"
+            var permissionName = policyName["Permission:".Length..];
+            policyBuilder.AddRequirements(new PermissionRequirement(permissionName));
 
             var policy = policyBuilder.Build();
 
