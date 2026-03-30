@@ -2,7 +2,7 @@ services:
     db:
         image: "postgres:16"
         ports:
-            - "5432:5432"
+            - "55432:5432"
         environment:
             POSTGRES_USER: ${POSTGRES_USER}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -20,6 +20,12 @@ services:
         ports:
           - "5672:5672"
           - "15672:15672"
+        healthcheck:
+          test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+          interval: 5s
+          timeout: 10s
+          retries: 12
+          start_period: 10s
     mailhog:
         image: mailhog/mailhog
         ports: 
@@ -32,6 +38,12 @@ services:
         volumes:
           - redis_data:/data
         command: redis-server --appendonly yes
+        healthcheck:
+          test: ["CMD", "redis-cli", "ping"]
+          interval: 5s
+          timeout: 5s
+          retries: 12
+          start_period: 5s
     migrator:
         image: classifiedads.modularmonolith.migrator
         build:
@@ -42,7 +54,7 @@ services:
             condition: service_healthy
         environment:
           DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
-          ConnectionStrings__Default: ${ConnectionStrings__Default}
+          ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
           CheckDependency__Enabled: "true"
           CheckDependency__Host: "db:5432"
     webapi:
@@ -58,13 +70,23 @@ services:
           migrator:
             condition: service_completed_successfully
           rabbitmq:
-            condition: service_started
+            condition: service_healthy
+          redis:
+            condition: service_healthy
         environment:
           ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
-          ConnectionStrings__Default: ${ConnectionStrings__Default}
+          ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+          Messaging__Provider: "RabbitMQ"
+          Messaging__RabbitMQ__HostName: "rabbitmq"
+          Caching__Distributed__Provider: "Redis"
+          Caching__Distributed__Redis__Configuration: "redis:6379"
+          Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"
           Modules__Identity__BootstrapDevelopmentData: "true"
-          Modules__Storage__Provider: ${Storage__Provider}
-          Modules__Storage__Local__Path: ${Storage__Local__Path}
+          Modules__Identity__Jwt__SecretKey: ${Modules__Identity__Jwt__SecretKey}
+          Modules__Identity__Jwt__Issuer: ${Modules__Identity__Jwt__Issuer}
+          Modules__Identity__Jwt__Audience: ${Modules__Identity__Jwt__Audience}
+          Modules__Storage__Provider: "Local"
+          Modules__Storage__Local__Path: "/files"
     background:
         image: classifiedads.modularmonolith.background
         build:
@@ -76,16 +98,21 @@ services:
           migrator:
             condition: service_completed_successfully
           rabbitmq:
-            condition: service_started
+            condition: service_healthy
+          redis:
+            condition: service_healthy
           mailhog:
             condition: service_started
         environment:
           DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
           CheckDependency__Enabled: "true"
           CheckDependency__Host: "rabbitmq:5672"
-          Messaging__Provider: ${Messaging__Provider}
-          Messaging__RabbitMQ__HostName: ${Messaging__RabbitMQ__HostName}
-          ConnectionStrings__Default: ${ConnectionStrings__Default}
+          Messaging__Provider: "RabbitMQ"
+          Messaging__RabbitMQ__HostName: "rabbitmq"
+          Caching__Distributed__Provider: "Redis"
+          Caching__Distributed__Redis__Configuration: "redis:6379"
+          Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"
+          ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
           Modules__Notification__Email__Provider: "SmtpClient"
           Modules__Notification__Email__SmtpClient__Host: "mailhog"
           Modules__Notification__Email__SmtpClient__Port: "1025"
@@ -100,8 +127,8 @@ services:
           Modules__Notification__Sms__Twilio__FromNumber: ""
           Modules__Notification__Web__Provider: "Fake"
           Modules__Notification__Web__SignalR__Endpoint: "http://notificationserver"
-          Modules__Storage__Provider: ${Storage__Provider}
-          Modules__Storage__Local__Path: ${Storage__Local__Path}
+          Modules__Storage__Provider: "Local"
+          Modules__Storage__Local__Path: "/files"
 
 volumes:
     postgres_data:

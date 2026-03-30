@@ -61,6 +61,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ClassifiedAds.Application\ClassifiedAds.Application.csproj" />
+    <ProjectReference Include="..\ClassifiedAds.Contracts\ClassifiedAds.Contracts.csproj" />
     <ProjectReference Include="..\ClassifiedAds.Domain\ClassifiedAds.Domain.csproj" />
   </ItemGroup>
 

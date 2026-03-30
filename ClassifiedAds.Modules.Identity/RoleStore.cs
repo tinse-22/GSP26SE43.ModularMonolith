@@ -3,19 +3,23 @@ using ClassifiedAds.Modules.Identity.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.Identity;
 
-public class RoleStore : IRoleStore<Role>
+public class RoleStore : IRoleStore<Role>, IRoleClaimStore<Role>
 {
     private readonly IRoleRepository _roleRepository;
+    private readonly IdentityDbContext _dbContext;
 
-    public RoleStore(IRoleRepository roleRepository)
+    public RoleStore(IRoleRepository roleRepository, IdentityDbContext dbContext)
     {
         _roleRepository = roleRepository;
+        _dbContext = dbContext;
     }
 
     public void Dispose()
@@ -30,7 +34,7 @@ public class RoleStore : IRoleStore<Role>
         }
 
         role.ConcurrencyStamp ??= Guid.NewGuid().ToString();
-        return PersistRoleAsync(role, cancellationToken);
+        return PersistRoleAsync(role, cancellationToken, isCreate: true);
     }
 
     public Task<IdentityResult> DeleteAsync(Role role, CancellationToken cancellationToken)
@@ -95,13 +99,21 @@ public class RoleStore : IRoleStore<Role>
             throw new ArgumentNullException(nameof(role));
         }
 
-        role.ConcurrencyStamp ??= Guid.NewGuid().ToString();
-        return PersistRoleAsync(role, cancellationToken);
+        role.ConcurrencyStamp = Guid.NewGuid().ToString();
+        return PersistRoleAsync(role, cancellationToken, isCreate: false);
     }
 
-    private async Task<IdentityResult> PersistRoleAsync(Role role, CancellationToken cancellationToken)
+    private async Task<IdentityResult> PersistRoleAsync(Role role, CancellationToken cancellationToken, bool isCreate)
     {
-        await _roleRepository.AddOrUpdateAsync(role, cancellationToken);
+        if (isCreate)
+        {
+            await _roleRepository.AddAsync(role, cancellationToken);
+        }
+        else
+        {
+            await _roleRepository.UpdateAsync(role, cancellationToken);
+        }
+
         return await SaveChangesAsync(cancellationToken);
     }
 
@@ -109,5 +121,63 @@ public class RoleStore : IRoleStore<Role>
     {
         await _roleRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
         return IdentityResult.Success;
+    }
+
+    // IRoleClaimStore implementation
+    public async Task<IList<Claim>> GetClaimsAsync(Role role, CancellationToken cancellationToken = default)
+    {
+        if (role == null)
+        {
+            throw new ArgumentNullException(nameof(role));
+        }
+
+        var claims = await _dbContext.Set<RoleClaim>()
+            .Where(rc => rc.RoleId == role.Id)
+            .Select(rc => new Claim(rc.Type, rc.Value))
+            .ToListAsync(cancellationToken);
+
+        return claims;
+    }
+
+    public async Task AddClaimAsync(Role role, Claim claim, CancellationToken cancellationToken = default)
+    {
+        if (role == null)
+        {
+            throw new ArgumentNullException(nameof(role));
+        }
+
+        if (claim == null)
+        {
+            throw new ArgumentNullException(nameof(claim));
+        }
+
+        var roleClaim = new RoleClaim
+        {
+            Id = Guid.NewGuid(),
+            RoleId = role.Id,
+            Type = claim.Type,
+            Value = claim.Value
+        };
+
+        await _dbContext.Set<RoleClaim>().AddAsync(roleClaim, cancellationToken);
+    }
+
+    public async Task RemoveClaimAsync(Role role, Claim claim, CancellationToken cancellationToken = default)
+    {
+        if (role == null)
+        {
+            throw new ArgumentNullException(nameof(role));
+        }
+
+        if (claim == null)
+        {
+            throw new ArgumentNullException(nameof(claim));
+        }
+
+        var roleClaims = await _dbContext.Set<RoleClaim>()
+            .Where(rc => rc.RoleId == role.Id && rc.Type == claim.Type && rc.Value == claim.Value)
+            .ToListAsync(cancellationToken);
+
+        _dbContext.Set<RoleClaim>().RemoveRange(roleClaims);
     }
 }

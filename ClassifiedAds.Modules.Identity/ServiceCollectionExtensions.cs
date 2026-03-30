@@ -47,8 +47,20 @@ public static class ServiceCollectionExtensions
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
+            .AddScoped(typeof(IPasswordHistoryRepository), typeof(PasswordHistoryRepository))
             .AddScoped(typeof(IUserService), typeof(UserService))
+            .AddScoped<IUserPermissionService, UserPermissionService>()
             .AddScoped<IJwtTokenService, JwtTokenService>();
+
+        // Password validation options
+        services.Configure<PasswordValidationOptions>(opt => { });
+
+        // HttpClient for HIBP API
+        services.AddHttpClient("HIBP", client =>
+        {
+            client.BaseAddress = new Uri("https://api.pwnedpasswords.com");
+            client.DefaultRequestHeaders.Add("User-Agent", "ClassifiedAds-PasswordValidator");
+        });
 
         // Token blacklist: singleton in-memory cache for revoked JWT access tokens
         // Tokens are auto-removed from cache when they would have expired naturally
@@ -111,7 +123,18 @@ public static class ServiceCollectionExtensions
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
+            .AddScoped(typeof(IPasswordHistoryRepository), typeof(PasswordHistoryRepository))
             .AddScoped(typeof(IUserService), typeof(UserService));
+
+        // Password validation options
+        services.Configure<PasswordValidationOptions>(opt => { });
+
+        // HttpClient for HIBP API
+        services.AddHttpClient("HIBP", client =>
+        {
+            client.BaseAddress = new Uri("https://api.pwnedpasswords.com");
+            client.DefaultRequestHeaders.Add("User-Agent", "ClassifiedAds-PasswordValidator");
+        });
 
         services.AddIdentityCore<User>()
                 .AddTokenProviders()

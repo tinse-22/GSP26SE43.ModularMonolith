@@ -18,12 +18,22 @@ namespace ClassifiedAds.Modules.TestGeneration.Algorithms;
 public interface ISchemaRelationshipAnalyzer
 {
     /// <summary>
-    /// Build a directed graph of schema-name → set of schema-names it references.
-    /// Extracts all $ref from each schema payload and maps them by name.
+    /// Build a directed graph of schema-name → set of schema-names it references (PREFERRED).
+    /// For each schema in the dictionary, extracts all $ref and creates directed edges.
     /// </summary>
-    /// <param name="schemaPayloads">All schema JSON payloads from all endpoints (parameters + responses).</param>
-    /// <returns>Map: schema name → referenced schema names (direct only).</returns>
+    /// <param name="schemaNameToPayload">Map: schema name → its JSON payload definition.</param>
+    /// <returns>Map: schema name → referenced schema names (direct only, UNIDIRECTIONAL).</returns>
     IReadOnlyDictionary<string, HashSet<string>> BuildSchemaReferenceGraph(
+        IReadOnlyDictionary<string, string> schemaNameToPayload);
+
+    /// <summary>
+    /// Build a directed graph from a collection of payloads (LEGACY - less accurate).
+    /// This overload infers schema relationships from co-occurrence of $refs in payloads.
+    /// Prefer the dictionary overload when schema names are known.
+    /// </summary>
+    /// <param name="schemaPayloads">All schema JSON payloads from all endpoints.</param>
+    /// <returns>Map: schema name → referenced schema names (co-reference based).</returns>
+    IReadOnlyDictionary<string, HashSet<string>> BuildSchemaReferenceGraphLegacy(
         IReadOnlyCollection<string> schemaPayloads);
 
     /// <summary>
