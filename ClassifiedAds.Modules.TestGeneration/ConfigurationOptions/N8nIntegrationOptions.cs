@@ -38,4 +38,10 @@ public class N8nIntegrationOptions
     /// via the "x-callback-api-key" request header.
     /// </summary>
     public string CallbackApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When true, generation APIs use the unified DotnetIntegration webhook (callback-based)
+    /// instead of per-flow synchronous webhooks.
+    /// </summary>
+    public bool UseDotnetIntegrationWorkflowForGeneration { get; set; }
 }

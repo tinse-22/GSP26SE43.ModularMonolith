@@ -97,6 +97,7 @@ public static class TestGenerationServiceCollectionExtensions
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
             options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
             options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
+            options.UseDotnetIntegrationWorkflowForGeneration = n8n.UseDotnetIntegrationWorkflowForGeneration;
         });
 
         services.AddHttpClient<IN8nIntegrationService, N8nIntegrationService>((sp, client) =>

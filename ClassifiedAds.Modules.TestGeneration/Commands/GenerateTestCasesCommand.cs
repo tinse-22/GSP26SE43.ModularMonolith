@@ -1,7 +1,12 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Modules.TestGeneration.Algorithms;
+using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
@@ -9,6 +14,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -23,10 +29,66 @@ public class GenerateTestCasesCommand : ICommand
 
 public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCasesCommand>
 {
-    private const string WebhookName = "DotnetIntegration";
+    private const string WebhookName = N8nWebhookNames.GenerateTestCasesUnified;
+    private const string DefaultUnifiedSystemPrompt =
+        "You are a senior QA engineer specializing in REST API test generation. Generate robust, executable, deterministic test cases and return ONLY raw JSON.";
+
+    private const string UnifiedRulesBlock =
+        "=== RULES ===\n" +
+        "1. For EACH endpoint, generate at least: 1 HappyPath + 1 Boundary + 1 Negative.\n" +
+        "2. testType must be exactly one of: \"HappyPath\", \"Boundary\", \"Negative\".\n" +
+        "3. endpointId must match exact UUID from input.\n" +
+        "4. Keep execution order aligned with endpoint order (orderIndex unique, 0-based, no duplicates).\n" +
+        "5. Use realistic synthetic data and consistent variable names.\n" +
+        "6. request.body must be stringified JSON or null.\n" +
+        "7. expectation.expectedStatus must be an array of integers.\n" +
+        "8. HappyPath expectedStatus should prefer 2xx. Boundary/Negative should prefer 4xx (or 401/403/404 where appropriate).\n" +
+        "9. Return complete request/expectation objects for each test case.";
+
+    private const string UnifiedResponseFormatBlock =
+        "=== RESPONSE FORMAT ===\n" +
+        "Return ONLY this JSON structure:\n" +
+        "{\n" +
+        "  \"testCases\": [\n" +
+        "    {\n" +
+        "      \"endpointId\": \"<exact UUID>\",\n" +
+        "      \"name\": \"<short descriptive name>\",\n" +
+        "      \"description\": \"<one sentence>\",\n" +
+        "      \"testType\": \"HappyPath|Boundary|Negative\",\n" +
+        "      \"priority\": \"Critical|High|Medium|Low\",\n" +
+        "      \"orderIndex\": 0,\n" +
+        "      \"tags\": [\"happy-path\"],\n" +
+        "      \"request\": {\n" +
+        "        \"httpMethod\": \"GET|POST|PUT|DELETE|PATCH\",\n" +
+        "        \"url\": \"/path\",\n" +
+        "        \"headers\": {},\n" +
+        "        \"pathParams\": {},\n" +
+        "        \"queryParams\": {},\n" +
+        "        \"bodyType\": \"None|JSON|FormData|UrlEncoded|Raw\",\n" +
+        "        \"body\": \"<serialized JSON string or null>\",\n" +
+        "        \"timeout\": 30000\n" +
+        "      },\n" +
+        "      \"expectation\": {\n" +
+        "        \"expectedStatus\": [200],\n" +
+        "        \"responseSchema\": null,\n" +
+        "        \"headerChecks\": {},\n" +
+        "        \"bodyContains\": [],\n" +
+        "        \"bodyNotContains\": [],\n" +
+        "        \"jsonPathChecks\": {},\n" +
+        "        \"maxResponseTime\": null\n" +
+        "      },\n" +
+        "      \"variables\": []\n" +
+        "    }\n" +
+        "  ],\n" +
+        "  \"model\": \"<model name>\",\n" +
+        "  \"tokensUsed\": 0,\n" +
+        "  \"reasoning\": \"<brief note>\"\n" +
+        "}";
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestOrderProposal, Guid> _proposalRepository;
+    private readonly IApiEndpointMetadataService _endpointMetadataService;
+    private readonly IObservationConfirmationPromptBuilder _promptBuilder;
     private readonly IN8nIntegrationService _n8nService;
     private readonly IApiTestOrderService _apiTestOrderService;
     private readonly N8nIntegrationOptions _n8nOptions;
@@ -35,6 +97,8 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
     public GenerateTestCasesCommandHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<TestOrderProposal, Guid> proposalRepository,
+        IApiEndpointMetadataService endpointMetadataService,
+        IObservationConfirmationPromptBuilder promptBuilder,
         IN8nIntegrationService n8nService,
         IApiTestOrderService apiTestOrderService,
         IOptions<N8nIntegrationOptions> n8nOptions,
@@ -42,6 +106,8 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
     {
         _suiteRepository = suiteRepository;
         _proposalRepository = proposalRepository;
+        _endpointMetadataService = endpointMetadataService;
+        _promptBuilder = promptBuilder;
         _n8nService = n8nService;
         _apiTestOrderService = apiTestOrderService;
         _n8nOptions = n8nOptions.Value;
@@ -105,19 +171,82 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
             ? string.Empty
             : $"{beBaseUrl}/api/test-suites/{suite.Id}/test-cases/from-ai";
 
+        var metadataByEndpointId = new Dictionary<Guid, ApiEndpointMetadataDto>();
+        var promptByEndpointId = new Dictionary<Guid, ObservationConfirmationPrompt>();
+
+        if (suite.ApiSpecId.HasValue && suite.ApiSpecId.Value != Guid.Empty)
+        {
+            var endpointIds = appliedOrder.Select(x => x.EndpointId).ToList();
+            var endpointMetadata = await _endpointMetadataService.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                endpointIds,
+                cancellationToken);
+
+            metadataByEndpointId = endpointMetadata
+                .GroupBy(x => x.EndpointId)
+                .Select(x => x.First())
+                .ToDictionary(x => x.EndpointId);
+
+            var orderedMetadata = appliedOrder
+                .Where(x => metadataByEndpointId.ContainsKey(x.EndpointId))
+                .Select(x => metadataByEndpointId[x.EndpointId])
+                .ToList();
+
+            var promptContexts = EndpointPromptContextMapper.Map(orderedMetadata, suite);
+            var prompts = _promptBuilder.BuildForSequence(promptContexts);
+
+            for (var index = 0; index < orderedMetadata.Count && index < prompts.Count; index++)
+            {
+                var prompt = prompts[index];
+                if (prompt == null)
+                {
+                    continue;
+                }
+
+                promptByEndpointId[orderedMetadata[index].EndpointId] = prompt;
+            }
+        }
+
         var payload = new N8nGenerateTestsPayload
         {
             TestSuiteId = suite.Id,
+            TestSuiteName = suite.Name,
             SpecificationId = suite.ApiSpecId ?? Guid.Empty,
-            Endpoints = appliedOrder.Select(x => new N8nOrderedEndpoint
+            PromptConfig = BuildUnifiedPromptConfig(suite, promptByEndpointId),
+            Endpoints = appliedOrder.Select(x =>
             {
-                EndpointId = x.EndpointId,
-                HttpMethod = x.HttpMethod,
-                Path = x.Path,
-                OrderIndex = x.OrderIndex,
-                DependsOnEndpointIds = x.DependsOnEndpointIds?.ToList() ?? new(),
-                ReasonCodes = x.ReasonCodes?.ToList() ?? new(),
-                IsAuthRelated = x.IsAuthRelated,
+                metadataByEndpointId.TryGetValue(x.EndpointId, out var metadata);
+                promptByEndpointId.TryGetValue(x.EndpointId, out var prompt);
+                var businessContext = string.Empty;
+                if (suite.EndpointBusinessContexts != null
+                    && suite.EndpointBusinessContexts.TryGetValue(x.EndpointId, out var contextValue))
+                {
+                    businessContext = contextValue;
+                }
+
+                return new N8nOrderedEndpoint
+                {
+                    EndpointId = x.EndpointId,
+                    HttpMethod = x.HttpMethod,
+                    Path = x.Path,
+                    OperationId = metadata?.OperationId,
+                    OrderIndex = x.OrderIndex,
+                    DependsOnEndpointIds = x.DependsOnEndpointIds?.ToList() ?? new(),
+                    ReasonCodes = x.ReasonCodes?.ToList() ?? new(),
+                    IsAuthRelated = x.IsAuthRelated,
+                    BusinessContext = businessContext,
+                    Prompt = prompt == null
+                        ? null
+                        : new N8nPromptPayload
+                        {
+                            SystemPrompt = prompt.SystemPrompt,
+                            CombinedPrompt = prompt.CombinedPrompt,
+                            ObservationPrompt = prompt.ObservationPrompt,
+                            ConfirmationPromptTemplate = prompt.ConfirmationPromptTemplate,
+                        },
+                    ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new(),
+                    ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new(),
+                };
             }).ToList(),
             EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new(),
             GlobalBusinessRules = suite.GlobalBusinessRules,
@@ -131,12 +260,50 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
             "Triggered test generation via n8n. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, ActorUserId={ActorUserId}",
             suite.Id, appliedOrder.Count, command.CurrentUserId);
     }
+
+    private static N8nUnifiedPromptConfig BuildUnifiedPromptConfig(
+        TestSuite suite,
+        IReadOnlyDictionary<Guid, ObservationConfirmationPrompt> promptByEndpointId)
+    {
+        var systemPrompt = promptByEndpointId.Values
+            .Select(x => x?.SystemPrompt)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+        return new N8nUnifiedPromptConfig
+        {
+            SystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
+                ? DefaultUnifiedSystemPrompt
+                : systemPrompt,
+            TaskInstruction = BuildUnifiedTaskInstruction(suite),
+            Rules = UnifiedRulesBlock,
+            ResponseFormat = UnifiedResponseFormatBlock,
+        };
+    }
+
+    private static string BuildUnifiedTaskInstruction(TestSuite suite)
+    {
+        var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
+        var sb = new StringBuilder();
+        sb.Append($"Generate mixed test cases for this ordered REST API sequence (suite: {suiteName}).");
+
+        if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
+        {
+            sb.AppendLine();
+            sb.AppendLine();
+            sb.AppendLine("=== GLOBAL BUSINESS RULES ===");
+            sb.Append(suite.GlobalBusinessRules);
+        }
+
+        return sb.ToString();
+    }
 }
 
 public class N8nGenerateTestsPayload
 {
     public Guid TestSuiteId { get; set; }
+    public string TestSuiteName { get; set; } = string.Empty;
     public Guid SpecificationId { get; set; }
+    public N8nUnifiedPromptConfig PromptConfig { get; set; } = new();
     public List<N8nOrderedEndpoint> Endpoints { get; set; } = new();
     public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
     public string GlobalBusinessRules { get; set; }
@@ -151,8 +318,29 @@ public class N8nOrderedEndpoint
     public Guid EndpointId { get; set; }
     public string HttpMethod { get; set; }
     public string Path { get; set; }
+    public string OperationId { get; set; }
     public int OrderIndex { get; set; }
     public List<Guid> DependsOnEndpointIds { get; set; } = new();
     public List<string> ReasonCodes { get; set; } = new();
     public bool IsAuthRelated { get; set; }
+    public string BusinessContext { get; set; }
+    public N8nPromptPayload Prompt { get; set; }
+    public List<string> ParameterSchemaPayloads { get; set; } = new();
+    public List<string> ResponseSchemaPayloads { get; set; } = new();
+}
+
+public class N8nPromptPayload
+{
+    public string SystemPrompt { get; set; }
+    public string CombinedPrompt { get; set; }
+    public string ObservationPrompt { get; set; }
+    public string ConfirmationPromptTemplate { get; set; }
+}
+
+public class N8nUnifiedPromptConfig
+{
+    public string SystemPrompt { get; set; }
+    public string TaskInstruction { get; set; }
+    public string Rules { get; set; }
+    public string ResponseFormat { get; set; }
 }
