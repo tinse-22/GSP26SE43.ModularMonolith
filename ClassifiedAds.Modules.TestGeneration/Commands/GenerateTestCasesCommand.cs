@@ -8,6 +8,7 @@ using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -235,15 +236,7 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
                     ReasonCodes = x.ReasonCodes?.ToList() ?? new(),
                     IsAuthRelated = x.IsAuthRelated,
                     BusinessContext = businessContext,
-                    Prompt = prompt == null
-                        ? null
-                        : new N8nPromptPayload
-                        {
-                            SystemPrompt = prompt.SystemPrompt,
-                            CombinedPrompt = prompt.CombinedPrompt,
-                            ObservationPrompt = prompt.ObservationPrompt,
-                            ConfirmationPromptTemplate = prompt.ConfirmationPromptTemplate,
-                        },
+                    Prompt = BuildEndpointPromptPayload(x, suite, metadata, businessContext, prompt),
                     ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new(),
                     ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new(),
                 };
@@ -292,6 +285,83 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
             sb.AppendLine();
             sb.AppendLine("=== GLOBAL BUSINESS RULES ===");
             sb.Append(suite.GlobalBusinessRules);
+        }
+
+        return sb.ToString();
+    }
+
+    private static N8nPromptPayload BuildEndpointPromptPayload(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext,
+        ObservationConfirmationPrompt prompt)
+    {
+        var combinedPrompt = string.IsNullOrWhiteSpace(prompt?.CombinedPrompt)
+            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext)
+            : prompt.CombinedPrompt;
+
+        return new N8nPromptPayload
+        {
+            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+                ? DefaultUnifiedSystemPrompt
+                : prompt.SystemPrompt,
+            CombinedPrompt = combinedPrompt,
+            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                ? combinedPrompt
+                : prompt.ObservationPrompt,
+            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                ? "Validate constraints strictly from provided API details and business rules; output only valid JSON."
+                : prompt.ConfirmationPromptTemplate,
+        };
+    }
+
+    private static string BuildFallbackCombinedPrompt(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Endpoint Context (Fallback)");
+        sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
+        sb.AppendLine($"Path: {orderItem?.Path ?? metadata?.Path ?? "/"}");
+        sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
+        sb.AppendLine();
+        sb.AppendLine("Generate mixed test cases (HappyPath, Boundary, Negative) for this endpoint.");
+
+        if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Global Business Rules");
+            sb.AppendLine(suite.GlobalBusinessRules);
+        }
+
+        if (!string.IsNullOrWhiteSpace(businessContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Endpoint Business Context");
+            sb.AppendLine(businessContext);
+        }
+
+        if (metadata?.ParameterSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Parameter Schemas");
+            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
+        }
+
+        if (metadata?.ResponseSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Response Schemas");
+            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
         }
 
         return sb.ToString();

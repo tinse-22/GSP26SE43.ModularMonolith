@@ -254,18 +254,18 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var businessContext);
 
-            N8nPromptPayload promptPayload = null;
-            if (i < prompts.Count && prompts[i] != null)
+            ObservationConfirmationPrompt prompt = null;
+            if (i < prompts.Count)
             {
-                var prompt = prompts[i];
-                promptPayload = new N8nPromptPayload
-                {
-                    SystemPrompt = prompt.SystemPrompt,
-                    CombinedPrompt = prompt.CombinedPrompt,
-                    ObservationPrompt = prompt.ObservationPrompt,
-                    ConfirmationPromptTemplate = prompt.ConfirmationPromptTemplate,
-                };
+                prompt = prompts[i];
             }
+
+            var promptPayload = BuildEndpointPromptPayload(
+                orderItem,
+                context.Suite,
+                metadata,
+                businessContext,
+                prompt);
 
             endpointPayloads.Add(new N8nBoundaryEndpointPayload
             {
@@ -293,6 +293,83 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             PromptConfig = BuildSuggestionPromptConfig(context, prompts),
             Endpoints = endpointPayloads,
         };
+    }
+
+    private static N8nPromptPayload BuildEndpointPromptPayload(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext,
+        ObservationConfirmationPrompt prompt)
+    {
+        var combinedPrompt = string.IsNullOrWhiteSpace(prompt?.CombinedPrompt)
+            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext)
+            : prompt.CombinedPrompt;
+
+        return new N8nPromptPayload
+        {
+            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+                ? DefaultSuggestionSystemPrompt
+                : prompt.SystemPrompt,
+            CombinedPrompt = combinedPrompt,
+            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                ? combinedPrompt
+                : prompt.ObservationPrompt,
+            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                ? "Generate only boundary/negative scenarios based on provided API details and business rules; return JSON only."
+                : prompt.ConfirmationPromptTemplate,
+        };
+    }
+
+    private static string BuildFallbackCombinedPrompt(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Endpoint Context (Fallback)");
+        sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
+        sb.AppendLine($"Path: {orderItem?.Path ?? metadata?.Path ?? "/"}");
+        sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
+        sb.AppendLine();
+        sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
+
+        if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Global Business Rules");
+            sb.AppendLine(suite.GlobalBusinessRules);
+        }
+
+        if (!string.IsNullOrWhiteSpace(businessContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Endpoint Business Context");
+            sb.AppendLine(businessContext);
+        }
+
+        if (metadata?.ParameterSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Parameter Schemas");
+            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
+        }
+
+        if (metadata?.ResponseSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Response Schemas");
+            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
+        }
+
+        return sb.ToString();
     }
 
     private static N8nSuggestionPromptConfig BuildSuggestionPromptConfig(
