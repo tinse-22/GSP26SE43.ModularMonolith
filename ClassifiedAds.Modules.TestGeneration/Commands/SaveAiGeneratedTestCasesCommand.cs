@@ -142,7 +142,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     Priority = ParsePriority(dto.Priority),
                     IsEnabled = true,
                     OrderIndex = dto.OrderIndex > 0 ? dto.OrderIndex : orderIdx,
-                    Tags = dto.Tags,
+                    Tags = NormalizeTagsJson(dto.Tags),
                     Version = 1,
                     LastModifiedById = actorUserId,
                     CreatedDateTime = now,
@@ -159,9 +159,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         TestCaseId = testCase.Id,
                         HttpMethod = ResolveHttpMethod(dto),
                         Url = dto.Request.Url,
-                        Headers = dto.Request.Headers,
-                        PathParams = dto.Request.PathParams,
-                        QueryParams = dto.Request.QueryParams,
+                        Headers = NormalizeJsonOrDefault(dto.Request.Headers, "{}"),
+                        PathParams = NormalizeJsonOrDefault(dto.Request.PathParams, "{}"),
+                        QueryParams = NormalizeJsonOrDefault(dto.Request.QueryParams, "{}"),
                         BodyType = ParseBodyType(dto.Request.BodyType),
                         Body = dto.Request.Body,
                         Timeout = dto.Request.Timeout > 0 ? dto.Request.Timeout : 30000,
@@ -176,12 +176,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     {
                         Id = Guid.NewGuid(),
                         TestCaseId = testCase.Id,
-                        ExpectedStatus = dto.Expectation.ExpectedStatus ?? "[200]",
-                        ResponseSchema = dto.Expectation.ResponseSchema,
-                        HeaderChecks = dto.Expectation.HeaderChecks,
-                        BodyContains = dto.Expectation.BodyContains,
-                        BodyNotContains = dto.Expectation.BodyNotContains,
-                        JsonPathChecks = dto.Expectation.JsonPathChecks,
+                        ExpectedStatus = NormalizeJsonOrDefault(dto.Expectation.ExpectedStatus, "[200]"),
+                        ResponseSchema = NormalizeNullableJson(dto.Expectation.ResponseSchema),
+                        HeaderChecks = NormalizeJsonOrDefault(dto.Expectation.HeaderChecks, "{}"),
+                        BodyContains = NormalizeJsonOrDefault(dto.Expectation.BodyContains, "[]"),
+                        BodyNotContains = NormalizeJsonOrDefault(dto.Expectation.BodyNotContains, "[]"),
+                        JsonPathChecks = NormalizeJsonOrDefault(dto.Expectation.JsonPathChecks, "{}"),
                         MaxResponseTime = dto.Expectation.MaxResponseTime,
                         CreatedDateTime = now,
                     };
@@ -324,4 +324,69 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             "raw" => BodyType.Raw,
             _ => BodyType.None,
         };
+
+    private static string NormalizeTagsJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "[]";
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return doc.RootElement.ValueKind == JsonValueKind.Array
+                ? trimmed
+                : JsonSerializer.Serialize(new[] { trimmed });
+        }
+        catch
+        {
+            var parts = trimmed
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToArray();
+
+            return JsonSerializer.Serialize(parts.Length > 0 ? parts : new[] { trimmed });
+        }
+    }
+
+    private static string NormalizeJsonOrDefault(string value, string fallbackJson)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallbackJson;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var _ = JsonDocument.Parse(trimmed);
+            return trimmed;
+        }
+        catch
+        {
+            return JsonSerializer.Serialize(trimmed);
+        }
+    }
+
+    private static string NormalizeNullableJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var _ = JsonDocument.Parse(trimmed);
+            return trimmed;
+        }
+        catch
+        {
+            return JsonSerializer.Serialize(trimmed);
+        }
+    }
 }

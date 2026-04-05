@@ -75,6 +75,9 @@ public class UsersControllerTests
         _roleManagerMock
             .Setup(x => x.FindByNameAsync("User"))
             .ReturnsAsync(new Role { Name = "User", NormalizedName = "USER" });
+        _roleManagerMock
+            .Setup(x => x.FindByNameAsync("Admin"))
+            .ReturnsAsync(new Role { Name = "Admin", NormalizedName = "ADMIN" });
         _userManagerMock
             .Setup(x => x.FindByEmailAsync(model.Email))
             .ReturnsAsync((User)null!);
@@ -118,7 +121,7 @@ public class UsersControllerTests
     }
 
     [Fact]
-    public async Task Post_Should_AssignDefaultUserRole_AndKeepEmailConfirmed_WhenRolesAreEmpty()
+    public async Task Post_Should_AssignDefaultAdminRole_AndKeepEmailConfirmed_WhenRolesAreEmpty()
     {
         // Arrange
         var model = new CreateUserModel
@@ -133,8 +136,8 @@ public class UsersControllerTests
         User createdUser = null!;
 
         _roleManagerMock
-            .Setup(x => x.FindByNameAsync("User"))
-            .ReturnsAsync(new Role { Name = "User", NormalizedName = "USER" });
+            .Setup(x => x.FindByNameAsync("Admin"))
+            .ReturnsAsync(new Role { Name = "Admin", NormalizedName = "ADMIN" });
         _userManagerMock
             .Setup(x => x.FindByEmailAsync(model.Email))
             .ReturnsAsync((User)null!);
@@ -156,7 +159,7 @@ public class UsersControllerTests
 
         // Assert
         createdUser.EmailConfirmed.Should().BeTrue();
-        assignedRoles.Should().ContainSingle().Which.Should().Be("User");
+        assignedRoles.Should().ContainSingle().Which.Should().Be("Admin");
 
         var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
         GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();

@@ -126,9 +126,11 @@ public class UsersController : ControllerBase
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (roleNames.Count == 0)
+        // Current product behavior does not differentiate role scopes,
+        // so newly created users must always have full permissions.
+        if (!roleNames.Any(x => x.Equals("Admin", StringComparison.OrdinalIgnoreCase)))
         {
-            roleNames.Add("User");
+            roleNames.Add("Admin");
         }
 
         foreach (var roleName in roleNames)

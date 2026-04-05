@@ -1,4 +1,3 @@
-using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
@@ -97,7 +96,6 @@ public class TestResultCollector : ITestResultCollector
 
         // Try to save cache payload
         bool cacheSaved = false;
-        Exception cacheException = null;
         try
         {
             var payload = JsonSerializer.Serialize(resultModel, JsonOptions);
@@ -111,9 +109,7 @@ public class TestResultCollector : ITestResultCollector
         }
         catch (Exception ex)
         {
-            cacheException = ex;
             _logger.LogCritical(ex, "Failed to save test run results to cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
-            run.Status = TestRunStatus.Failed;
         }
 
         // Always persist summary to DB
@@ -128,13 +124,11 @@ public class TestResultCollector : ITestResultCollector
             throw;
         }
 
-        // If cache failed after summary is saved, propagate
+        // If cache failed after summary is saved, keep run successful but mark source.
         if (!cacheSaved)
         {
-            _logger.LogWarning("Test run {RunId}: summary saved but cache write failed", run.Id);
-            throw new ConflictException(
-                "CACHE_WRITE_FAILED",
-                $"Kết quả chi tiết không thể lưu vào cache. RunId={run.Id}");
+            _logger.LogWarning("Test run {RunId}: summary saved but cache write failed; returning without cached details", run.Id);
+            resultModel.ResultsSource = "unavailable";
         }
 
         resultModel.Run = TestRunModel.FromEntity(run);

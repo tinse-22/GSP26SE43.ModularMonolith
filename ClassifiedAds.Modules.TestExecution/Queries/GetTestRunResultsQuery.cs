@@ -5,6 +5,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Text.Json;
@@ -32,15 +33,18 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
     private readonly IRepository<TestRun, Guid> _runRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _gatewayService;
+    private readonly ILogger<GetTestRunResultsQueryHandler> _logger;
 
     public GetTestRunResultsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
         IDistributedCache cache,
-        ITestExecutionReadGatewayService gatewayService)
+        ITestExecutionReadGatewayService gatewayService,
+        ILogger<GetTestRunResultsQueryHandler> logger)
     {
         _runRepository = runRepository;
         _cache = cache;
         _gatewayService = gatewayService;
+        _logger = logger;
     }
 
     public async Task<TestRunResultModel> HandleAsync(GetTestRunResultsQuery query, CancellationToken cancellationToken = default)
@@ -62,23 +66,60 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
 
         if (string.IsNullOrEmpty(run.RedisKey))
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+            return CreateUnavailableResult(run);
         }
 
         // Check expiry
         if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+            return CreateUnavailableResult(run);
         }
 
-        var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
-        if (cached == null)
+        string cached;
+        try
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+            cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read test run results from cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
+            return CreateUnavailableResult(run);
         }
 
-        var result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
+        if (string.IsNullOrEmpty(cached))
+        {
+            return CreateUnavailableResult(run);
+        }
+
+        TestRunResultModel result;
+        try
+        {
+            result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize cached test run results. RunId={RunId}", run.Id);
+            return CreateUnavailableResult(run);
+        }
+
+        if (result == null)
+        {
+            return CreateUnavailableResult(run);
+        }
+
         result.Run = TestRunModel.FromEntity(run);
         return result;
+    }
+
+    private static TestRunResultModel CreateUnavailableResult(TestRun run)
+    {
+        return new TestRunResultModel
+        {
+            Run = TestRunModel.FromEntity(run),
+            ResultsSource = "unavailable",
+            ExecutedAt = run.CompletedAt ?? run.StartedAt ?? DateTimeOffset.UtcNow,
+            ResolvedEnvironmentName = string.Empty,
+            Cases = new(),
+        };
     }
 }
