@@ -128,6 +128,7 @@ public class ConfigurationEntriesController : ControllerBase
     }
 
     [HttpGet("ExportAsExcel")]
+    [Authorize(Permissions.ExportConfigurationEntries)]
     public async Task<IActionResult> ExportAsExcel()
     {
         var entries = await _dispatcher.DispatchAsync(new GetEntititesQuery<ConfigurationEntry>());
@@ -137,6 +138,7 @@ public class ConfigurationEntriesController : ControllerBase
     }
 
     [HttpPost("ImportExcel")]
+    [Authorize(Permissions.ImportConfigurationEntries)]
     public async Task<IActionResult> ImportExcel([FromForm] UploadFileModel model)
     {
         using var stream = model.FormFile.OpenReadStream();

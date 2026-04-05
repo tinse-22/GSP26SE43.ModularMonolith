@@ -58,7 +58,7 @@ public class UsersControllerTests
     }
 
     [Fact]
-    public async Task Post_Should_AssignAdminRoleAndAutoConfirmEmail_WhenRequestContainsOnlyUserRole()
+    public async Task Post_Should_KeepRequestedRolesAndAutoConfirmEmail_WhenRequestContainsOnlyUserRole()
     {
         // Arrange
         var model = new CreateUserModel
@@ -99,15 +99,14 @@ public class UsersControllerTests
 
         // Assert
         createdUser.EmailConfirmed.Should().BeTrue();
-        assignedRoles.Should().Contain("User");
-        assignedRoles.Should().Contain("Admin");
+        assignedRoles.Should().ContainSingle().Which.Should().Be("User");
 
         var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
         createdResult.Value.Should().NotBeNull();
 
         GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();
         GetPropertyValue<string>(createdResult.Value!, "Message")
-            .Should().Be("Tạo người dùng thành công với toàn quyền (Admin). Email đã được xác nhận tự động.");
+            .Should().Be("Tạo người dùng thành công với vai trò: User. Email đã được xác nhận tự động.");
         GetPropertyValue<UserModel>(createdResult.Value!, "User").EmailConfirmed.Should().BeTrue();
 
         _userManagerMock.Verify(

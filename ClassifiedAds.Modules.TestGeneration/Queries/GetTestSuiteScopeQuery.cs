@@ -15,6 +15,8 @@ public class GetTestSuiteScopeQuery : IQuery<TestSuiteScopeModel>
     public Guid ProjectId { get; set; }
 
     public Guid SuiteId { get; set; }
+
+    public Guid CurrentUserId { get; set; }
 }
 
 public class GetTestSuiteScopeQueryHandler : IQueryHandler<GetTestSuiteScopeQuery, TestSuiteScopeModel>
@@ -28,9 +30,16 @@ public class GetTestSuiteScopeQueryHandler : IQueryHandler<GetTestSuiteScopeQuer
 
     public async Task<TestSuiteScopeModel> HandleAsync(GetTestSuiteScopeQuery query, CancellationToken cancellationToken = default)
     {
+        if (query.CurrentUserId == Guid.Empty)
+        {
+            throw new ValidationException("CurrentUserId la bat buoc.");
+        }
+
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet()
-                .Where(x => x.Id == query.SuiteId && x.ProjectId == query.ProjectId));
+                .Where(x => x.Id == query.SuiteId
+                    && x.ProjectId == query.ProjectId
+                    && x.CreatedById == query.CurrentUserId));
 
         if (suite == null)
         {

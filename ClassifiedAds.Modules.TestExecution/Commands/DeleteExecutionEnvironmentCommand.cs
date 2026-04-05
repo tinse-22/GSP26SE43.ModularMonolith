@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
@@ -25,13 +26,16 @@ public class DeleteExecutionEnvironmentCommand : ICommand
 public class DeleteExecutionEnvironmentCommandHandler : ICommandHandler<DeleteExecutionEnvironmentCommand>
 {
     private readonly IRepository<ExecutionEnvironment, Guid> _envRepository;
+    private readonly IProjectOwnershipGatewayService _projectOwnershipGatewayService;
     private readonly ILogger<DeleteExecutionEnvironmentCommandHandler> _logger;
 
     public DeleteExecutionEnvironmentCommandHandler(
         IRepository<ExecutionEnvironment, Guid> envRepository,
+        IProjectOwnershipGatewayService projectOwnershipGatewayService,
         ILogger<DeleteExecutionEnvironmentCommandHandler> logger)
     {
         _envRepository = envRepository;
+        _projectOwnershipGatewayService = projectOwnershipGatewayService;
         _logger = logger;
     }
 
@@ -50,6 +54,16 @@ public class DeleteExecutionEnvironmentCommandHandler : ICommandHandler<DeleteEx
         if (command.CurrentUserId == Guid.Empty)
         {
             throw new ValidationException("CurrentUserId là bắt buộc.");
+        }
+
+        var isProjectOwner = await _projectOwnershipGatewayService.IsProjectOwnedByUserAsync(
+            command.ProjectId,
+            command.CurrentUserId,
+            cancellationToken);
+
+        if (!isProjectOwner)
+        {
+            throw new ValidationException("Ban khong co quyen thao tac project nay.");
         }
 
         var env = await _envRepository.FirstOrDefaultAsync(

@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
@@ -52,21 +53,34 @@ public class AddUpdateExecutionEnvironmentCommandHandler : ICommandHandler<AddUp
 
     private readonly IRepository<ExecutionEnvironment, Guid> _envRepository;
     private readonly IExecutionAuthConfigService _authConfigService;
+    private readonly IProjectOwnershipGatewayService _projectOwnershipGatewayService;
     private readonly ILogger<AddUpdateExecutionEnvironmentCommandHandler> _logger;
 
     public AddUpdateExecutionEnvironmentCommandHandler(
         IRepository<ExecutionEnvironment, Guid> envRepository,
         IExecutionAuthConfigService authConfigService,
+        IProjectOwnershipGatewayService projectOwnershipGatewayService,
         ILogger<AddUpdateExecutionEnvironmentCommandHandler> logger)
     {
         _envRepository = envRepository;
         _authConfigService = authConfigService;
+        _projectOwnershipGatewayService = projectOwnershipGatewayService;
         _logger = logger;
     }
 
     public async Task HandleAsync(AddUpdateExecutionEnvironmentCommand command, CancellationToken cancellationToken = default)
     {
         ValidateInput(command);
+
+        var isProjectOwner = await _projectOwnershipGatewayService.IsProjectOwnedByUserAsync(
+            command.ProjectId,
+            command.CurrentUserId,
+            cancellationToken);
+
+        if (!isProjectOwner)
+        {
+            throw new ValidationException("Ban khong co quyen thao tac project nay.");
+        }
 
         _authConfigService.ValidateAuthConfig(command.AuthConfig);
 

@@ -187,7 +187,7 @@ public class UsersController : ControllerBase
             User = userModel,
             Roles = roleNames,
             EmailConfirmationRequired = false,
-            Message = "Tạo người dùng thành công với toàn quyền (Admin). Email đã được xác nhận tự động."
+            Message = $"Tạo người dùng thành công với vai trò: {string.Join(", ", roleNames)}. Email đã được xác nhận tự động."
         });
     }
 

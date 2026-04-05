@@ -9,6 +9,7 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using TestGenerationHttpMethod = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
 
 namespace ClassifiedAds.UnitTests.TestGeneration;
 
@@ -113,6 +114,41 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
                 s.LastModifiedById == actorUserId &&
                 s.UpdatedDateTime > DateTimeOffset.MinValue &&
                 s.RowVersion != null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ParseHttpMethod_FromMethodAndPathFormat()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(1);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Request.HttpMethod = "POST /api/categories";
+
+        await _handler.HandleAsync(command);
+
+        _requestRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequest>(r => r.HttpMethod == TestGenerationHttpMethod.POST),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_FallbackToName_WhenRequestHttpMethodIsUnparseable()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(1);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Request.HttpMethod = "Create Category Happy Path";
+        command.TestCases[0].Name = "POST /api/categories - Create Category Happy Path";
+
+        await _handler.HandleAsync(command);
+
+        _requestRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequest>(r => r.HttpMethod == TestGenerationHttpMethod.POST),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

@@ -3,6 +3,7 @@ using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ClassifiedAds.Modules.TestGeneration.Services;
 
@@ -25,6 +26,10 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
         WriteIndented = false,
     };
 
+    private static readonly Regex HttpMethodTokenRegex = new(
+        @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public TestCaseRequest Build(Guid testCaseId, N8nTestCaseRequest source, ApiOrderItemModel orderItem)
     {
         if (source == null)
@@ -34,7 +39,7 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
             {
                 Id = Guid.NewGuid(),
                 TestCaseId = testCaseId,
-                HttpMethod = ParseHttpMethod(orderItem?.HttpMethod),
+                HttpMethod = ResolveHttpMethod(null, orderItem?.HttpMethod),
                 Url = orderItem?.Path ?? string.Empty,
                 BodyType = BodyType.None,
                 Timeout = 30000,
@@ -45,7 +50,7 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
         {
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
-            HttpMethod = ParseHttpMethod(source.HttpMethod ?? orderItem?.HttpMethod),
+            HttpMethod = ResolveHttpMethod(source.HttpMethod, orderItem?.HttpMethod),
             Url = source.Url ?? orderItem?.Path ?? string.Empty,
             Headers = SerializeDict(source.Headers),
             PathParams = SerializeDict(source.PathParams),
@@ -56,21 +61,68 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
         };
     }
 
-    private static Entities.HttpMethod ParseHttpMethod(string method)
+    private static Entities.HttpMethod ResolveHttpMethod(string preferredMethod, string fallbackMethod)
     {
-        if (string.IsNullOrWhiteSpace(method)) return Entities.HttpMethod.GET;
-
-        return method.Trim().ToUpperInvariant() switch
+        if (TryParseHttpMethod(preferredMethod, out var parsed))
         {
-            "GET" => Entities.HttpMethod.GET,
-            "POST" => Entities.HttpMethod.POST,
-            "PUT" => Entities.HttpMethod.PUT,
-            "DELETE" => Entities.HttpMethod.DELETE,
-            "PATCH" => Entities.HttpMethod.PATCH,
-            "HEAD" => Entities.HttpMethod.HEAD,
-            "OPTIONS" => Entities.HttpMethod.OPTIONS,
-            _ => Entities.HttpMethod.GET,
-        };
+            return parsed;
+        }
+
+        if (TryParseHttpMethod(fallbackMethod, out parsed))
+        {
+            return parsed;
+        }
+
+        return Entities.HttpMethod.GET;
+    }
+
+    private static bool TryParseHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        parsed = Entities.HttpMethod.GET;
+
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            return false;
+        }
+
+        if (MapHttpMethod(method, out parsed))
+        {
+            return true;
+        }
+
+        var match = HttpMethodTokenRegex.Match(method);
+        return match.Success && MapHttpMethod(match.Groups[1].Value, out parsed);
+    }
+
+    private static bool MapHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        switch (method?.Trim().ToUpperInvariant())
+        {
+            case "GET":
+                parsed = Entities.HttpMethod.GET;
+                return true;
+            case "POST":
+                parsed = Entities.HttpMethod.POST;
+                return true;
+            case "PUT":
+                parsed = Entities.HttpMethod.PUT;
+                return true;
+            case "DELETE":
+                parsed = Entities.HttpMethod.DELETE;
+                return true;
+            case "PATCH":
+                parsed = Entities.HttpMethod.PATCH;
+                return true;
+            case "HEAD":
+                parsed = Entities.HttpMethod.HEAD;
+                return true;
+            case "OPTIONS":
+                parsed = Entities.HttpMethod.OPTIONS;
+                return true;
+            default:
+                parsed = Entities.HttpMethod.GET;
+                return false;
+        }
     }
 
     private static BodyType ParseBodyType(string bodyType)
