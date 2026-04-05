@@ -58,7 +58,7 @@ public class UsersControllerTests
     }
 
     [Fact]
-    public async Task Post_Should_AutoConfirmEmail_AndSkipConfirmationEmail_WhenAdminCreatesRegularUser()
+    public async Task Post_Should_AssignAdminRoleAndAutoConfirmEmail_WhenRequestContainsOnlyUserRole()
     {
         // Arrange
         var model = new CreateUserModel
@@ -69,69 +69,15 @@ public class UsersControllerTests
             Roles = new List<string> { "User" },
         };
 
-        User createdUser = null!;
-
-        _roleManagerMock
-            .Setup(x => x.FindByNameAsync("User"))
-            .ReturnsAsync(new Role { Name = "User", NormalizedName = "USER" });
-        _userManagerMock
-            .Setup(x => x.FindByEmailAsync(model.Email))
-            .ReturnsAsync((User)null!);
-        _userManagerMock
-            .Setup(x => x.CreateAsync(It.IsAny<User>(), model.Password))
-            .Callback<User, string>((user, _) =>
-            {
-                user.Id = Guid.NewGuid();
-                createdUser = user;
-            })
-            .ReturnsAsync(IdentityResult.Success);
-        _userManagerMock
-            .Setup(x => x.AddToRolesAsync(It.IsAny<User>(), It.IsAny<IEnumerable<string>>()))
-            .ReturnsAsync(IdentityResult.Success);
-
-        // Act
-        var result = await _controller.Post(model);
-
-        // Assert
-        createdUser.EmailConfirmed.Should().BeTrue();
-
-        var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
-        createdResult.Value.Should().NotBeNull();
-
-        GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();
-        GetPropertyValue<string>(createdResult.Value!, "Message")
-            .Should().Be("Tạo người dùng thành công. Email đã được xác nhận tự động.");
-        GetPropertyValue<UserModel>(createdResult.Value!, "User").EmailConfirmed.Should().BeTrue();
-
-        _userManagerMock.Verify(
-            x => x.GenerateEmailConfirmationTokenAsync(It.IsAny<User>()),
-            Times.Never);
-        _emailMessageServiceMock.Verify(
-            x => x.CreateEmailMessageAsync(It.IsAny<EmailMessageDTO>()),
-            Times.Never);
-        _emailTemplateServiceMock.Verify(
-            x => x.WelcomeConfirmEmail(It.IsAny<string>(), It.IsAny<string>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task Post_Should_AssignDefaultUserRole_AndKeepEmailConfirmed_WhenRolesAreEmpty()
-    {
-        // Arrange
-        var model = new CreateUserModel
-        {
-            UserName = "another.user",
-            Email = "another.user@example.com",
-            Password = "Password123!",
-            Roles = new List<string>(),
-        };
-
         IEnumerable<string> assignedRoles = Array.Empty<string>();
         User createdUser = null!;
 
         _roleManagerMock
             .Setup(x => x.FindByNameAsync("User"))
             .ReturnsAsync(new Role { Name = "User", NormalizedName = "USER" });
+        _roleManagerMock
+            .Setup(x => x.FindByNameAsync("Admin"))
+            .ReturnsAsync(new Role { Name = "Admin", NormalizedName = "ADMIN" });
         _userManagerMock
             .Setup(x => x.FindByEmailAsync(model.Email))
             .ReturnsAsync((User)null!);
@@ -153,7 +99,68 @@ public class UsersControllerTests
 
         // Assert
         createdUser.EmailConfirmed.Should().BeTrue();
-        assignedRoles.Should().ContainSingle().Which.Should().Be("User");
+        assignedRoles.Should().Contain("User");
+        assignedRoles.Should().Contain("Admin");
+
+        var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
+        createdResult.Value.Should().NotBeNull();
+
+        GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();
+        GetPropertyValue<string>(createdResult.Value!, "Message")
+            .Should().Be("Tạo người dùng thành công với toàn quyền (Admin). Email đã được xác nhận tự động.");
+        GetPropertyValue<UserModel>(createdResult.Value!, "User").EmailConfirmed.Should().BeTrue();
+
+        _userManagerMock.Verify(
+            x => x.GenerateEmailConfirmationTokenAsync(It.IsAny<User>()),
+            Times.Never);
+        _emailMessageServiceMock.Verify(
+            x => x.CreateEmailMessageAsync(It.IsAny<EmailMessageDTO>()),
+            Times.Never);
+        _emailTemplateServiceMock.Verify(
+            x => x.WelcomeConfirmEmail(It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Post_Should_AssignDefaultAdminRole_AndKeepEmailConfirmed_WhenRolesAreEmpty()
+    {
+        // Arrange
+        var model = new CreateUserModel
+        {
+            UserName = "another.user",
+            Email = "another.user@example.com",
+            Password = "Password123!",
+            Roles = new List<string>(),
+        };
+
+        IEnumerable<string> assignedRoles = Array.Empty<string>();
+        User createdUser = null!;
+
+        _roleManagerMock
+            .Setup(x => x.FindByNameAsync("Admin"))
+            .ReturnsAsync(new Role { Name = "Admin", NormalizedName = "ADMIN" });
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(model.Email))
+            .ReturnsAsync((User)null!);
+        _userManagerMock
+            .Setup(x => x.CreateAsync(It.IsAny<User>(), model.Password))
+            .Callback<User, string>((user, _) =>
+            {
+                user.Id = Guid.NewGuid();
+                createdUser = user;
+            })
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock
+            .Setup(x => x.AddToRolesAsync(It.IsAny<User>(), It.IsAny<IEnumerable<string>>()))
+            .Callback<User, IEnumerable<string>>((_, roles) => assignedRoles = roles)
+            .ReturnsAsync(IdentityResult.Success);
+
+        // Act
+        var result = await _controller.Post(model);
+
+        // Assert
+        createdUser.EmailConfirmed.Should().BeTrue();
+        assignedRoles.Should().ContainSingle().Which.Should().Be("Admin");
 
         var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
         GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();
