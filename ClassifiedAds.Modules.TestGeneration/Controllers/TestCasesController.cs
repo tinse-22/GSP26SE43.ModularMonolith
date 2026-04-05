@@ -135,6 +135,7 @@ public class TestCasesController : ControllerBase
         var result = await _dispatcher.DispatchAsync(new GetTestCasesByTestSuiteQuery
         {
             TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
             FilterByTestType = filterType,
             IncludeDisabled = includeDisabled,
         });
@@ -155,6 +156,7 @@ public class TestCasesController : ControllerBase
         {
             TestSuiteId = suiteId,
             TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);

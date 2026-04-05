@@ -126,11 +126,9 @@ public class UsersController : ControllerBase
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // Current product behavior does not differentiate role scopes,
-        // so newly created users must always have full permissions.
-        if (!roleNames.Any(x => x.Equals("Admin", StringComparison.OrdinalIgnoreCase)))
+        if (roleNames.Count == 0)
         {
-            roleNames.Add("Admin");
+            roleNames.Add("User");
         }
 
         foreach (var roleName in roleNames)
@@ -187,7 +185,7 @@ public class UsersController : ControllerBase
             User = userModel,
             Roles = roleNames,
             EmailConfirmationRequired = false,
-            Message = "Tạo người dùng thành công với toàn quyền (Admin). Email đã được xác nhận tự động."
+            Message = $"Tạo người dùng thành công với vai trò: {string.Join(", ", roleNames)}. Email đã được xác nhận tự động."
         });
     }
 

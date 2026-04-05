@@ -53,6 +53,7 @@ public static class ApiDocumentationServiceCollectionExtensions
         services.AddScoped<ClassifiedAds.Modules.ApiDocumentation.Services.IPathParameterTemplateService,
             ClassifiedAds.Modules.ApiDocumentation.Services.PathParameterTemplateService>();
         services.AddScoped<IApiEndpointMetadataService, ClassifiedAds.Modules.ApiDocumentation.Services.ApiEndpointMetadataService>();
+        services.AddScoped<IProjectOwnershipGatewayService, ClassifiedAds.Modules.ApiDocumentation.Services.ProjectOwnershipGatewayService>();
 
         // FE-06: Cross-module contract implementations for boundary/negative generation
         services.AddScoped<IApiEndpointParameterDetailService, ClassifiedAds.Modules.ApiDocumentation.Services.ApiEndpointParameterDetailService>();

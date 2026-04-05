@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using ClassifiedAds.Modules.Identity.Authorization;
 using ClassifiedAds.Modules.Identity.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -10,51 +11,46 @@ public class RoleClaimConfiguration : IEntityTypeConfiguration<RoleClaim>
 {
     // Admin Role ID (must match RoleConfiguration)
     private static readonly Guid AdminRoleId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private static readonly Guid UserRoleId = Guid.Parse("00000000-0000-0000-0000-000000000002");
 
     public void Configure(EntityTypeBuilder<RoleClaim> builder)
     {
         builder.ToTable("RoleClaims");
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
 
-        // Seed all permissions for Admin role
-        var permissions = new[]
-        {
-            // Role permissions
-            Permissions.GetRoles,
-            Permissions.GetRole,
-            Permissions.AddRole,
-            Permissions.UpdateRole,
-            Permissions.DeleteRole,
+        var adminClaims = BuildRoleClaims(
+            AdminRoleId,
+            RolePermissionMappings.AdminPermissions,
+            "0001");
 
-            // User permissions
-            Permissions.GetUsers,
-            Permissions.GetUser,
-            Permissions.AddUser,
-            Permissions.UpdateUser,
-            Permissions.SetPassword,
-            Permissions.DeleteUser,
+        var userClaims = BuildRoleClaims(
+            UserRoleId,
+            RolePermissionMappings.UserPermissions,
+            "0002");
 
-            // User management actions
-            Permissions.SendResetPasswordEmail,
-            Permissions.SendConfirmationEmailAddressEmail,
-            Permissions.AssignRole,
-            Permissions.RemoveRole,
-            Permissions.LockUser,
-            Permissions.UnlockUser,
-        };
+        var roleClaims = adminClaims.Concat(userClaims).ToArray();
 
-        var roleClaims = new RoleClaim[permissions.Length];
-        for (int i = 0; i < permissions.Length; i++)
+        builder.HasData(roleClaims);
+    }
+
+    private static RoleClaim[] BuildRoleClaims(Guid roleId, string[] permissions, string seedGroup)
+    {
+        var distinctPermissions = permissions
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var roleClaims = new RoleClaim[distinctPermissions.Length];
+        for (int i = 0; i < distinctPermissions.Length; i++)
         {
             roleClaims[i] = new RoleClaim
             {
-                Id = Guid.Parse($"00000000-0000-0000-0001-{(i + 1):D12}"),
-                RoleId = AdminRoleId,
+                Id = Guid.Parse($"00000000-0000-0000-{seedGroup}-{(i + 1):D12}"),
+                RoleId = roleId,
                 Type = "Permission",
-                Value = permissions[i],
+                Value = distinctPermissions[i],
             };
         }
 
-        builder.HasData(roleClaims);
+        return roleClaims;
     }
 }
