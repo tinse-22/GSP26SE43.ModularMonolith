@@ -1,5 +1,6 @@
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Modules.TestExecution.Commands;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
@@ -17,6 +18,7 @@ public class AddUpdateExecutionEnvironmentCommandHandlerTests
 {
     private readonly Mock<IRepository<ExecutionEnvironment, Guid>> _envRepoMock;
     private readonly Mock<IExecutionAuthConfigService> _authConfigServiceMock;
+    private readonly Mock<IProjectOwnershipGatewayService> _projectOwnershipGatewayServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly AddUpdateExecutionEnvironmentCommandHandler _handler;
 
@@ -24,6 +26,7 @@ public class AddUpdateExecutionEnvironmentCommandHandlerTests
     {
         _envRepoMock = new Mock<IRepository<ExecutionEnvironment, Guid>>();
         _authConfigServiceMock = new Mock<IExecutionAuthConfigService>();
+        _projectOwnershipGatewayServiceMock = new Mock<IProjectOwnershipGatewayService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _envRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
@@ -36,9 +39,17 @@ public class AddUpdateExecutionEnvironmentCommandHandlerTests
         _authConfigServiceMock.Setup(x => x.MaskAuthConfig(It.IsAny<ExecutionAuthConfigModel>()))
             .Returns((ExecutionAuthConfigModel)null);
 
+        _projectOwnershipGatewayServiceMock
+            .Setup(x => x.IsProjectOwnedByUserAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         _handler = new AddUpdateExecutionEnvironmentCommandHandler(
             _envRepoMock.Object,
             _authConfigServiceMock.Object,
+            _projectOwnershipGatewayServiceMock.Object,
             new Mock<ILogger<AddUpdateExecutionEnvironmentCommandHandler>>().Object);
     }
 

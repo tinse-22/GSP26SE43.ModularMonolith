@@ -114,6 +114,7 @@ public class TestSuiteScopeIntegrationTests : IAsyncLifetime
             {
                 ProjectId = ProjectId,
                 SuiteId = createCommand.Result.Id,
+                CurrentUserId = UserId,
             });
 
             fetched.SelectedEndpointIds.Should().Contain(Endpoint1);
@@ -439,6 +440,7 @@ public class TestSuiteScopeIntegrationTests : IAsyncLifetime
             var result = await dispatcher.DispatchAsync(new GetTestSuiteScopesQuery
             {
                 ProjectId = uniqueProjectId,
+                CurrentUserId = UserId,
             });
 
             // Assert
