@@ -52,7 +52,7 @@ public class CreateUserModel
     [Phone(ErrorMessage = "Invalid phone number format")]
     public string PhoneNumber { get; set; }
 
-    public List<string> Roles { get; set; } = new () { "User" };
+    public List<string> Roles { get; set; } = new () { "Admin" };
 }
 
 /// <summary>

@@ -126,27 +126,19 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
                 $"Đã vượt quá giới hạn test case cho gói subscription. {limitCheck.DenialReason}");
         }
 
-        // 6) If regenerating, delete existing happy-path test cases
-        if (existingHappyPath.Count > 0 && command.ForceRegenerate)
-        {
-            _logger.LogInformation(
-                "Force regenerating happy-path test cases. Deleting {Count} existing test cases. TestSuiteId={TestSuiteId}",
-                existingHappyPath.Count, command.TestSuiteId);
-
-            foreach (var existing in existingHappyPath)
-            {
-                _testCaseRepository.Delete(existing);
-            }
-
-            await _testCaseRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-        }
-
-        // 7) Generate test cases via n8n/LLM pipeline
+        // 6) Generate test cases via n8n/LLM pipeline
         var generationResult = await _generator.GenerateAsync(
             suite, approvedOrder, command.SpecificationId, cancellationToken);
 
         if (generationResult.TestCases.Count == 0)
         {
+            if (existingHappyPath.Count > 0 && command.ForceRegenerate)
+            {
+                _logger.LogWarning(
+                    "Happy-path regeneration produced no replacement test cases. Existing test cases were preserved. TestSuiteId={TestSuiteId}",
+                    command.TestSuiteId);
+            }
+
             command.Result = new GenerateHappyPathResultModel
             {
                 TestSuiteId = command.TestSuiteId,
@@ -160,11 +152,23 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
             return;
         }
 
-        // 8) Persist everything in a transaction
+        // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
+            if (existingHappyPath.Count > 0 && command.ForceRegenerate)
+            {
+                _logger.LogInformation(
+                    "Force regenerating happy-path test cases. Replacing {Count} existing test cases. TestSuiteId={TestSuiteId}",
+                    existingHappyPath.Count, command.TestSuiteId);
+
+                foreach (var existing in existingHappyPath)
+                {
+                    _testCaseRepository.Delete(existing);
+                }
+            }
+
             foreach (var testCase in generationResult.TestCases)
             {
                 testCase.CreatedDateTime = now;
@@ -239,7 +243,7 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
         }, cancellationToken: cancellationToken);
 
-        // 9) Increment subscription usage
+        // 8) Increment subscription usage
         await _subscriptionLimitService.IncrementUsageAsync(
             new Contracts.Subscription.DTOs.IncrementUsageRequest
             {
@@ -249,7 +253,7 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
             },
             cancellationToken);
 
-        // 10) Build result model
+        // 9) Build result model
         command.Result = new GenerateHappyPathResultModel
         {
             TestSuiteId = command.TestSuiteId,

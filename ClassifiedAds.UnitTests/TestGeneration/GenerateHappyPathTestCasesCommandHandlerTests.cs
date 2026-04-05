@@ -235,7 +235,7 @@ public class GenerateHappyPathTestCasesCommandHandlerTests
         SetupGateApproved(suite.Id);
         SetupExistingHappyPathCases(2);
         SetupSubscriptionAllowed();
-        SetupGeneratorReturnsEmpty();
+        SetupGeneratorReturns(CreateGeneratedTestCases(2));
 
         var command = CreateValidCommand(suite.CreatedById);
         command.ForceRegenerate = true;
@@ -244,6 +244,44 @@ public class GenerateHappyPathTestCasesCommandHandlerTests
 
         // Verify existing cases were deleted
         _testCaseRepoMock.Verify(x => x.Delete(It.IsAny<TestCase>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PreserveExistingCases_WhenForceRegenerateReturnsEmpty()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved(suite.Id);
+        SetupExistingHappyPathCases(2);
+        SetupSubscriptionAllowed();
+        SetupGeneratorReturnsEmpty();
+
+        var command = CreateValidCommand(suite.CreatedById);
+        command.ForceRegenerate = true;
+
+        await _handler.HandleAsync(command);
+
+        _testCaseRepoMock.Verify(x => x.Delete(It.IsAny<TestCase>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PreserveExistingCases_WhenForceRegenerateGenerationFails()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved(suite.Id);
+        SetupExistingHappyPathCases(2);
+        SetupSubscriptionAllowed();
+        SetupGeneratorThrows(new InvalidOperationException("n8n returned empty body"));
+
+        var command = CreateValidCommand(suite.CreatedById);
+        command.ForceRegenerate = true;
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*empty body*");
+        _testCaseRepoMock.Verify(x => x.Delete(It.IsAny<TestCase>()), Times.Never);
     }
 
     [Fact]
@@ -518,6 +556,16 @@ public class GenerateHappyPathTestCasesCommandHandlerTests
                 LlmModel = "gpt-4",
                 TokensUsed = 1500,
             });
+    }
+
+    private void SetupGeneratorThrows(Exception exception)
+    {
+        _generatorMock.Setup(x => x.GenerateAsync(
+                It.IsAny<TestSuite>(),
+                It.IsAny<IReadOnlyList<ApiOrderItemModel>>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(exception);
     }
 
     private static IReadOnlyList<TestCase> CreateGeneratedTestCases(int count)
