@@ -14,7 +14,20 @@ public class N8nBoundaryNegativePayload
 
     public string GlobalBusinessRules { get; set; }
 
+    public N8nSuggestionPromptConfig PromptConfig { get; set; } = new();
+
     public List<N8nBoundaryEndpointPayload> Endpoints { get; set; } = new();
+}
+
+public class N8nSuggestionPromptConfig
+{
+    public string SystemPrompt { get; set; }
+
+    public string TaskInstruction { get; set; }
+
+    public string Rules { get; set; }
+
+    public string ResponseFormat { get; set; }
 }
 
 public class N8nBoundaryEndpointPayload

@@ -26,6 +26,56 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
+    private const string DefaultSuggestionSystemPrompt =
+        "You are a senior QA engineer specialising in REST API security and robustness testing. " +
+        "Generate boundary and negative test scenarios for REST API endpoints and return ONLY raw JSON.";
+
+    private const string SuggestionRulesBlock =
+        "=== RULES ===\n" +
+        "1. For each endpoint generate 2-4 scenarios: mix of Boundary and Negative types.\n" +
+        "2. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
+        "3. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
+        "4. Use realistic but clearly synthetic test data.\n" +
+        "5. endpointId must be the EXACT UUID from input.\n" +
+        "6. testType must be exactly \"Boundary\" or \"Negative\".\n" +
+        "7. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
+        "8. request.body must be a JSON string (serialized) or null.\n" +
+        "9. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
+
+    private const string SuggestionResponseFormatBlock =
+        "=== RESPONSE FORMAT ===\n" +
+        "Return ONLY this JSON structure:\n" +
+        "{\n" +
+        "  \"scenarios\": [\n" +
+        "    {\n" +
+        "      \"endpointId\": \"<exact UUID>\",\n" +
+        "      \"scenarioName\": \"<short name e.g. 'Missing required field: email'>\",\n" +
+        "      \"description\": \"<one sentence>\",\n" +
+        "      \"testType\": \"Boundary|Negative\",\n" +
+        "      \"priority\": \"High|Medium|Low\",\n" +
+        "      \"tags\": [\"boundary\"],\n" +
+        "      \"request\": {\n" +
+        "        \"httpMethod\": \"<GET|POST|PUT|DELETE|PATCH>\",\n" +
+        "        \"url\": \"<path>\",\n" +
+        "        \"headers\": null,\n" +
+        "        \"pathParams\": null,\n" +
+        "        \"queryParams\": null,\n" +
+        "        \"bodyType\": \"None|JSON\",\n" +
+        "        \"body\": \"<serialized JSON string or null>\",\n" +
+        "        \"timeout\": 30000\n" +
+        "      },\n" +
+        "      \"expectation\": {\n" +
+        "        \"expectedStatus\": [400],\n" +
+        "        \"bodyContains\": null,\n" +
+        "        \"bodyNotContains\": null\n" +
+        "      },\n" +
+        "      \"variables\": []\n" +
+        "    }\n" +
+        "  ],\n" +
+        "  \"model\": \"<model name>\",\n" +
+        "  \"tokensUsed\": 0\n" +
+        "}";
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -105,14 +155,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         // Step 4: Call n8n webhook
         _logger.LogInformation(
             "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
-            N8nWebhookNames.GenerateBoundaryNegative,
+            N8nWebhookNames.GenerateLlmSuggestions,
             context.TestSuiteId,
             feedbackContext.FeedbackFingerprint,
             cacheKey);
 
         var stopwatch = Stopwatch.StartNew();
         var n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-            N8nWebhookNames.GenerateBoundaryNegative, payload, cancellationToken);
+            N8nWebhookNames.GenerateLlmSuggestions, payload, cancellationToken);
         stopwatch.Stop();
 
         var latencyMs = (int)stopwatch.ElapsedMilliseconds;
@@ -204,18 +254,18 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var businessContext);
 
-            N8nPromptPayload promptPayload = null;
-            if (i < prompts.Count && prompts[i] != null)
+            ObservationConfirmationPrompt prompt = null;
+            if (i < prompts.Count)
             {
-                var prompt = prompts[i];
-                promptPayload = new N8nPromptPayload
-                {
-                    SystemPrompt = prompt.SystemPrompt,
-                    CombinedPrompt = prompt.CombinedPrompt,
-                    ObservationPrompt = prompt.ObservationPrompt,
-                    ConfirmationPromptTemplate = prompt.ConfirmationPromptTemplate,
-                };
+                prompt = prompts[i];
             }
+
+            var promptPayload = BuildEndpointPromptPayload(
+                orderItem,
+                context.Suite,
+                metadata,
+                businessContext,
+                prompt);
 
             endpointPayloads.Add(new N8nBoundaryEndpointPayload
             {
@@ -240,8 +290,122 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TestSuiteId = context.TestSuiteId,
             TestSuiteName = context.Suite.Name,
             GlobalBusinessRules = context.Suite.GlobalBusinessRules,
+            PromptConfig = BuildSuggestionPromptConfig(context, prompts),
             Endpoints = endpointPayloads,
         };
+    }
+
+    private static N8nPromptPayload BuildEndpointPromptPayload(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext,
+        ObservationConfirmationPrompt prompt)
+    {
+        var combinedPrompt = string.IsNullOrWhiteSpace(prompt?.CombinedPrompt)
+            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext)
+            : prompt.CombinedPrompt;
+
+        return new N8nPromptPayload
+        {
+            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+                ? DefaultSuggestionSystemPrompt
+                : prompt.SystemPrompt,
+            CombinedPrompt = combinedPrompt,
+            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                ? combinedPrompt
+                : prompt.ObservationPrompt,
+            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                ? "Generate only boundary/negative scenarios based on provided API details and business rules; return JSON only."
+                : prompt.ConfirmationPromptTemplate,
+        };
+    }
+
+    private static string BuildFallbackCombinedPrompt(
+        ApiOrderItemModel orderItem,
+        TestSuite suite,
+        ApiEndpointMetadataDto metadata,
+        string businessContext)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Endpoint Context (Fallback)");
+        sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
+        sb.AppendLine($"Path: {orderItem?.Path ?? metadata?.Path ?? "/"}");
+        sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
+        sb.AppendLine();
+        sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
+
+        if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Global Business Rules");
+            sb.AppendLine(suite.GlobalBusinessRules);
+        }
+
+        if (!string.IsNullOrWhiteSpace(businessContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Endpoint Business Context");
+            sb.AppendLine(businessContext);
+        }
+
+        if (metadata?.ParameterSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Parameter Schemas");
+            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
+        }
+
+        if (metadata?.ResponseSchemaPayloads?.Any() == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Response Schemas");
+            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            {
+                sb.AppendLine(schema);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static N8nSuggestionPromptConfig BuildSuggestionPromptConfig(
+        LlmScenarioSuggestionContext context,
+        IReadOnlyList<ObservationConfirmationPrompt> prompts)
+    {
+        var systemPrompt = prompts?
+            .Select(x => x?.SystemPrompt)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+        return new N8nSuggestionPromptConfig
+        {
+            SystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
+                ? DefaultSuggestionSystemPrompt
+                : systemPrompt,
+            TaskInstruction = BuildSuggestionTaskInstruction(context?.Suite),
+            Rules = SuggestionRulesBlock,
+            ResponseFormat = SuggestionResponseFormatBlock,
+        };
+    }
+
+    private static string BuildSuggestionTaskInstruction(TestSuite suite)
+    {
+        var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
+        var sb = new StringBuilder();
+        sb.Append($"Generate boundary and negative test scenarios for this ordered REST API sequence (suite: {suiteName}).");
+
+        if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
+        {
+            sb.AppendLine();
+            sb.AppendLine();
+            sb.AppendLine("=== GLOBAL BUSINESS RULES ===");
+            sb.Append(suite.GlobalBusinessRules);
+        }
+
+        return sb.ToString();
     }
 
     private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(N8nBoundaryNegativeResponse response)
