@@ -43,6 +43,7 @@ public class TestSuitesController : ControllerBase
         var result = await _dispatcher.DispatchAsync(new GetTestSuiteScopesQuery
         {
             ProjectId = projectId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);
@@ -58,6 +59,7 @@ public class TestSuitesController : ControllerBase
         {
             ProjectId = projectId,
             SuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);

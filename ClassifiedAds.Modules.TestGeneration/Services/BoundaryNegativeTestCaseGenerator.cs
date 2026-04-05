@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,6 +28,10 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
+
+    private static readonly Regex HttpMethodTokenRegex = new(
+        @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _parameterDetailService;
@@ -320,19 +325,61 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
 
     private static Entities.HttpMethod ParseHttpMethod(string method)
     {
-        if (string.IsNullOrWhiteSpace(method)) return Entities.HttpMethod.GET;
-
-        return method.Trim().ToUpperInvariant() switch
+        if (TryParseHttpMethod(method, out var parsed))
         {
-            "GET" => Entities.HttpMethod.GET,
-            "POST" => Entities.HttpMethod.POST,
-            "PUT" => Entities.HttpMethod.PUT,
-            "DELETE" => Entities.HttpMethod.DELETE,
-            "PATCH" => Entities.HttpMethod.PATCH,
-            "HEAD" => Entities.HttpMethod.HEAD,
-            "OPTIONS" => Entities.HttpMethod.OPTIONS,
-            _ => Entities.HttpMethod.GET,
-        };
+            return parsed;
+        }
+
+        return Entities.HttpMethod.GET;
+    }
+
+    private static bool TryParseHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        parsed = Entities.HttpMethod.GET;
+
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            return false;
+        }
+
+        if (MapHttpMethod(method, out parsed))
+        {
+            return true;
+        }
+
+        var match = HttpMethodTokenRegex.Match(method);
+        return match.Success && MapHttpMethod(match.Groups[1].Value, out parsed);
+    }
+
+    private static bool MapHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        switch (method?.Trim().ToUpperInvariant())
+        {
+            case "GET":
+                parsed = Entities.HttpMethod.GET;
+                return true;
+            case "POST":
+                parsed = Entities.HttpMethod.POST;
+                return true;
+            case "PUT":
+                parsed = Entities.HttpMethod.PUT;
+                return true;
+            case "DELETE":
+                parsed = Entities.HttpMethod.DELETE;
+                return true;
+            case "PATCH":
+                parsed = Entities.HttpMethod.PATCH;
+                return true;
+            case "HEAD":
+                parsed = Entities.HttpMethod.HEAD;
+                return true;
+            case "OPTIONS":
+                parsed = Entities.HttpMethod.OPTIONS;
+                return true;
+            default:
+                parsed = Entities.HttpMethod.GET;
+                return false;
+        }
     }
 
     private static string SerializeTags(TestType testType, string source, params string[] extraTags)

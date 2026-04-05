@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -65,6 +66,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
+
+    private static readonly Regex HttpMethodTokenRegex = new(
+        @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
@@ -152,7 +157,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     {
                         Id = Guid.NewGuid(),
                         TestCaseId = testCase.Id,
-                        HttpMethod = ParseHttpMethod(dto.Request.HttpMethod),
+                        HttpMethod = ResolveHttpMethod(dto),
                         Url = dto.Request.Url,
                         Headers = NormalizeJsonOrDefault(dto.Request.Headers, "{}"),
                         PathParams = NormalizeJsonOrDefault(dto.Request.PathParams, "{}"),
@@ -241,15 +246,74 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             _ => TestPriority.Medium,
         };
 
-    private static HttpMethod ParseHttpMethod(string value) =>
-        value?.Trim().ToUpperInvariant() switch
+    private static HttpMethod ResolveHttpMethod(AiGeneratedTestCaseDto dto)
+    {
+        if (TryParseHttpMethod(dto?.Request?.HttpMethod, out var method))
         {
-            "POST" => HttpMethod.POST,
-            "PUT" => HttpMethod.PUT,
-            "DELETE" => HttpMethod.DELETE,
-            "PATCH" => HttpMethod.PATCH,
-            _ => HttpMethod.GET,
-        };
+            return method;
+        }
+
+        if (TryParseHttpMethod(dto?.Name, out method))
+        {
+            return method;
+        }
+
+        if (TryParseHttpMethod(dto?.Description, out method))
+        {
+            return method;
+        }
+
+        return HttpMethod.GET;
+    }
+
+    private static bool TryParseHttpMethod(string value, out HttpMethod method)
+    {
+        method = HttpMethod.GET;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (MapHttpMethod(value, out method))
+        {
+            return true;
+        }
+
+        var match = HttpMethodTokenRegex.Match(value);
+        return match.Success && MapHttpMethod(match.Groups[1].Value, out method);
+    }
+
+    private static bool MapHttpMethod(string value, out HttpMethod method)
+    {
+        switch (value?.Trim().ToUpperInvariant())
+        {
+            case "GET":
+                method = HttpMethod.GET;
+                return true;
+            case "POST":
+                method = HttpMethod.POST;
+                return true;
+            case "PUT":
+                method = HttpMethod.PUT;
+                return true;
+            case "DELETE":
+                method = HttpMethod.DELETE;
+                return true;
+            case "PATCH":
+                method = HttpMethod.PATCH;
+                return true;
+            case "HEAD":
+                method = HttpMethod.HEAD;
+                return true;
+            case "OPTIONS":
+                method = HttpMethod.OPTIONS;
+                return true;
+            default:
+                method = HttpMethod.GET;
+                return false;
+        }
+    }
 
     private static BodyType ParseBodyType(string value) =>
         value?.Trim().ToLowerInvariant() switch

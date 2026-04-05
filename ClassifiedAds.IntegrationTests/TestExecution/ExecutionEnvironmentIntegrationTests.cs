@@ -80,6 +80,7 @@ public class ExecutionEnvironmentIntegrationTests : IAsyncLifetime
             {
                 ProjectId = ProjectId,
                 EnvironmentId = createCommand.Result.Id,
+                CurrentUserId = UserId,
             });
 
             fetched.Name.Should().Be("Development");
@@ -332,6 +333,7 @@ public class ExecutionEnvironmentIntegrationTests : IAsyncLifetime
             {
                 ProjectId = uniqueProjectId,
                 EnvironmentId = envId,
+                CurrentUserId = UserId,
             });
 
             fetched.AuthConfig.ClientSecret.Should().Be("******");
@@ -373,6 +375,7 @@ public class ExecutionEnvironmentIntegrationTests : IAsyncLifetime
             var result = await dispatcher.DispatchAsync(new GetExecutionEnvironmentsQuery
             {
                 ProjectId = uniqueProjectId,
+                CurrentUserId = UserId,
             });
 
             result.Should().HaveCount(2);

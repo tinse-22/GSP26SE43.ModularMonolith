@@ -134,14 +134,22 @@ public class AuthController : ControllerBase
                     return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
                 }
 
-                var userRole = await _roleManager.FindByNameAsync("User");
-                if (userRole == null)
+                var defaultRoles = new[] { "User" };
+                foreach (var roleName in defaultRoles)
                 {
+                    var role = await _roleManager.FindByNameAsync(roleName);
+                    if (role != null)
+                    {
+                        continue;
+                    }
+
                     await _dbContext.RollbackTransactionAsync();
-                    return StatusCode(StatusCodes.Status500InternalServerError, new { Error = "Vai trò mặc định 'User' không tồn tại." });
+                    return StatusCode(
+                        StatusCodes.Status500InternalServerError,
+                        new { Error = $"Vai tro mac dinh '{roleName}' khong ton tai." });
                 }
 
-                var roleResult = await _userManager.AddToRoleAsync(user, "User");
+                var roleResult = await _userManager.AddToRolesAsync(user, defaultRoles);
                 if (!roleResult.Succeeded)
                 {
                     await _dbContext.RollbackTransactionAsync();
