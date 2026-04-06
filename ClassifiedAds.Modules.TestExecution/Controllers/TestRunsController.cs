@@ -53,6 +53,7 @@ public class TestRunsController : ControllerBase
             TestSuiteId = suiteId,
             CurrentUserId = _currentUser.UserId,
             EnvironmentId = request?.EnvironmentId,
+            StrictValidation = request?.StrictValidation ?? false,
             SelectedTestCaseIds = request?.SelectedTestCaseIds?
                 .Where(id => id != Guid.Empty)
                 .Distinct()

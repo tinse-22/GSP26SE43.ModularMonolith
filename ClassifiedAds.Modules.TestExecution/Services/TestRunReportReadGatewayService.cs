@@ -7,10 +7,10 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -21,23 +21,24 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
     private const int MinRecentHistoryLimit = 1;
     private const int MaxRecentHistoryLimit = 20;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _executionReadGatewayService;
+    private readonly ILogger<TestRunReportReadGatewayService> _logger;
 
     public TestRunReportReadGatewayService(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
-        ITestExecutionReadGatewayService executionReadGatewayService)
+        ITestExecutionReadGatewayService executionReadGatewayService,
+        ILogger<TestRunReportReadGatewayService> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _executionReadGatewayService = executionReadGatewayService;
+        _logger = logger;
     }
 
     public async Task<TestRunReportContextDto> GetReportContextAsync(
@@ -98,23 +99,33 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
 
     private async Task<TestRunResultModel> GetRunResultsAsync(TestRun run, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(run.RedisKey))
+        if (!string.IsNullOrEmpty(run.RedisKey) &&
+            (!run.ResultsExpireAt.HasValue || run.ResultsExpireAt.Value >= DateTimeOffset.UtcNow))
         {
-            throw CreateRunResultsExpiredException();
+            try
+            {
+                var cached = await _cache.GetStringAsync(run.RedisKey, ct);
+                var result = TestRunResultsStorage.DeserializeCachedResult(cached);
+                if (result != null)
+                {
+                    result.ResultsSource = "cache";
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Redis cache read failed for RunId={RunId}, RedisKey={RedisKey}. Falling back to PostgreSQL for report generation.", run.Id, run.RedisKey);
+            }
         }
 
-        if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
-        {
-            throw CreateRunResultsExpiredException();
-        }
+        _logger.LogInformation("Redis unavailable/expired for RunId={RunId}, falling back to PostgreSQL for report generation", run.Id);
 
-        var cached = await _cache.GetStringAsync(run.RedisKey, ct);
-        if (cached == null)
-        {
-            throw CreateRunResultsExpiredException();
-        }
+        var pgResults = await _resultRepository.ToListAsync(
+            _resultRepository.GetQueryableSet()
+                .Where(x => x.TestRunId == run.Id)
+                .OrderBy(x => x.OrderIndex));
 
-        return JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions)
+        return TestRunResultsStorage.ReconstructFromDatabase(run, pgResults)
             ?? throw CreateRunResultsExpiredException();
     }
 
@@ -253,6 +264,6 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
 
     private static ConflictException CreateRunResultsExpiredException()
     {
-        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache và không tìm thấy trong database.");
     }
 }

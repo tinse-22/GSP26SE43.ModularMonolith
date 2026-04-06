@@ -10,7 +10,7 @@
 >   | Identity | `20260216012247_IdentitySeedHashSync` |
 >   | ApiDocumentation | `20260214004925_InitialApiDocumentation` |
 >   | TestGeneration | `20260219061423_AddTestSuiteSelectedEndpointIds` |
->   | TestExecution | `20260201104234_InitialTestExecution` |
+>   | TestExecution | `20260406130000_AddTestCaseResults` |
 >   | TestReporting | `20260201104246_InitialTestReporting` |
 >   | Subscription | `20260217103000_ReseedAdminEnterpriseSubscriptionForDev` |
 >   | Storage | `20260201101114_InitialStorage` |
@@ -61,7 +61,8 @@
 |-----------|---------|-----------|-------|
 | **User, Project, ApiSpec** | PostgreSQL | Permanent | Core business data |
 | **TestCase, TestSuite** | PostgreSQL | Permanent | Reusable test definitions |
-| **TestRun Results** | Redis → PostgreSQL | 5-10 days in Redis | Hot data for real-time access |
+| **TestRun Summary** | PostgreSQL | Permanent | Run metadata, counts, timing |
+| **TestCaseResults (Detailed)** | Redis (hot) + PostgreSQL (cold) | Redis: 7 days, PostgreSQL: Permanent | Dual-write: fast access + fallback |
 | **TestExecution Logs** | Redis | 5-10 days | Temporary, high-frequency writes |
 | **Reports (generated)** | File Storage + PostgreSQL metadata | Permanent | User-requested exports |
 
@@ -571,7 +572,7 @@
 │     EnvironmentId   : UUID                   │  (cross-module, no FK)
 │     TriggeredById   : UUID                   │  (cross-module, no FK)
 │     RunNumber       : integer                │
-│     Status          : integer                │
+│     Status          : varchar(20)            │  Pending|Running|Completed|Failed|Cancelled
 │     StartedAt       : timestamptz            │
 │     CompletedAt     : timestamptz            │
 │     TotalTests      : integer                │
@@ -588,6 +589,40 @@
     Index: EnvironmentId, Status, TestSuiteId, TriggeredById,
            (TestSuiteId, RunNumber) UNIQUE
 
+┌──────────────────────────────────────────────┐
+│            TestCaseResults                    │  ← NEW: Cold storage for test results
+├──────────────────────────────────────────────┤
+│ PK  Id                       : UUID          │  gen_random_uuid()
+│     TestRunId                : UUID          │  (references TestRuns)
+│     TestCaseId               : UUID          │  (cross-module, no FK)
+│     EndpointId               : UUID?         │  (cross-module, no FK)
+│     Name                     : varchar(500)  │  Required
+│     OrderIndex               : integer       │
+│     Status                   : varchar(20)   │  Passed|Failed|Skipped
+│     HttpStatusCode           : integer?      │
+│     DurationMs               : bigint        │
+│     ResolvedUrl              : varchar(2000) │
+│     RequestHeaders           : jsonb         │
+│     ResponseHeaders          : jsonb         │
+│     ResponseBodyPreview      : varchar(65536)│
+│     FailureReasons           : jsonb         │  Array of ValidationFailure
+│     ExtractedVariables       : jsonb         │  Masked sensitive values
+│     DependencyIds            : jsonb         │  Array of Guid
+│     SkippedBecauseDependencyIds : jsonb      │  Array of Guid
+│     StatusCodeMatched        : boolean       │
+│     SchemaMatched            : boolean?      │
+│     HeaderChecksPassed       : boolean?      │
+│     BodyContainsPassed       : boolean?      │
+│     BodyNotContainsPassed    : boolean?      │
+│     JsonPathChecksPassed     : boolean?      │
+│     ResponseTimePassed       : boolean?      │
+│     CreatedDateTime          : timestamptz   │
+│     UpdatedDateTime          : timestamptz   │
+│     RowVersion               : bytea         │
+└──────────────────────────────────────────────┘
+    Index: TestRunId, TestCaseId, Status,
+           (TestRunId, Status), (TestRunId, OrderIndex)
+
 ┌─────────────────────────────────────┐  ┌─────────────────────────────────────────┐
 │ AuditLogEntries (testexecution)     │  │ OutboxMessages (testexecution)          │
 ├─────────────────────────────────────┤  ├─────────────────────────────────────────┤
@@ -601,7 +636,7 @@
 └─────────────────────────────────────┘
 ```
 
-**5 bảng**: ExecutionEnvironments, TestRuns, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
+**6 bảng**: ExecutionEnvironments, TestRuns, TestCaseResults, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
 
 ---
 
@@ -1459,7 +1494,7 @@ erDiagram
 
     %% ═══════════════════════════════════════════════════════════════════════
     %% MODULE 4: TEST EXECUTION — Schema: testexecution
-    %% 5 tables
+    %% 6 tables
     %% ═══════════════════════════════════════════════════════════════════════
 
     testexec_ExecutionEnvironments {
@@ -1481,7 +1516,7 @@ erDiagram
         UUID EnvironmentId "cross-module Guid"
         UUID TriggeredById "cross-module Guid"
         integer RunNumber
-        integer Status
+        varchar_20 Status "Pending|Running|Completed|Failed|Cancelled"
         timestamptz StartedAt
         timestamptz CompletedAt
         integer TotalTests
@@ -1494,6 +1529,37 @@ erDiagram
         timestamptz CreatedDateTime
         bytea RowVersion
     }
+
+    testexec_TestCaseResults {
+        UUID Id PK "gen_random_uuid()"
+        UUID TestRunId FK "references TestRuns"
+        UUID TestCaseId "cross-module Guid"
+        UUID EndpointId "nullable, cross-module"
+        varchar_500 Name "Required"
+        integer OrderIndex
+        varchar_20 Status "Passed|Failed|Skipped"
+        integer HttpStatusCode "nullable"
+        bigint DurationMs
+        varchar_2000 ResolvedUrl
+        jsonb RequestHeaders
+        jsonb ResponseHeaders
+        varchar_65536 ResponseBodyPreview
+        jsonb FailureReasons
+        jsonb ExtractedVariables
+        jsonb DependencyIds
+        jsonb SkippedBecauseDependencyIds
+        boolean StatusCodeMatched
+        boolean SchemaMatched "nullable"
+        boolean HeaderChecksPassed "nullable"
+        boolean BodyContainsPassed "nullable"
+        boolean BodyNotContainsPassed "nullable"
+        boolean JsonPathChecksPassed "nullable"
+        boolean ResponseTimePassed "nullable"
+        timestamptz CreatedDateTime
+        bytea RowVersion
+    }
+
+    testexec_TestRuns ||--o{ testexec_TestCaseResults : "1:N"
 
     %% ═══════════════════════════════════════════════════════════════════════
     %% MODULE 5: TEST REPORTING — Schema: testreporting
@@ -1869,7 +1935,7 @@ erDiagram
 | 1 | Identity | `identity` | 9 | 0 | **9** |
 | 2 | ApiDocumentation | `apidoc` | 7 | 3 | **10** |
 | 3 | TestGeneration | `testgen` | 9 | 2 | **11** |
-| 4 | TestExecution | `testexecution` | 2 | 3 | **5** |
+| 4 | TestExecution | `testexecution` | 3 | 3 | **6** |
 | 5 | TestReporting | `testreporting` | 2 | 3 | **5** |
 | 6 | Subscription | `subscription` | 7 | 3 | **10** |
 | 7 | Storage | `storage` | 2 | 3 | **5** |
@@ -1877,9 +1943,9 @@ erDiagram
 | 9 | Configuration | `configuration` | 2 | 0 | **2** |
 | 10 | AuditLog | `auditlog` | 2 | 0 | **2** |
 | 11 | LlmAssistant | `llmassistant` | 2 | 3 | **5** |
-| | **TOTAL** | **11 schemas** | **49** | **20** | **69** |
+| | **TOTAL** | **11 schemas** | **50** | **20** | **70** |
 
-> **Ghi chú**: Infra tables (AuditLogEntries, OutboxMessages, ArchivedOutboxMessages) được tính riêng vì mỗi schema có bản copy riêng. Con số 69 là tổng bảng thực tế nếu tính cả infra tables lặp lại. Nếu tính unique business entities: **49 bảng**.
+> **Ghi chú**: Infra tables (AuditLogEntries, OutboxMessages, ArchivedOutboxMessages) được tính riêng vì mỗi schema có bản copy riêng. Con số 70 là tổng bảng thực tế nếu tính cả infra tables lặp lại. Nếu tính unique business entities: **50 bảng**.
 
 ---
 
@@ -1895,31 +1961,49 @@ erDiagram
 | `testrun:{id}:variables` | HASH | 5-10 days | Runtime extracted variables |
 | `user:{id}:recent_runs` | SORTED SET | 5-10 days | Quick access to recent runs |
 
-### 5.2 TTL Configuration
+### 5.2 TTL Configuration & Dual-Write Strategy
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         REDIS TTL STRATEGY                                  │
+│                    DUAL-WRITE STORAGE STRATEGY                              │
+│             (Updated: TestCaseResults now persisted to PostgreSQL)          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   Test execution completes                                                   │
 │          │                                                                   │
-│          ▼                                                                   │
-│   ┌─────────────────┐                      ┌─────────────────┐              │
-│   │     REDIS       │                      │   PostgreSQL    │              │
-│   │  (Hot Storage)  │                      │ (Cold Storage)  │              │
-│   │                 │                      │                 │              │
-│   │ • Real-time     │    Background job    │ • TestRun       │              │
-│   │   results       │ ──────────────────►  │   summary       │              │
-│   │ • Execution     │    (before TTL)      │ • Aggregated    │              │
-│   │   logs          │                      │   metrics       │              │
-│   │ • TTL: 5-10 days│                      │ • Report refs   │              │
-│   └─────────────────┘                      └─────────────────┘              │
+│          ├───────────────────────┬──────────────────────────┐               │
+│          ▼                       ▼                          ▼               │
+│   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐      │
+│   │     REDIS       │     │   PostgreSQL    │     │   PostgreSQL    │      │
+│   │  (Hot Storage)  │     │    TestRuns     │     │ TestCaseResults │      │
+│   │                 │     │ (Summary Only)  │     │  (Full Detail)  │      │
+│   │ • Full results  │     │                 │     │                 │      │
+│   │ • Fast access   │     │ • Counts        │     │ • Request/Resp  │      │
+│   │ • TTL: 7 days   │     │ • Timing        │     │ • FailureReasons│      │
+│   │                 │     │ • RedisKey ref  │     │ • ValidationFlag│      │
+│   └─────────────────┘     └─────────────────┘     └─────────────────┘      │
+│          │                       │                          │               │
+│          │ expires               │ permanent                │ permanent     │
+│          ▼                       │                          │               │
+│   ┌─────────────────┐           │                          │               │
+│   │ resultsSource=  │           │                          │               │
+│   │ "unavailable"   │◄──────────┼──────────────────────────┤               │
+│   │ (OLD behavior)  │           │                          │               │
+│   └─────────────────┘           │                          │               │
+│          │                       │                          │               │
+│          ▼ (NEW: Fallback)       │                          │               │
+│   ┌─────────────────┐           │                          │               │
+│   │ resultsSource=  │◄──────────┴──────────────────────────┘               │
+│   │ "database"      │                                                       │
+│   │ (NEW behavior)  │  Failure Explanation now works after Redis expires!   │
+│   └─────────────────┘                                                       │
 │                                                                              │
 │   TTL is controlled per subscription tier:                                   │
 │   • Free:       ReportRetentionDays = 7                                      │
 │   • Pro:        ReportRetentionDays = 30                                     │
 │   • Enterprise: ReportRetentionDays = 365                                    │
+│                                                                              │
+│   NOTE: PostgreSQL TestCaseResults are PERMANENT. Only Redis expires.        │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

@@ -2,8 +2,10 @@ using ClassifiedAds.Contracts.TestExecution.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.ConfigurationOptions;
 using ClassifiedAds.Modules.TestExecution.Entities;
+using ClassifiedAds.Modules.TestExecution.Models.Validators;
 using ClassifiedAds.Modules.TestExecution.Persistence;
 using ClassifiedAds.Modules.TestExecution.Services;
+using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -37,12 +39,14 @@ public static class TestExecutionServiceCollectionExtensions
         services
             .AddScoped<IRepository<ExecutionEnvironment, Guid>, Repository<ExecutionEnvironment, Guid>>()
             .AddScoped<IRepository<TestRun, Guid>, Repository<TestRun, Guid>>()
+            .AddScoped<IRepository<TestCaseResult, Guid>, Repository<TestCaseResult, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
 
         services.AddScoped<IExecutionAuthConfigService, ExecutionAuthConfigService>();
         services.AddScoped<ITestFailureReadGatewayService, TestFailureReadGatewayService>();
         services.AddScoped<ITestRunReportReadGatewayService, TestRunReportReadGatewayService>();
+        services.AddValidatorsFromAssemblyContaining<StartTestRunRequestValidator>();
 
         // FE-07/08: Test Execution Engine + Rule-Based Validation
         services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
