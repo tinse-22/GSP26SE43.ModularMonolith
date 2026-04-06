@@ -63,6 +63,11 @@ public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuer
         {
             queryable = queryable.Where(x => x.ReviewStatus == reviewStatus);
         }
+        else
+        {
+            // Default view focuses on active queue and reviewed items, not historical superseded rows.
+            queryable = queryable.Where(x => x.ReviewStatus != ReviewStatus.Superseded);
+        }
 
         // Filter by test type
         if (!string.IsNullOrWhiteSpace(query.FilterByTestType)

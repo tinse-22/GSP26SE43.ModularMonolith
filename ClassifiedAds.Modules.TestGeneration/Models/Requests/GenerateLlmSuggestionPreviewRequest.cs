@@ -1,4 +1,5 @@
 using System;
+using ClassifiedAds.Modules.TestGeneration.Models;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models.Requests;
 
@@ -16,4 +17,10 @@ public class GenerateLlmSuggestionPreviewRequest
     /// If true, supersedes existing pending suggestions and generates fresh ones.
     /// </summary>
     public bool ForceRefresh { get; set; }
+
+    /// <summary>
+    /// Optional algorithm profile for suggestion generation.
+    /// If omitted, all algorithms are enabled.
+    /// </summary>
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
 }
