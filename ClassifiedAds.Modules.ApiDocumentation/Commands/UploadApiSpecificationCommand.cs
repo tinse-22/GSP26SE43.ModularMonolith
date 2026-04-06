@@ -252,6 +252,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
         // 6. Create spec + endpoints + optionally activate (in transaction)
         var spec = new ApiSpecification
         {
+            Id = Guid.NewGuid(),
             ProjectId = command.ProjectId,
             OriginalFileId = fileEntryId,
             Name = command.Name.Trim(),

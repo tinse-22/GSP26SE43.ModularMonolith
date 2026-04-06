@@ -63,7 +63,7 @@ public class AddUpdateEndpointCommandHandlerTests
         _endpointRepoMock.Setup(x => x.GetQueryableSet())
             .Returns(new List<ApiEndpoint>().AsQueryable());
         _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
-            .Callback<ApiEndpoint, CancellationToken>((e, _) => { if (e.Id == Guid.Empty) e.Id = Guid.NewGuid(); });
+            .Returns(Task.CompletedTask);
         _parameterRepoMock.Setup(x => x.GetQueryableSet())
             .Returns(new TestAsyncEnumerable<EndpointParameter>(new List<EndpointParameter>()));
         _responseRepoMock.Setup(x => x.GetQueryableSet())
@@ -128,6 +128,15 @@ public class AddUpdateEndpointCommandHandlerTests
     {
         // Arrange
         SetupValidProjectAndSpec();
+        var createdEndpoints = new List<ApiEndpoint>();
+        var createdParameters = new List<EndpointParameter>();
+
+        _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
+            .Callback<ApiEndpoint, CancellationToken>((endpoint, _) => createdEndpoints.Add(endpoint))
+            .Returns(Task.CompletedTask);
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
 
         var command = new AddUpdateEndpointCommand
         {
@@ -153,6 +162,11 @@ public class AddUpdateEndpointCommandHandlerTests
         _parameterRepoMock.Verify(
             x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+        createdEndpoints.Should().ContainSingle();
+        createdEndpoints[0].Id.Should().NotBe(Guid.Empty);
+        createdParameters.Should().HaveCount(2);
+        createdParameters.Select(x => x.Id).Should().OnlyContain(x => x != Guid.Empty);
+        createdParameters.Select(x => x.EndpointId).Should().OnlyContain(x => x == createdEndpoints[0].Id);
     }
 
     [Fact]

@@ -65,7 +65,7 @@ public class ParseUploadedSpecificationCommandHandlerTests
             .ReturnsAsync(new List<SecurityScheme>());
 
         _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
-            .Callback<ApiEndpoint, CancellationToken>((e, _) => { if (e.Id == Guid.Empty) e.Id = Guid.NewGuid(); });
+            .Returns(Task.CompletedTask);
 
         _parserMock.Setup(x => x.CanParse(SourceType.OpenAPI)).Returns(true);
 
@@ -305,6 +305,19 @@ public class ParseUploadedSpecificationCommandHandlerTests
         SetupSpecFound(spec);
         SetupFileDownload();
         SetupParseSuccess(endpointCount: 2, schemeCount: 1);
+        var createdEndpoints = new List<ApiEndpoint>();
+        var createdParameters = new List<EndpointParameter>();
+        var createdResponses = new List<EndpointResponse>();
+
+        _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
+            .Callback<ApiEndpoint, CancellationToken>((endpoint, _) => createdEndpoints.Add(endpoint))
+            .Returns(Task.CompletedTask);
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
+        _responseRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointResponse>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointResponse, CancellationToken>((response, _) => createdResponses.Add(response))
+            .Returns(Task.CompletedTask);
 
         var command = new ParseUploadedSpecificationCommand { SpecificationId = _specId };
 
@@ -331,6 +344,14 @@ public class ParseUploadedSpecificationCommandHandlerTests
         _responseRepoMock.Verify(
             x => x.AddAsync(It.IsAny<EndpointResponse>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+        createdEndpoints.Should().HaveCount(2);
+        createdEndpoints.Select(x => x.Id).Should().OnlyContain(x => x != Guid.Empty);
+        createdParameters.Should().HaveCount(2);
+        createdParameters.Select(x => x.Id).Should().OnlyContain(x => x != Guid.Empty);
+        createdParameters.Select(x => x.EndpointId).Should().BeEquivalentTo(createdEndpoints.Select(x => x.Id));
+        createdResponses.Should().HaveCount(2);
+        createdResponses.Select(x => x.Id).Should().OnlyContain(x => x != Guid.Empty);
+        createdResponses.Select(x => x.EndpointId).Should().BeEquivalentTo(createdEndpoints.Select(x => x.Id));
 
         // Verify security schemes were created
         _securitySchemeRepoMock.Verify(
@@ -435,6 +456,15 @@ public class ParseUploadedSpecificationCommandHandlerTests
         var spec = CreatePendingSpec();
         SetupSpecFound(spec);
         SetupFileDownload();
+        var createdEndpoints = new List<ApiEndpoint>();
+        var createdSecurityRequirements = new List<EndpointSecurityReq>();
+
+        _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
+            .Callback<ApiEndpoint, CancellationToken>((endpoint, _) => createdEndpoints.Add(endpoint))
+            .Returns(Task.CompletedTask);
+        _securityReqRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointSecurityReq>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointSecurityReq, CancellationToken>((securityRequirement, _) => createdSecurityRequirements.Add(securityRequirement))
+            .Returns(Task.CompletedTask);
 
         _parserMock.Setup(x => x.ParseAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SpecificationParseResult
@@ -481,6 +511,11 @@ public class ParseUploadedSpecificationCommandHandlerTests
                 r.SecurityType == SecurityType.Bearer && r.SchemeName == "bearerAuth"),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+        createdEndpoints.Should().ContainSingle();
+        createdEndpoints[0].Id.Should().NotBe(Guid.Empty);
+        createdSecurityRequirements.Should().ContainSingle();
+        createdSecurityRequirements[0].Id.Should().NotBe(Guid.Empty);
+        createdSecurityRequirements[0].EndpointId.Should().Be(createdEndpoints[0].Id);
 
         _securitySchemeRepoMock.Verify(
             x => x.AddAsync(It.Is<SecurityScheme>(s =>

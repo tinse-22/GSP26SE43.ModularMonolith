@@ -59,7 +59,7 @@ public class CreateManualSpecificationCommandHandlerTests
                 async (operation, _, ct) => await operation(ct));
 
         _specServiceMock.Setup(x => x.AddAsync(It.IsAny<ApiSpecification>(), It.IsAny<CancellationToken>()))
-            .Callback<ApiSpecification, CancellationToken>((s, _) => { if (s.Id == Guid.Empty) s.Id = Guid.NewGuid(); });
+            .Returns(Task.CompletedTask);
 
         _handler = new CreateManualSpecificationCommandHandler(
             _projectRepoMock.Object,
@@ -136,6 +136,15 @@ public class CreateManualSpecificationCommandHandlerTests
     {
         // Arrange
         SetupValidProject();
+        var createdEndpoints = new List<ApiEndpoint>();
+        var createdParameters = new List<EndpointParameter>();
+
+        _endpointRepoMock.Setup(x => x.AddAsync(It.IsAny<ApiEndpoint>(), It.IsAny<CancellationToken>()))
+            .Callback<ApiEndpoint, CancellationToken>((endpoint, _) => createdEndpoints.Add(endpoint))
+            .Returns(Task.CompletedTask);
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
 
         var command = new CreateManualSpecificationCommand
         {
@@ -167,6 +176,11 @@ public class CreateManualSpecificationCommandHandlerTests
         _parameterRepoMock.Verify(
             x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+        createdEndpoints.Should().ContainSingle();
+        createdEndpoints[0].Id.Should().NotBe(Guid.Empty);
+        createdParameters.Should().HaveCount(2);
+        createdParameters.Select(x => x.Id).Should().OnlyContain(x => x != Guid.Empty);
+        createdParameters.Select(x => x.EndpointId).Should().OnlyContain(x => x == createdEndpoints[0].Id);
     }
 
     [Fact]
