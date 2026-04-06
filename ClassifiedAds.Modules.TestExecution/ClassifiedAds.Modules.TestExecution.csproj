@@ -6,6 +6,7 @@
 
     <ItemGroup>
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
+        <PackageReference Include="FluentValidation" Version="11.11.0" />
         <PackageReference Include="JsonSchema.Net" Version="*" />
         <PackageReference Include="StyleCop.Analyzers" Version="1.1.118">
             <PrivateAssets>all</PrivateAssets>

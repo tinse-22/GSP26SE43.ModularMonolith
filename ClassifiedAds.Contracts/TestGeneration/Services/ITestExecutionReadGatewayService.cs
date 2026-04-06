@@ -16,4 +16,8 @@ public interface ITestExecutionReadGatewayService
         Guid testSuiteId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<Guid>> GetTestCaseIdsBySuiteAsync(
+        Guid testSuiteId,
+        CancellationToken ct = default);
 }

@@ -12,5 +12,6 @@ public interface ITestExecutionOrchestrator
             Guid testRunId,
             Guid currentUserId,
             IReadOnlyCollection<Guid> selectedTestCaseIds,
-            CancellationToken ct = default);
+            CancellationToken ct = default,
+            bool strictValidation = false);
 }

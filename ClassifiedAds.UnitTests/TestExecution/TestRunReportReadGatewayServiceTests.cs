@@ -7,6 +7,7 @@ using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
 using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,6 +26,7 @@ public class TestRunReportReadGatewayServiceTests
     };
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepositoryMock;
+    private readonly Mock<IRepository<TestCaseResult, Guid>> _resultRepositoryMock;
     private readonly Mock<IDistributedCache> _cacheMock;
     private readonly Mock<ITestExecutionReadGatewayService> _executionReadGatewayMock;
     private readonly TestRunReportReadGatewayService _service;
@@ -37,13 +39,20 @@ public class TestRunReportReadGatewayServiceTests
     public TestRunReportReadGatewayServiceTests()
     {
         _runRepositoryMock = new Mock<IRepository<TestRun, Guid>>();
+        _resultRepositoryMock = new Mock<IRepository<TestCaseResult, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
         _executionReadGatewayMock = new Mock<ITestExecutionReadGatewayService>();
+        _resultRepositoryMock.Setup(x => x.GetQueryableSet())
+            .Returns(Array.Empty<TestCaseResult>().AsQueryable());
+        _resultRepositoryMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseResult>>()))
+            .ReturnsAsync((IQueryable<TestCaseResult> query) => query.ToList());
 
         _service = new TestRunReportReadGatewayService(
             _runRepositoryMock.Object,
+            _resultRepositoryMock.Object,
             _cacheMock.Object,
-            _executionReadGatewayMock.Object);
+            _executionReadGatewayMock.Object,
+            new Mock<ILogger<TestRunReportReadGatewayService>>().Object);
     }
 
     [Fact]
@@ -227,6 +236,60 @@ public class TestRunReportReadGatewayServiceTests
         // Assert
         result.RecentRuns.Should().ContainSingle();
         result.RecentRuns[0].RunNumber.Should().Be(9);
+    }
+
+    [Fact]
+    public async Task GetReportContextAsync_CacheThrows_ShouldFallBackToDatabase()
+    {
+        // Arrange
+        var currentRun = CreateRun(Guid.NewGuid(), runNumber: 10, status: TestRunStatus.Failed, resultsExpireAt: DateTimeOffset.UtcNow.AddHours(1));
+        var testCaseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        SetupSuiteAccessContext();
+        SetupRunRepository(currentRun);
+        _cacheMock.Setup(x => x.GetAsync(currentRun.RedisKey, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis offline"));
+        _resultRepositoryMock.Setup(x => x.GetQueryableSet())
+            .Returns(new[]
+            {
+                new TestCaseResult
+                {
+                    Id = Guid.NewGuid(),
+                    TestRunId = currentRun.Id,
+                    TestCaseId = testCaseId,
+                    EndpointId = endpointId,
+                    Name = "Recovered case",
+                    OrderIndex = 1,
+                    Status = "Failed",
+                    HttpStatusCode = 500,
+                    DurationMs = 250,
+                    ResolvedUrl = "/api/orders",
+                    RequestHeaders = "{\"Content-Type\":\"application/json\"}",
+                    ResponseHeaders = "{\"X-Trace-Id\":\"trace-001\"}",
+                    ResponseBodyPreview = "{\"error\":\"boom\"}",
+                    FailureReasons = "[{\"code\":\"STATUS_CODE_MISMATCH\",\"message\":\"Expected 201 but got 500.\",\"target\":\"statusCode\",\"expected\":\"201\",\"actual\":\"500\"}]",
+                    ExtractedVariables = "{\"traceId\":\"trace-001\"}",
+                    DependencyIds = "[]",
+                    SkippedBecauseDependencyIds = "[]",
+                    StatusCodeMatched = false,
+                    SchemaMatched = false,
+                    HeaderChecksPassed = true,
+                    BodyContainsPassed = false,
+                    BodyNotContainsPassed = true,
+                    JsonPathChecksPassed = false,
+                    ResponseTimePassed = true,
+                },
+            }.AsQueryable());
+        SetupExecutionContext(CreateExecutionTestCase(testCaseId, endpointId, 1, Guid.NewGuid()));
+
+        // Act
+        var result = await _service.GetReportContextAsync(_suiteId, currentRun.Id);
+
+        // Assert
+        result.Results.Should().ContainSingle();
+        result.Results[0].Name.Should().Be("Recovered case");
+        result.Results[0].Status.Should().Be("Failed");
     }
 
     private void SetupSuiteAccessContext()

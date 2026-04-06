@@ -6,6 +6,7 @@ using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
 using ClassifiedAds.Modules.TestExecution.Queries;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,6 +25,7 @@ public class GetTestRunResultsQueryHandlerTests
     };
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
+    private readonly Mock<IRepository<TestCaseResult, Guid>> _resultRepoMock;
     private readonly Mock<IDistributedCache> _cacheMock;
     private readonly Mock<ITestExecutionReadGatewayService> _gatewayMock;
     private readonly GetTestRunResultsQueryHandler _handler;
@@ -33,13 +35,21 @@ public class GetTestRunResultsQueryHandlerTests
     public GetTestRunResultsQueryHandlerTests()
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
+        _resultRepoMock = new Mock<IRepository<TestCaseResult, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
         _gatewayMock = new Mock<ITestExecutionReadGatewayService>();
 
+        _resultRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(Array.Empty<TestCaseResult>().AsQueryable());
+        _resultRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseResult>>()))
+            .ReturnsAsync((IQueryable<TestCaseResult> query) => query.ToList());
+
         _handler = new GetTestRunResultsQueryHandler(
             _runRepoMock.Object,
+            _resultRepoMock.Object,
             _cacheMock.Object,
-            _gatewayMock.Object);
+            _gatewayMock.Object,
+            new Mock<ILogger<GetTestRunResultsQueryHandler>>().Object);
     }
 
     [Fact]
@@ -86,7 +96,7 @@ public class GetTestRunResultsQueryHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_EmptyRedisKey_ShouldThrowConflictException()
+    public async Task HandleAsync_EmptyRedisKey_ShouldReturnUnavailable()
     {
         // Arrange
         var runId = Guid.NewGuid();
@@ -105,14 +115,15 @@ public class GetTestRunResultsQueryHandlerTests
         SetupRunRepository(run);
 
         // Act
-        var act = () => _handler.HandleAsync(query);
+        var result = await _handler.HandleAsync(query);
 
         // Assert
-        await act.Should().ThrowAsync<ConflictException>();
+        result.ResultsSource.Should().Be("unavailable");
+        result.Cases.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task HandleAsync_CacheExpired_ShouldThrowConflictException()
+    public async Task HandleAsync_CacheExpired_ShouldReturnUnavailable()
     {
         // Arrange
         var runId = Guid.NewGuid();
@@ -130,14 +141,15 @@ public class GetTestRunResultsQueryHandlerTests
         SetupRunRepository(run);
 
         // Act
-        var act = () => _handler.HandleAsync(query);
+        var result = await _handler.HandleAsync(query);
 
         // Assert
-        await act.Should().ThrowAsync<ConflictException>();
+        result.ResultsSource.Should().Be("unavailable");
+        result.Cases.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task HandleAsync_CacheMissing_ShouldThrowConflictException()
+    public async Task HandleAsync_CacheMissing_ShouldReturnUnavailable()
     {
         // Arrange
         var runId = Guid.NewGuid();
@@ -159,10 +171,11 @@ public class GetTestRunResultsQueryHandlerTests
             .ReturnsAsync((byte[])null);
 
         // Act
-        var act = () => _handler.HandleAsync(query);
+        var result = await _handler.HandleAsync(query);
 
         // Assert
-        await act.Should().ThrowAsync<ConflictException>();
+        result.ResultsSource.Should().Be("unavailable");
+        result.Cases.Should().BeEmpty();
     }
 
     [Fact]
@@ -214,6 +227,53 @@ public class GetTestRunResultsQueryHandlerTests
         result.Cases.Should().HaveCount(1);
         result.Cases[0].Name.Should().Be("Test 1");
         result.Run.Should().NotBeNull();
+        result.Run.Id.Should().Be(runId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CacheThrows_ShouldFallBackToDatabase()
+    {
+        // Arrange
+        var runId = Guid.NewGuid();
+        var suiteId = Guid.NewGuid();
+        var run = CreateTestRun(runId, suiteId, resultsExpireAt: DateTimeOffset.UtcNow.AddDays(1));
+        var testCaseId = Guid.NewGuid();
+
+        var query = new GetTestRunResultsQuery
+        {
+            TestSuiteId = suiteId,
+            RunId = runId,
+            CurrentUserId = _ownerId,
+        };
+
+        SetupGateway(suiteId, _ownerId);
+        SetupRunRepository(run);
+        _resultRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new[]
+            {
+                new TestCaseResult
+                {
+                    Id = Guid.NewGuid(),
+                    TestRunId = runId,
+                    TestCaseId = testCaseId,
+                    Name = "Recovered case",
+                    OrderIndex = 1,
+                    Status = "Passed",
+                    DurationMs = 42,
+                    StatusCodeMatched = true,
+                },
+            }.AsQueryable());
+
+        _cacheMock.Setup(x => x.GetAsync(run.RedisKey, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis offline"));
+
+        // Act
+        var result = await _handler.HandleAsync(query);
+
+        // Assert
+        result.ResultsSource.Should().Be("database");
+        result.Cases.Should().ContainSingle();
+        result.Cases[0].Name.Should().Be("Recovered case");
         result.Run.Id.Should().Be(runId);
     }
 

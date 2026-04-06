@@ -426,7 +426,7 @@ public class RuleBasedValidatorTests
     #region No Expectation
 
     [Fact]
-    public void Validate_NoExpectation_Should_Pass()
+    public void Validate_NoExpectation_Should_PassWithWarning()
     {
         // Arrange
         var response = CreateResponse();
@@ -441,6 +441,92 @@ public class RuleBasedValidatorTests
 
         // Assert
         result.IsPassed.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "NO_EXPECTATION_DEFINED");
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    [Fact]
+    public void Validate_NoExpectation_StrictMode_Should_Fail()
+    {
+        // Arrange
+        var response = CreateResponse();
+        var testCase = new ExecutionTestCaseDto
+        {
+            TestCaseId = Guid.NewGuid(),
+            Expectation = null,
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, strictMode: true);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "NO_EXPECTATION");
+        result.Warnings.Should().BeEmpty();
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    [Fact]
+    public void Validate_AllChecksSkipped_Should_PassWithWarning()
+    {
+        // Arrange
+        var response = CreateResponse();
+        var testCase = CreateTestCase(
+            expectedStatus: string.Empty,
+            responseSchema: string.Empty,
+            headerChecks: string.Empty,
+            bodyContains: string.Empty,
+            bodyNotContains: string.Empty,
+            jsonPathChecks: string.Empty,
+            maxResponseTime: null);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "ALL_CHECKS_SKIPPED");
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    #endregion
+
+    #region Expectation Format
+
+    [Theory]
+    [InlineData("abc", null, null, null, null, "ExpectedStatus")]
+    [InlineData(null, "not-json", null, null, null, "HeaderChecks")]
+    [InlineData(null, null, "not-json", null, null, "BodyContains")]
+    [InlineData(null, null, null, "not-json", null, "BodyNotContains")]
+    [InlineData(null, null, null, null, "not-json", "JsonPathChecks")]
+    public void Validate_InvalidExpectationFormat_Should_Fail(
+        string? expectedStatus,
+        string? headerChecks,
+        string? bodyContains,
+        string? bodyNotContains,
+        string? jsonPathChecks,
+        string expectedTarget)
+    {
+        // Arrange
+        var response = CreateResponse(body: "{}", headers: new Dictionary<string, string>());
+        var testCase = CreateTestCase(
+            expectedStatus: expectedStatus,
+            headerChecks: headerChecks,
+            bodyContains: bodyContains,
+            bodyNotContains: bodyNotContains,
+            jsonPathChecks: jsonPathChecks);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f =>
+            f.Code == "INVALID_EXPECTATION_FORMAT" &&
+            f.Target == expectedTarget);
     }
 
     #endregion
@@ -477,9 +563,9 @@ public class RuleBasedValidatorTests
 
     private static HttpTestResponse CreateResponse(
         int statusCode = 200,
-        string body = null,
+        string? body = null,
         long latencyMs = 100,
-        Dictionary<string, string> headers = null)
+        Dictionary<string, string>? headers = null)
     {
         return new HttpTestResponse
         {
@@ -491,12 +577,12 @@ public class RuleBasedValidatorTests
     }
 
     private static ExecutionTestCaseDto CreateTestCase(
-        string expectedStatus = null,
-        string responseSchema = null,
-        string headerChecks = null,
-        string bodyContains = null,
-        string bodyNotContains = null,
-        string jsonPathChecks = null,
+        string? expectedStatus = null,
+        string? responseSchema = null,
+        string? headerChecks = null,
+        string? bodyContains = null,
+        string? bodyNotContains = null,
+        string? jsonPathChecks = null,
         int? maxResponseTime = null)
     {
         return new ExecutionTestCaseDto
