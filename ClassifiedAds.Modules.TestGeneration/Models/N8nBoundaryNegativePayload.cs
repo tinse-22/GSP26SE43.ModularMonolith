@@ -14,6 +14,8 @@ public class N8nBoundaryNegativePayload
 
     public string GlobalBusinessRules { get; set; }
 
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
+
     public N8nSuggestionPromptConfig PromptConfig { get; set; } = new();
 
     public List<N8nBoundaryEndpointPayload> Endpoints { get; set; } = new();

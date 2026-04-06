@@ -144,18 +144,54 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         ValidationException.Requires(
             approvalItems.All(x => x.Suggestion.TestSuiteId == suite.Id),
             "Tất cả suggestions phải thuộc về test suite được review.");
-        EnsureSuggestionsArePending(approvalItems.Select(x => x.Suggestion));
+        EnsureSuggestionsAreApprovableForMaterialization(approvalItems.Select(x => x.Suggestion));
 
-        var limitCheck = await _subscriptionLimitService.CheckLimitAsync(
-            currentUserId,
-            LimitType.MaxTestCasesPerSuite,
-            approvalItems.Count,
-            cancellationToken);
+        var previouslyApprovedSuggestions = await _suggestionRepository.ToListAsync(
+            _suggestionRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == suite.Id
+                    && x.AppliedTestCaseId.HasValue
+                    && (x.ReviewStatus == ReviewStatus.Approved
+                        || x.ReviewStatus == ReviewStatus.ModifiedAndApproved)));
 
-        if (!limitCheck.IsAllowed)
+        var fingerprintToAppliedTestCaseId = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        foreach (var approvedSuggestion in previouslyApprovedSuggestions)
         {
-            throw new ValidationException(
-                $"Đã vượt quá giới hạn test case cho gói subscription. {limitCheck.DenialReason}");
+            if (!approvedSuggestion.AppliedTestCaseId.HasValue)
+            {
+                continue;
+            }
+
+            var fingerprint = BuildApprovalFingerprint(approvedSuggestion, modifiedContent: null);
+            if (!fingerprintToAppliedTestCaseId.ContainsKey(fingerprint))
+            {
+                fingerprintToAppliedTestCaseId[fingerprint] = approvedSuggestion.AppliedTestCaseId.Value;
+            }
+        }
+
+        var pendingFingerprintSet = new HashSet<string>(fingerprintToAppliedTestCaseId.Keys, StringComparer.Ordinal);
+        var potentialNewCount = 0;
+        foreach (var approvalItem in approvalItems)
+        {
+            var fingerprint = BuildApprovalFingerprint(approvalItem.Suggestion, approvalItem.ModifiedContent);
+            if (pendingFingerprintSet.Add(fingerprint))
+            {
+                potentialNewCount++;
+            }
+        }
+
+        if (potentialNewCount > 0)
+        {
+            var limitCheck = await _subscriptionLimitService.CheckLimitAsync(
+                currentUserId,
+                LimitType.MaxTestCasesPerSuite,
+                potentialNewCount,
+                cancellationToken);
+
+            if (!limitCheck.IsAllowed)
+            {
+                throw new ValidationException(
+                    $"Đã vượt quá giới hạn test case cho gói subscription. {limitCheck.DenialReason}");
+            }
         }
 
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(suite.Id, cancellationToken);
@@ -179,6 +215,23 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 {
                     var suggestion = approvalItem.Suggestion;
                     var isModify = approvalItem.ModifiedContent != null;
+                    var approvalFingerprint = BuildApprovalFingerprint(suggestion, approvalItem.ModifiedContent);
+
+                    if (fingerprintToAppliedTestCaseId.TryGetValue(approvalFingerprint, out var existingAppliedTestCaseId))
+                    {
+                        suggestion.ReviewStatus = isModify
+                            ? ReviewStatus.ModifiedAndApproved
+                            : ReviewStatus.Approved;
+                        suggestion.ReviewedById = currentUserId;
+                        suggestion.ReviewedAt = now;
+                        suggestion.ReviewNotes = approvalItem.ReviewNotes;
+                        suggestion.AppliedTestCaseId = existingAppliedTestCaseId;
+                        suggestion.UpdatedDateTime = now;
+                        suggestion.RowVersion = Guid.NewGuid().ToByteArray();
+
+                        await _suggestionRepository.UpdateAsync(suggestion, ct);
+                        continue;
+                    }
 
                     ApiOrderItemModel orderItem = null;
                     if (suggestion.EndpointId.HasValue)
@@ -192,6 +245,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 
                     testCase.CreatedDateTime = now;
                     materializedTestCases.Add(testCase);
+                    fingerprintToAppliedTestCaseId[approvalFingerprint] = testCase.Id;
 
                     suggestion.ReviewStatus = isModify
                         ? ReviewStatus.ModifiedAndApproved
@@ -256,6 +310,11 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 }, ct);
 
                 suite.Version += 1;
+                if (suite.Status != TestSuiteStatus.Archived &&
+                    (existingTestCases.Count > 0 || materializedTestCases.Count > 0))
+                {
+                    suite.Status = TestSuiteStatus.Ready;
+                }
                 suite.LastModifiedById = currentUserId;
                 suite.UpdatedDateTime = now;
                 suite.RowVersion = Guid.NewGuid().ToByteArray();
@@ -271,14 +330,17 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 "Suggestion đã được thay đổi bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
 
-        await _subscriptionLimitService.IncrementUsageAsync(
-            new IncrementUsageRequest
-            {
-                UserId = currentUserId,
-                LimitType = LimitType.MaxTestCasesPerSuite,
-                IncrementValue = approvalItems.Count,
-            },
-            cancellationToken);
+        if (materializedTestCases.Count > 0)
+        {
+            await _subscriptionLimitService.IncrementUsageAsync(
+                new IncrementUsageRequest
+                {
+                    UserId = currentUserId,
+                    LimitType = LimitType.MaxTestCasesPerSuite,
+                    IncrementValue = materializedTestCases.Count,
+                },
+                cancellationToken);
+        }
 
         _logger.LogInformation(
             "Approved {SuggestionCount} LLM suggestion(s). SuggestionIds={SuggestionIds}, TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
@@ -366,6 +428,17 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             "Chỉ có thể review suggestions đang Pending trong shared review service.");
     }
 
+    private static void EnsureSuggestionsAreApprovableForMaterialization(IEnumerable<LlmSuggestion> suggestions)
+    {
+        ValidationException.Requires(
+            suggestions.All(x =>
+                x.ReviewStatus == ReviewStatus.Pending
+                || ((x.ReviewStatus == ReviewStatus.Approved
+                        || x.ReviewStatus == ReviewStatus.ModifiedAndApproved)
+                    && !x.AppliedTestCaseId.HasValue)),
+            "Chỉ có thể materialize suggestions ở trạng thái Pending, hoặc Approved/ModifiedAndApproved nhưng chưa có AppliedTestCaseId.");
+    }
+
     private static void EnsureNoDuplicateSuggestions(IEnumerable<Guid> suggestionIds)
     {
         var duplicateIds = suggestionIds
@@ -377,5 +450,52 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         ValidationException.Requires(
             duplicateIds.Count == 0,
             "Danh sách suggestion review không được chứa phần tử trùng lặp.");
+    }
+
+    private static string BuildApprovalFingerprint(
+        LlmSuggestion suggestion,
+        EditableLlmSuggestionInput modifiedContent)
+    {
+        var fingerprintPayload = new
+        {
+            endpointId = suggestion.EndpointId,
+            suggestionType = suggestion.SuggestionType.ToString(),
+            testType = (modifiedContent?.TestType ?? suggestion.TestType.ToString())?.Trim(),
+            priority = (modifiedContent?.Priority ?? suggestion.Priority.ToString())?.Trim(),
+            name = (modifiedContent?.Name ?? suggestion.SuggestedName)?.Trim(),
+            description = (modifiedContent?.Description ?? suggestion.SuggestedDescription)?.Trim(),
+            tags = NormalizeJson(modifiedContent?.Tags != null
+                ? JsonSerializer.Serialize(modifiedContent.Tags, JsonOpts)
+                : suggestion.SuggestedTags),
+            request = NormalizeJson(modifiedContent?.Request != null
+                ? JsonSerializer.Serialize(modifiedContent.Request, JsonOpts)
+                : suggestion.SuggestedRequest),
+            expectation = NormalizeJson(modifiedContent?.Expectation != null
+                ? JsonSerializer.Serialize(modifiedContent.Expectation, JsonOpts)
+                : suggestion.SuggestedExpectation),
+            variables = NormalizeJson(modifiedContent?.Variables != null
+                ? JsonSerializer.Serialize(modifiedContent.Variables, JsonOpts)
+                : suggestion.SuggestedVariables),
+        };
+
+        return JsonSerializer.Serialize(fingerprintPayload, JsonOpts);
+    }
+
+    private static string NormalizeJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return JsonSerializer.Serialize(document.RootElement, JsonOpts);
+        }
+        catch
+        {
+            return value.Trim();
+        }
     }
 }

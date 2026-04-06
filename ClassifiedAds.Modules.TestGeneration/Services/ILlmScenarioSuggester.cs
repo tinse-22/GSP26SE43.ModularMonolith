@@ -34,6 +34,8 @@ public class LlmScenarioSuggestionContext
     public Guid SpecificationId { get; set; }
 
     public IReadOnlyDictionary<Guid, EndpointParameterDetailDto> EndpointParameterDetails { get; set; } = new Dictionary<Guid, EndpointParameterDetailDto>();
+
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
 }
 
 public class LlmScenarioSuggestionResult

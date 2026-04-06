@@ -60,6 +60,7 @@ public class LlmSuggestionsController : ControllerBase
             CurrentUserId = _currentUser.UserId,
             SpecificationId = request.SpecificationId,
             ForceRefresh = request.ForceRefresh,
+            AlgorithmProfile = request.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
         };
 
         await _dispatcher.DispatchAsync(command);

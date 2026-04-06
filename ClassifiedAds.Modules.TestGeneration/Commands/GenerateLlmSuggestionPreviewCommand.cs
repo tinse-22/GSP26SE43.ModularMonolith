@@ -22,6 +22,7 @@ public class GenerateLlmSuggestionPreviewCommand : ICommand
     public Guid CurrentUserId { get; set; }
     public Guid SpecificationId { get; set; }
     public bool ForceRefresh { get; set; }
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
     public GenerateLlmSuggestionPreviewResultModel Result { get; set; }
 }
 
@@ -115,6 +116,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             Suite = suite,
             OrderedEndpoints = approvedOrder,
             SpecificationId = command.SpecificationId,
+            AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
         };
 
         var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
@@ -135,17 +137,19 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             return;
         }
 
-        // 7) Supersede existing pending suggestions
+        // 7) Supersede existing non-materialized suggestions (treat new generate as active batch)
         var existingSuggestions = await _suggestionRepository.ToListAsync(
             _suggestionRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == command.TestSuiteId
-                    && x.ReviewStatus == ReviewStatus.Pending));
+                    && !x.AppliedTestCaseId.HasValue));
 
         var now = DateTimeOffset.UtcNow;
 
         foreach (var existing in existingSuggestions)
         {
             existing.ReviewStatus = ReviewStatus.Superseded;
+            existing.ReviewedById = command.CurrentUserId;
+            existing.ReviewedAt = now;
             existing.UpdatedDateTime = now;
             existing.RowVersion = Guid.NewGuid().ToByteArray();
             await _suggestionRepository.UpdateAsync(existing, cancellationToken);
@@ -167,7 +171,9 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 EndpointId = scenario.EndpointId,
                 CacheKey = null,
                 DisplayOrder = displayOrder++,
-                SuggestionType = LlmSuggestionType.BoundaryNegative,
+                SuggestionType = scenario.SuggestedTestType == TestType.HappyPath
+                    ? LlmSuggestionType.HappyPath
+                    : LlmSuggestionType.BoundaryNegative,
                 TestType = scenario.SuggestedTestType,
                 SuggestedName = LlmSuggestionMaterializer.SanitizeName(scenario.ScenarioName, orderItem),
                 SuggestedDescription = scenario.Description,
