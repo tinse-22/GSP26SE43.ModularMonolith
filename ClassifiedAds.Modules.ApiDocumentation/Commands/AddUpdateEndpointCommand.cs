@@ -156,6 +156,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
 
             var endpoint = new ApiEndpoint
             {
+                Id = Guid.NewGuid(),
                 ApiSpecId = spec.Id,
                 HttpMethod = HttpMethodMap[command.Model.HttpMethod],
                 Path = command.Model.Path.Trim(),
@@ -230,6 +231,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
 
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpointId,
                     Name = paramDef.Name?.Trim(),
                     Location = location,
@@ -249,6 +251,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
             {
                 await _responseRepository.AddAsync(new EndpointResponse
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpointId,
                     StatusCode = resDef.StatusCode,
                     Description = resDef.Description?.Trim(),
