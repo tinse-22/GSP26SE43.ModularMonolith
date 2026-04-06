@@ -7,9 +7,12 @@ Scope: docs only, no code changes in this step
 
 Muc tieu san pham can chot lai la:
 
-- ung dung nay la workspace ca nhan, khong phai mo hinh company / organization / role hierarchy phuc tap
-- `User` mac dinh phai dung duoc gan nhu toan bo tinh nang hang ngay tren du lieu cua chinh ho
-- `Admin` chi giu cac nhom thao tac nhay cam: quan tri user/role, cau hinh he thong, audit log toan he thong, billing admin, payment debug/reconciliation, webhook/integration hardening
+- Ung dung nay la workspace ca nhan, khong phai mo hinh company / organization / role hierarchy phuc tap.
+- **`User` mac dinh co TOAN BO quyen tren he thong**, chi tru cac quyen dac biet (danh cho Admin) nhu:
+  - Xoa / quan tri nguoi dung (Deleted user).
+  - Tao cac goi dich vu (Plan/package management).
+  - Quan ly thanh toan (Payment managements, billing admin, reconciliation).
+  - System Admin (Cau hinh he thong, Global audit log).
 
 ## Current State
 
@@ -89,180 +92,45 @@ Ket luan:
 
 ## Recommended Target Model
 
-## A. Endpoints nen de `User` mac dinh
+## A. Endpoints thuoc quyen `User` mac dinh
 
-### Auth self-service
+Theo nguyen tac "User co toan bo quyen", mac dinh Role `User` se so huu TAT CA cac permission cua cac xu ly nghiep vu/ung dung bao gom:
 
-Khong can permission rieng, chi can authenticated user:
+- ApiDocumentation (Get/Add/Update/Delete Projects, Specs, Endpoints)
+- TestExecution, TestReporting, FailureExplanation (Run, View, Explain test)
+- TestGeneration (Create/Update/Delete Suites, Cases, Generate from AI)
+- Storage (File upload/download)
+- Subscription self-service (Get Plans, Get own subscription, Create payment intent, PayOs Checkout)
+- Auth self-service (Login, Register, Logout, Profile update)
+- Configuration (Get public configs if any)
 
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
-- `POST /api/auth/change-password`
-- `GET /api/auth/me/profile`
-- `PUT /api/auth/me/profile`
-- `POST /api/auth/me/avatar`
-- cac flow anonymous hop le:
-  - register
-  - login
-  - refresh-token
-  - forgot-password
-  - reset-password
-  - confirm-email
-  - resend-confirmation-email
+*Ghi chu:* Mac du co toan quyen su dung chuc nang, he thong phai luon dam bao Resource-level Authorization (kiem tra `OwnerId` hoac `CurrentUserId`) de User chi doc/ghi du lieu cua chinh ho.
 
-### ApiDocumentation
+## B. Endpoints thuoc quyen `Admin-only` (Cac quyen dac biet)
 
-Nen mo toan bo cho `User` mac dinh:
+Nhung quyen sau la "quyền đặc biệt", chi danh rieng cho `Admin` va User khong duoc phep goi:
 
-- `Permission:GetProjects`
-- `Permission:AddProject`
-- `Permission:UpdateProject`
-- `Permission:DeleteProject`
-- `Permission:ArchiveProject`
-- `Permission:GetSpecifications`
-- `Permission:AddSpecification`
-- `Permission:UpdateSpecification`
-- `Permission:DeleteSpecification`
-- `Permission:ActivateSpecification`
-- `Permission:GetEndpoints`
-- `Permission:AddEndpoint`
-- `Permission:UpdateEndpoint`
-- `Permission:DeleteEndpoint`
+### 1. Quan tri nguoi dung (User/Role management)
+- Xoa nguoi dung (Deleted user)
+- Quan ly role, phan quyen (Assign/remove role)
+- Khoa / mo khoa tai khoan (Lock/unlock user)
+- Dat lai mat khau cho user khac
+- Xem tat ca nguoi dung
 
-Ly do:
+### 2. Tao cac goi dich vu (Plan management)
+- Tao cac goi dich vu (`Permission:AddPlan`)
+- Sua, xoa goi dich vu (`Permission:UpdatePlan`, `Permission:DeletePlan`)
+- Xem lich su thay doi cac goi (`Permission:GetPlanAuditLogs`)
 
-- module nay da thiet ke theo `OwnerId`
-- phu hop mo hinh workspace ca nhan
+### 3. Quan ly thanh toan (Payment managements)
+- Cap nhat/tao subscription thu cong khong qua payment gateway (`Permission:AddSubscription`, `Permission:UpdateSubscription`)
+- Ghi nhan giao dich thu cong (`Permission:AddPaymentTransaction`)
+- Dong bo va debug thanh toan (`Permission:SyncPayment`, debug endpoint)
+- Chinh sua usage tracking thu cong (`Permission:UpdateUsageTracking`)
 
-### TestExecution / TestReporting / FailureExplanation
-
-Nen mo cho `User` mac dinh:
-
-- `Permission:StartTestRun`
-- `Permission:GetTestRuns`
-
-Ly do:
-
-- day la flow su dung cot loi cua san pham
-- `TestRuns`, `Reports`, `FailureExplanations` da truyen `CurrentUserId`
-
-### TestGeneration
-
-Muc tieu san pham nen la `User` duoc dung toan bo:
-
-- `Permission:GetTestSuites`
-- `Permission:AddTestSuite`
-- `Permission:UpdateTestSuite`
-- `Permission:DeleteTestSuite`
-- `Permission:ProposeTestOrder`
-- `Permission:GetTestOrderProposal`
-- `Permission:ReorderTestOrder`
-- `Permission:ApproveTestOrder`
-- `Permission:GenerateTestCases`
-- `Permission:GetTestCases`
-- `Permission:GenerateBoundaryNegativeTestCases`
-- `Permission:AddTestCase`
-- `Permission:UpdateTestCase`
-- `Permission:DeleteTestCase`
-
-Nhung rollout nen tach 2 pha:
-
-- Pha 1: mo write/generation flow da co `CurrentUserId`
-- Pha 2: mo read flow sau khi audit them owner filter cho suite/test-case queries
-
-### Subscription self-service
-
-Nen mo cho `User` mac dinh:
-
-- `Permission:GetPlans`
-- `Permission:GetSubscription`
-- `Permission:GetCurrentSubscription`
-- `Permission:CancelSubscription`
-- `Permission:GetSubscriptionHistory`
-- `Permission:GetPaymentTransactions`
-- `Permission:GetUsageTracking` cho du lieu cua chinh user
-- `Permission:CreateSubscriptionPayment`
-- `Permission:GetPaymentIntent`
-- `Permission:CreatePayOsCheckout`
-
-Ghi chu quan trong:
-
-- `CreateSubscriptionPayment` va `CreatePayOsCheckout` la user-facing payment flow, khong nen cho vao `Admin-only`, neu khong user se khong tu mua goi duoc
-- webhook / return URL cua PayOS la integration endpoint, khong xep vao role `User` hay `Admin`
-
-## B. Endpoints nen giu `Admin-only`
-
-### Identity admin
-
-Giu `Admin-only`:
-
-- tat ca permission trong `ClassifiedAds.Modules.Identity/Authorization/Permissions.cs`
-- quan ly role
-- quan ly user
-- assign/remove role
-- lock/unlock user
-- set password cho user khac
-- gui reset password / resend confirmation thay mat user khac
-
-### System configuration
-
-Giu `Admin-only`:
-
-- `Permission:GetConfigurationEntries`
-- `Permission:GetConfigurationEntry`
-- `Permission:AddConfigurationEntry`
-- `Permission:UpdateConfigurationEntry`
-- `Permission:DeleteConfigurationEntry`
-- `ExportAsExcel`
-- `ImportExcel`
-
-Ly do:
-
-- day la system-wide settings
-- co kha nang chua secret / encrypted config
-
-### Global audit log
-
-Giu `Admin-only`:
-
-- `Permission:GetAuditLogs`
-
-Ly do:
-
-- audit log tong hop co the lo metadata cua toan bo he thong
-
-### Subscription admin / billing admin
-
-Nen giu `Admin-only` hoac internal-only:
-
-- `Permission:AddPlan`
-- `Permission:UpdatePlan`
-- `Permission:DeletePlan`
-- `Permission:GetPlanAuditLogs`
-- `Permission:AddSubscription`
-- `Permission:UpdateSubscription`
-- `Permission:AddPaymentTransaction`
-- `Permission:UpdateUsageTracking`
-- `Permission:SyncPayment`
-
-Ly do:
-
-- `AddSubscription` / `UpdateSubscription` hien co the tao hoac nang cap paid subscription truc tiep ma khong di qua payment intent
-- `AddPaymentTransaction` la ghi nhan giao dich thu cong
-- `UpdateUsageTracking` anh huong billing counter
-- `SyncPayment` la manual reconciliation / debug voi PayOS
-
-### Payment debug / operational endpoints
-
-Nen `Admin-only` hoac doi ten sang internal endpoint:
-
-- `POST /api/payments/debug/check-payment/{intentId}`
-- `POST /api/payments/debug/sync-payment/{intentId}`
-
-Ghi chu:
-
-- `GetPaymentIntent` da du cho user tu xem trang thai intent cua ho
-- debug endpoints khong nen la public user-facing contract
+### 4. System operation
+- Quan ly cau hinh he thong (System configuration: Add/Update/Delete/Import/Export)
+- Xem log he thong (Global audit logs: GetAuditLogs)
 
 ## C. Endpoints khong xep theo User/Admin thong thuong
 
@@ -281,48 +149,31 @@ De xuat:
 
 | Nhom | De xuat |
 |------|---------|
-| Auth self-service | Authenticated user |
-| Project / Spec / Endpoint | User |
-| Test generation / execution / reports | User, nhung audit read ownership truoc khi rollout full |
-| File management | Chua mo rong cho toi khi fix owner enforcement |
-| User/Role management | Admin |
-| System configuration | Admin |
-| Global audit logs | Admin |
-| Plan management | Admin |
-| Subscription direct create/update | Admin/Internal |
-| Payment reconciliation / debug | Admin |
+| **Toan bo cac chuc nang ung dung (Core Features)**<br> (Project, Spec, Test Generation/Execution, Storage, LlmAssistant...) | **User**<br> (Co toan quyen su dung tren du lieu cua ho - can check Resource Ownership) |
+| User/Role management (Bao gom Delete User) | Admin |
+| Plan management (Tao cac goi, Sua xoa goi) | Admin |
+| Payment management / Billing admin | Admin |
+| System configuration & Global audit logs | Admin |
 | PayOS webhook / AI callback | Integration auth, khong theo role |
 
 ## Recommended Implementation Order
 
-1. Chot target role model:
-   - `User` = workspace ca nhan day du
-   - `Admin` = system/security/billing admin
-2. Tao bang mapping permission -> role lam single source of truth cho toan repo.
-3. Mo role `User` cho `ApiDocumentation` va nhom test flow an toan truoc.
-4. Dua `AuthController.Register` va `UsersController.Post` ve model dung:
-   - self-register mac dinh chi nhan `User`
-   - create-user khong auto them `Admin` neu khong chu dong chon
-5. Giu `Identity`, `Configuration`, `AuditLog`, `Plan management`, `billing admin` cho `Admin`.
-6. Fix cac security gaps truoc khi mo rong them:
+1. Chot target role model nhu da xac nhan: `User` co toan bo quyen, chi tru cac quyen dac biet cua `Admin` (xoa user, tao goi, quan ly thanh toan).
+2. Tao file / module mapping permission -> role (dieu chinh `RoleClaimConfiguration`) lam single source of truth cho toan repo: tat ca permission ung dung deu nhet vao `User`.
+3. Dua `AuthController.Register` va luong API user ve model dung:
+   - self-register mac dinh chi nhan `User` (se map tu dong voi toan bo quyen ung dung)
+   - Khong auto them `Admin` cho user moi.
+4. Giu cac permission lien quan toi `Identity (User/Role)`, `System Configuration`, `AuditLog`, `Plan management`, `Payment managements` mac dinh mapping cho `Admin`.
+5. Fix cac security gaps de dam bao "User chi xem data cua User" mac du co the truyen input de goi API:
    - owner filter cho `Storage`
-   - `FileEntryAuthorizationHandler`
    - read ownership trong `TestGeneration` / `ExecutionEnvironments`
-   - permission-specific authorize cho `Configuration Export/Import`
-7. Sau khi role mapping on dinh, bo workaround "grant Admin cho user moi".
+6. Sau khi role mapping on dinh, bo workaround "grant Admin cho user moi dang ky".
 
 ## Final Recommendation
 
-Neu follow dung business direction "app ca nhan, khong role hierarchy phuc tap", thi target hop ly nhat la:
+Da dieu chinh va xac nhan lai business direction theo yeu cau:
 
-- `User` duoc dung phan lon tinh nang cot loi
-- `Admin` chi quan ly he thong va billing nhay cam
-- khong tiep tuc giai quyet bang cach gan `Admin` cho tat ca user moi
+- **`User` co TOAN BO QUYEN tren he thong ung dung**.
+- **Chỉ TRỪ cac quyen dac biet** tieu bieu nhu: deleted user (xoa nguoi dung), tao cac goi (quan ly plans/packages), va payment managements (quan tri thanh toan, doi soat).
 
-Tuy nhien, de rollout an toan, can tach ro:
-
-- nhom co the mo ngay
-- nhom phai fix ownership truoc
-- nhom bat buoc giu admin/internal
-
-File nay la baseline de implement o buoc tiep theo, khong nen code truoc khi chot bang mapping nay.
+Khong can chia nho viec add authorization attribute. Co the gan truc tiep tap permission rat lon cho `User` trong bang RoleClaimConfiguration, sau do tap trung fix Data Ownership de hoan tra quyen that su cua "workspace ca nhan" cho nguoi dung binh thuong. File nay la baseline moi nhat de thuc hien viec cap nhat Code.

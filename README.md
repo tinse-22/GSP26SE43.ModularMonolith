@@ -125,7 +125,7 @@ Do not run AppHost and the standalone hosts at the same time unless you intentio
 | WebAPI (full Docker) | http://localhost:9002/docs | REST API documentation when running the full compose stack |
 | RabbitMQ | http://localhost:15672 | guest / guest |
 | PostgreSQL (AppHost local) | localhost:5432 | postgres / postgres |
-| PostgreSQL (standalone compose) | localhost:55432 | postgres / value from `POSTGRES_PASSWORD` |
+| PostgreSQL (standalone compose) | localhost:5432 | postgres / value from `POSTGRES_PASSWORD` |
 | Redis | localhost:6379 | Distributed cache |
 
 ## Project Documentation
