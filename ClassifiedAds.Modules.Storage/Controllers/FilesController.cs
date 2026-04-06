@@ -227,6 +227,19 @@ public class FilesController : Controller
     [HttpGet("{id}/auditlogs")]
     public async Task<ActionResult<IEnumerable<AuditLogEntryDTO>>> GetAuditLogs(Guid id)
     {
+        var fileEntry = await _dispatcher.DispatchAsync(new GetEntityByIdQuery<FileEntry> { Id = id });
+
+        if (fileEntry == null || fileEntry.Deleted)
+        {
+            return Ok(Array.Empty<object>());
+        }
+
+        var authorizationResult = await _authorizationService.AuthorizeAsync(User, fileEntry, Operations.Read);
+        if (!authorizationResult.Succeeded)
+        {
+            return Forbid();
+        }
+
         var logs = await _dispatcher.DispatchAsync(new GetAuditEntriesQuery { ObjectId = id.ToString() });
 
         List<dynamic> entries = new List<dynamic>();
