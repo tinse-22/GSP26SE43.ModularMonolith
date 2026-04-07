@@ -1,5 +1,6 @@
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
+using ClassifiedAds.Infrastructure.Configuration;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
@@ -51,6 +52,8 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+
+AspireResourceEnvironmentBridge.Apply();
 
 if (!isRunningInContainer)
 {

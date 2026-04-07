@@ -3,6 +3,7 @@ using ClassifiedAds.Background.ConfigurationOptions;
 using ClassifiedAds.Background.Identity;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
+using ClassifiedAds.Infrastructure.Configuration;
 using ClassifiedAds.Infrastructure.FeatureToggles.OutboxPublishingToggle;
 using ClassifiedAds.Infrastructure.HealthChecks;
 using ClassifiedAds.Infrastructure.Logging;
@@ -34,6 +35,8 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+
+AspireResourceEnvironmentBridge.Apply();
 
 if (!isRunningInContainer)
 {

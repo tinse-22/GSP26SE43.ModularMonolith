@@ -23,6 +23,7 @@ public class RabbitMQSender<T> : IMessageSender<T>
         _connectionFactory = new ConnectionFactory
         {
             HostName = options.HostName,
+            Port = options.Port,
             UserName = options.UserName,
             Password = options.Password,
         };
