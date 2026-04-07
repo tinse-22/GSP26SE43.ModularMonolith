@@ -68,6 +68,13 @@ if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgres
         $"Falling back to {appHostPostgresHostPort}.");
 }
 
+if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgresHostPort)
+{
+    Console.WriteLine(
+        $"[AppHost] Requested PostgreSQL host port {configuredAppHostPostgresHostPort} is already in use. " +
+        $"Falling back to {appHostPostgresHostPort}.");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Infrastructure Resources
 // ═══════════════════════════════════════════════════════════════════════════════════

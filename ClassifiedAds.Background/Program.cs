@@ -38,6 +38,8 @@ var isRunningInContainer = string.Equals(
     "true",
     StringComparison.OrdinalIgnoreCase);
 
+AspireResourceEnvironmentBridge.Apply();
+
 if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
