@@ -182,19 +182,49 @@ public class TestOrderController : ControllerBase
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> GenerateTests(Guid suiteId)
+    public async Task<ActionResult<GenerateTestsAcceptedResponse>> GenerateTests(Guid suiteId)
     {
-        await _dispatcher.DispatchAsync(new GenerateTestCasesCommand
+        var command = new GenerateTestCasesCommand
         {
             TestSuiteId = suiteId,
             CurrentUserId = _currentUser.UserId,
-        });
+        };
+
+        await _dispatcher.DispatchAsync(command);
 
         _logger.LogInformation(
-            "Triggered test generation. TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
-            suiteId, _currentUser.UserId);
+            "Triggered test generation. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+            suiteId, command.JobId, _currentUser.UserId);
 
-        return Accepted();
+        return Accepted(new GenerateTestsAcceptedResponse
+        {
+            JobId = command.JobId,
+            TestSuiteId = suiteId,
+            Mode = "callback",
+            Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Sử dụng GET /generation-status để kiểm tra trạng thái."
+        });
+    }
+
+    /// <summary>
+    /// Get the status of a test generation job.
+    /// </summary>
+    [Authorize(Permissions.GenerateTestCases)]
+    [HttpGet("generation-status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<GenerationJobStatusDto>> GetGenerationStatus(
+        Guid suiteId,
+        [FromQuery] Guid? jobId = null)
+    {
+        var query = new GetGenerationJobStatusQuery
+        {
+            JobId = jobId ?? Guid.Empty,
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+        };
+
+        var status = await _dispatcher.DispatchAsync(query);
+        return Ok(status);
     }
 
     /// <summary>
@@ -242,4 +272,12 @@ public class TestOrderController : ControllerBase
 public class N8nTestCasesCallbackRequest
 {
     public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new();
+}
+
+public class GenerateTestsAcceptedResponse
+{
+    public Guid JobId { get; set; }
+    public Guid TestSuiteId { get; set; }
+    public string Mode { get; set; }
+    public string Message { get; set; }
 }

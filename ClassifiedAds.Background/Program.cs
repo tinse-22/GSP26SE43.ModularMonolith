@@ -11,6 +11,8 @@ using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Storage.DTOs;
 using ClassifiedAds.Modules.Storage.MessageBusConsumers;
+using ClassifiedAds.Modules.TestGeneration.MessageBusConsumers;
+using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,6 +126,12 @@ Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.Notification.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
+    .AddApiDocumentationModule(opt =>
+    {
+        configuration.GetSection("Modules:ApiDocumentation").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.ApiDocumentation.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
     .AddStorageModule(opt =>
     {
         configuration.GetSection("Modules:Storage").Bind(opt);
@@ -137,6 +145,12 @@ Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings.Default = sharedConnectionString;
         opt.PayOS ??= new ClassifiedAds.Modules.Subscription.ConfigurationOptions.PayOsOptions();
         configuration.GetSection("PayOS").Bind(opt.PayOS);
+    })
+    .AddTestGenerationModule(opt =>
+    {
+        configuration.GetSection("Modules:TestGeneration").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
     })
     .AddApplicationServices();
 
@@ -161,6 +175,7 @@ Host.CreateDefaultBuilder(args)
     services.AddMessageBusSender<FileDeletedEvent>(appSettings.Messaging);
     services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.Messaging);
     services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.Messaging);
+    services.AddMessageBusReceiver<TriggerTestGenerationConsumer, TriggerTestGenerationMessage>(appSettings.Messaging);
 
     // Register feature toggles (e.g., file-based outbox publishing toggle)
     AddFeatureToggles(services);
@@ -182,4 +197,5 @@ static void AddHostedServices(IServiceCollection services)
     services.AddHostedServicesNotificationModule();
     services.AddHostedServicesStorageModule();
     services.AddHostedServicesSubscriptionModule();
+    services.AddHostedServicesTestGenerationModule();
 }

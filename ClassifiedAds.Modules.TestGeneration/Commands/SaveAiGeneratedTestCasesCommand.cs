@@ -76,6 +76,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _testCaseExpectationRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
+    private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
@@ -84,6 +85,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestCaseRequest, Guid> testCaseRequestRepository,
         IRepository<TestCaseExpectation, Guid> testCaseExpectationRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
+        IRepository<TestGenerationJob, Guid> jobRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
@@ -91,6 +93,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         _testCaseRequestRepository = testCaseRequestRepository;
         _testCaseExpectationRepository = testCaseExpectationRepository;
         _versionRepository = versionRepository;
+        _jobRepository = jobRepository;
         _logger = logger;
     }
 
@@ -215,6 +218,26 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             suite.UpdatedDateTime = now;
             suite.RowVersion = Guid.NewGuid().ToByteArray();
             await _suiteRepository.UpdateAsync(suite, ct);
+
+            // Update the latest generation job to Completed status
+            var latestJob = await _jobRepository.FirstOrDefaultAsync(
+                _jobRepository.GetQueryableSet()
+                    .Where(x => x.TestSuiteId == command.TestSuiteId
+                        && x.Status == GenerationJobStatus.WaitingForCallback)
+                    .OrderByDescending(x => x.QueuedAt));
+
+            if (latestJob != null)
+            {
+                latestJob.Status = GenerationJobStatus.Completed;
+                latestJob.CompletedAt = now;
+                latestJob.TestCasesGenerated = command.TestCases.Count;
+                latestJob.RowVersion = Guid.NewGuid().ToByteArray();
+                await _jobRepository.UpdateAsync(latestJob, ct);
+
+                _logger.LogInformation(
+                    "Updated generation job to Completed. JobId={JobId}, TestCasesGenerated={Count}",
+                    latestJob.Id, command.TestCases.Count);
+            }
 
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
 
