@@ -303,7 +303,15 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
     {
         var tags = new List<string>();
 
-        tags.Add(testType == TestType.Boundary ? "boundary" : "negative");
+        tags.Add(testType switch
+        {
+            TestType.HappyPath => "happy-path",
+            TestType.Boundary => "boundary",
+            TestType.Negative => "negative",
+            TestType.Security => "security",
+            TestType.Performance => "performance",
+            _ => "negative",
+        });
         tags.Add("auto-generated");
         tags.Add(source);
 
