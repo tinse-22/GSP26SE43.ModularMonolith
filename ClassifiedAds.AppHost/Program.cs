@@ -104,7 +104,10 @@ var rabbitmq = builder.AddRabbitMQ("rabbitmq")
 // Redis - Distributed cache
 // Matches docker-compose: redis:7-alpine, port 6379
 // Used for distributed caching across multiple instances
+// IMPORTANT: Use fixed port 6379 to match appsettings.json and docker-compose.yml
+//            Avoids dynamic port allocation issues when restarting WebAPI independently
 var redis = builder.AddRedis("redis")
+    .WithHostPort(6379)             // Force static port matching production config
     .WithDataVolume("redis_data");  // Aspire uses latest stable Redis image
 
 // MailHog - Email testing (SMTP + Web UI)
@@ -147,6 +150,7 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WithReference(redis)            // Injects Redis connection details
                                      // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
+    .WithEnvironment("Caching__Distributed__Redis__Configuration", "localhost:6379")  // Explicit static port
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     .WaitFor(migrator)  // Ensures migrations complete first
@@ -172,6 +176,7 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WithReference(redis)
     // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
+    .WithEnvironment("Caching__Distributed__Redis__Configuration", "localhost:6379")  // Explicit static port
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     // Configure email via MailHog (for testing, no real emails sent)
