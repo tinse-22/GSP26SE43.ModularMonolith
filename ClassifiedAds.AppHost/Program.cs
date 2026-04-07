@@ -24,6 +24,7 @@ const string AppHostPostgresDatabaseName = "ClassifiedAds";
 const int DefaultAppHostPostgresHostPort = 55433;
 const int AppHostPostgresFallbackPortFloor = 55434;
 const int AppHostPostgresFallbackPortCeiling = 55483;
+var shellProvidedConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
@@ -37,10 +38,19 @@ if (!isRunningInContainer)
         probeLevelsToSearch: 6,
         trimValues: true,
         overwriteExistingVars: false));
+
+    if (string.IsNullOrWhiteSpace(shellProvidedConnectionString) &&
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ConnectionStrings__Default")))
+    {
+        Console.WriteLine(
+            "[AppHost] Ignoring ConnectionStrings__Default loaded from .env. " +
+            "Export it in the current shell to force external DB mode.");
+        Environment.SetEnvironmentVariable("ConnectionStrings__Default", null);
+    }
 }
 
 var builder = DistributedApplication.CreateBuilder(args);
-var externalConnectionString = builder.Configuration.GetConnectionString("Default");
+var externalConnectionString = shellProvidedConnectionString;
 var externalRedisUrl = builder.Configuration["REDIS_URL"];
 var redisInstanceName = builder.Configuration["Caching__Distributed__Redis__InstanceName"] ?? "ClassifiedAds_";
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
