@@ -8,10 +8,10 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 
 public interface ITestExecutionOrchestrator
 {
-        Task<TestRunResultModel> ExecuteAsync(
-            Guid testRunId,
-            Guid currentUserId,
-            IReadOnlyCollection<Guid> selectedTestCaseIds,
-            CancellationToken ct = default,
-            bool strictValidation = false);
+    Task<TestRunResultModel> ExecuteAsync(
+        Guid testRunId,
+        Guid currentUserId,
+        IReadOnlyCollection<Guid> selectedTestCaseIds,
+        CancellationToken ct = default,
+        bool strictValidation = false);
 }

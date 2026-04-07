@@ -58,6 +58,7 @@ public static class MessagingCollectionExtensions
         services.AddSingleton<IMessageSender<T>>(new RabbitMQSender<T>(new RabbitMQSenderOptions
         {
             HostName = options.HostName,
+            Port = options.Port,
             UserName = options.UserName,
             Password = options.Password,
             ExchangeName = options.ExchangeName,
@@ -73,6 +74,7 @@ public static class MessagingCollectionExtensions
         var receiverOptions = new RabbitMQReceiverOptions
         {
             HostName = options.HostName,
+            Port = options.Port,
             UserName = options.UserName,
             Password = options.Password,
             ExchangeName = options.ExchangeName,
@@ -139,6 +141,7 @@ public static class MessagingCollectionExtensions
             healthChecksBuilder.AddRabbitMQ(new RabbitMQHealthCheckOptions
             {
                 HostName = options.RabbitMQ.HostName,
+                Port = options.RabbitMQ.Port,
                 UserName = options.RabbitMQ.UserName,
                 Password = options.RabbitMQ.Password,
             },

@@ -203,10 +203,22 @@ public class RuleBasedValidator : IRuleBasedValidator
         // Determine which schema to use
         var schemaJson = expectation.ResponseSchema;
 
-        // Fallback to endpoint metadata schema if expectation schema is empty
-        if (string.IsNullOrWhiteSpace(schemaJson) && endpointMetadata?.ResponseSchemaPayloads != null)
+        // If expectation has no explicit schema, check if we should skip schema validation
+        // for non-2xx expected statuses (error responses don't match success schemas)
+        if (string.IsNullOrWhiteSpace(schemaJson))
         {
-            schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
+            if (IsExpectingNon2xxStatus(expectation))
+            {
+                // Skip schema validation for error responses when no explicit schema provided
+                // Success schemas (ResponseSchemaPayloads) are not appropriate for error responses
+                return false;
+            }
+
+            // Fallback to endpoint metadata schema only for 2xx expected statuses
+            if (endpointMetadata?.ResponseSchemaPayloads != null)
+            {
+                schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
+            }
         }
 
         if (string.IsNullOrWhiteSpace(schemaJson))
@@ -754,5 +766,39 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         return value[..maxLength] + "...";
+    }
+
+    /// <summary>
+    /// Determines if the expectation is for non-2xx (error) status codes.
+    /// Returns true if ALL expected statuses are outside the 200-299 range.
+    /// </summary>
+    private static bool IsExpectingNon2xxStatus(ExecutionTestCaseExpectationDto expectation)
+    {
+        if (string.IsNullOrWhiteSpace(expectation?.ExpectedStatus))
+        {
+            return false;
+        }
+
+        try
+        {
+            var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+            if (expectedStatuses == null || expectedStatuses.Count == 0)
+            {
+                return false;
+            }
+
+            // All statuses must be non-2xx for this to return true
+            return expectedStatuses.All(status => status < 200 || status >= 300);
+        }
+        catch (JsonException)
+        {
+            // Try single integer
+            if (int.TryParse(expectation.ExpectedStatus.Trim('[', ']', ' '), out var singleStatus))
+            {
+                return singleStatus < 200 || singleStatus >= 300;
+            }
+
+            return false;
+        }
     }
 }

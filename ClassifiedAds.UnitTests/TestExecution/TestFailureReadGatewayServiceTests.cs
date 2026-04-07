@@ -20,7 +20,7 @@ namespace ClassifiedAds.UnitTests.TestExecution;
 
 public class TestFailureReadGatewayServiceTests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new ()
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };

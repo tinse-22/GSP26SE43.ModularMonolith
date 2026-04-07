@@ -39,6 +39,7 @@ public class RabbitMQReceiver<TConsumer, T> : IMessageReceiver<TConsumer, T>, ID
         _connection = await new ConnectionFactory
         {
             HostName = _options.HostName,
+            Port = _options.Port,
             UserName = _options.UserName,
             Password = _options.Password,
             AutomaticRecoveryEnabled = true,
