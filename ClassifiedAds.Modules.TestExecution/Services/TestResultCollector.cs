@@ -24,18 +24,15 @@ public class TestResultCollector : ITestResultCollector
     };
 
     private readonly IRepository<TestRun, Guid> _runRepository;
-    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ILogger<TestResultCollector> _logger;
 
     public TestResultCollector(
         IRepository<TestRun, Guid> runRepository,
-        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
         ILogger<TestResultCollector> logger)
     {
         _runRepository = runRepository;
-        _resultRepository = resultRepository;
         _cache = cache;
         _logger = logger;
     }
@@ -67,9 +64,6 @@ public class TestResultCollector : ITestResultCollector
             ResponseHeaders = r.ResponseHeaders ?? new Dictionary<string, string>(),
             ResponseBodyPreview = TruncateBody(r.ResponseBody),
             FailureReasons = r.FailureReasons ?? new List<ValidationFailureModel>(),
-            Warnings = r.Warnings ?? new List<ValidationWarningModel>(),
-            ChecksPerformed = r.ChecksPerformed,
-            ChecksSkipped = r.ChecksSkipped,
             ExtractedVariables = MaskSensitiveVariables(r.ExtractedVariables),
             DependencyIds = r.DependencyIds?.ToList() ?? new List<Guid>(),
             SkippedBecauseDependencyIds = r.SkippedBecauseDependencyIds ?? new List<Guid>(),
@@ -100,9 +94,8 @@ public class TestResultCollector : ITestResultCollector
         run.Status = failedCount > 0 ? TestRunStatus.Failed : TestRunStatus.Completed;
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
-        // Try to save cache payload (Redis - hot storage)
+        // Try to save cache payload
         bool cacheSaved = false;
-        bool databaseSaved = false;
         try
         {
             var payload = JsonSerializer.Serialize(resultModel, JsonOptions);
@@ -116,53 +109,7 @@ public class TestResultCollector : ITestResultCollector
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis cache write failed for RunId={RunId}, RedisKey={RedisKey}. Continuing with PostgreSQL cold storage.", run.Id, run.RedisKey);
-        }
-
-        // Persist individual test case results to PostgreSQL (cold storage)
-        // This ensures Failure Explanation can be generated even after Redis cache expires
-        try
-        {
-            var pgResults = caseResults.Select(r => new TestCaseResult
-            {
-                Id = Guid.NewGuid(),
-                TestRunId = run.Id,
-                TestCaseId = r.TestCaseId,
-                EndpointId = r.EndpointId,
-                Name = r.Name,
-                OrderIndex = r.OrderIndex,
-                Status = r.Status,
-                HttpStatusCode = r.HttpStatusCode,
-                DurationMs = r.DurationMs,
-                ResolvedUrl = r.ResolvedUrl,
-                RequestHeaders = JsonSerializer.Serialize(r.RequestHeaders ?? new Dictionary<string, string>(), JsonOptions),
-                ResponseHeaders = JsonSerializer.Serialize(r.ResponseHeaders ?? new Dictionary<string, string>(), JsonOptions),
-                ResponseBodyPreview = TruncateBody(r.ResponseBody),
-                FailureReasons = JsonSerializer.Serialize(r.FailureReasons ?? new List<ValidationFailureModel>(), JsonOptions),
-                ExtractedVariables = JsonSerializer.Serialize(MaskSensitiveVariables(r.ExtractedVariables), JsonOptions),
-                DependencyIds = JsonSerializer.Serialize(r.DependencyIds ?? new List<Guid>(), JsonOptions),
-                SkippedBecauseDependencyIds = JsonSerializer.Serialize(r.SkippedBecauseDependencyIds ?? new List<Guid>(), JsonOptions),
-                StatusCodeMatched = r.StatusCodeMatched,
-                SchemaMatched = r.SchemaMatched,
-                HeaderChecksPassed = r.HeaderChecksPassed,
-                BodyContainsPassed = r.BodyContainsPassed,
-                BodyNotContainsPassed = r.BodyNotContainsPassed,
-                JsonPathChecksPassed = r.JsonPathChecksPassed,
-                ResponseTimePassed = r.ResponseTimePassed,
-            }).ToList();
-
-            foreach (var resultEntity in pgResults)
-            {
-                await _resultRepository.AddAsync(resultEntity, ct);
-            }
-
-            databaseSaved = true;
-            _logger.LogInformation("Persisted {Count} test case results to PostgreSQL. RunId={RunId}", pgResults.Count, run.Id);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogCritical(ex, "Failed to persist test case results to PostgreSQL. RunId={RunId}", run.Id);
-            // Non-fatal: allow the run to succeed even if PostgreSQL persistence fails
+            _logger.LogCritical(ex, "Failed to save test run results to cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
         }
 
         // Always persist summary to DB
@@ -181,7 +128,7 @@ public class TestResultCollector : ITestResultCollector
         if (!cacheSaved)
         {
             _logger.LogWarning("Test run {RunId}: summary saved but cache write failed; returning without cached details", run.Id);
-            resultModel.ResultsSource = databaseSaved ? "database" : "unavailable";
+            resultModel.ResultsSource = "unavailable";
         }
 
         resultModel.Run = TestRunModel.FromEntity(run);
