@@ -415,21 +415,28 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return Array.Empty<LlmSuggestedScenario>();
         }
 
-        return response.Scenarios.Select(s => new LlmSuggestedScenario
+        return response.Scenarios.Select(s =>
         {
-            EndpointId = s.EndpointId,
-            ScenarioName = s.ScenarioName,
-            Description = s.Description,
-            SuggestedTestType = ParseTestType(s.TestType),
-            SuggestedBody = s.Request?.Body,
-            SuggestedPathParams = s.Request?.PathParams,
-            SuggestedQueryParams = s.Request?.QueryParams,
-            SuggestedHeaders = s.Request?.Headers,
-            ExpectedStatusCode = s.Expectation?.ExpectedStatus?.FirstOrDefault() ?? 400,
-            ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
-            Priority = s.Priority,
-            Tags = s.Tags ?? new List<string>(),
-            Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
+            var expectedStatuses = s.Expectation?.ExpectedStatus ?? new List<int>();
+            var primaryStatus = expectedStatuses.Count > 0 ? expectedStatuses[0] : 400;
+
+            return new LlmSuggestedScenario
+            {
+                EndpointId = s.EndpointId,
+                ScenarioName = s.ScenarioName,
+                Description = s.Description,
+                SuggestedTestType = ParseTestType(s.TestType),
+                SuggestedBody = s.Request?.Body,
+                SuggestedPathParams = s.Request?.PathParams,
+                SuggestedQueryParams = s.Request?.QueryParams,
+                SuggestedHeaders = s.Request?.Headers,
+                ExpectedStatusCode = primaryStatus,
+                ExpectedStatusCodes = expectedStatuses.Count > 0 ? expectedStatuses : null,
+                ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
+                Priority = s.Priority,
+                Tags = s.Tags ?? new List<string>(),
+                Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
+            };
         }).ToList();
     }
 
