@@ -202,6 +202,68 @@ public class AddUpdateEndpointCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_CreateEndpoint_WithJsonFields_Should_NormalizeJsonbValuesBeforePersisting()
+    {
+        // Arrange
+        SetupValidProjectAndSpec();
+        var createdParameters = new List<EndpointParameter>();
+        var createdResponses = new List<EndpointResponse>();
+
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
+        _responseRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointResponse>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointResponse, CancellationToken>((response, _) => createdResponses.Add(response))
+            .Returns(Task.CompletedTask);
+
+        var command = new AddUpdateEndpointCommand
+        {
+            ProjectId = _projectId,
+            SpecId = _specId,
+            CurrentUserId = _userId,
+            Model = new CreateUpdateEndpointModel
+            {
+                HttpMethod = "POST",
+                Path = "/api/users",
+                Parameters = new List<ManualParameterDefinition>
+                {
+                    new()
+                    {
+                        Name = "body",
+                        Location = "Body",
+                        DataType = EndpointParameterDataType.Object,
+                        Schema = " { \"type\": \"object\" } ",
+                        Examples = "sample-body",
+                    },
+                },
+                Responses = new List<ManualResponseDefinition>
+                {
+                    new()
+                    {
+                        StatusCode = 201,
+                        Schema = "{ \"type\": \"object\" }",
+                        Examples = "created",
+                        Headers = " { \"Location\": { \"schema\": { \"type\": \"string\" } } } ",
+                    },
+                },
+            },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        createdParameters.Should().ContainSingle();
+        createdParameters[0].Schema.Should().Be("{\"type\":\"object\"}");
+        createdParameters[0].Examples.Should().Be("\"sample-body\"");
+
+        createdResponses.Should().ContainSingle();
+        createdResponses[0].Schema.Should().Be("{\"type\":\"object\"}");
+        createdResponses[0].Examples.Should().Be("\"created\"");
+        createdResponses[0].Headers.Should().Be("{\"Location\":{\"schema\":{\"type\":\"string\"}}}");
+    }
+
+    [Fact]
     public async Task HandleAsync_NullModel_Should_ThrowValidationException()
     {
         // Arrange
@@ -287,6 +349,45 @@ public class AddUpdateEndpointCommandHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_CreateEndpoint_WithMalformedJsonLikeHeaders_Should_ThrowValidationExceptionBeforeConsumingLimit()
+    {
+        // Arrange
+        SetupValidProjectAndSpec();
+
+        var command = new AddUpdateEndpointCommand
+        {
+            ProjectId = _projectId,
+            SpecId = _specId,
+            CurrentUserId = _userId,
+            Model = new CreateUpdateEndpointModel
+            {
+                HttpMethod = "POST",
+                Path = "/api/users",
+                Responses = new List<ManualResponseDefinition>
+                {
+                    new()
+                    {
+                        StatusCode = 200,
+                        Headers = "{bad json}",
+                    },
+                },
+            },
+        };
+
+        // Act
+        var act = () => _handler.HandleAsync(command);
+
+        // Assert
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Headers của response 200*");
+        _subscriptionLimitMock.Verify(x => x.TryConsumeLimitAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<LimitType>(),
+            It.IsAny<decimal>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

@@ -36,6 +36,8 @@ services:
           - 8025:8025 # web ui
     redis:
         image: "redis:7-alpine"
+        profiles:
+          - "local-redis"
         ports:
           - "6379:6379"
         volumes:
@@ -76,6 +78,7 @@ services:
             condition: service_healthy
           redis:
             condition: service_healthy
+            required: false
         environment:
           ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
           ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
@@ -84,8 +87,8 @@ services:
           Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
           Messaging__RabbitMQ__Password: ${Messaging__RabbitMQ__Password:-guest}
           Caching__Distributed__Provider: "Redis"
-          Caching__Distributed__Redis__Configuration: "redis:6379"
-          Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"
+          REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+          Caching__Distributed__Redis__InstanceName: "${Caching__Distributed__Redis__InstanceName:-ClassifiedAds_}"
           Modules__Identity__BootstrapDevelopmentData: "true"
           Modules__Identity__Jwt__SecretKey: ${Modules__Identity__Jwt__SecretKey}
           Modules__Identity__Jwt__Issuer: ${Modules__Identity__Jwt__Issuer}
@@ -106,6 +109,7 @@ services:
             condition: service_healthy
           redis:
             condition: service_healthy
+            required: false
           mailhog:
             condition: service_started
         environment:
@@ -117,8 +121,8 @@ services:
           Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
           Messaging__RabbitMQ__Password: ${Messaging__RabbitMQ__Password:-guest}
           Caching__Distributed__Provider: "Redis"
-          Caching__Distributed__Redis__Configuration: "redis:6379"
-          Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"
+          REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+          Caching__Distributed__Redis__InstanceName: "${Caching__Distributed__Redis__InstanceName:-ClassifiedAds_}"
           ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
           Modules__Notification__Email__Provider: "SmtpClient"
           Modules__Notification__Email__SmtpClient__Host: "mailhog"

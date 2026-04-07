@@ -366,6 +366,75 @@ public class ParseUploadedSpecificationCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_ParseSuccess_Should_NormalizePlainTextExamplesBeforePersisting()
+    {
+        // Arrange
+        var spec = CreatePendingSpec();
+        SetupSpecFound(spec);
+        SetupFileDownload();
+        var createdParameters = new List<EndpointParameter>();
+        var createdResponses = new List<EndpointResponse>();
+
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
+        _responseRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointResponse>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointResponse, CancellationToken>((response, _) => createdResponses.Add(response))
+            .Returns(Task.CompletedTask);
+
+        _parserMock.Setup(x => x.ParseAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SpecificationParseResult
+            {
+                Success = true,
+                DetectedVersion = "1.0.0",
+                Endpoints = new List<ParsedEndpoint>
+                {
+                    new()
+                    {
+                        HttpMethod = "POST",
+                        Path = "/api/users",
+                        Parameters = new List<ParsedParameter>
+                        {
+                            new()
+                            {
+                                Name = "body",
+                                Location = "Body",
+                                DataType = "object",
+                                Schema = "{ \"type\": \"object\" }",
+                                Examples = "sample request body",
+                            },
+                        },
+                        Responses = new List<ParsedResponse>
+                        {
+                            new()
+                            {
+                                StatusCode = 200,
+                                Examples = "created",
+                                Headers = "{ \"X-Trace-Id\": { \"schema\": { \"type\": \"string\" } } }",
+                            },
+                        },
+                        SecurityRequirements = new List<ParsedSecurityRequirement>(),
+                    },
+                },
+                SecuritySchemes = new List<ParsedSecurityScheme>(),
+            });
+
+        var command = new ParseUploadedSpecificationCommand { SpecificationId = _specId };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        createdParameters.Should().ContainSingle();
+        createdParameters[0].Schema.Should().Be("{\"type\":\"object\"}");
+        createdParameters[0].Examples.Should().Be("\"sample request body\"");
+
+        createdResponses.Should().ContainSingle();
+        createdResponses[0].Examples.Should().Be("\"created\"");
+        createdResponses[0].Headers.Should().Be("{\"X-Trace-Id\":{\"schema\":{\"type\":\"string\"}}}");
+    }
+
+    [Fact]
     public async Task HandleAsync_ParseSuccess_Should_DeleteExistingEndpointsFirst()
     {
         // Arrange

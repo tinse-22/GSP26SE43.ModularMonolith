@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Linq;
 
 namespace ClassifiedAds.Infrastructure.Logging;
 
@@ -35,7 +36,8 @@ public static class StartupDiagnostics
         {
             var redisConfiguration = configuration["Caching:Distributed:Redis:Configuration"];
             var instanceName = configuration["Caching:Distributed:Redis:InstanceName"];
-            Console.WriteLine($"[{hostName}] CacheProvider=Redis RedisTarget={redisConfiguration ?? "missing"} InstanceName={instanceName ?? "missing"}");
+            Console.WriteLine(
+                $"[{hostName}] CacheProvider=Redis RedisTarget={BuildRedisSummary(redisConfiguration)} InstanceName={instanceName ?? "missing"}");
             return;
         }
 
@@ -96,6 +98,66 @@ public static class StartupDiagnostics
                     return text;
                 }
             }
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildRedisSummary(string redisConfiguration)
+    {
+        if (string.IsNullOrWhiteSpace(redisConfiguration))
+        {
+            return "missing";
+        }
+
+        if (Uri.TryCreate(redisConfiguration, UriKind.Absolute, out var redisUri) &&
+            (string.Equals(redisUri.Scheme, "redis", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(redisUri.Scheme, "rediss", StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"Host={redisUri.Host};Port={(redisUri.IsDefaultPort ? 6379 : redisUri.Port)};Ssl={string.Equals(redisUri.Scheme, "rediss", StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        var segments = redisConfiguration
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .ToArray();
+
+        var endpoint = segments.FirstOrDefault(x => !x.Contains('='));
+        var ssl = GetRedisOption(segments, "ssl");
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(endpoint))
+        {
+            parts.Add($"Endpoint={endpoint}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(ssl))
+        {
+            parts.Add($"Ssl={ssl}");
+        }
+
+        return parts.Count == 0
+            ? "configured"
+            : string.Join(";", parts);
+    }
+
+    private static string GetRedisOption(IEnumerable<string> segments, string optionName)
+    {
+        foreach (var segment in segments)
+        {
+            var separatorIndex = segment.IndexOf('=');
+            if (separatorIndex < 0)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            if (!string.Equals(key, optionName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return segment.Substring(separatorIndex + 1).Trim();
         }
 
         return string.Empty;

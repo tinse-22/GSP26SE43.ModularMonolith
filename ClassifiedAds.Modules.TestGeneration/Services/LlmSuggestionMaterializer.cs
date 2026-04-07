@@ -66,10 +66,10 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         };
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
-        // Build expectation from LLM suggestion
+        // Build expectation from LLM suggestion - use full status list if available
         var n8nExpectation = new N8nTestCaseExpectation
         {
-            ExpectedStatus = new List<int> { scenario.ExpectedStatusCode },
+            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
             BodyContains = !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
                 ? new List<string> { scenario.ExpectedBehavior }
                 : new List<string>(),

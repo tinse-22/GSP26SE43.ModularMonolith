@@ -25,9 +25,26 @@ const int DefaultAppHostPostgresHostPort = 55433;
 const int AppHostPostgresFallbackPortFloor = 55434;
 const int AppHostPostgresFallbackPortCeiling = 55483;
 
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
+
 var builder = DistributedApplication.CreateBuilder(args);
 var externalConnectionString = builder.Configuration.GetConnectionString("Default");
+var externalRedisUrl = builder.Configuration["REDIS_URL"];
+var redisInstanceName = builder.Configuration["Caching__Distributed__Redis__InstanceName"] ?? "ClassifiedAds_";
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
+var useExternalRedis = !string.IsNullOrWhiteSpace(externalRedisUrl);
 var configuredAppHostPostgresHostPort = ResolveConfiguredAppHostPostgresHostPort();
 var appHostPostgresHostPort = useExternalDatabase
     ? 0
@@ -39,6 +56,17 @@ Console.WriteLine(
     useExternalDatabase
         ? "[AppHost] Database mode: External (ConnectionStrings__Default)"
         : $"[AppHost] Database mode: Local PostgreSQL container with persistent volume '{AppHostPostgresVolumeName}'");
+Console.WriteLine(
+    useExternalRedis
+        ? "[AppHost] Redis mode: External (REDIS_URL)"
+        : "[AppHost] Redis mode: Local container");
+
+if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgresHostPort)
+{
+    Console.WriteLine(
+        $"[AppHost] Requested PostgreSQL host port {configuredAppHostPostgresHostPort} is already in use. " +
+        $"Falling back to {appHostPostgresHostPort}.");
+}
 
 if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgresHostPort)
 {
@@ -102,11 +130,16 @@ var rabbitmq = builder.AddRabbitMQ("rabbitmq")
     .WithManagementPlugin();  // Aspire automatically uses rabbitmq:3-management image
 
 // Redis - Distributed cache
-// Matches docker-compose: redis:7-alpine, port 6379
-// Used for distributed caching across multiple instances
-var redis = builder.AddRedis("redis")
-    .WithHostPort(6379)
-    .WithDataVolume("redis_data");  // Aspire uses latest stable Redis image
+// When REDIS_URL is present, AppHost reuses the external Redis instead of starting a local container.
+var redis = default(IResourceBuilder<RedisResource>);
+
+if (!useExternalRedis)
+{
+    // Matches docker-compose local fallback: redis:7-alpine, port 6379
+    redis = builder.AddRedis("redis")
+        .WithHostPort(6379)
+        .WithDataVolume("redis_data");
+}
 
 // MailHog - Email testing (SMTP + Web UI)
 // Matches docker-compose: mailhog/mailhog, ports 1025 (SMTP), 8025 (Web UI)
@@ -144,16 +177,24 @@ else
 // Depends on: PostgreSQL, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
-    .WithReference(rabbitmq)         // Injects RabbitMQ connection details
-    .WithReference(redis)            // Injects Redis connection details
-                                     // Override appsettings for Aspire environment
+    .WithReference(rabbitmq)
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
-    .WaitFor(migrator)  // Ensures migrations complete first
+    .WaitFor(migrator)
     .WaitFor(rabbitmq)
-    .WaitFor(redis)
-    .WithExternalHttpEndpoints();  // Exposes to localhost for external access
+    .WithExternalHttpEndpoints();
+
+if (useExternalRedis)
+{
+    webapi = webapi.WithEnvironment("REDIS_URL", externalRedisUrl!);
+}
+else
+{
+    webapi = webapi
+        .WithReference(redis!)
+        .WaitFor(redis!);
+}
 
 if (useExternalDatabase)
 {
@@ -170,10 +211,8 @@ else
 // Responsibilities: Publish outbox messages, send emails/SMS, consume message bus events
 var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
     .WithReference(rabbitmq)
-    .WithReference(redis)
-    // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     // Configure email via MailHog (for testing, no real emails sent)
     .WithEnvironment("Modules__Notification__Email__Provider", "SmtpClient")
@@ -187,8 +226,18 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
     .WaitFor(migrator)
     .WaitFor(rabbitmq)
-    .WaitFor(redis)
     .WaitFor(mailhog);
+
+if (useExternalRedis)
+{
+    background = background.WithEnvironment("REDIS_URL", externalRedisUrl!);
+}
+else
+{
+    background = background
+        .WithReference(redis!)
+        .WaitFor(redis!);
+}
 
 if (useExternalDatabase)
 {
