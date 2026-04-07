@@ -134,6 +134,8 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
             {
                 throw new ValidationException($"Endpoint #{i + 1}: {ex.Message}");
             }
+
+            NormalizeEndpointJsonFields(ep, i + 1);
         }
 
         // 2. Load project, verify ownership
@@ -270,5 +272,60 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
         }, cancellationToken: cancellationToken);
 
         command.SavedSpecId = spec.Id;
+    }
+
+    private static void NormalizeEndpointJsonFields(ManualEndpointDefinition endpoint, int endpointNumber)
+    {
+        if (endpoint?.Parameters != null)
+        {
+            for (int i = 0; i < endpoint.Parameters.Count; i++)
+            {
+                var parameter = endpoint.Parameters[i];
+                var parameterLabel = BuildParameterLabel(parameter?.Name, endpointNumber, i + 1);
+
+                parameter.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    parameter.Schema,
+                    $"Schema của {parameterLabel}");
+                parameter.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    parameter.Examples,
+                    $"Examples của {parameterLabel}",
+                    allowPlainText: true);
+            }
+        }
+
+        if (endpoint?.Responses != null)
+        {
+            for (int i = 0; i < endpoint.Responses.Count; i++)
+            {
+                var response = endpoint.Responses[i];
+                var responseLabel = BuildResponseLabel(response?.StatusCode, endpointNumber, i + 1);
+
+                response.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Schema,
+                    $"Schema của {responseLabel}");
+                response.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Examples,
+                    $"Examples của {responseLabel}",
+                    allowPlainText: true);
+                response.Headers = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Headers,
+                    $"Headers của {responseLabel}");
+            }
+        }
+    }
+
+    private static string BuildParameterLabel(string parameterName, int endpointNumber, int parameterNumber)
+    {
+        var normalizedName = parameterName?.Trim();
+        return !string.IsNullOrWhiteSpace(normalizedName)
+            ? $"parameter '{normalizedName}' ở endpoint #{endpointNumber}"
+            : $"parameter #{parameterNumber} ở endpoint #{endpointNumber}";
+    }
+
+    private static string BuildResponseLabel(int? statusCode, int endpointNumber, int responseNumber)
+    {
+        return statusCode.HasValue && statusCode.Value > 0
+            ? $"response {statusCode.Value} ở endpoint #{endpointNumber}"
+            : $"response #{responseNumber} ở endpoint #{endpointNumber}";
     }
 }

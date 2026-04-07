@@ -30,6 +30,14 @@ public static class AspireResourceEnvironmentBridge
 
     private static void ApplyRedis()
     {
+        var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL");
+        if (!string.IsNullOrWhiteSpace(redisUrl))
+        {
+            SetIfMissing("Caching__Distributed__Provider", "Redis");
+            SetIfMissing("Caching__Distributed__Redis__Configuration", redisUrl);
+            return;
+        }
+
         var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
         var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT");
 
@@ -38,6 +46,7 @@ public static class AspireResourceEnvironmentBridge
             return;
         }
 
+        SetIfMissing("Caching__Distributed__Provider", "Redis");
         SetIfMissing("Caching__Distributed__Redis__Configuration", $"{redisHost}:{redisPort}");
     }
 

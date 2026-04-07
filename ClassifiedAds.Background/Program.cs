@@ -38,8 +38,6 @@ var isRunningInContainer = string.Equals(
     "true",
     StringComparison.OrdinalIgnoreCase);
 
-AspireResourceEnvironmentBridge.Apply();
-
 if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
@@ -48,6 +46,8 @@ if (!isRunningInContainer)
         trimValues: true,
         overwriteExistingVars: false));
 }
+
+AspireResourceEnvironmentBridge.Apply();
 
 var shouldWaitForDependency = bool.TryParse(
     Environment.GetEnvironmentVariable("CheckDependency__Enabled"),
@@ -71,6 +71,7 @@ Host.CreateDefaultBuilder(args)
     var configuration = hostContext.Configuration;
 
     StartupDiagnostics.LogDatabaseTarget("Background", configuration, isRunningInContainer);
+    StartupDiagnostics.LogCacheTarget("Background", configuration);
 
     // Bind and validate AppSettings (fail-fast on misconfiguration)
     var appSettings = new AppSettings();

@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -152,19 +151,9 @@ public class GetEndpointQueryHandler : IQueryHandler<GetEndpointQuery, EndpointD
             {
                 pathParamValues[p.Name] = p.DefaultValue;
             }
-            else if (!string.IsNullOrEmpty(p.Examples))
+            else if (Services.JsonbFieldNormalizer.TryExtractFirstString(p.Examples, out var firstExample))
             {
-                try
-                {
-                    var examples = JsonSerializer.Deserialize<List<string>>(p.Examples);
-                    if (examples?.Count > 0)
-                    {
-                        pathParamValues[p.Name] = examples[0];
-                    }
-                }
-                catch
-                {
-                }
+                pathParamValues[p.Name] = firstExample;
             }
         }
 

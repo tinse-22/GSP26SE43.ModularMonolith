@@ -8,7 +8,6 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -106,21 +105,9 @@ public class GetResolvedUrlQueryHandler : IQueryHandler<GetResolvedUrlQuery, Res
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(p.Examples))
+            if (Services.JsonbFieldNormalizer.TryExtractFirstString(p.Examples, out var firstExample))
             {
-                try
-                {
-                    var examples = JsonSerializer.Deserialize<List<string>>(p.Examples);
-                    var firstExample = examples?.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
-                    if (!string.IsNullOrWhiteSpace(firstExample))
-                    {
-                        parameterValues[p.Name] = firstExample;
-                    }
-                }
-                catch
-                {
-                    // Ignore malformed Examples JSON and continue with unresolved value
-                }
+                parameterValues[p.Name] = firstExample;
             }
         }
 
