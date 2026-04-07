@@ -1,5 +1,6 @@
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Modules.TestExecution.Commands;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using Microsoft.Extensions.Logging;
@@ -14,19 +15,29 @@ namespace ClassifiedAds.UnitTests.TestExecution;
 public class DeleteExecutionEnvironmentCommandHandlerTests
 {
     private readonly Mock<IRepository<ExecutionEnvironment, Guid>> _envRepoMock;
+    private readonly Mock<IProjectOwnershipGatewayService> _projectOwnershipGatewayServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly DeleteExecutionEnvironmentCommandHandler _handler;
 
     public DeleteExecutionEnvironmentCommandHandlerTests()
     {
         _envRepoMock = new Mock<IRepository<ExecutionEnvironment, Guid>>();
+        _projectOwnershipGatewayServiceMock = new Mock<IProjectOwnershipGatewayService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _envRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
         _envRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<ExecutionEnvironment>().AsQueryable());
 
+        _projectOwnershipGatewayServiceMock
+            .Setup(x => x.IsProjectOwnedByUserAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         _handler = new DeleteExecutionEnvironmentCommandHandler(
             _envRepoMock.Object,
+            _projectOwnershipGatewayServiceMock.Object,
             new Mock<ILogger<DeleteExecutionEnvironmentCommandHandler>>().Object);
     }
 

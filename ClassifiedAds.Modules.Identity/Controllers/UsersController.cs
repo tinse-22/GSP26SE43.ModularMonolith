@@ -126,7 +126,8 @@ public class UsersController : ControllerBase
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (roleNames.Count == 0)
+        // Default to User when admin does not explicitly provide roles.
+        if (!roleNames.Any())
         {
             roleNames.Add("User");
         }
@@ -148,8 +149,7 @@ public class UsersController : ControllerBase
         }
 
         // Users created from the admin screen are considered trusted input,
-        // so their email is confirmed immediately regardless of assigned role.
-        var isAdmin = roleNames.Any(x => x.Equals("Admin", StringComparison.OrdinalIgnoreCase));
+        // so their email is confirmed immediately.
 
         var user = new User
         {
@@ -186,9 +186,7 @@ public class UsersController : ControllerBase
             User = userModel,
             Roles = roleNames,
             EmailConfirmationRequired = false,
-            Message = isAdmin
-                ? "Tạo quản trị viên thành công."
-                : "Tạo người dùng thành công. Email đã được xác nhận tự động."
+            Message = $"Tạo người dùng thành công với vai trò: {string.Join(", ", roleNames)}. Email đã được xác nhận tự động."
         });
     }
 

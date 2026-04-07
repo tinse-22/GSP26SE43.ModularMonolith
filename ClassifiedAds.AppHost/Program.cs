@@ -1,6 +1,9 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Configuration;
+using System;
+using System.Linq;
+using System.Net.NetworkInformation;
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ClassifiedAds.AppHost - .NET Aspire Orchestration
@@ -18,15 +21,31 @@ using Microsoft.Extensions.Configuration;
 
 const string AppHostPostgresVolumeName = "classifiedads_apphost_postgres_data";
 const string AppHostPostgresDatabaseName = "ClassifiedAds";
-const int AppHostPostgresHostPort = 5432;
+const int DefaultAppHostPostgresHostPort = 55433;
+const int AppHostPostgresFallbackPortFloor = 55434;
+const int AppHostPostgresFallbackPortCeiling = 55483;
 
 var builder = DistributedApplication.CreateBuilder(args);
 var externalConnectionString = builder.Configuration.GetConnectionString("Default");
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
+var configuredAppHostPostgresHostPort = ResolveConfiguredAppHostPostgresHostPort();
+var appHostPostgresHostPort = useExternalDatabase
+    ? 0
+    : ResolveAvailableHostPort(
+        configuredAppHostPostgresHostPort,
+        AppHostPostgresFallbackPortFloor,
+        AppHostPostgresFallbackPortCeiling);
 Console.WriteLine(
     useExternalDatabase
         ? "[AppHost] Database mode: External (ConnectionStrings__Default)"
         : $"[AppHost] Database mode: Local PostgreSQL container with persistent volume '{AppHostPostgresVolumeName}'");
+
+if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgresHostPort)
+{
+    Console.WriteLine(
+        $"[AppHost] Requested PostgreSQL host port {configuredAppHostPostgresHostPort} is already in use. " +
+        $"Falling back to {appHostPostgresHostPort}.");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Infrastructure Resources
@@ -58,7 +77,7 @@ if (!useExternalDatabase)
     postgres = builder.AddPostgres("postgres", password: postgresPassword)
         .WithImage("postgres")
         .WithImageTag("16")
-        .WithHostPort(AppHostPostgresHostPort)
+        .WithHostPort(appHostPostgresHostPort)
         .WithDataVolume(AppHostPostgresVolumeName)
         .WithPgAdmin();                   // Adds PgAdmin UI for database management
 
@@ -68,7 +87,7 @@ if (!useExternalDatabase)
     classifiedAdsDb = postgres.AddDatabase("Default", databaseName: AppHostPostgresDatabaseName);
 
     Console.WriteLine($"[AppHost] Local PostgreSQL database: {AppHostPostgresDatabaseName}");
-    Console.WriteLine($"[AppHost] Local PostgreSQL host port: {AppHostPostgresHostPort}");
+    Console.WriteLine($"[AppHost] Local PostgreSQL host port: {appHostPostgresHostPort}");
     Console.WriteLine($"[AppHost] Local PostgreSQL volume: {AppHostPostgresVolumeName}");
 }
 else
@@ -187,3 +206,50 @@ else
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 builder.Build().Run();
+
+int ResolveConfiguredAppHostPostgresHostPort()
+{
+    var configuredPortText = Environment.GetEnvironmentVariable("APPHOST_POSTGRES_HOST_PORT");
+    if (string.IsNullOrWhiteSpace(configuredPortText))
+    {
+        return DefaultAppHostPostgresHostPort;
+    }
+
+    if (int.TryParse(configuredPortText, out var configuredPort) &&
+        configuredPort is > 0 and < 65536)
+    {
+        return configuredPort;
+    }
+
+    Console.WriteLine(
+        $"[AppHost] APPHOST_POSTGRES_HOST_PORT='{configuredPortText}' is invalid. " +
+        $"Falling back to {DefaultAppHostPostgresHostPort}.");
+
+    return DefaultAppHostPostgresHostPort;
+}
+
+int ResolveAvailableHostPort(int preferredPort, int fallbackPortFloor, int fallbackPortCeiling)
+{
+    if (!IsTcpPortInUse(preferredPort))
+    {
+        return preferredPort;
+    }
+
+    for (var candidatePort = fallbackPortFloor; candidatePort <= fallbackPortCeiling; candidatePort++)
+    {
+        if (candidatePort != preferredPort && !IsTcpPortInUse(candidatePort))
+        {
+            return candidatePort;
+        }
+    }
+
+    throw new InvalidOperationException(
+        $"Could not find an available PostgreSQL host port for AppHost between {fallbackPortFloor} and {fallbackPortCeiling}.");
+}
+
+bool IsTcpPortInUse(int port)
+{
+    return IPGlobalProperties.GetIPGlobalProperties()
+        .GetActiveTcpListeners()
+        .Any(endpoint => endpoint.Port == port);
+}

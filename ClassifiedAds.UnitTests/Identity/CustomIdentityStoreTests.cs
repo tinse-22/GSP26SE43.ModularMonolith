@@ -61,7 +61,8 @@ public class CustomIdentityStoreTests
         var roleRepositoryMock = new Mock<IRoleRepository>();
         roleRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(unitOfWorkMock.Object);
 
-        var roleStore = new RoleStore(roleRepositoryMock.Object);
+        using var dbContext = new IdentityDbContext(new DbContextOptionsBuilder<IdentityDbContext>().Options);
+        var roleStore = new RoleStore(roleRepositoryMock.Object, dbContext);
         var role = new Role
         {
             Id = Guid.NewGuid(),

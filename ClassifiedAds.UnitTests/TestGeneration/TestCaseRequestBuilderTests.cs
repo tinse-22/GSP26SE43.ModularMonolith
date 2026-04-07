@@ -62,6 +62,9 @@ public class TestCaseRequestBuilderTests
     [Theory]
     [InlineData("GET", HttpMethodEnum.GET)]
     [InlineData("POST", HttpMethodEnum.POST)]
+    [InlineData("POST /api/categories", HttpMethodEnum.POST)]
+    [InlineData("method: post", HttpMethodEnum.POST)]
+    [InlineData("[PATCH]", HttpMethodEnum.PATCH)]
     [InlineData("PUT", HttpMethodEnum.PUT)]
     [InlineData("DELETE", HttpMethodEnum.DELETE)]
     [InlineData("PATCH", HttpMethodEnum.PATCH)]
@@ -76,6 +79,26 @@ public class TestCaseRequestBuilderTests
         var result = _builder.Build(Guid.NewGuid(), source, null);
 
         result.HttpMethod.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Build_Should_FallbackToOrderItemHttpMethod_WhenSourceHttpMethodCannotBeParsed()
+    {
+        var testCaseId = Guid.NewGuid();
+        var source = new N8nTestCaseRequest
+        {
+            HttpMethod = "Create Category Happy Path",
+            Url = "/api/categories",
+        };
+        var orderItem = new ApiOrderItemModel
+        {
+            HttpMethod = "POST",
+            Path = "/api/categories",
+        };
+
+        var result = _builder.Build(testCaseId, source, orderItem);
+
+        result.HttpMethod.Should().Be(HttpMethodEnum.POST);
     }
 
     [Theory]

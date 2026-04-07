@@ -1,14 +1,18 @@
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Infrastructure.HostedServices;
 using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.MessageBusConsumers;
+using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Http.Resilience;
 using System;
 using System.Reflection;
 
@@ -51,7 +55,8 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<LlmSuggestion, Guid>, Repository<LlmSuggestion, Guid>>()
             .AddScoped<IRepository<LlmSuggestionFeedback, Guid>, Repository<LlmSuggestionFeedback, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
-            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>();
+            .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>()
+            .AddScoped<IRepository<TestGenerationJob, Guid>, Repository<TestGenerationJob, Guid>>();
 
         // Register paper-based algorithms (standalone, reusable, no DB dependency)
         services
@@ -87,19 +92,31 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<ILlmSuggestionMaterializer, LlmSuggestionMaterializer>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
 
+        // FE-17: Test generation payload builder (reusable by command handler and background consumer)
+        services
+            .AddScoped<ITestGenerationPayloadBuilder, TestGenerationPayloadBuilder>();
+
         // n8n Integration (typed HttpClient + Options pattern, same as PayOS in Subscription module)
         services.Configure<N8nIntegrationOptions>(options =>
         {
             var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
             options.BaseUrl = n8n.BaseUrl ?? string.Empty;
             options.ApiKey = n8n.ApiKey ?? string.Empty;
-            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 30 : n8n.TimeoutSeconds;
+            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 120 : n8n.TimeoutSeconds;
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
             options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
             options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
+            options.UseDotnetIntegrationWorkflowForGeneration = n8n.UseDotnetIntegrationWorkflowForGeneration;
         });
 
-        services.AddHttpClient<IN8nIntegrationService, N8nIntegrationService>((sp, client) =>
+        var n8nTimeoutSeconds = settings.N8nIntegration?.TimeoutSeconds > 0
+            ? settings.N8nIntegration.TimeoutSeconds
+            : 120; // Default 2 minutes for LLM webhook calls
+
+        // Named client to exclude from default resilience handler in ServiceDefaults
+        const string n8nHttpClientName = "N8nIntegrationHttpClient";
+
+        services.AddHttpClient<IN8nIntegrationService, N8nIntegrationService>(n8nHttpClientName, (sp, client) =>
         {
             var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
             if (!string.IsNullOrWhiteSpace(n8n.BaseUrl))
@@ -107,8 +124,20 @@ public static class TestGenerationServiceCollectionExtensions
                 client.BaseAddress = new System.Uri(n8n.BaseUrl);
             }
 
-            client.Timeout = System.TimeSpan.FromSeconds(
-                n8n.TimeoutSeconds > 0 ? n8n.TimeoutSeconds : 30);
+            // This timeout is a backstop; Polly resilience handler controls actual timeout
+            client.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 30);
+        })
+        .AddStandardResilienceHandler(options =>
+        {
+            // Override standard resilience timeouts for LLM/n8n webhook calls (120s default)
+            // Standard handler has 10s attempt timeout which is too short for LLM operations
+            options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
+            options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 60);
+            options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(n8nTimeoutSeconds * 2);
+
+            // Reduce retries since LLM calls are expensive
+            options.Retry.MaxRetryAttempts = 2;
+            options.Retry.Delay = System.TimeSpan.FromSeconds(3);
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
@@ -138,6 +167,7 @@ public static class TestGenerationServiceCollectionExtensions
     {
         services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
         services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
+        services.AddHostedService<MessageBusConsumerBackgroundService<TriggerTestGenerationConsumer, TriggerTestGenerationMessage>>();
 
         return services;
     }

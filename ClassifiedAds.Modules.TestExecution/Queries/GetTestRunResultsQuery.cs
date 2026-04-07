@@ -4,10 +4,11 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
+using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,23 +25,24 @@ public class GetTestRunResultsQuery : IQuery<TestRunResultModel>
 
 public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuery, TestRunResultModel>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _gatewayService;
+    private readonly ILogger<GetTestRunResultsQueryHandler> _logger;
 
     public GetTestRunResultsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
-        ITestExecutionReadGatewayService gatewayService)
+        ITestExecutionReadGatewayService gatewayService,
+        ILogger<GetTestRunResultsQueryHandler> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _gatewayService = gatewayService;
+        _logger = logger;
     }
 
     public async Task<TestRunResultModel> HandleAsync(GetTestRunResultsQuery query, CancellationToken cancellationToken = default)
@@ -60,25 +62,61 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
             throw new NotFoundException($"Không tìm thấy test run với mã '{query.RunId}'.");
         }
 
-        if (string.IsNullOrEmpty(run.RedisKey))
+        // PRIMARY: Try Redis (hot cache) - only if not expired
+        if (!string.IsNullOrEmpty(run.RedisKey) &&
+            (!run.ResultsExpireAt.HasValue || run.ResultsExpireAt.Value >= DateTimeOffset.UtcNow))
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+            try
+            {
+                var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
+                var result = TestRunResultsStorage.DeserializeCachedResult(cached);
+                if (result != null)
+                {
+                    result.Run = TestRunModel.FromEntity(run);
+                    result.ResultsSource = "cache";
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Redis cache read failed for RunId={RunId}, RedisKey={RedisKey}. Falling back to PostgreSQL.", run.Id, run.RedisKey);
+            }
         }
 
-        // Check expiry
-        if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
+        // FALLBACK: Reconstruct from PostgreSQL (cold storage)
+        _logger.LogInformation("Redis unavailable/expired for RunId={RunId}, falling back to PostgreSQL", run.Id);
+        try
         {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+            var pgResults = await _resultRepository.ToListAsync(
+                _resultRepository.GetQueryableSet()
+                    .Where(x => x.TestRunId == run.Id)
+                    .OrderBy(x => x.OrderIndex));
+
+            var reconstructed = TestRunResultsStorage.ReconstructFromDatabase(run, pgResults);
+            if (reconstructed != null)
+            {
+                _logger.LogInformation("Successfully reconstructed {CaseCount} test cases from PostgreSQL for RunId={RunId}", reconstructed.Cases.Count, run.Id);
+                return reconstructed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read test case results from PostgreSQL. RunId={RunId}", run.Id);
         }
 
-        var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
-        if (cached == null)
-        {
-            throw new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
-        }
+        // All fallbacks exhausted
+        return CreateUnavailableResult(run);
+    }
 
-        var result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
-        result.Run = TestRunModel.FromEntity(run);
-        return result;
+    private static TestRunResultModel CreateUnavailableResult(TestRun run)
+    {
+        return new TestRunResultModel
+        {
+            Run = TestRunModel.FromEntity(run),
+            ResultsSource = "unavailable",
+            ExecutedAt = run.CompletedAt ?? run.StartedAt ?? DateTimeOffset.UtcNow,
+            ResolvedEnvironmentName = string.Empty,
+            Cases = new(),
+        };
     }
 }

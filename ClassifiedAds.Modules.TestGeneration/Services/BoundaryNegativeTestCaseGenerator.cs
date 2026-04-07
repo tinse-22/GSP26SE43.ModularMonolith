@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,6 +28,10 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
+
+    private static readonly Regex HttpMethodTokenRegex = new(
+        @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _parameterDetailService;
@@ -116,7 +121,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
                     foreach (var mutation in mutations)
                     {
                         var tc = BuildPathMutationTestCase(
-                            suite.Id, orderItem, metadata, pathParam, mutation);
+                            suite.Id, orderItem, metadata, pathParam, mutation, pathParams);
                         testCases.Add(tc);
                         pathMutationCount++;
                     }
@@ -126,6 +131,10 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             // 3b: Body mutations
             if (options.IncludeBodyMutations)
             {
+                var allPathParams = paramDetail?.Parameters?
+                    .Where(p => string.Equals(p.Location, "Path", StringComparison.OrdinalIgnoreCase))
+                    .ToList() ?? new List<ParameterDetailDto>();
+
                 var bodyParams = paramDetail?.Parameters?
                     .Where(p => string.Equals(p.Location, "Body", StringComparison.OrdinalIgnoreCase))
                     .ToList();
@@ -143,7 +152,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
 
                 foreach (var mutation in bodyMutations)
                 {
-                    var tc = BuildBodyMutationTestCase(suite.Id, orderItem, metadata, mutation);
+                    var tc = BuildBodyMutationTestCase(suite.Id, orderItem, metadata, mutation, allPathParams);
                     testCases.Add(tc);
                     bodyMutationCount++;
                 }
@@ -212,7 +221,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         ApiOrderItemModel orderItem,
         ApiEndpointMetadataDto metadata,
         ParameterDetailDto pathParam,
-        PathParameterMutationDto mutation)
+        PathParameterMutationDto mutation,
+        IReadOnlyList<ParameterDetailDto> allPathParams)
     {
         var testCaseId = Guid.NewGuid();
         var testType = ClassifyPathMutationType(mutation.MutationType);
@@ -231,8 +241,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             Version = 1,
         };
 
-        // Build request with mutated path param
-        var pathParams = new Dictionary<string, string> { { pathParam.Name, mutation.Value } };
+        // Build request with ALL path params - baseline values for non-mutated, mutation value for target
+        var pathParams = BuildBaselinePathParams(allPathParams, pathParam.Name, mutation.Value);
         testCase.Request = new TestCaseRequest
         {
             Id = Guid.NewGuid(),
@@ -259,7 +269,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         Guid testSuiteId,
         ApiOrderItemModel orderItem,
         ApiEndpointMetadataDto metadata,
-        BodyMutation mutation)
+        BodyMutation mutation,
+        IReadOnlyList<ParameterDetailDto> allPathParams)
     {
         var testCaseId = Guid.NewGuid();
 
@@ -277,12 +288,17 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             Version = 1,
         };
 
+        // Build baseline path params so URL route tokens are resolved
+        var pathParams = BuildBaselinePathParams(allPathParams, mutateParamName: null, mutateValue: null);
+        var pathParamsJson = pathParams.Count > 0 ? JsonSerializer.Serialize(pathParams, JsonOpts) : null;
+
         testCase.Request = new TestCaseRequest
         {
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
             HttpMethod = ParseHttpMethod(orderItem.HttpMethod),
             Url = orderItem.Path,
+            PathParams = pathParamsJson,
             BodyType = BodyType.JSON,
             Body = mutation.MutatedBody,
             Timeout = 30000,
@@ -320,18 +336,152 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
 
     private static Entities.HttpMethod ParseHttpMethod(string method)
     {
-        if (string.IsNullOrWhiteSpace(method)) return Entities.HttpMethod.GET;
-
-        return method.Trim().ToUpperInvariant() switch
+        if (TryParseHttpMethod(method, out var parsed))
         {
-            "GET" => Entities.HttpMethod.GET,
-            "POST" => Entities.HttpMethod.POST,
-            "PUT" => Entities.HttpMethod.PUT,
-            "DELETE" => Entities.HttpMethod.DELETE,
-            "PATCH" => Entities.HttpMethod.PATCH,
-            "HEAD" => Entities.HttpMethod.HEAD,
-            "OPTIONS" => Entities.HttpMethod.OPTIONS,
-            _ => Entities.HttpMethod.GET,
+            return parsed;
+        }
+
+        return Entities.HttpMethod.GET;
+    }
+
+    private static bool TryParseHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        parsed = Entities.HttpMethod.GET;
+
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            return false;
+        }
+
+        if (MapHttpMethod(method, out parsed))
+        {
+            return true;
+        }
+
+        var match = HttpMethodTokenRegex.Match(method);
+        return match.Success && MapHttpMethod(match.Groups[1].Value, out parsed);
+    }
+
+    private static bool MapHttpMethod(string method, out Entities.HttpMethod parsed)
+    {
+        switch (method?.Trim().ToUpperInvariant())
+        {
+            case "GET":
+                parsed = Entities.HttpMethod.GET;
+                return true;
+            case "POST":
+                parsed = Entities.HttpMethod.POST;
+                return true;
+            case "PUT":
+                parsed = Entities.HttpMethod.PUT;
+                return true;
+            case "DELETE":
+                parsed = Entities.HttpMethod.DELETE;
+                return true;
+            case "PATCH":
+                parsed = Entities.HttpMethod.PATCH;
+                return true;
+            case "HEAD":
+                parsed = Entities.HttpMethod.HEAD;
+                return true;
+            case "OPTIONS":
+                parsed = Entities.HttpMethod.OPTIONS;
+                return true;
+            default:
+                parsed = Entities.HttpMethod.GET;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Builds baseline path parameters dictionary.
+    /// All params get default/example values; optionally override one param with a mutation value.
+    /// </summary>
+    private static Dictionary<string, string> BuildBaselinePathParams(
+        IReadOnlyList<ParameterDetailDto> allPathParams,
+        string mutateParamName,
+        string mutateValue)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (allPathParams == null || allPathParams.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var param in allPathParams)
+        {
+            if (string.IsNullOrWhiteSpace(param.Name))
+            {
+                continue;
+            }
+
+            string value;
+            if (!string.IsNullOrEmpty(mutateParamName) &&
+                string.Equals(param.Name, mutateParamName, StringComparison.OrdinalIgnoreCase))
+            {
+                // This is the param being mutated
+                value = mutateValue ?? GetBaselineValue(param);
+            }
+            else
+            {
+                // Use baseline value for non-mutated params
+                value = GetBaselineValue(param);
+            }
+
+            result[param.Name] = value;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Gets a baseline value for a path parameter from DefaultValue, Examples, or type-based fallback.
+    /// </summary>
+    private static string GetBaselineValue(ParameterDetailDto param)
+    {
+        // Prefer DefaultValue
+        if (!string.IsNullOrWhiteSpace(param.DefaultValue))
+        {
+            return param.DefaultValue;
+        }
+
+        // Try Examples (JSON array or single value)
+        if (!string.IsNullOrWhiteSpace(param.Examples))
+        {
+            try
+            {
+                var examples = JsonSerializer.Deserialize<List<string>>(param.Examples);
+                if (examples != null && examples.Count > 0 && !string.IsNullOrWhiteSpace(examples[0]))
+                {
+                    return examples[0];
+                }
+            }
+            catch
+            {
+                // Examples might be single value string
+                var trimmed = param.Examples.Trim('"', ' ');
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                {
+                    return trimmed;
+                }
+            }
+        }
+
+        // Type-based fallback
+        var dataType = (param.DataType ?? string.Empty).ToLowerInvariant();
+        var format = (param.Format ?? string.Empty).ToLowerInvariant();
+
+        return (dataType, format) switch
+        {
+            ("integer", "int64") => "1",
+            ("integer", _) => "1",
+            ("number", _) => "1.0",
+            ("string", "uuid") => "00000000-0000-0000-0000-000000000001",
+            ("string", "date") => "2024-01-01",
+            ("string", "date-time") => "2024-01-01T00:00:00Z",
+            ("boolean", _) => "true",
+            _ => "1", // Sensible default for most path params (often IDs)
         };
     }
 

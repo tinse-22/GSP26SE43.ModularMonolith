@@ -12,6 +12,9 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 
 public class RuleBasedValidator : IRuleBasedValidator
 {
+    private const int TotalValidationChecks = 7;
+    private const string InvalidExpectationFormatCode = "INVALID_EXPECTATION_FORMAT";
+
     private readonly ILogger<RuleBasedValidator> _logger;
 
     public RuleBasedValidator(ILogger<RuleBasedValidator> logger)
@@ -22,7 +25,8 @@ public class RuleBasedValidator : IRuleBasedValidator
     public TestCaseValidationResult Validate(
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
-        ApiEndpointMetadataDto endpointMetadata = null)
+        ApiEndpointMetadataDto endpointMetadata = null,
+        bool strictMode = false)
     {
         var result = new TestCaseValidationResult
         {
@@ -46,61 +50,119 @@ public class RuleBasedValidator : IRuleBasedValidator
         var expectation = testCase.Expectation;
         if (expectation == null)
         {
+            result.ChecksSkipped = TotalValidationChecks;
+
+            if (strictMode)
+            {
+                result.IsPassed = false;
+                result.Failures.Add(new ValidationFailureModel
+                {
+                    Code = "NO_EXPECTATION",
+                    Message = "Strict mode: Test case phải có expectation được định nghĩa.",
+                    Target = "Expectation",
+                });
+
+                _logger.LogWarning(
+                    "Strict validation failed for test case {TestCaseId} because expectation is missing.",
+                    testCase.TestCaseId);
+
+                return result;
+            }
+
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "NO_EXPECTATION_DEFINED",
+                Message = "Test case không có expectation được định nghĩa. Kết quả có thể thiếu độ tin cậy.",
+            });
+
+            _logger.LogWarning(
+                "Test case {TestCaseId} has no expectation defined. Validation checks were skipped.",
+                testCase.TestCaseId);
+
             return result;
         }
 
+        var checksPerformed = 0;
+        var checksSkipped = 0;
+
         // 1. Status code check
-        ValidateStatusCode(response, expectation, result);
+        TrackCheck(ValidateStatusCode(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 2. Response schema validation
-        ValidateResponseSchema(response, expectation, endpointMetadata, result);
+        TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result), ref checksPerformed, ref checksSkipped);
 
         // 3. Header exact-match validation
-        ValidateHeaders(response, expectation, result);
+        TrackCheck(ValidateHeaders(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 4. Body contains
-        ValidateBodyContains(response, expectation, result);
+        TrackCheck(ValidateBodyContains(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 5. Body not contains
-        ValidateBodyNotContains(response, expectation, result);
+        TrackCheck(ValidateBodyNotContains(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
-        ValidateJsonPathChecks(response, expectation, result);
+        TrackCheck(ValidateJsonPathChecks(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 7. Max response time
-        ValidateResponseTime(response, expectation, result);
+        TrackCheck(ValidateResponseTime(response, expectation, result), ref checksPerformed, ref checksSkipped);
+
+        result.ChecksPerformed = checksPerformed;
+        result.ChecksSkipped = checksSkipped;
+
+        if (checksPerformed == 0 && checksSkipped > 0)
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "ALL_CHECKS_SKIPPED",
+                Message = $"Tất cả {checksSkipped} validation checks bị bỏ qua do expectation trống hoặc không hợp lệ.",
+            });
+
+            _logger.LogWarning(
+                "Test case {TestCaseId}: all validation checks were skipped.",
+                testCase.TestCaseId);
+        }
 
         result.IsPassed = result.Failures.Count == 0;
         return result;
     }
 
-    private static void ValidateStatusCode(
+    private static bool ValidateStatusCode(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
-        if (string.IsNullOrEmpty(expectation.ExpectedStatus))
+        if (string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
         {
-            return;
+            return false;
         }
 
         try
         {
             var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
-            if (expectedStatuses != null && expectedStatuses.Count > 0 && response.StatusCode.HasValue)
+            if (expectedStatuses == null || expectedStatuses.Count == 0)
             {
-                if (!expectedStatuses.Contains(response.StatusCode.Value))
-                {
-                    result.StatusCodeMatched = false;
-                    result.Failures.Add(new ValidationFailureModel
-                    {
-                        Code = "STATUS_CODE_MISMATCH",
-                        Message = $"Mã trạng thái không khớp. Mong đợi: [{string.Join(", ", expectedStatuses)}], thực tế: {response.StatusCode}.",
-                        Expected = string.Join(", ", expectedStatuses),
-                        Actual = response.StatusCode.Value.ToString(),
-                    });
-                }
+                result.StatusCodeMatched = false;
+                AddInvalidExpectationFailure(
+                    result,
+                    "ExpectedStatus",
+                    expectation.ExpectedStatus,
+                    "Mong đợi JSON array số nguyên, ví dụ [200, 201].");
+                return true;
             }
+
+            if (!response.StatusCode.HasValue || !expectedStatuses.Contains(response.StatusCode.Value))
+            {
+                result.StatusCodeMatched = false;
+                result.Failures.Add(new ValidationFailureModel
+                {
+                    Code = "STATUS_CODE_MISMATCH",
+                    Message = $"Mã trạng thái không khớp. Mong đợi: [{string.Join(", ", expectedStatuses)}], thực tế: {response.StatusCode?.ToString() ?? "(null)"}.",
+                    Expected = string.Join(", ", expectedStatuses),
+                    Actual = response.StatusCode?.ToString(),
+                });
+            }
+
+            return true;
         }
         catch (JsonException)
         {
@@ -118,11 +180,21 @@ public class RuleBasedValidator : IRuleBasedValidator
                         Actual = response.StatusCode?.ToString(),
                     });
                 }
+
+                return true;
             }
+
+            result.StatusCodeMatched = false;
+            AddInvalidExpectationFailure(
+                result,
+                "ExpectedStatus",
+                expectation.ExpectedStatus,
+                "Mong đợi JSON array số nguyên, ví dụ [200, 201].");
+            return true;
         }
     }
 
-    private void ValidateResponseSchema(
+    private static bool ValidateResponseSchema(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ApiEndpointMetadataDto endpointMetadata,
@@ -131,15 +203,44 @@ public class RuleBasedValidator : IRuleBasedValidator
         // Determine which schema to use
         var schemaJson = expectation.ResponseSchema;
 
-        // Fallback to endpoint metadata schema if expectation schema is empty
-        if (string.IsNullOrWhiteSpace(schemaJson) && endpointMetadata?.ResponseSchemaPayloads != null)
+        // If expectation has no explicit schema, check if we should skip schema validation
+        // for non-2xx expected statuses (error responses don't match success schemas)
+        if (string.IsNullOrWhiteSpace(schemaJson))
         {
-            schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
+            if (IsExpectingNon2xxStatus(expectation))
+            {
+                // Skip schema validation for error responses when no explicit schema provided
+                // Success schemas (ResponseSchemaPayloads) are not appropriate for error responses
+                return false;
+            }
+
+            // Fallback to endpoint metadata schema only for 2xx expected statuses
+            if (endpointMetadata?.ResponseSchemaPayloads != null)
+            {
+                schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
+            }
         }
 
         if (string.IsNullOrWhiteSpace(schemaJson))
         {
-            return;
+            return false;
+        }
+
+        Json.Schema.JsonSchema schema;
+        try
+        {
+            var normalizedSchemaJson = NormalizeSchemaForEvaluation(schemaJson);
+            schema = Json.Schema.JsonSchema.FromText(normalizedSchemaJson);
+        }
+        catch (Exception)
+        {
+            result.SchemaMatched = false;
+            AddInvalidExpectationFailure(
+                result,
+                "ResponseSchema",
+                schemaJson,
+                "ResponseSchema không phải JSON schema hợp lệ.");
+            return true;
         }
 
         if (string.IsNullOrEmpty(response.Body))
@@ -150,14 +251,12 @@ public class RuleBasedValidator : IRuleBasedValidator
                 Code = "RESPONSE_NOT_JSON",
                 Message = "Response body trống nhưng có schema validation.",
             });
-            return;
+            return true;
         }
 
         try
         {
             using var responseDoc = JsonDocument.Parse(response.Body);
-            var normalizedSchemaJson = NormalizeSchemaForEvaluation(schemaJson);
-            var schema = Json.Schema.JsonSchema.FromText(normalizedSchemaJson);
             var evaluation = schema.Evaluate(responseDoc.RootElement);
             var isValid = evaluation.IsValid;
             result.SchemaMatched = isValid;
@@ -170,6 +269,8 @@ public class RuleBasedValidator : IRuleBasedValidator
                     Message = "Response body không phù hợp với JSON schema mong đợi.",
                 });
             }
+
+            return true;
         }
         catch (JsonException)
         {
@@ -179,6 +280,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 Code = "RESPONSE_NOT_JSON",
                 Message = "Response body không phải JSON hợp lệ.",
             });
+            return true;
         }
     }
 
@@ -307,14 +409,14 @@ public class RuleBasedValidator : IRuleBasedValidator
         return true;
     }
 
-    private static void ValidateHeaders(
+    private static bool ValidateHeaders(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
-        if (string.IsNullOrEmpty(expectation.HeaderChecks))
+        if (string.IsNullOrWhiteSpace(expectation.HeaderChecks))
         {
-            return;
+            return false;
         }
 
         Dictionary<string, string> headerChecks;
@@ -322,21 +424,28 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             headerChecks = JsonSerializer.Deserialize<Dictionary<string, string>>(expectation.HeaderChecks);
         }
-        catch
+        catch (JsonException)
         {
-            return;
+            result.HeaderChecksPassed = false;
+            AddInvalidExpectationFailure(
+                result,
+                "HeaderChecks",
+                expectation.HeaderChecks,
+                "Mong đợi JSON object dạng {\"Header-Name\": \"expected-value\"}.");
+            return true;
         }
 
         if (headerChecks == null || headerChecks.Count == 0)
         {
-            return;
+            return false;
         }
 
+        var responseHeaders = response.Headers ?? new Dictionary<string, string>();
         var allPassed = true;
         foreach (var check in headerChecks)
         {
             var found = false;
-            foreach (var h in response.Headers)
+            foreach (var h in responseHeaders)
             {
                 if (h.Key.Equals(check.Key, StringComparison.OrdinalIgnoreCase))
                 {
@@ -372,16 +481,17 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         result.HeaderChecksPassed = allPassed;
+        return true;
     }
 
-    private static void ValidateBodyContains(
+    private static bool ValidateBodyContains(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
-        if (string.IsNullOrEmpty(expectation.BodyContains))
+        if (string.IsNullOrWhiteSpace(expectation.BodyContains))
         {
-            return;
+            return false;
         }
 
         List<string> patterns;
@@ -389,20 +499,30 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             patterns = JsonSerializer.Deserialize<List<string>>(expectation.BodyContains);
         }
-        catch
+        catch (JsonException)
         {
-            return;
+            result.BodyContainsPassed = false;
+            AddInvalidExpectationFailure(
+                result,
+                "BodyContains",
+                expectation.BodyContains,
+                "Mong đợi JSON array chuỗi, ví dụ [\"success\", \"completed\"].");
+            return true;
         }
 
-        if (patterns == null || patterns.Count == 0)
+        var normalizedPatterns = patterns?
+            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .ToList();
+
+        if (normalizedPatterns == null || normalizedPatterns.Count == 0)
         {
-            return;
+            return false;
         }
 
         var body = response.Body ?? string.Empty;
         var allPassed = true;
 
-        foreach (var pattern in patterns)
+        foreach (var pattern in normalizedPatterns)
         {
             if (!body.Contains(pattern, StringComparison.Ordinal))
             {
@@ -417,16 +537,17 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         result.BodyContainsPassed = allPassed;
+        return true;
     }
 
-    private static void ValidateBodyNotContains(
+    private static bool ValidateBodyNotContains(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
-        if (string.IsNullOrEmpty(expectation.BodyNotContains))
+        if (string.IsNullOrWhiteSpace(expectation.BodyNotContains))
         {
-            return;
+            return false;
         }
 
         List<string> patterns;
@@ -434,20 +555,30 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             patterns = JsonSerializer.Deserialize<List<string>>(expectation.BodyNotContains);
         }
-        catch
+        catch (JsonException)
         {
-            return;
+            result.BodyNotContainsPassed = false;
+            AddInvalidExpectationFailure(
+                result,
+                "BodyNotContains",
+                expectation.BodyNotContains,
+                "Mong đợi JSON array chuỗi, ví dụ [\"error\", \"forbidden\"].");
+            return true;
         }
 
-        if (patterns == null || patterns.Count == 0)
+        var normalizedPatterns = patterns?
+            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .ToList();
+
+        if (normalizedPatterns == null || normalizedPatterns.Count == 0)
         {
-            return;
+            return false;
         }
 
         var body = response.Body ?? string.Empty;
         var allPassed = true;
 
-        foreach (var pattern in patterns)
+        foreach (var pattern in normalizedPatterns)
         {
             if (body.Contains(pattern, StringComparison.Ordinal))
             {
@@ -462,16 +593,17 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         result.BodyNotContainsPassed = allPassed;
+        return true;
     }
 
-    private static void ValidateJsonPathChecks(
+    private static bool ValidateJsonPathChecks(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
-        if (string.IsNullOrEmpty(expectation.JsonPathChecks))
+        if (string.IsNullOrWhiteSpace(expectation.JsonPathChecks))
         {
-            return;
+            return false;
         }
 
         Dictionary<string, string> checks;
@@ -479,14 +611,20 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             checks = JsonSerializer.Deserialize<Dictionary<string, string>>(expectation.JsonPathChecks);
         }
-        catch
+        catch (JsonException)
         {
-            return;
+            result.JsonPathChecksPassed = false;
+            AddInvalidExpectationFailure(
+                result,
+                "JsonPathChecks",
+                expectation.JsonPathChecks,
+                "Mong đợi JSON object dạng {\"$.path\": \"expectedValue\"}.");
+            return true;
         }
 
         if (checks == null || checks.Count == 0)
         {
-            return;
+            return false;
         }
 
         if (string.IsNullOrEmpty(response.Body))
@@ -497,7 +635,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 Code = "RESPONSE_NOT_JSON",
                 Message = "Response body trống nhưng có JSONPath checks.",
             });
-            return;
+            return true;
         }
 
         JsonDocument doc;
@@ -505,7 +643,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             doc = JsonDocument.Parse(response.Body);
         }
-        catch
+        catch (JsonException)
         {
             result.JsonPathChecksPassed = false;
             result.Failures.Add(new ValidationFailureModel
@@ -513,7 +651,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 Code = "RESPONSE_NOT_JSON",
                 Message = "Response body không phải JSON hợp lệ cho JSONPath checks.",
             });
-            return;
+            return true;
         }
 
         var allPassed = true;
@@ -540,16 +678,17 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         result.JsonPathChecksPassed = allPassed;
+        return true;
     }
 
-    private static void ValidateResponseTime(
+    private static bool ValidateResponseTime(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
         if (!expectation.MaxResponseTime.HasValue)
         {
-            return;
+            return false;
         }
 
         if (response.LatencyMs > expectation.MaxResponseTime.Value)
@@ -567,6 +706,34 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             result.ResponseTimePassed = true;
         }
+
+        return true;
+    }
+
+    private static void TrackCheck(bool checkPerformed, ref int checksPerformed, ref int checksSkipped)
+    {
+        if (checkPerformed)
+        {
+            checksPerformed++;
+            return;
+        }
+
+        checksSkipped++;
+    }
+
+    private static void AddInvalidExpectationFailure(
+        TestCaseValidationResult result,
+        string target,
+        string actualValue,
+        string details)
+    {
+        result.Failures.Add(new ValidationFailureModel
+        {
+            Code = InvalidExpectationFormatCode,
+            Message = $"{target} không đúng định dạng mong đợi. {details}",
+            Target = target,
+            Actual = Truncate(actualValue, 500),
+        });
     }
 
     private static bool ValuesEqual(string actual, string expected)
@@ -599,5 +766,39 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         return value[..maxLength] + "...";
+    }
+
+    /// <summary>
+    /// Determines if the expectation is for non-2xx (error) status codes.
+    /// Returns true if ALL expected statuses are outside the 200-299 range.
+    /// </summary>
+    private static bool IsExpectingNon2xxStatus(ExecutionTestCaseExpectationDto expectation)
+    {
+        if (string.IsNullOrWhiteSpace(expectation?.ExpectedStatus))
+        {
+            return false;
+        }
+
+        try
+        {
+            var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+            if (expectedStatuses == null || expectedStatuses.Count == 0)
+            {
+                return false;
+            }
+
+            // All statuses must be non-2xx for this to return true
+            return expectedStatuses.All(status => status < 200 || status >= 300);
+        }
+        catch (JsonException)
+        {
+            // Try single integer
+            if (int.TryParse(expectation.ExpectedStatus.Trim('[', ']', ' '), out var singleStatus))
+            {
+                return singleStatus < 200 || singleStatus >= 300;
+            }
+
+            return false;
+        }
     }
 }

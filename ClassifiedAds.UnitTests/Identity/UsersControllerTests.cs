@@ -58,7 +58,7 @@ public class UsersControllerTests
     }
 
     [Fact]
-    public async Task Post_Should_AutoConfirmEmail_AndSkipConfirmationEmail_WhenAdminCreatesRegularUser()
+    public async Task Post_Should_KeepRequestedRolesAndAutoConfirmEmail_WhenRequestContainsOnlyUserRole()
     {
         // Arrange
         var model = new CreateUserModel
@@ -69,6 +69,7 @@ public class UsersControllerTests
             Roles = new List<string> { "User" },
         };
 
+        IEnumerable<string> assignedRoles = Array.Empty<string>();
         User createdUser = null!;
 
         _roleManagerMock
@@ -87,6 +88,7 @@ public class UsersControllerTests
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock
             .Setup(x => x.AddToRolesAsync(It.IsAny<User>(), It.IsAny<IEnumerable<string>>()))
+            .Callback<User, IEnumerable<string>>((_, roles) => assignedRoles = roles)
             .ReturnsAsync(IdentityResult.Success);
 
         // Act
@@ -94,13 +96,14 @@ public class UsersControllerTests
 
         // Assert
         createdUser.EmailConfirmed.Should().BeTrue();
+        assignedRoles.Should().ContainSingle().Which.Should().Be("User");
 
         var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
         createdResult.Value.Should().NotBeNull();
 
         GetPropertyValue<bool>(createdResult.Value!, "EmailConfirmationRequired").Should().BeFalse();
         GetPropertyValue<string>(createdResult.Value!, "Message")
-            .Should().Be("Tạo người dùng thành công. Email đã được xác nhận tự động.");
+            .Should().Be("Tạo người dùng thành công với vai trò: User. Email đã được xác nhận tự động.");
         GetPropertyValue<UserModel>(createdResult.Value!, "User").EmailConfirmed.Should().BeTrue();
 
         _userManagerMock.Verify(

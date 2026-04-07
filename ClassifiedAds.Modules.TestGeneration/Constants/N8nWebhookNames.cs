@@ -6,6 +6,11 @@ namespace ClassifiedAds.Modules.TestGeneration.Constants;
 public static class N8nWebhookNames
 {
     /// <summary>
+    /// Unified webhook for test-case generation (used when callback-based generation is enabled).
+    /// </summary>
+    public const string GenerateTestCasesUnified = "generate-test-cases-unified";
+
+    /// <summary>
     /// Webhook that orchestrates LLM calls to generate happy-path test cases
     /// from approved API order + endpoint metadata + ObservationConfirmation prompts.
     /// </summary>
@@ -16,4 +21,9 @@ public static class N8nWebhookNames
     /// from approved API order + endpoint metadata + parameter details.
     /// </summary>
     public const string GenerateBoundaryNegative = "generate-boundary-negative-scenarios";
+
+    /// <summary>
+    /// Logical name used by LLM suggestions API. It can map to the same n8n flow as boundary/negative generation.
+    /// </summary>
+    public const string GenerateLlmSuggestions = "generate-llm-suggestions";
 }

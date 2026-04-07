@@ -43,6 +43,7 @@ public class ExecutionEnvironmentsController : ControllerBase
         var result = await _dispatcher.DispatchAsync(new GetExecutionEnvironmentsQuery
         {
             ProjectId = projectId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);
@@ -58,6 +59,7 @@ public class ExecutionEnvironmentsController : ControllerBase
         {
             ProjectId = projectId,
             EnvironmentId = environmentId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);

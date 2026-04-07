@@ -2,6 +2,7 @@ using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
+using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Models.Requests;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,15 +33,18 @@ public class TestCasesController : ControllerBase
     private readonly Dispatcher _dispatcher;
     private readonly ICurrentUser _currentUser;
     private readonly ILogger<TestCasesController> _logger;
+    private readonly N8nIntegrationOptions _n8nOptions;
 
     public TestCasesController(
         Dispatcher dispatcher,
         ICurrentUser currentUser,
-        ILogger<TestCasesController> logger)
+        ILogger<TestCasesController> logger,
+        IOptions<N8nIntegrationOptions> n8nOptions)
     {
         _dispatcher = dispatcher;
         _currentUser = currentUser;
         _logger = logger;
+        _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
     }
 
     /// <summary>
@@ -50,6 +55,7 @@ public class TestCasesController : ControllerBase
     [HttpPost("generate-happy-path")]
     [Consumes("application/json")]
     [ProducesResponseType(typeof(GenerateHappyPathResultModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -57,6 +63,30 @@ public class TestCasesController : ControllerBase
         Guid suiteId,
         [FromBody] GenerateHappyPathTestCasesRequest request)
     {
+        if (_n8nOptions.UseDotnetIntegrationWorkflowForGeneration)
+        {
+            var queueCommand = new GenerateTestCasesCommand
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = _currentUser.UserId,
+            };
+
+            await _dispatcher.DispatchAsync(queueCommand);
+
+            _logger.LogInformation(
+                "Queued unified n8n generation workflow trigger from happy-path endpoint. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+                suiteId, queueCommand.JobId,
+                _currentUser.UserId);
+
+            return Accepted(new GenerateTestsAcceptedResponse
+            {
+                JobId = queueCommand.JobId,
+                TestSuiteId = suiteId,
+                Mode = "callback",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
+            });
+        }
+
         var command = new GenerateHappyPathTestCasesCommand
         {
             TestSuiteId = suiteId,
@@ -84,6 +114,7 @@ public class TestCasesController : ControllerBase
     [HttpPost("generate-boundary-negative")]
     [Consumes("application/json")]
     [ProducesResponseType(typeof(GenerateBoundaryNegativeResultModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -91,6 +122,30 @@ public class TestCasesController : ControllerBase
         Guid suiteId,
         [FromBody] GenerateBoundaryNegativeTestCasesRequest request)
     {
+        if (_n8nOptions.UseDotnetIntegrationWorkflowForGeneration)
+        {
+            var queueCommand = new GenerateTestCasesCommand
+            {
+                TestSuiteId = suiteId,
+                CurrentUserId = _currentUser.UserId,
+            };
+
+            await _dispatcher.DispatchAsync(queueCommand);
+
+            _logger.LogInformation(
+                "Queued unified n8n generation workflow trigger from boundary/negative endpoint. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+                suiteId, queueCommand.JobId,
+                _currentUser.UserId);
+
+            return Accepted(new GenerateTestsAcceptedResponse
+            {
+                JobId = queueCommand.JobId,
+                TestSuiteId = suiteId,
+                Mode = "callback",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
+            });
+        }
+
         var command = new GenerateBoundaryNegativeTestCasesCommand
         {
             TestSuiteId = suiteId,
@@ -135,6 +190,7 @@ public class TestCasesController : ControllerBase
         var result = await _dispatcher.DispatchAsync(new GetTestCasesByTestSuiteQuery
         {
             TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
             FilterByTestType = filterType,
             IncludeDisabled = includeDisabled,
         });
@@ -155,6 +211,7 @@ public class TestCasesController : ControllerBase
         {
             TestSuiteId = suiteId,
             TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
         });
 
         return Ok(result);

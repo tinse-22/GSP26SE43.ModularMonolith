@@ -411,7 +411,10 @@ OUTPUT FORMAT (JSON array):
 
     private static bool IsVersionPrefix(string segment)
     {
-        return segment.StartsWith('v') && segment.Length <= 3 && char.IsDigit(segment[1]);
+        // Fixed: Check length >= 2 before accessing segment[1] to avoid IndexOutOfRangeException
+        return segment.Length >= 2 && segment.Length <= 3
+               && segment.StartsWith('v')
+               && char.IsDigit(segment[1]);
     }
 
     private static string TruncateSchema(string schema, int maxLength)

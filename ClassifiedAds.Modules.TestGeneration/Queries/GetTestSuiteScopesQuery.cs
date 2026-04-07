@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
@@ -14,6 +15,8 @@ namespace ClassifiedAds.Modules.TestGeneration.Queries;
 public class GetTestSuiteScopesQuery : IQuery<List<TestSuiteScopeModel>>
 {
     public Guid ProjectId { get; set; }
+
+    public Guid CurrentUserId { get; set; }
 }
 
 public class GetTestSuiteScopesQueryHandler : IQueryHandler<GetTestSuiteScopesQuery, List<TestSuiteScopeModel>>
@@ -31,9 +34,16 @@ public class GetTestSuiteScopesQueryHandler : IQueryHandler<GetTestSuiteScopesQu
 
     public async Task<List<TestSuiteScopeModel>> HandleAsync(GetTestSuiteScopesQuery query, CancellationToken cancellationToken = default)
     {
+        if (query.CurrentUserId == Guid.Empty)
+        {
+            throw new ValidationException("CurrentUserId la bat buoc.");
+        }
+
         var suites = await _suiteRepository.ToListAsync(
             _suiteRepository.GetQueryableSet()
-                .Where(x => x.ProjectId == query.ProjectId && x.Status != TestSuiteStatus.Archived)
+                .Where(x => x.ProjectId == query.ProjectId
+                    && x.CreatedById == query.CurrentUserId
+                    && x.Status != TestSuiteStatus.Archived)
                 .OrderByDescending(x => x.CreatedDateTime));
 
         var suiteIds = suites.Select(s => s.Id).ToList();

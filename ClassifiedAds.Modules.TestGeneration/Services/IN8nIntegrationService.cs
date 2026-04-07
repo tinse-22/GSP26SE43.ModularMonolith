@@ -22,9 +22,24 @@ public interface IN8nIntegrationService
 
     /// <summary>
     /// Triggers a named n8n webhook with the given payload (fire-and-forget, no response body expected).
+    /// Throws ValidationException on failure.
     /// </summary>
     Task TriggerWebhookAsync<TPayload>(
         string webhookName,
         TPayload payload,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Triggers a named n8n webhook and returns a result object instead of throwing.
+    /// Use this for background processing where you want to handle errors gracefully.
+    /// </summary>
+    Task<WebhookTriggerResult> TriggerWebhookWithResultAsync<TPayload>(
+        string webhookName,
+        TPayload payload,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the full webhook URL for a given webhook name.
+    /// </summary>
+    string GetResolvedWebhookUrl(string webhookName);
 }

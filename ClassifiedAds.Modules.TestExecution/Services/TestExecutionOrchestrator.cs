@@ -63,7 +63,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         Guid testRunId,
         Guid currentUserId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool strictValidation = false)
     {
         // Load run record
         var run = await _runRepository.FirstOrDefaultAsync(
@@ -115,7 +116,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         foreach (var testCase in executionContext.OrderedTestCases)
         {
             var result = await ExecuteTestCase(
-                testCase, resolvedEnv, variableBag, caseStatusMap, endpointMetadataMap, ct);
+                testCase, resolvedEnv, variableBag, caseStatusMap, endpointMetadataMap, ct, strictValidation);
 
             caseResults.Add(result);
             caseStatusMap[testCase.TestCaseId] = result.Status;
@@ -131,7 +132,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         Dictionary<string, string> variableBag,
         Dictionary<Guid, string> caseStatusMap,
         Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool strictValidation)
     {
         // Check dependencies
         var failedDeps = testCase.DependencyIds
@@ -199,7 +201,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Validate response
         endpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
-        var validation = _validator.Validate(response, testCase, endpointMetadata);
+        var validation = _validator.Validate(response, testCase, endpointMetadata, strictValidation);
 
         var caseStatus = validation.IsPassed ? "Passed" : "Failed";
 
@@ -216,7 +218,10 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             RequestHeaders = resolvedRequest.Headers,
             ResponseHeaders = response.Headers,
             ResponseBody = response.Body,
-            FailureReasons = validation.Failures,
+            FailureReasons = validation.Failures?.ToList() ?? new List<ValidationFailureModel>(),
+            Warnings = validation.Warnings?.ToList() ?? new List<ValidationWarningModel>(),
+            ChecksPerformed = validation.ChecksPerformed,
+            ChecksSkipped = validation.ChecksSkipped,
             ExtractedVariables = extracted.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             DependencyIds = testCase.DependencyIds,
             StatusCodeMatched = validation.StatusCodeMatched,

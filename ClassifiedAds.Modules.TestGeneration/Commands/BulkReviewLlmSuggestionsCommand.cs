@@ -101,8 +101,20 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
             "Bạn không phải chủ sở hữu của test suite này.");
 
         var queryable = _suggestionRepository.GetQueryableSet()
-            .Where(x => x.TestSuiteId == command.TestSuiteId
-                && x.ReviewStatus == ReviewStatus.Pending);
+            .Where(x => x.TestSuiteId == command.TestSuiteId);
+
+        if (isApprove)
+        {
+            queryable = queryable.Where(x =>
+                x.ReviewStatus == ReviewStatus.Pending
+                || ((x.ReviewStatus == ReviewStatus.Approved
+                        || x.ReviewStatus == ReviewStatus.ModifiedAndApproved)
+                    && x.AppliedTestCaseId == null));
+        }
+        else
+        {
+            queryable = queryable.Where(x => x.ReviewStatus == ReviewStatus.Pending);
+        }
 
         if (filterBySuggestionType.HasValue)
         {

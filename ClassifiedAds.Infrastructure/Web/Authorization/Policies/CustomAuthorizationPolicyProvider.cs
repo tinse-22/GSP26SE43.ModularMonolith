@@ -21,10 +21,8 @@ internal class CustomAuthorizationPolicyProvider : DefaultAuthorizationPolicyPro
 
             policyBuilder.RequireAuthenticatedUser();
 
-            // Extract the permission name from the policy name
-            // e.g., "Permission:Users.Read" -> "Users.Read"
-            var permissionName = policyName["Permission:".Length..];
-            policyBuilder.AddRequirements(new PermissionRequirement(permissionName));
+            // Permission constants and seeded claims both use the full "Permission:Foo" value.
+            policyBuilder.AddRequirements(new PermissionRequirement(policyName));
 
             var policy = policyBuilder.Build();
 

@@ -16,9 +16,9 @@ public class N8nIntegrationOptions
     public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// HTTP request timeout in seconds. Default: 30.
+    /// HTTP request timeout in seconds. Default: 120 (2 minutes) for LLM/webhook calls.
     /// </summary>
-    public int TimeoutSeconds { get; set; } = 30;
+    public int TimeoutSeconds { get; set; } = 120;
 
     /// <summary>
     /// Named webhook paths appended to BaseUrl.
@@ -38,4 +38,10 @@ public class N8nIntegrationOptions
     /// via the "x-callback-api-key" request header.
     /// </summary>
     public string CallbackApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When true, generation APIs use the unified DotnetIntegration webhook (callback-based)
+    /// instead of per-flow synchronous webhooks.
+    /// </summary>
+    public bool UseDotnetIntegrationWorkflowForGeneration { get; set; }
 }

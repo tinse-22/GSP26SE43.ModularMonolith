@@ -639,6 +639,87 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.ToTable("TestDataSets", "testgen");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestGenerationJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("CallbackUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorDetails")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid?>("ProposalId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("QueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<int?>("TestCasesGenerated")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TestSuiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("TriggeredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TriggeredById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WebhookName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("WebhookUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QueuedAt");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TestSuiteId");
+
+                    b.HasIndex("TriggeredById");
+
+                    b.HasIndex("TestSuiteId", "QueuedAt");
+
+                    b.ToTable("TestGenerationJobs", "testgen");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestOrderProposal", b =>
                 {
                     b.Property<Guid>("Id")
@@ -982,6 +1063,17 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsRequired();
 
                     b.Navigation("TestCase");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestGenerationJob", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestSuite", "TestSuite")
+                        .WithMany()
+                        .HasForeignKey("TestSuiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("TestSuite");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestOrderProposal", b =>

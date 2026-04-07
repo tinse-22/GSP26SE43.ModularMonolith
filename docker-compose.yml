@@ -2,7 +2,7 @@ services:
     db:
         image: "postgres:16"
         ports:
-            - "55432:5432"
+            - "${POSTGRES_HOST_PORT:-55432}:5432"
         environment:
             POSTGRES_USER: ${POSTGRES_USER}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -17,6 +17,9 @@ services:
             - postgres_data:/var/lib/postgresql/data
     rabbitmq:
         image: "rabbitmq:3-management"
+        environment:
+          RABBITMQ_DEFAULT_USER: ${Messaging__RabbitMQ__UserName:-guest}
+          RABBITMQ_DEFAULT_PASS: ${Messaging__RabbitMQ__Password:-guest}
         ports:
           - "5672:5672"
           - "15672:15672"
@@ -78,6 +81,8 @@ services:
           ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
           Messaging__Provider: "RabbitMQ"
           Messaging__RabbitMQ__HostName: "rabbitmq"
+          Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
+          Messaging__RabbitMQ__Password: ${Messaging__RabbitMQ__Password:-guest}
           Caching__Distributed__Provider: "Redis"
           Caching__Distributed__Redis__Configuration: "redis:6379"
           Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"
@@ -109,6 +114,8 @@ services:
           CheckDependency__Host: "rabbitmq:5672"
           Messaging__Provider: "RabbitMQ"
           Messaging__RabbitMQ__HostName: "rabbitmq"
+          Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
+          Messaging__RabbitMQ__Password: ${Messaging__RabbitMQ__Password:-guest}
           Caching__Distributed__Provider: "Redis"
           Caching__Distributed__Redis__Configuration: "redis:6379"
           Caching__Distributed__Redis__InstanceName: "ClassifiedAds_"

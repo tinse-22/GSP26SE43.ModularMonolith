@@ -277,6 +277,958 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
                             Type = "Permission",
                             Value = "Permission:UnlockUser"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000018"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetConfigurationEntries"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000019"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetConfigurationEntry"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000020"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddConfigurationEntry"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000021"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateConfigurationEntry"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000022"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteConfigurationEntry"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000023"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ExportConfigurationEntries"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000024"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ImportConfigurationEntries"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000025"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetAuditLogs"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000026"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetProjects"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000027"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000028"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000029"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000030"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ArchiveProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000031"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetSpecifications"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000032"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000033"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000034"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000035"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ActivateSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000036"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetEndpoints"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000037"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000038"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000039"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000040"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetFiles"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000041"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UploadFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000042"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000043"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DownloadFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000044"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000045"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000046"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetFileAuditLogs"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000047"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestSuites"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000048"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000049"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000050"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000051"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ProposeTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000052"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestOrderProposal"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000053"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ReorderTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000054"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:ApproveTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000055"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GenerateTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000056"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000057"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GenerateBoundaryNegativeTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000058"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000059"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000060"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000061"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetExecutionEnvironments"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000062"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000063"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000064"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000065"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:StartTestRun"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000066"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestRuns"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000067"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetPlans"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000068"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddPlan"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000069"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdatePlan"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000070"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:DeletePlan"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000071"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetPlanAuditLogs"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000072"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000073"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetCurrentSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000074"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000075"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000076"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:CancelSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000077"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetSubscriptionHistory"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000078"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentTransactions"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000079"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:AddPaymentTransaction"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000080"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetUsageTracking"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000081"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateUsageTracking"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000082"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:CreateSubscriptionPayment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000083"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentIntent"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000084"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:CreatePayOsCheckout"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0001-000000000085"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000001"),
+                            Type = "Permission",
+                            Value = "Permission:SyncPayment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000001"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetProjects"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000002"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000003"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000004"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000005"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:ArchiveProject"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000006"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetSpecifications"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000007"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000008"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000009"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000010"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:ActivateSpecification"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000011"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetEndpoints"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000012"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000013"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000014"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteEndpoint"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000015"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestSuites"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000016"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000017"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000018"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteTestSuite"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000019"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:ProposeTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000020"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestOrderProposal"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000021"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:ReorderTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000022"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:ApproveTestOrder"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000023"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GenerateTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000024"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000025"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GenerateBoundaryNegativeTestCases"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000026"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000027"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000028"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteTestCase"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000029"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetExecutionEnvironments"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000030"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:AddExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000031"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000032"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteExecutionEnvironment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000033"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:StartTestRun"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000034"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetTestRuns"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000035"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetFiles"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000036"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UploadFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000037"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000038"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DownloadFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000039"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:UpdateFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000040"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:DeleteFile"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000041"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetFileAuditLogs"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000042"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetPlans"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000043"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000044"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetCurrentSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000045"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:CancelSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000046"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetSubscriptionHistory"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000047"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentTransactions"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000048"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetUsageTracking"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000049"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:CreateSubscriptionPayment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000050"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentIntent"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000051"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:CreatePayOsCheckout"
                         });
                 });
 

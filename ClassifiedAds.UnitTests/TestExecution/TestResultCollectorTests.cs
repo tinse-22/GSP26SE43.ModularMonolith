@@ -23,19 +23,29 @@ public class TestResultCollectorTests
     };
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
+    private readonly Mock<IRepository<TestCaseResult, Guid>> _resultRepoMock;
     private readonly Mock<IDistributedCache> _cacheMock;
     private readonly TestResultCollector _collector;
 
     public TestResultCollectorTests()
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
+        _resultRepoMock = new Mock<IRepository<TestCaseResult, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
 
         var unitOfWorkMock = new Mock<IUnitOfWork>();
         _runRepoMock.Setup(x => x.UnitOfWork).Returns(unitOfWorkMock.Object);
+        _runRepoMock.Setup(x => x.UpdateAsync(It.IsAny<TestRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        unitOfWorkMock.Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        _resultRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseResult>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         _collector = new TestResultCollector(
             _runRepoMock.Object,
+            _resultRepoMock.Object,
             _cacheMock.Object,
             new Mock<ILogger<TestResultCollector>>().Object);
     }
@@ -254,7 +264,7 @@ public class TestResultCollectorTests
     }
 
     [Fact]
-    public async Task CollectAsync_CacheFail_ShouldPersistSummaryThenThrow()
+    public async Task CollectAsync_CacheFail_ShouldReturnDatabaseAndPersistSummary()
     {
         // Arrange
         var run = CreateTestRun();
@@ -271,11 +281,11 @@ public class TestResultCollectorTests
             .ThrowsAsync(new Exception("Redis unavailable"));
 
         // Act
-        var act = () => _collector.CollectAsync(run, caseResults, 7, "Dev");
+        var result = await _collector.CollectAsync(run, caseResults, 7, "Dev");
 
         // Assert
-        await act.Should().ThrowAsync<ConflictException>();
-        run.Status.Should().Be(TestRunStatus.Failed);
+        result.ResultsSource.Should().Be("database");
+        run.Status.Should().Be(TestRunStatus.Completed);
         _runRepoMock.Verify(x => x.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
         _runRepoMock.Verify(x => x.UnitOfWork.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }

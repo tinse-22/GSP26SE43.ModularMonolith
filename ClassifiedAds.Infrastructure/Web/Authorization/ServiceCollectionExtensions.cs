@@ -15,7 +15,7 @@ public static class ServiceCollectionExtensions
     {
         if (!services.Any(s => s.ServiceType == typeof(IClaimsTransformation) && s.ImplementationType == typeof(CustomClaimsTransformation)))
         {
-            services.AddSingleton<IClaimsTransformation, CustomClaimsTransformation>();
+            services.AddScoped<IClaimsTransformation, CustomClaimsTransformation>();
         }
 
         if (!services.Any(s => s.ServiceType == typeof(IAuthorizationPolicyProvider) && s.ImplementationType == typeof(CustomAuthorizationPolicyProvider)))

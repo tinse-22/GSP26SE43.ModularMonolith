@@ -42,6 +42,8 @@ public static class Extensions
             http.AddServiceDiscovery();
 
             // Enable resilience with standard retry and circuit breaker policies
+            // Note: Typed clients with custom resilience (e.g., N8nIntegrationService) add their own
+            // handlers which take precedence over this default (last-in wins for Polly pipelines)
             http.AddStandardResilienceHandler();
         });
 

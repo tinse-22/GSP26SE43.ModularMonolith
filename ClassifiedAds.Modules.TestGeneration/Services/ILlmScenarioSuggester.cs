@@ -34,6 +34,8 @@ public class LlmScenarioSuggestionContext
     public Guid SpecificationId { get; set; }
 
     public IReadOnlyDictionary<Guid, EndpointParameterDetailDto> EndpointParameterDetails { get; set; } = new Dictionary<Guid, EndpointParameterDetailDto>();
+
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
 }
 
 public class LlmScenarioSuggestionResult
@@ -67,7 +69,17 @@ public class LlmSuggestedScenario
 
     public Dictionary<string, string> SuggestedHeaders { get; set; }
 
+    /// <summary>
+    /// Primary expected status code (backward compatibility).
+    /// Use <see cref="ExpectedStatusCodes"/> for full list.
+    /// </summary>
     public int ExpectedStatusCode { get; set; } = 400;
+
+    /// <summary>
+    /// List of all acceptable status codes for this scenario.
+    /// If null or empty, falls back to <see cref="ExpectedStatusCode"/>.
+    /// </summary>
+    public List<int> ExpectedStatusCodes { get; set; }
 
     public string ExpectedBehavior { get; set; }
 
@@ -76,4 +88,17 @@ public class LlmSuggestedScenario
     public List<string> Tags { get; set; } = new();
 
     public List<N8nTestCaseVariable> Variables { get; set; } = new();
+
+    /// <summary>
+    /// Gets the effective list of expected status codes, preferring the full list if available.
+    /// </summary>
+    public List<int> GetEffectiveExpectedStatusCodes()
+    {
+        if (ExpectedStatusCodes != null && ExpectedStatusCodes.Count > 0)
+        {
+            return ExpectedStatusCodes;
+        }
+
+        return new List<int> { ExpectedStatusCode };
+    }
 }

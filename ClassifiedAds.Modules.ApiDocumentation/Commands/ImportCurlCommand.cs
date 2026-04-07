@@ -135,6 +135,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
         // 6. Create spec and endpoint in transaction
         var spec = new ApiSpecification
         {
+            Id = Guid.NewGuid(),
             ProjectId = command.ProjectId,
             OriginalFileId = null,
             Name = command.Model.Name.Trim(),
@@ -151,6 +152,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
 
             var endpoint = new ApiEndpoint
             {
+                Id = Guid.NewGuid(),
                 ApiSpecId = spec.Id,
                 HttpMethod = httpMethod,
                 Path = parseResult.Path ?? "/",
@@ -167,6 +169,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
             {
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpoint.Id,
                     Name = pathParam.Name,
                     Location = ParameterLocation.Path,
@@ -180,6 +183,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
             {
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpoint.Id,
                     Name = kvp.Key,
                     Location = ParameterLocation.Query,
@@ -204,6 +208,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
 
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpoint.Id,
                     Name = kvp.Key,
                     Location = ParameterLocation.Header,
@@ -218,6 +223,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
             {
                 await _parameterRepository.AddAsync(new EndpointParameter
                 {
+                    Id = Guid.NewGuid(),
                     EndpointId = endpoint.Id,
                     Name = "body",
                     Location = ParameterLocation.Body,

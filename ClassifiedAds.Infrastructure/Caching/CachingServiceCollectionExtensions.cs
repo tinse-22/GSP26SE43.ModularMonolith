@@ -1,4 +1,5 @@
-﻿using ClassifiedAds.Infrastructure.Caching;
+using System;
+using ClassifiedAds.Infrastructure.Caching;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -24,7 +25,7 @@ public static class CachingServiceCollectionExtensions
         {
             services.AddDistributedRedisCache(opt =>
             {
-                opt.Configuration = options.Distributed.Redis.Configuration;
+                opt.Configuration = BuildRedisConfiguration(options.Distributed.Redis);
                 opt.InstanceName = options.Distributed.Redis.InstanceName;
             });
         }
@@ -34,5 +35,34 @@ public static class CachingServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    private static string BuildRedisConfiguration(RedisOptions options)
+    {
+        var configuration = options?.Configuration;
+        if (string.IsNullOrWhiteSpace(configuration))
+        {
+            return configuration;
+        }
+
+        if (ContainsOption(configuration, "abortConnect") || ContainsOption(configuration, "abortOnConnectFail"))
+        {
+            return configuration;
+        }
+
+        return $"{configuration},abortConnect=false";
+    }
+
+    private static bool ContainsOption(string configuration, string optionName)
+    {
+        foreach (var segment in configuration.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment.Trim().StartsWith(optionName + "=", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

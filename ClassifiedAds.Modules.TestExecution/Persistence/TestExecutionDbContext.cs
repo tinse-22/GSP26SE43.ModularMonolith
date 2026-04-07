@@ -19,6 +19,8 @@ public class TestExecutionDbContext : DbContextUnitOfWork<TestExecutionDbContext
 
     public DbSet<TestRun> TestRuns { get; set; }
 
+    public DbSet<TestCaseResult> TestCaseResults { get; set; }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

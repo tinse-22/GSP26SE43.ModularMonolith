@@ -153,22 +153,7 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             }
         }
 
-        // 6) If regenerating, delete existing boundary/negative test cases
-        if (existingCases.Count > 0 && command.ForceRegenerate)
-        {
-            _logger.LogInformation(
-                "Force regenerating boundary/negative test cases. Deleting {Count} existing test cases. TestSuiteId={TestSuiteId}",
-                existingCases.Count, command.TestSuiteId);
-
-            foreach (var existing in existingCases)
-            {
-                _testCaseRepository.Delete(existing);
-            }
-
-            await _testCaseRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-        }
-
-        // 7) Generate test cases via orchestrator pipeline
+        // 6) Generate test cases via orchestrator pipeline
         var options = new BoundaryNegativeOptions
         {
             IncludePathMutations = command.IncludePathMutations,
@@ -182,6 +167,13 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
 
         if (generationResult.TestCases.Count == 0)
         {
+            if (existingCases.Count > 0 && command.ForceRegenerate)
+            {
+                _logger.LogWarning(
+                    "Boundary/negative regeneration produced no replacement test cases. Existing test cases were preserved. TestSuiteId={TestSuiteId}",
+                    command.TestSuiteId);
+            }
+
             command.Result = new GenerateBoundaryNegativeResultModel
             {
                 TestSuiteId = command.TestSuiteId,
@@ -198,11 +190,23 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             return;
         }
 
-        // 8) Persist everything in a transaction
+        // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
+            if (existingCases.Count > 0 && command.ForceRegenerate)
+            {
+                _logger.LogInformation(
+                    "Force regenerating boundary/negative test cases. Replacing {Count} existing test cases. TestSuiteId={TestSuiteId}",
+                    existingCases.Count, command.TestSuiteId);
+
+                foreach (var existing in existingCases)
+                {
+                    _testCaseRepository.Delete(existing);
+                }
+            }
+
             foreach (var testCase in generationResult.TestCases)
             {
                 testCase.CreatedDateTime = now;
@@ -281,7 +285,7 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
         }, cancellationToken: cancellationToken);
 
-        // 9) Increment subscription usage
+        // 8) Increment subscription usage
         await _subscriptionLimitService.IncrementUsageAsync(
             new Contracts.Subscription.DTOs.IncrementUsageRequest
             {
@@ -303,7 +307,7 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
                 cancellationToken);
         }
 
-        // 10) Build result model
+        // 9) Build result model
         command.Result = new GenerateBoundaryNegativeResultModel
         {
             TestSuiteId = command.TestSuiteId,

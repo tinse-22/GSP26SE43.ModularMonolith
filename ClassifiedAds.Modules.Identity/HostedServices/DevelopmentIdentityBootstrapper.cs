@@ -14,6 +14,10 @@ namespace ClassifiedAds.Modules.Identity.HostedServices;
 
 public class DevelopmentIdentityBootstrapper : IHostedService
 {
+    // Must match RoleConfiguration and RoleClaimConfiguration seed IDs
+    private static readonly Guid AdminRoleId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private static readonly Guid UserRoleId = Guid.Parse("00000000-0000-0000-0000-000000000002");
+
     private readonly IServiceProvider _serviceProvider;
     private readonly IHostEnvironment _hostEnvironment;
     private readonly IOptions<IdentityModuleOptions> _options;
@@ -42,8 +46,8 @@ public class DevelopmentIdentityBootstrapper : IHostedService
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<Role>>();
 
-        await EnsureRoleAsync(roleManager, "Admin", cancellationToken);
-        await EnsureRoleAsync(roleManager, "User", cancellationToken);
+        await EnsureRoleAsync(roleManager, AdminRoleId, "Admin", cancellationToken);
+        await EnsureRoleAsync(roleManager, UserRoleId, "User", cancellationToken);
 
         await EnsureUserAsync(
             userManager,
@@ -62,7 +66,7 @@ public class DevelopmentIdentityBootstrapper : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private async Task EnsureRoleAsync(RoleManager<Role> roleManager, string roleName, CancellationToken cancellationToken)
+    private async Task EnsureRoleAsync(RoleManager<Role> roleManager, Guid roleId, string roleName, CancellationToken cancellationToken)
     {
         var role = await roleManager.FindByNameAsync(roleName);
         if (role != null)
@@ -72,10 +76,10 @@ public class DevelopmentIdentityBootstrapper : IHostedService
 
         var result = await roleManager.CreateAsync(new Role
         {
-            Id = Guid.NewGuid(),
+            Id = roleId,
             Name = roleName,
             NormalizedName = roleName.ToUpperInvariant(),
-            ConcurrencyStamp = Guid.NewGuid().ToString(),
+            ConcurrencyStamp = roleId.ToString(),
         });
 
         if (!result.Succeeded)

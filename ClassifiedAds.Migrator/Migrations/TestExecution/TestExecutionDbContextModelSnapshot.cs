@@ -197,6 +197,114 @@ namespace ClassifiedAds.Migrator.Migrations.TestExecution
                     b.ToTable("OutboxMessages", "testexecution");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestExecution.Entities.TestCaseResult", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<bool?>("BodyContainsPassed")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("BodyNotContainsPassed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DependencyIds")
+                        .HasColumnType("jsonb");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("EndpointId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExtractedVariables")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("FailureReasons")
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool?>("HeaderChecksPassed")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<bool?>("JsonPathChecksPassed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("OrderIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RequestHeaders")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ResolvedUrl")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ResponseBodyPreview")
+                        .HasMaxLength(65536)
+                        .HasColumnType("character varying(65536)");
+
+                    b.Property<string>("ResponseHeaders")
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool?>("ResponseTimePassed")
+                        .HasColumnType("boolean");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<bool?>("SchemaMatched")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SkippedBecauseDependencyIds")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("StatusCodeMatched")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("TestCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TestRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TestCaseId");
+
+                    b.HasIndex("TestRunId");
+
+                    b.HasIndex("TestRunId", "OrderIndex");
+
+                    b.HasIndex("TestRunId", "Status");
+
+                    b.ToTable("TestCaseResults", "testexecution");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestExecution.Entities.TestRun", b =>
                 {
                     b.Property<Guid>("Id")

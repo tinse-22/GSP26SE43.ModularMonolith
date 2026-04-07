@@ -153,6 +153,16 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         };
     }
 
+    public async Task<IReadOnlyList<Guid>> GetTestCaseIdsBySuiteAsync(
+        Guid testSuiteId,
+        CancellationToken ct = default)
+    {
+        return await _testCaseRepository.ToListAsync(
+            _testCaseRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == testSuiteId && x.IsEnabled)
+                .Select(x => x.Id));
+    }
+
     private static void ValidateSelectedTestCases(
         IReadOnlyCollection<Guid> selectedIds,
         Dictionary<Guid, TestCase> enabledMap)

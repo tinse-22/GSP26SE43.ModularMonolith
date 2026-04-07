@@ -41,6 +41,18 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
         "Get", "List", "Search", "Find", "Fetch",
     };
 
+    /// <summary>
+    /// Pre-sorted suffixes by length descending for greedy matching (cached for performance).
+    /// </summary>
+    private static readonly string[] SortedSuffixesByLengthDesc =
+        SchemaNameSuffixes.OrderByDescending(s => s.Length).ToArray();
+
+    /// <summary>
+    /// Pre-sorted prefixes by length descending for greedy matching (cached for performance).
+    /// </summary>
+    private static readonly string[] SortedPrefixesByLengthDesc =
+        SchemaNamePrefixes.OrderByDescending(s => s.Length).ToArray();
+
     /// <inheritdoc />
     public IReadOnlyDictionary<string, HashSet<string>> BuildSchemaReferenceGraph(
         IReadOnlyDictionary<string, string> schemaNameToPayload)
@@ -428,6 +440,7 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
     /// <summary>
     /// Extract the meaningful base name from a schema name by stripping common prefixes/suffixes.
     /// "CreateUserRequest" → "User", "UserResponse" → "User", "OrderItemDto" → "OrderItem".
+    /// Uses pre-sorted arrays for better performance.
     /// </summary>
     internal static string ExtractSchemaBaseName(string schemaName)
     {
@@ -438,12 +451,8 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
 
         var name = schemaName.Trim();
 
-        // Strip suffixes (longest first for greedy match).
-        var sortedSuffixes = SchemaNameSuffixes
-            .OrderByDescending(s => s.Length)
-            .ToList();
-
-        foreach (var suffix in sortedSuffixes)
+        // Strip suffixes (longest first for greedy match, using pre-sorted array).
+        foreach (var suffix in SortedSuffixesByLengthDesc)
         {
             if (name.Length > suffix.Length && name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {
@@ -452,12 +461,8 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
             }
         }
 
-        // Strip prefixes.
-        var sortedPrefixes = SchemaNamePrefixes
-            .OrderByDescending(s => s.Length)
-            .ToList();
-
-        foreach (var prefix in sortedPrefixes)
+        // Strip prefixes (using pre-sorted array).
+        foreach (var prefix in SortedPrefixesByLengthDesc)
         {
             if (name.Length > prefix.Length && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {

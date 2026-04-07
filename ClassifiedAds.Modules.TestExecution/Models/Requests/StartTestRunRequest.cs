@@ -8,4 +8,6 @@ public class StartTestRunRequest
     public Guid? EnvironmentId { get; set; }
 
     public List<Guid> SelectedTestCaseIds { get; set; }
+
+    public bool StrictValidation { get; set; }
 }

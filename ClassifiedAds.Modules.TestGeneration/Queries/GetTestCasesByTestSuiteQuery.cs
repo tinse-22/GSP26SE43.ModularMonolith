@@ -15,6 +15,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Queries;
 public class GetTestCasesByTestSuiteQuery : IQuery<List<TestCaseModel>>
 {
     public Guid TestSuiteId { get; set; }
+    public Guid CurrentUserId { get; set; }
     public TestType? FilterByTestType { get; set; }
     public bool IncludeDisabled { get; set; }
 }
@@ -36,10 +37,13 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
         GetTestCasesByTestSuiteQuery query,
         CancellationToken cancellationToken = default)
     {
+        if (query.CurrentUserId == Guid.Empty)
+            throw new ValidationException("CurrentUserId la bat buoc.");
+
         // Verify suite exists
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet()
-                .Where(x => x.Id == query.TestSuiteId));
+                .Where(x => x.Id == query.TestSuiteId && x.CreatedById == query.CurrentUserId));
 
         if (suite == null)
             throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");

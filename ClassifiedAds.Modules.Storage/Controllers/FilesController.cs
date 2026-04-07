@@ -1,5 +1,6 @@
 ﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.AuditLog.DTOs;
+using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Storage.Authorization;
 using ClassifiedAds.Modules.Storage.ConfigurationOptions;
@@ -31,16 +32,19 @@ namespace ClassifiedAds.Modules.Storage.Controllers;
 public class FilesController : Controller
 {
     private readonly Dispatcher _dispatcher;
+    private readonly ICurrentUser _currentUser;
     private readonly StorageModuleOptions _options;
     private readonly IFileStorageManager _fileManager;
     private readonly IAuthorizationService _authorizationService;
 
     public FilesController(Dispatcher dispatcher,
+        ICurrentUser currentUser,
         IOptions<StorageModuleOptions> options,
         IFileStorageManager fileManager,
         IAuthorizationService authorizationService)
     {
         _dispatcher = dispatcher;
+        _currentUser = currentUser;
         _options = options.Value;
         _fileManager = fileManager;
         _authorizationService = authorizationService;
@@ -50,7 +54,10 @@ public class FilesController : Controller
     [HttpGet]
     public async Task<ActionResult<IEnumerable<FileEntryModel>>> Get()
     {
-        var fileEntries = await _dispatcher.DispatchAsync(new GetFileEntriesQuery());
+        var fileEntries = await _dispatcher.DispatchAsync(new GetFileEntriesQuery
+        {
+            CurrentUserId = _currentUser.UserId,
+        });
         return Ok(fileEntries.ToModels());
     }
 
@@ -66,6 +73,7 @@ public class FilesController : Controller
             UploadedTime = DateTime.Now,
             FileName = model.FormFile.FileName,
             Encrypted = model.Encrypted,
+            OwnerId = _currentUser.UserId,
         };
 
         await _dispatcher.DispatchAsync(new AddOrUpdateEntityCommand<FileEntry>(fileEntry));
@@ -219,6 +227,19 @@ public class FilesController : Controller
     [HttpGet("{id}/auditlogs")]
     public async Task<ActionResult<IEnumerable<AuditLogEntryDTO>>> GetAuditLogs(Guid id)
     {
+        var fileEntry = await _dispatcher.DispatchAsync(new GetEntityByIdQuery<FileEntry> { Id = id });
+
+        if (fileEntry == null || fileEntry.Deleted)
+        {
+            return Ok(Array.Empty<object>());
+        }
+
+        var authorizationResult = await _authorizationService.AuthorizeAsync(User, fileEntry, Operations.Read);
+        if (!authorizationResult.Succeeded)
+        {
+            return Forbid();
+        }
+
         var logs = await _dispatcher.DispatchAsync(new GetAuditEntriesQuery { ObjectId = id.ToString() });
 
         List<dynamic> entries = new List<dynamic>();
