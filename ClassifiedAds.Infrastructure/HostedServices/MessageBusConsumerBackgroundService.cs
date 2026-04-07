@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace ClassifiedAds.Infrastructure.HostedServices;
 
 public sealed class MessageBusConsumerBackgroundService<TConsumer, T> : BackgroundService
-    where T : IMessageBusEvent
+    where T : IMessageBusMessage
 {
     private readonly ILogger<MessageBusConsumerBackgroundService<TConsumer, T>> _logger;
     private readonly IMessageBus _messageBus;

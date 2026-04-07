@@ -2,6 +2,8 @@ using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Infrastructure.Configuration;
 using ClassifiedAds.Infrastructure.Logging;
+using ClassifiedAds.Infrastructure.Messaging;
+using ClassifiedAds.Infrastructure.Messaging.RabbitMQ;
 using ClassifiedAds.Infrastructure.Monitoring;
 using ClassifiedAds.Infrastructure.Web.ExceptionHandlers;
 using ClassifiedAds.Infrastructure.Web.Validation;
@@ -11,6 +13,7 @@ using ClassifiedAds.Modules.Identity.Services;
 using ClassifiedAds.Modules.Notification.Hubs;
 using ClassifiedAds.Application.FeatureToggles;
 using ClassifiedAds.Infrastructure.FeatureToggles.OutboxPublishingToggle;
+using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.WebAPI.ConfigurationOptions;
 using FluentValidation;
 using FluentValidation.AspNetCore;
@@ -331,6 +334,17 @@ services.AddSingleton<IOutboxPublishingToggle, FileBasedOutboxPublishingToggle>(
 
 // Register IMessageBus for outbox PublishEventWorkers that send messages via the bus
 services.AddTransient<IMessageBus, MessageBus>();
+var messageBusOptions = new MessagingOptions();
+configuration.GetSection("Messaging").Bind(messageBusOptions);
+messageBusOptions.RabbitMQ ??= new RabbitMQOptions();
+messageBusOptions.RabbitMQ.ExchangeName ??= "amq.direct";
+messageBusOptions.RabbitMQ.RoutingKeys ??= new Dictionary<string, string>();
+if (!messageBusOptions.RabbitMQ.RoutingKeys.ContainsKey(nameof(TriggerTestGenerationMessage)))
+{
+    messageBusOptions.RabbitMQ.RoutingKeys[nameof(TriggerTestGenerationMessage)] = "classifiedadds_testgeneration_trigger";
+}
+
+services.AddMessageBusSender<TriggerTestGenerationMessage>(messageBusOptions);
 
 services.AddHostedServicesNotificationModule();
 services.AddHostedServicesApiDocumentationModule();

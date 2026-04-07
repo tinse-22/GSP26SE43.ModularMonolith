@@ -65,22 +65,25 @@ public class TestCasesController : ControllerBase
     {
         if (_n8nOptions.UseDotnetIntegrationWorkflowForGeneration)
         {
-            await _dispatcher.DispatchAsync(new GenerateTestCasesCommand
+            var queueCommand = new GenerateTestCasesCommand
             {
                 TestSuiteId = suiteId,
                 CurrentUserId = _currentUser.UserId,
-            });
+            };
+
+            await _dispatcher.DispatchAsync(queueCommand);
 
             _logger.LogInformation(
-                "Triggered unified n8n generation workflow (DotnetIntegration) from happy-path endpoint. TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
-                suiteId,
+                "Queued unified n8n generation workflow trigger from happy-path endpoint. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+                suiteId, queueCommand.JobId,
                 _currentUser.UserId);
 
-            return Accepted(new
+            return Accepted(new GenerateTestsAcceptedResponse
             {
-                testSuiteId = suiteId,
-                mode = "callback",
-                message = "Triggered DotnetIntegration workflow. Test cases will be saved via callback endpoint.",
+                JobId = queueCommand.JobId,
+                TestSuiteId = suiteId,
+                Mode = "callback",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
             });
         }
 
@@ -121,22 +124,25 @@ public class TestCasesController : ControllerBase
     {
         if (_n8nOptions.UseDotnetIntegrationWorkflowForGeneration)
         {
-            await _dispatcher.DispatchAsync(new GenerateTestCasesCommand
+            var queueCommand = new GenerateTestCasesCommand
             {
                 TestSuiteId = suiteId,
                 CurrentUserId = _currentUser.UserId,
-            });
+            };
+
+            await _dispatcher.DispatchAsync(queueCommand);
 
             _logger.LogInformation(
-                "Triggered unified n8n generation workflow (DotnetIntegration) from boundary/negative endpoint. TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
-                suiteId,
+                "Queued unified n8n generation workflow trigger from boundary/negative endpoint. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+                suiteId, queueCommand.JobId,
                 _currentUser.UserId);
 
-            return Accepted(new
+            return Accepted(new GenerateTestsAcceptedResponse
             {
-                testSuiteId = suiteId,
-                mode = "callback",
-                message = "Triggered DotnetIntegration workflow. Test cases will be saved via callback endpoint.",
+                JobId = queueCommand.JobId,
+                TestSuiteId = suiteId,
+                Mode = "callback",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
             });
         }
 

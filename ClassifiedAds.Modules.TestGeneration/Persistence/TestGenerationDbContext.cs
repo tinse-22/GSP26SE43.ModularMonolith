@@ -28,6 +28,7 @@ public class TestGenerationDbContext : DbContextUnitOfWork<TestGenerationDbConte
     public DbSet<LlmSuggestionFeedback> LlmSuggestionFeedbacks { get; set; }
     public DbSet<AuditLogEntry> AuditLogEntries { get; set; }
     public DbSet<OutboxMessage> OutboxMessages { get; set; }
+    public DbSet<TestGenerationJob> TestGenerationJobs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
