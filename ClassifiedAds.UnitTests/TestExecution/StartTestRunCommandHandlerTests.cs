@@ -123,6 +123,120 @@ public class StartTestRunCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_SelectedTestCaseNotInSuite_ShouldThrowValidation()
+    {
+        // Arrange
+        SetupSuiteAccess();
+
+        var selectedId = Guid.NewGuid();
+        _gatewayMock
+            .Setup(x => x.GetTestCaseIdsBySuiteAsync(_suiteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Guid> { Guid.NewGuid() });
+
+        var command = new StartTestRunCommand
+        {
+            TestSuiteId = _suiteId,
+            CurrentUserId = _userId,
+            SelectedTestCaseIds = new List<Guid> { selectedId },
+        };
+
+        // Act
+        var act = () => _handler.HandleAsync(command);
+
+        // Assert
+        await act.Should().ThrowAsync<ValidationException>()
+            .Where(ex => ex.Message.Contains("không thuộc suite hoặc đã bị vô hiệu hóa"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_SelectedTestCaseInSuite_ShouldCallOrchestratorWithNormalizedIds()
+    {
+        // Arrange
+        SetupFullHappyPath();
+
+        var selectedId = Guid.NewGuid();
+        _gatewayMock
+            .Setup(x => x.GetTestCaseIdsBySuiteAsync(_suiteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Guid> { selectedId });
+
+        IReadOnlyCollection<Guid> capturedSelectedIds = Array.Empty<Guid>();
+        _orchestratorMock
+            .Setup(x => x.ExecuteAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool>((_, _, ids, _, _) =>
+                capturedSelectedIds = ids)
+            .ReturnsAsync(new TestRunResultModel
+            {
+                Run = new TestRunModel(),
+                Cases = new List<TestCaseRunResultModel>(),
+            });
+
+        var command = new StartTestRunCommand
+        {
+            TestSuiteId = _suiteId,
+            CurrentUserId = _userId,
+            EnvironmentId = _envId,
+            SelectedTestCaseIds = new List<Guid> { selectedId, Guid.Empty, selectedId },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        capturedSelectedIds.Should().BeEquivalentTo(new[] { selectedId });
+    }
+
+    [Fact]
+    public async Task HandleAsync_StrictValidationEnabled_ShouldPassFlagToOrchestrator()
+    {
+        // Arrange
+        SetupSuiteAccess();
+        SetupEnvironment();
+        SetupLimits();
+        SetupRunAllocation();
+
+        var selectedId = Guid.NewGuid();
+        _gatewayMock
+            .Setup(x => x.GetTestCaseIdsBySuiteAsync(_suiteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Guid> { selectedId });
+
+        var capturedStrictValidation = false;
+        _orchestratorMock
+            .Setup(x => x.ExecuteAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool>((_, _, _, _, strict) =>
+                capturedStrictValidation = strict)
+            .ReturnsAsync(new TestRunResultModel
+            {
+                Run = new TestRunModel(),
+                Cases = new List<TestCaseRunResultModel>(),
+            });
+
+        var command = new StartTestRunCommand
+        {
+            TestSuiteId = _suiteId,
+            CurrentUserId = _userId,
+            EnvironmentId = _envId,
+            SelectedTestCaseIds = new List<Guid> { selectedId },
+            StrictValidation = true,
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        capturedStrictValidation.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task HandleAsync_WithEnvironmentId_ShouldResolveSpecificEnvironment()
     {
         // Arrange
@@ -141,7 +255,12 @@ public class StartTestRunCommandHandlerTests
         // Assert
         command.Result.Should().NotBeNull();
         _orchestratorMock.Verify(
-            x => x.ExecuteAsync(It.IsAny<Guid>(), _userId, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()),
+            x => x.ExecuteAsync(
+                It.IsAny<Guid>(),
+                _userId,
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -348,7 +467,12 @@ public class StartTestRunCommandHandlerTests
     private void SetupOrchestrator()
     {
         _orchestratorMock
-            .Setup(x => x.ExecuteAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.ExecuteAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
             .ReturnsAsync(new TestRunResultModel
             {
                 Run = new TestRunModel(),

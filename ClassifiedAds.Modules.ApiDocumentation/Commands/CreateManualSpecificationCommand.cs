@@ -165,6 +165,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
         // 4. Create spec and endpoints in transaction
         var spec = new ApiSpecification
         {
+            Id = Guid.NewGuid(),
             ProjectId = command.ProjectId,
             OriginalFileId = null,
             Name = command.Model.Name.Trim(),
@@ -183,6 +184,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
             {
                 var endpoint = new ApiEndpoint
                 {
+                    Id = Guid.NewGuid(),
                     ApiSpecId = spec.Id,
                     HttpMethod = HttpMethodMap[epDef.HttpMethod],
                     Path = epDef.Path.Trim(),
@@ -209,6 +211,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
 
                         var parameter = new EndpointParameter
                         {
+                            Id = Guid.NewGuid(),
                             EndpointId = endpoint.Id,
                             Name = paramDef.Name?.Trim(),
                             Location = location,
@@ -231,6 +234,7 @@ public class CreateManualSpecificationCommandHandler : ICommandHandler<CreateMan
                     {
                         var response = new EndpointResponse
                         {
+                            Id = Guid.NewGuid(),
                             EndpointId = endpoint.Id,
                             StatusCode = resDef.StatusCode,
                             Description = resDef.Description?.Trim(),

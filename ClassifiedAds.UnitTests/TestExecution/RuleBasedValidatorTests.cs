@@ -426,7 +426,7 @@ public class RuleBasedValidatorTests
     #region No Expectation
 
     [Fact]
-    public void Validate_NoExpectation_Should_Pass()
+    public void Validate_NoExpectation_Should_PassWithWarning()
     {
         // Arrange
         var response = CreateResponse();
@@ -441,6 +441,92 @@ public class RuleBasedValidatorTests
 
         // Assert
         result.IsPassed.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "NO_EXPECTATION_DEFINED");
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    [Fact]
+    public void Validate_NoExpectation_StrictMode_Should_Fail()
+    {
+        // Arrange
+        var response = CreateResponse();
+        var testCase = new ExecutionTestCaseDto
+        {
+            TestCaseId = Guid.NewGuid(),
+            Expectation = null,
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, strictMode: true);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "NO_EXPECTATION");
+        result.Warnings.Should().BeEmpty();
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    [Fact]
+    public void Validate_AllChecksSkipped_Should_PassWithWarning()
+    {
+        // Arrange
+        var response = CreateResponse();
+        var testCase = CreateTestCase(
+            expectedStatus: string.Empty,
+            responseSchema: string.Empty,
+            headerChecks: string.Empty,
+            bodyContains: string.Empty,
+            bodyNotContains: string.Empty,
+            jsonPathChecks: string.Empty,
+            maxResponseTime: null);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "ALL_CHECKS_SKIPPED");
+        result.ChecksPerformed.Should().Be(0);
+        result.ChecksSkipped.Should().Be(7);
+    }
+
+    #endregion
+
+    #region Expectation Format
+
+    [Theory]
+    [InlineData("abc", null, null, null, null, "ExpectedStatus")]
+    [InlineData(null, "not-json", null, null, null, "HeaderChecks")]
+    [InlineData(null, null, "not-json", null, null, "BodyContains")]
+    [InlineData(null, null, null, "not-json", null, "BodyNotContains")]
+    [InlineData(null, null, null, null, "not-json", "JsonPathChecks")]
+    public void Validate_InvalidExpectationFormat_Should_Fail(
+        string? expectedStatus,
+        string? headerChecks,
+        string? bodyContains,
+        string? bodyNotContains,
+        string? jsonPathChecks,
+        string expectedTarget)
+    {
+        // Arrange
+        var response = CreateResponse(body: "{}", headers: new Dictionary<string, string>());
+        var testCase = CreateTestCase(
+            expectedStatus: expectedStatus,
+            headerChecks: headerChecks,
+            bodyContains: bodyContains,
+            bodyNotContains: bodyNotContains,
+            jsonPathChecks: jsonPathChecks);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f =>
+            f.Code == "INVALID_EXPECTATION_FORMAT" &&
+            f.Target == expectedTarget);
     }
 
     #endregion
@@ -473,13 +559,161 @@ public class RuleBasedValidatorTests
 
     #endregion
 
+    #region Schema Fallback for Non-2xx Status Codes
+
+    [Fact]
+    public void Validate_Non2xxExpectedStatus_WithNoSchema_Should_SkipSchemaFallback()
+    {
+        // Arrange: expecting 400, no explicit schema, but endpoint has success schema
+        var response = CreateResponse(
+            statusCode: 400,
+            body: """{"error": "Bad Request", "code": "VALIDATION_ERROR"}""");
+        var testCase = CreateTestCase(expectedStatus: "[400]", responseSchema: null);
+
+        // Endpoint metadata has success schema that doesn't match error response
+        var metadata = new ApiEndpointMetadataDto
+        {
+            EndpointId = Guid.NewGuid(),
+            ResponseSchemaPayloads = new[]
+            {
+                """{"type": "object", "required": ["id", "name"], "properties": {"id": {"type": "integer"}, "name": {"type": "string"}}}""",
+            },
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, metadata);
+
+        // Assert: Should PASS because schema validation is skipped for non-2xx
+        result.IsPassed.Should().BeTrue();
+        result.Failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_2xxExpectedStatus_WithNoSchema_Should_FallbackToEndpointSchema()
+    {
+        // Arrange: expecting 200, no explicit schema
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"name": "test"}""");  // Missing required "id" and "email"
+        var testCase = CreateTestCase(expectedStatus: "[200]", responseSchema: null);
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            EndpointId = Guid.NewGuid(),
+            ResponseSchemaPayloads = new[]
+            {
+                """{"type": "object", "required": ["id", "name", "email"], "properties": {"id": {"type": "integer"}, "name": {"type": "string"}, "email": {"type": "string"}}}""",
+            },
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, metadata);
+
+        // Assert: Should FAIL because schema fallback is applied for 2xx
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+    }
+
+    [Fact]
+    public void Validate_MixedExpectedStatus_With2xx_Should_FallbackToEndpointSchema()
+    {
+        // Arrange: expecting [200, 400] - mixed statuses including 2xx
+        var response = CreateResponse(
+            statusCode: 400,
+            body: """{"error": "Bad Request"}""");
+        var testCase = CreateTestCase(expectedStatus: "[200, 400]", responseSchema: null);
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            EndpointId = Guid.NewGuid(),
+            ResponseSchemaPayloads = new[]
+            {
+                """{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}""",
+            },
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, metadata);
+
+        // Assert: Should apply fallback because expected list contains 2xx
+        result.IsPassed.Should().BeFalse();
+        result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+    }
+
+    [Fact]
+    public void Validate_Non2xxWithExplicitSchema_Should_ValidateAgainstSchema()
+    {
+        // Arrange: expecting 400 with explicit error schema
+        var errorSchema = """{"type": "object", "required": ["error"], "properties": {"error": {"type": "string"}}}""";
+        var response = CreateResponse(
+            statusCode: 400,
+            body: """{"error": "Bad Request"}""");
+        var testCase = CreateTestCase(expectedStatus: "[400]", responseSchema: errorSchema);
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert: Should PASS - explicit schema takes precedence
+        result.IsPassed.Should().BeTrue();
+        result.SchemaMatched.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("[400]", true)]
+    [InlineData("[401]", true)]
+    [InlineData("[403]", true)]
+    [InlineData("[404]", true)]
+    [InlineData("[422]", true)]
+    [InlineData("[500]", true)]
+    [InlineData("[400, 422]", true)]
+    [InlineData("[200]", false)]
+    [InlineData("[201]", false)]
+    [InlineData("[204]", false)]
+    [InlineData("[200, 201]", false)]
+    [InlineData("[200, 400]", false)]  // Mixed - contains 2xx, so should not skip
+    public void Validate_SchemaFallbackBehavior_BasedOnExpectedStatus(
+        string expectedStatus, bool shouldSkipFallback)
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 400,
+            body: """{"error": "Test"}""");
+        var testCase = CreateTestCase(expectedStatus: expectedStatus, responseSchema: null);
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            EndpointId = Guid.NewGuid(),
+            ResponseSchemaPayloads = new[]
+            {
+                """{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}""",
+            },
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase, metadata);
+
+        // Assert
+        if (shouldSkipFallback)
+        {
+            // No schema mismatch because fallback was skipped
+            result.Failures.Should().NotContain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+        }
+        else
+        {
+            // Schema mismatch because fallback was applied
+            result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+        }
+    }
+
+    #endregion
+
     #region Helpers
 
     private static HttpTestResponse CreateResponse(
         int statusCode = 200,
-        string body = null,
+        string? body = null,
         long latencyMs = 100,
-        Dictionary<string, string> headers = null)
+        Dictionary<string, string>? headers = null)
     {
         return new HttpTestResponse
         {
@@ -491,12 +725,12 @@ public class RuleBasedValidatorTests
     }
 
     private static ExecutionTestCaseDto CreateTestCase(
-        string expectedStatus = null,
-        string responseSchema = null,
-        string headerChecks = null,
-        string bodyContains = null,
-        string bodyNotContains = null,
-        string jsonPathChecks = null,
+        string? expectedStatus = null,
+        string? responseSchema = null,
+        string? headerChecks = null,
+        string? bodyContains = null,
+        string? bodyNotContains = null,
+        string? jsonPathChecks = null,
         int? maxResponseTime = null)
     {
         return new ExecutionTestCaseDto

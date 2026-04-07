@@ -7,10 +7,10 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,23 +18,24 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 
 public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new ()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _executionReadGatewayService;
+    private readonly ILogger<TestFailureReadGatewayService> _logger;
 
     public TestFailureReadGatewayService(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
-        ITestExecutionReadGatewayService executionReadGatewayService)
+        ITestExecutionReadGatewayService executionReadGatewayService,
+        ILogger<TestFailureReadGatewayService> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _executionReadGatewayService = executionReadGatewayService;
+        _logger = logger;
     }
 
     public async Task<TestFailureExplanationContextDto> GetFailureExplanationContextAsync(
@@ -95,24 +96,49 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
     private async Task<TestRunResultModel> GetRunResultsAsync(TestRun run, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(run.RedisKey))
+        // PRIMARY: Try Redis (hot cache) - only if not expired
+        if (!string.IsNullOrEmpty(run.RedisKey) &&
+            (!run.ResultsExpireAt.HasValue || run.ResultsExpireAt.Value >= DateTimeOffset.UtcNow))
         {
-            throw CreateRunResultsExpiredException();
+            try
+            {
+                var cached = await _cache.GetStringAsync(run.RedisKey, ct);
+                var result = TestRunResultsStorage.DeserializeCachedResult(cached);
+                if (result != null)
+                {
+                    result.ResultsSource = "cache";
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Redis cache read failed for RunId={RunId}, RedisKey={RedisKey}. Falling back to PostgreSQL for failure explanation.", run.Id, run.RedisKey);
+            }
         }
 
-        if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
+        // FALLBACK: Reconstruct from PostgreSQL (cold storage)
+        _logger.LogInformation("Redis unavailable/expired for RunId={RunId}, falling back to PostgreSQL for failure explanation", run.Id);
+        try
         {
-            throw CreateRunResultsExpiredException();
+            var pgResults = await _resultRepository.ToListAsync(
+                _resultRepository.GetQueryableSet()
+                    .Where(x => x.TestRunId == run.Id)
+                    .OrderBy(x => x.OrderIndex));
+
+            var reconstructed = TestRunResultsStorage.ReconstructFromDatabase(run, pgResults);
+            if (reconstructed != null)
+            {
+                _logger.LogInformation("Successfully reconstructed {CaseCount} test cases from PostgreSQL for RunId={RunId}", reconstructed.Cases.Count, run.Id);
+                return reconstructed;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read test case results from PostgreSQL. RunId={RunId}", run.Id);
         }
 
-        var cached = await _cache.GetStringAsync(run.RedisKey, ct);
-        if (cached == null)
-        {
-            throw CreateRunResultsExpiredException();
-        }
-
-        return JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions)
-            ?? throw CreateRunResultsExpiredException();
+        // All fallbacks exhausted
+        throw CreateRunResultsExpiredException();
     }
 
     private static FailureExplanationDefinitionDto MapDefinition(ExecutionTestCaseDto definition)
@@ -210,6 +236,6 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
     private static ConflictException CreateRunResultsExpiredException()
     {
-        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache.");
+        return new ConflictException("RUN_RESULTS_EXPIRED", "Chi tiết kết quả đã hết hạn lưu trữ trong cache và không tìm thấy trong database.");
     }
 }

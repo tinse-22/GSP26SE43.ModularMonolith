@@ -9,5 +9,6 @@ public interface IRuleBasedValidator
     TestCaseValidationResult Validate(
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
-        ApiEndpointMetadataDto endpointMetadata = null);
+        ApiEndpointMetadataDto endpointMetadata = null,
+        bool strictMode = false);
 }

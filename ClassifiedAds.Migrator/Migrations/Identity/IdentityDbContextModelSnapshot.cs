@@ -1100,7 +1100,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetPlans"
+                            Value = "Permission:GetFiles"
                         },
                         new
                         {
@@ -1108,7 +1108,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetSubscription"
+                            Value = "Permission:UploadFile"
                         },
                         new
                         {
@@ -1116,7 +1116,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetCurrentSubscription"
+                            Value = "Permission:GetFile"
                         },
                         new
                         {
@@ -1124,7 +1124,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:CancelSubscription"
+                            Value = "Permission:DownloadFile"
                         },
                         new
                         {
@@ -1132,7 +1132,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetSubscriptionHistory"
+                            Value = "Permission:UpdateFile"
                         },
                         new
                         {
@@ -1140,7 +1140,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetPaymentTransactions"
+                            Value = "Permission:DeleteFile"
                         },
                         new
                         {
@@ -1148,7 +1148,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetUsageTracking"
+                            Value = "Permission:GetFileAuditLogs"
                         },
                         new
                         {
@@ -1156,7 +1156,7 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:CreateSubscriptionPayment"
+                            Value = "Permission:GetPlans"
                         },
                         new
                         {
@@ -1164,11 +1164,67 @@ namespace ClassifiedAds.Migrator.Migrations.Identity
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",
-                            Value = "Permission:GetPaymentIntent"
+                            Value = "Permission:GetSubscription"
                         },
                         new
                         {
                             Id = new Guid("00000000-0000-0000-0002-000000000044"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetCurrentSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000045"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:CancelSubscription"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000046"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetSubscriptionHistory"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000047"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentTransactions"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000048"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetUsageTracking"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000049"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:CreateSubscriptionPayment"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000050"),
+                            CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
+                            Type = "Permission",
+                            Value = "Permission:GetPaymentIntent"
+                        },
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0002-000000000051"),
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RoleId = new Guid("00000000-0000-0000-0000-000000000002"),
                             Type = "Permission",

@@ -2,6 +2,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly.Timeout;
 using System;
 using System.Net;
 using System.Net.Http;
@@ -11,6 +12,20 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.TestGeneration.Services;
+
+/// <summary>
+/// Result of a webhook trigger operation.
+/// </summary>
+public class WebhookTriggerResult
+{
+    public bool Success { get; set; }
+    public string WebhookName { get; set; }
+    public string ResolvedUrl { get; set; }
+    public string ErrorMessage { get; set; }
+    public string ErrorDetails { get; set; }
+    public bool IsTimeout { get; set; }
+    public bool IsNetworkError { get; set; }
+}
 
 public class N8nIntegrationService : IN8nIntegrationService
 {
@@ -123,9 +138,42 @@ public class N8nIntegrationService : IN8nIntegrationService
         TPayload payload,
         CancellationToken cancellationToken = default)
     {
-        var url = ResolveWebhookUrl(webhookName);
+        var result = await TriggerWebhookWithResultAsync(webhookName, payload, cancellationToken);
 
-        _logger.LogInformation("Triggering n8n webhook {WebhookName} at {Url} (fire-and-forget)", webhookName, url);
+        if (!result.Success)
+        {
+            throw new ValidationException(result.ErrorMessage);
+        }
+    }
+
+    /// <summary>
+    /// Triggers an n8n webhook and returns a result object instead of throwing.
+    /// Use this for background processing where you want to handle errors gracefully.
+    /// </summary>
+    public async Task<WebhookTriggerResult> TriggerWebhookWithResultAsync<TPayload>(
+        string webhookName,
+        TPayload payload,
+        CancellationToken cancellationToken = default)
+    {
+        string url;
+        try
+        {
+            url = ResolveWebhookUrl(webhookName);
+        }
+        catch (ValidationException ex)
+        {
+            return new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = webhookName,
+                ErrorMessage = ex.Message,
+                ErrorDetails = "Webhook configuration error"
+            };
+        }
+
+        _logger.LogInformation(
+            "Triggering n8n webhook {WebhookName} at {Url} (fire-and-forget). TimeoutSeconds={TimeoutSeconds}, BeBaseUrl={BeBaseUrl}",
+            webhookName, url, _options.TimeoutSeconds, _options.BeBaseUrl);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -133,19 +181,114 @@ public class N8nIntegrationService : IN8nIntegrationService
         };
         ApplyHeaders(request);
 
-        var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
-            _logger.LogError(
-                "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}",
-                webhookName, response.StatusCode, body);
-            throw new ValidationException(
-                $"n8n webhook '{webhookName}' tra ve loi. Status: {response.StatusCode}");
-        }
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
-        _logger.LogInformation("n8n webhook {WebhookName} succeeded. Status={Status}", webhookName, response.StatusCode);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                _logger.LogError(
+                    "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}, Url={Url}",
+                    webhookName, response.StatusCode, body, url);
+
+                return new WebhookTriggerResult
+                {
+                    Success = false,
+                    WebhookName = webhookName,
+                    ResolvedUrl = url,
+                    ErrorMessage = $"n8n webhook '{webhookName}' tra ve loi. Status: {response.StatusCode}",
+                    ErrorDetails = body
+                };
+            }
+
+            _logger.LogInformation(
+                "n8n webhook {WebhookName} succeeded. Status={Status}, Url={Url}",
+                webhookName, response.StatusCode, url);
+
+            return new WebhookTriggerResult
+            {
+                Success = true,
+                WebhookName = webhookName,
+                ResolvedUrl = url
+            };
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            return new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = webhookName,
+                ResolvedUrl = url,
+                IsTimeout = true,
+                ErrorMessage = $"n8n webhook '{webhookName}' timeout sau {_options.TimeoutSeconds}s. Vui long kiem tra n8n workflow hoac tang timeout.",
+                ErrorDetails = ex.ToString()
+            };
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            return new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = webhookName,
+                ResolvedUrl = url,
+                IsTimeout = true,
+                ErrorMessage = $"n8n webhook '{webhookName}' bi huy (timeout). TimeoutSeconds={_options.TimeoutSeconds}",
+                ErrorDetails = ex.ToString()
+            };
+        }
+        catch (TimeoutRejectedException ex)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            return new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = webhookName,
+                ResolvedUrl = url,
+                IsTimeout = true,
+                ErrorMessage = $"n8n webhook '{webhookName}' bi Polly timeout sau {_options.TimeoutSeconds}s.",
+                ErrorDetails = ex.ToString()
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} network error. Url={Url}",
+                webhookName, url);
+
+            return new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = webhookName,
+                ResolvedUrl = url,
+                IsNetworkError = true,
+                ErrorMessage = $"n8n webhook '{webhookName}' loi ket noi: {ex.Message}",
+                ErrorDetails = ex.ToString()
+            };
+        }
+    }
+
+    /// <summary>
+    /// Resolves the full webhook URL for a given webhook name.
+    /// </summary>
+    public string GetResolvedWebhookUrl(string webhookName)
+    {
+        return ResolveWebhookUrl(webhookName);
     }
 
     private string ResolveWebhookUrl(string webhookName)

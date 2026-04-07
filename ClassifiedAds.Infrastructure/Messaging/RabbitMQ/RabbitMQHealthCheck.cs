@@ -22,6 +22,7 @@ public class RabbitMQHealthCheck : IHealthCheck
             var connectionFactory = new ConnectionFactory
             {
                 HostName = _options.HostName,
+                Port = _options.Port,
                 UserName = _options.UserName,
                 Password = _options.Password,
             };
@@ -41,6 +42,8 @@ public class RabbitMQHealthCheck : IHealthCheck
 public class RabbitMQHealthCheckOptions
 {
     public string HostName { get; set; }
+
+    public int Port { get; set; } = 5672;
 
     public string UserName { get; set; }
 

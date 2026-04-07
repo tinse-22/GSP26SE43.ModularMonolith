@@ -29,6 +29,14 @@ public class TestCaseRunResultModel
 
     public List<ValidationFailureModel> FailureReasons { get; set; } = new();
 
+    public List<ValidationWarningModel> Warnings { get; set; } = new();
+
+    public bool HasWarnings => Warnings.Count > 0;
+
+    public int ChecksPerformed { get; set; }
+
+    public int ChecksSkipped { get; set; }
+
     public Dictionary<string, string> ExtractedVariables { get; set; } = new();
 
     public List<Guid> DependencyIds { get; set; } = new();

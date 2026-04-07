@@ -29,6 +29,12 @@ public class TestCaseExecutionResult
 
     public List<ValidationFailureModel> FailureReasons { get; set; } = new();
 
+    public List<ValidationWarningModel> Warnings { get; set; } = new();
+
+    public int ChecksPerformed { get; set; }
+
+    public int ChecksSkipped { get; set; }
+
     public Dictionary<string, string> ExtractedVariables { get; set; } = new();
 
     public IReadOnlyList<Guid> DependencyIds { get; set; } = Array.Empty<Guid>();

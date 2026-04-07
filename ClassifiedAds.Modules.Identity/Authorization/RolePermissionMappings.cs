@@ -151,6 +151,15 @@ public static class RolePermissionMappings
         "Permission:StartTestRun",
         "Permission:GetTestRuns",
 
+        // Storage (owner-scoped)
+        "Permission:GetFiles",
+        "Permission:UploadFile",
+        "Permission:GetFile",
+        "Permission:DownloadFile",
+        "Permission:UpdateFile",
+        "Permission:DeleteFile",
+        "Permission:GetFileAuditLogs",
+
         // Subscription self-service
         "Permission:GetPlans",
         "Permission:GetSubscription",

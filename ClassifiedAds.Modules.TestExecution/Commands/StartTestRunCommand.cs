@@ -26,6 +26,8 @@ public class StartTestRunCommand : ICommand
 
     public Guid? EnvironmentId { get; set; }
 
+    public bool StrictValidation { get; set; }
+
     public IReadOnlyList<Guid> SelectedTestCaseIds { get; set; }
 
     public TestRunResultModel Result { get; set; }
@@ -85,7 +87,24 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             throw new ValidationException("Test suite chưa sẵn sàng để chạy test.");
         }
 
-        // 5. Resolve environment
+        // 5. Validate selected test cases belong to this suite and are enabled
+        if (selectedIds.Count > 0)
+        {
+            var availableIds = await _gatewayService.GetTestCaseIdsBySuiteAsync(command.TestSuiteId, cancellationToken);
+            var availableIdSet = (availableIds ?? Array.Empty<Guid>()).ToHashSet();
+            var invalidIds = selectedIds.Where(id => !availableIdSet.Contains(id)).ToList();
+
+            if (invalidIds.Count > 0)
+            {
+                var displayIds = string.Join(", ", invalidIds.Take(5));
+                var suffix = invalidIds.Count > 5 ? $" và {invalidIds.Count - 5} ID khác" : string.Empty;
+
+                throw new ValidationException(
+                    $"Danh sách test case đã chọn có ID không thuộc suite hoặc đã bị vô hiệu hóa: {displayIds}{suffix}.");
+            }
+        }
+
+        // 6. Resolve environment
         ExecutionEnvironment environment;
         if (command.EnvironmentId.HasValue)
         {
@@ -110,7 +129,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             }
         }
 
-        // 6. Check concurrent run limit
+        // 7. Check concurrent run limit
         var runningCount = await _runRepository.ToListAsync(
             _runRepository.GetQueryableSet()
                 .Where(x => x.TriggeredById == command.CurrentUserId
@@ -128,7 +147,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             throw new ValidationException("Đã đạt giới hạn số lượng run đang chạy đồng thời.");
         }
 
-        // 7. Reserve monthly quota
+        // 8. Reserve monthly quota
         var monthlyCheck = await _limitService.TryConsumeLimitAsync(
             command.CurrentUserId,
             LimitType.MaxTestRunsPerMonth,
@@ -140,7 +159,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             throw new ValidationException("Đã đạt giới hạn số lượng test run trong tháng.");
         }
 
-        // 8. Allocate RunNumber in Serializable transaction and insert Pending run
+        // 9. Allocate RunNumber in Serializable transaction and insert Pending run
         TestRun run = null;
         await _runRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
@@ -170,11 +189,12 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             "Created test run. RunId={RunId}, SuiteId={SuiteId}, RunNumber={RunNumber}, EnvironmentId={EnvironmentId}",
             run.Id, command.TestSuiteId, run.RunNumber, environment.Id);
 
-        // 9. Execute via orchestrator (outside transaction)
+        // 10. Execute via orchestrator (outside transaction)
         command.Result = await _orchestrator.ExecuteAsync(
             run.Id,
             command.CurrentUserId,
             selectedIds.Count > 0 ? selectedIds : null,
-            cancellationToken);
+            cancellationToken,
+            command.StrictValidation);
     }
 }

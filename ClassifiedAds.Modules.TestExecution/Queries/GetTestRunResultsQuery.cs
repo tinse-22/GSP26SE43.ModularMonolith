@@ -4,11 +4,11 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
+using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,23 +25,21 @@ public class GetTestRunResultsQuery : IQuery<TestRunResultModel>
 
 public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuery, TestRunResultModel>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _gatewayService;
     private readonly ILogger<GetTestRunResultsQueryHandler> _logger;
 
     public GetTestRunResultsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
         ITestExecutionReadGatewayService gatewayService,
         ILogger<GetTestRunResultsQueryHandler> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _gatewayService = gatewayService;
         _logger = logger;
@@ -64,51 +62,50 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
             throw new NotFoundException($"Không tìm thấy test run với mã '{query.RunId}'.");
         }
 
-        if (string.IsNullOrEmpty(run.RedisKey))
+        // PRIMARY: Try Redis (hot cache) - only if not expired
+        if (!string.IsNullOrEmpty(run.RedisKey) &&
+            (!run.ResultsExpireAt.HasValue || run.ResultsExpireAt.Value >= DateTimeOffset.UtcNow))
         {
-            return CreateUnavailableResult(run);
+            try
+            {
+                var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
+                var result = TestRunResultsStorage.DeserializeCachedResult(cached);
+                if (result != null)
+                {
+                    result.Run = TestRunModel.FromEntity(run);
+                    result.ResultsSource = "cache";
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Redis cache read failed for RunId={RunId}, RedisKey={RedisKey}. Falling back to PostgreSQL.", run.Id, run.RedisKey);
+            }
         }
 
-        // Check expiry
-        if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
-        {
-            return CreateUnavailableResult(run);
-        }
-
-        string cached;
+        // FALLBACK: Reconstruct from PostgreSQL (cold storage)
+        _logger.LogInformation("Redis unavailable/expired for RunId={RunId}, falling back to PostgreSQL", run.Id);
         try
         {
-            cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
+            var pgResults = await _resultRepository.ToListAsync(
+                _resultRepository.GetQueryableSet()
+                    .Where(x => x.TestRunId == run.Id)
+                    .OrderBy(x => x.OrderIndex));
+
+            var reconstructed = TestRunResultsStorage.ReconstructFromDatabase(run, pgResults);
+            if (reconstructed != null)
+            {
+                _logger.LogInformation("Successfully reconstructed {CaseCount} test cases from PostgreSQL for RunId={RunId}", reconstructed.Cases.Count, run.Id);
+                return reconstructed;
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to read test run results from cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
-            return CreateUnavailableResult(run);
+            _logger.LogError(ex, "Failed to read test case results from PostgreSQL. RunId={RunId}", run.Id);
         }
 
-        if (string.IsNullOrEmpty(cached))
-        {
-            return CreateUnavailableResult(run);
-        }
-
-        TestRunResultModel result;
-        try
-        {
-            result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to deserialize cached test run results. RunId={RunId}", run.Id);
-            return CreateUnavailableResult(run);
-        }
-
-        if (result == null)
-        {
-            return CreateUnavailableResult(run);
-        }
-
-        result.Run = TestRunModel.FromEntity(run);
-        return result;
+        // All fallbacks exhausted
+        return CreateUnavailableResult(run);
     }
 
     private static TestRunResultModel CreateUnavailableResult(TestRun run)

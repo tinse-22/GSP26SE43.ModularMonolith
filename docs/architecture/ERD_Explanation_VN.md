@@ -75,9 +75,14 @@ Module này dùng để parse và lưu trữ cấu trúc API được import và
 Hai module này tách biệt với TestGen để tối ưu performance khi Runner Engine thực hiện việc call API hàng loạt.
 - **`testexec_ExecutionEnvironments`**: Lưu thông tin môi trường chạy (Local, Staging, Production). Bảng này cho phép User lưu sẵn các `Variables` (BaseURL) và `AuthConfig` (Username/Pass test mặc định) riêng cho hệ thống đó lặp đi lặp lại.
 - **`testexec_TestRuns`**: Mỗi lần nhấn "Test", hệ thống sinh ra một `TestRun`. Bảng này đóng vai trò như vé theo dõi (Tracking ticket) tiến độ:
-  - Cột `Status` (Queued, Running, Completed).
+  - Cột `Status` (Pending, Running, Completed, Failed, Cancelled).
   - Thống kê đếm tổng (Aggregated Counters): `PassedCount`, `FailedCount`, `DurationMs`.
-  - Cột `RedisKey` & `ResultsExpireAt`: Điểm kỹ thuật cực kỳ đắt giá! Việc chạy test sẽ sinh ra log request/response khổng lồ. Thiết kế này ám chỉ log chi tiết không ném hết vào SQL Database gây tắc nghẽn, mà được đẩy vào Caching/NoSQL (Redis) có thời hạn (TTL) thông qua Key.
+  - Cột `RedisKey` & `ResultsExpireAt`: Điểm kỹ thuật cực kỳ đắt giá! Việc chạy test sẽ sinh ra log request/response khổng lồ. Thiết kế này ám chỉ log chi tiết được đẩy vào Caching/NoSQL (Redis) có thời hạn (TTL) thông qua Key để truy xuất nhanh.
+- **`testexec_TestCaseResults`** *(MỚI - Dual-Write Pattern)*: Đây là bảng Cold Storage lưu **chi tiết kết quả từng Test Case** vào PostgreSQL vĩnh viễn, song song với việc lưu vào Redis (hot cache). 
+  - **Tại sao cần bảng này?** Trước đây, khi Redis cache hết hạn (TTL expired), tính năng **Failure Explanation** (AI giải thích lý do test fail) không thể hoạt động vì không còn dữ liệu chi tiết. Giờ đây, dù Redis expires, hệ thống vẫn fallback lấy dữ liệu từ PostgreSQL.
+  - Chứa đầy đủ: `RequestHeaders`, `ResponseHeaders`, `ResponseBodyPreview`, `FailureReasons` (JSONB array), các flag validation (`StatusCodeMatched`, `SchemaMatched`, `JsonPathChecksPassed`...).
+  - Quan hệ: Một `TestRun` có nhiều `TestCaseResult` (1:N).
+  - Cột `ResultsSource` trong response giờ có 3 giá trị: `"cache"` (từ Redis), `"database"` (từ PostgreSQL), `"unavailable"` (cả hai đều không có).
 - **`testreport_CoverageMetrics`**: Report toán học về mật độ và độ bao phủ sau khi Test. Bảng này lưu Metrics như:
   - Cột `TotalEndpoints` vs `TestedEndpoints` để tính ra `CoveragePercent` (%).
   - Cột `ByMethod`, `ByTag`, `UncoveredPaths` ở dạng JSONB để tiện vẽ biểu đồ trên UI.

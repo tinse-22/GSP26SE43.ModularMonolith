@@ -201,6 +201,7 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
 
                     var endpoint = new ApiEndpoint
                     {
+                        Id = Guid.NewGuid(),
                         ApiSpecId = spec.Id,
                         HttpMethod = httpMethod,
                         Path = parsedEndpoint.Path?.Trim(),
@@ -225,6 +226,7 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
 
                         var parameter = new EndpointParameter
                         {
+                            Id = Guid.NewGuid(),
                             EndpointId = endpoint.Id,
                             Name = parsedParam.Name?.Trim(),
                             Location = location,
@@ -244,6 +246,7 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
                     {
                         var response = new EndpointResponse
                         {
+                            Id = Guid.NewGuid(),
                             EndpointId = endpoint.Id,
                             StatusCode = parsedResponse.StatusCode,
                             Description = parsedResponse.Description?.Trim(),
@@ -260,6 +263,7 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
                     {
                         var secReq = new EndpointSecurityReq
                         {
+                            Id = Guid.NewGuid(),
                             EndpointId = endpoint.Id,
                             SecurityType = parsedSecReq.SecurityType,
                             SchemeName = parsedSecReq.SchemeName,

@@ -10,11 +10,13 @@ COPY ./ClassifiedAds.Infrastructure/*.csproj ./ClassifiedAds.Infrastructure/
 COPY ./ClassifiedAds.Persistence.PostgreSQL/*.csproj ./ClassifiedAds.Persistence.PostgreSQL/
 COPY ./ClassifiedAds.Contracts/*.csproj ./ClassifiedAds.Contracts/
 COPY ./ClassifiedAds.Modules.AuditLog/*.csproj ./ClassifiedAds.Modules.AuditLog/
+COPY ./ClassifiedAds.Modules.ApiDocumentation/*.csproj ./ClassifiedAds.Modules.ApiDocumentation/
 COPY ./ClassifiedAds.Modules.Configuration/*.csproj ./ClassifiedAds.Modules.Configuration/
 COPY ./ClassifiedAds.Modules.Identity/*.csproj ./ClassifiedAds.Modules.Identity/
 COPY ./ClassifiedAds.Modules.Notification/*.csproj ./ClassifiedAds.Modules.Notification/
 COPY ./ClassifiedAds.Modules.Storage/*.csproj ./ClassifiedAds.Modules.Storage/
 COPY ./ClassifiedAds.Modules.Subscription/*.csproj ./ClassifiedAds.Modules.Subscription/
+COPY ./ClassifiedAds.Modules.TestGeneration/*.csproj ./ClassifiedAds.Modules.TestGeneration/
 
 COPY ./ClassifiedAds.Background/*.csproj ./ClassifiedAds.Background/
 
