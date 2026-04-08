@@ -471,7 +471,7 @@ public class BodyMutationEngineTests
     }
 
     [Fact]
-    public void GenerateMutations_Should_SetExpectedStatusCode400_ForAllMutations()
+    public void GenerateMutations_Should_AssignExpectedStatuses_ByMutationPolicy()
     {
         // Arrange
         var context = new BodyMutationContext
@@ -514,9 +514,28 @@ public class BodyMutationEngineTests
         // Act
         var mutations = _engine.GenerateMutations(context);
 
-        // Assert - every single mutation should expect 400
+        // Assert - expected statuses should follow mutation-type policy
         mutations.Should().NotBeEmpty();
-        mutations.Should().OnlyContain(m => m.ExpectedStatusCode == 400);
+
+        var emptyBodyMutations = mutations.Where(m => m.MutationType == "emptyBody").ToList();
+        emptyBodyMutations.Should().NotBeEmpty();
+        emptyBodyMutations.Should().OnlyContain(m =>
+            m.GetEffectiveExpectedStatusCodes().SequenceEqual(new[] { 400, 415, 422 }));
+
+        var malformedJsonMutations = mutations.Where(m => m.MutationType == "malformedJson").ToList();
+        malformedJsonMutations.Should().NotBeEmpty();
+        malformedJsonMutations.Should().OnlyContain(m =>
+            m.GetEffectiveExpectedStatusCodes().SequenceEqual(new[] { 400 }));
+
+        var validationMutations = mutations.Where(m =>
+            m.MutationType is "missingRequired" or "typeMismatch" or "overflow" or "invalidEnum").ToList();
+        validationMutations.Should().NotBeEmpty();
+        validationMutations.Should().OnlyContain(m =>
+            m.GetEffectiveExpectedStatusCodes().SequenceEqual(new[] { 400, 422 }));
+
+        // Backward-compatibility: primary status remains the first allowed status.
+        mutations.Should().OnlyContain(m =>
+            m.ExpectedStatusCode == m.GetEffectiveExpectedStatusCodes().First());
 
         // Verify we have a variety of mutation types
         var types = mutations.Select(m => m.MutationType).Distinct().ToList();

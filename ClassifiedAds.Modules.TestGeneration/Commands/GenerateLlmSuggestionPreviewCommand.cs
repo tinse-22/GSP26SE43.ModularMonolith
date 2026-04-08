@@ -188,7 +188,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 }, JsonOpts),
                 SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
                 {
-                    ExpectedStatus = new List<int> { scenario.ExpectedStatusCode },
+                    ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
                     BodyContains = !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
                         ? new List<string> { scenario.ExpectedBehavior }
                         : new List<string>(),

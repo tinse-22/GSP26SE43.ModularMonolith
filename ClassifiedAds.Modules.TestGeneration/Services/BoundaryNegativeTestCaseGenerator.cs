@@ -308,7 +308,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         {
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
-            ExpectedStatus = JsonSerializer.Serialize(new[] { mutation.ExpectedStatusCode }, JsonOpts),
+            ExpectedStatus = JsonSerializer.Serialize(mutation.GetEffectiveExpectedStatusCodes(), JsonOpts),
         };
 
         return testCase;

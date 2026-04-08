@@ -64,6 +64,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = null,
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("emptyBody"),
             Description = $"{context.HttpMethod} {context.Path} - gửi body null.",
             SuggestedTestType = TestType.Negative,
         });
@@ -75,6 +76,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = "",
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("emptyBody"),
             Description = $"{context.HttpMethod} {context.Path} - gửi body rỗng.",
             SuggestedTestType = TestType.Negative,
         });
@@ -86,6 +88,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = "{}",
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("emptyBody"),
             Description = $"{context.HttpMethod} {context.Path} - gửi JSON object rỗng.",
             SuggestedTestType = TestType.Negative,
         });
@@ -100,6 +103,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = "{\"field\": \"value\"",
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("malformedJson"),
             Description = $"{context.HttpMethod} {context.Path} - gửi JSON thiếu dấu đóng ngoặc.",
             SuggestedTestType = TestType.Negative,
         });
@@ -111,6 +115,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = "{\"field\": }",
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("malformedJson"),
             Description = $"{context.HttpMethod} {context.Path} - gửi JSON bị cắt giá trị.",
             SuggestedTestType = TestType.Negative,
         });
@@ -122,6 +127,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = "this is not json",
             TargetFieldName = null,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("malformedJson"),
             Description = $"{context.HttpMethod} {context.Path} - gửi plain text thay vì JSON.",
             SuggestedTestType = TestType.Negative,
         });
@@ -148,6 +154,7 @@ public class BodyMutationEngine : IBodyMutationEngine
                 MutatedBody = JsonSerializer.Serialize(mutatedBody, JsonOpts),
                 TargetFieldName = field.Name,
                 ExpectedStatusCode = 400,
+                ExpectedStatusCodes = GetExpectedStatusesForMutation("missingRequired"),
                 Description = $"{context.HttpMethod} {context.Path} - thiếu trường bắt buộc '{field.Name}'.",
                 SuggestedTestType = TestType.Negative,
             });
@@ -187,6 +194,7 @@ public class BodyMutationEngine : IBodyMutationEngine
                 MutatedBody = JsonSerializer.Serialize(mutatedBody, JsonOpts),
                 TargetFieldName = field.Name,
                 ExpectedStatusCode = 400,
+                ExpectedStatusCodes = GetExpectedStatusesForMutation("typeMismatch"),
                 Description = $"{context.HttpMethod} {context.Path} - trường '{field.Name}' gửi kiểu dữ liệu sai (expected: {normalizedType}).",
                 SuggestedTestType = TestType.Negative,
             });
@@ -247,6 +255,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             MutatedBody = JsonSerializer.Serialize(mutatedBody, JsonOpts),
             TargetFieldName = fieldName,
             ExpectedStatusCode = 400,
+            ExpectedStatusCodes = GetExpectedStatusesForMutation("overflow"),
             Description = $"{context.HttpMethod} {context.Path} - trường '{fieldName}' vượt giới hạn: {valueDescription}.",
             SuggestedTestType = TestType.Boundary,
         });
@@ -277,6 +286,7 @@ public class BodyMutationEngine : IBodyMutationEngine
                 MutatedBody = JsonSerializer.Serialize(mutatedBody, JsonOpts),
                 TargetFieldName = field.Name,
                 ExpectedStatusCode = 400,
+                ExpectedStatusCodes = GetExpectedStatusesForMutation("invalidEnum"),
                 Description = $"{context.HttpMethod} {context.Path} - trường '{field.Name}' gửi giá trị ngoài enum " +
                     $"(valid: [{string.Join(", ", enumValues)}]).",
                 SuggestedTestType = TestType.Negative,
@@ -331,6 +341,7 @@ public class BodyMutationEngine : IBodyMutationEngine
                         MutatedBody = "{}",
                         TargetFieldName = prop.Name,
                         ExpectedStatusCode = 400,
+                        ExpectedStatusCodes = GetExpectedStatusesForMutation("missingRequired"),
                         Description = $"{context.HttpMethod} {context.Path} - thiếu trường bắt buộc '{prop.Name}' (từ JSON schema).",
                         SuggestedTestType = TestType.Negative,
                     });
@@ -341,6 +352,18 @@ public class BodyMutationEngine : IBodyMutationEngine
         {
             // Schema is not valid JSON; skip schema-based mutations
         }
+    }
+
+    private static List<int> GetExpectedStatusesForMutation(string mutationType)
+    {
+        return mutationType switch
+        {
+            "emptyBody" => new List<int> { 400, 415, 422 },
+            "malformedJson" => new List<int> { 400 },
+            "missingRequired" or "typeMismatch" or "overflow" or "invalidEnum"
+                => new List<int> { 400, 422 },
+            _ => new List<int> { 400 },
+        };
     }
 
     private static Dictionary<string, object> BuildBaseBody(IReadOnlyList<ParameterDetailDto> bodyParameters)
