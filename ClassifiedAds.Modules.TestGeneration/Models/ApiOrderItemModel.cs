@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
@@ -13,9 +13,9 @@ public class ApiOrderItemModel
 
     public int OrderIndex { get; set; }
 
-    public List<Guid> DependsOnEndpointIds { get; set; } = new();
+    public List<Guid> DependsOnEndpointIds { get; set; } = new List<Guid>();
 
-    public List<string> ReasonCodes { get; set; } = new();
+    public List<string> ReasonCodes { get; set; } = new List<string>();
 
     public bool IsAuthRelated { get; set; }
 }

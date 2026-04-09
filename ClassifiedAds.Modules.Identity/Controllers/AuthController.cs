@@ -252,7 +252,17 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Code = "invalid_credentials", Error = "Email hoặc mật khẩu không đúng." });
         }
 
-        _logger.LogInformation("Login succeeded. UserId={UserId} Email={Email}", user.Id, model.Email);
+        var origin = Request.Headers.Origin.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var referer = Request.Headers.Referer.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var userAgent = Request.Headers.UserAgent.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation(
+            "Login succeeded. UserId={UserId} Email={Email} TraceId={TraceId} Origin={Origin} Referer={Referer} UserAgent={UserAgent}",
+            user.Id,
+            model.Email,
+            HttpContext.TraceIdentifier,
+            string.IsNullOrWhiteSpace(origin) ? null : origin,
+            string.IsNullOrWhiteSpace(referer) ? null : referer,
+            string.IsNullOrWhiteSpace(userAgent) ? null : userAgent);
 
         // Get user roles
         var roles = await _userManager.GetRolesAsync(user);

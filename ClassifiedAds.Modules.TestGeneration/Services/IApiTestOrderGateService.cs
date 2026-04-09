@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
 using System.Collections.Generic;
 using System.Threading;

@@ -11,7 +11,7 @@ public class ProposeApiTestOrderRequest
     [Required]
     public Guid SpecificationId { get; set; }
 
-    public List<Guid> SelectedEndpointIds { get; set; } = new();
+    public List<Guid> SelectedEndpointIds { get; set; } = new ();
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public ProposalSource Source { get; set; } = ProposalSource.Ai;

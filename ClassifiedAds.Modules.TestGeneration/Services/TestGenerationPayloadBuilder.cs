@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+﻿using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -29,6 +29,7 @@ public interface ITestGenerationPayloadBuilder
     /// <summary>
     /// Builds the n8n webhook payload for a test suite.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     Task<N8nGenerateTestsPayload> BuildPayloadAsync(
         Guid testSuiteId,
         Guid proposalId,
@@ -134,13 +135,17 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             _suiteRepository.GetQueryableSet().Where(x => x.Id == testSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite '{testSuiteId}'.");
+        }
 
         var proposal = await _proposalRepository.FirstOrDefaultAsync(
             _proposalRepository.GetQueryableSet().Where(x => x.Id == proposalId));
 
         if (proposal == null)
+        {
             throw new NotFoundException($"Không tìm thấy proposal '{proposalId}'.");
+        }
 
         // Prefer AppliedOrder, fall back to UserModifiedOrder then ProposedOrder
         var appliedOrder = _apiTestOrderService.DeserializeOrderJson(proposal.AppliedOrder);
@@ -230,16 +235,16 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     Path = x.Path,
                     OperationId = metadata?.OperationId,
                     OrderIndex = x.OrderIndex,
-                    DependsOnEndpointIds = x.DependsOnEndpointIds?.ToList() ?? new(),
-                    ReasonCodes = x.ReasonCodes?.ToList() ?? new(),
+                    DependsOnEndpointIds = x.DependsOnEndpointIds?.ToList() ?? new List<Guid>(),
+                    ReasonCodes = x.ReasonCodes?.ToList() ?? new List<string>(),
                     IsAuthRelated = x.IsAuthRelated,
                     BusinessContext = businessContext,
                     Prompt = BuildEndpointPromptPayload(x, suite, metadata, businessContext, prompt),
-                    ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new(),
-                    ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new(),
+                    ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
+                    ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
                 };
             }).ToList(),
-            EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new(),
+            EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new Dictionary<Guid, string>(),
             GlobalBusinessRules = suite.GlobalBusinessRules,
             CallbackUrl = callbackUrl,
             CallbackApiKey = callbackApiKey,

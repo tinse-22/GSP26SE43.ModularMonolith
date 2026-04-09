@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.TestGeneration.DTOs;
+﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -227,27 +227,31 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             TestType = tc.TestType.ToString(),
             OrderIndex = orderIndex,
             DependencyIds = depIds?.AsReadOnly() ?? (IReadOnlyList<Guid>)Array.Empty<Guid>(),
-            Request = request != null ? new ExecutionTestCaseRequestDto
-            {
-                HttpMethod = request.HttpMethod.ToString(),
-                Url = request.Url,
-                Headers = request.Headers,
-                PathParams = request.PathParams,
-                QueryParams = request.QueryParams,
-                BodyType = request.BodyType.ToString(),
-                Body = request.Body,
-                Timeout = request.Timeout,
-            } : null,
-            Expectation = expectation != null ? new ExecutionTestCaseExpectationDto
-            {
-                ExpectedStatus = expectation.ExpectedStatus,
-                ResponseSchema = expectation.ResponseSchema,
-                HeaderChecks = expectation.HeaderChecks,
-                BodyContains = expectation.BodyContains,
-                BodyNotContains = expectation.BodyNotContains,
-                JsonPathChecks = expectation.JsonPathChecks,
-                MaxResponseTime = expectation.MaxResponseTime,
-            } : null,
+            Request = request != null
+                ? new ExecutionTestCaseRequestDto
+                {
+                    HttpMethod = request.HttpMethod.ToString(),
+                    Url = request.Url,
+                    Headers = request.Headers,
+                    PathParams = request.PathParams,
+                    QueryParams = request.QueryParams,
+                    BodyType = request.BodyType.ToString(),
+                    Body = request.Body,
+                    Timeout = request.Timeout,
+                }
+                : null,
+            Expectation = expectation != null
+                ? new ExecutionTestCaseExpectationDto
+                {
+                    ExpectedStatus = expectation.ExpectedStatus,
+                    ResponseSchema = expectation.ResponseSchema,
+                    HeaderChecks = expectation.HeaderChecks,
+                    BodyContains = expectation.BodyContains,
+                    BodyNotContains = expectation.BodyNotContains,
+                    JsonPathChecks = expectation.JsonPathChecks,
+                    MaxResponseTime = expectation.MaxResponseTime,
+                }
+                : null,
             Variables = variables?.Select(v => new ExecutionVariableRuleDto
             {
                 VariableName = v.VariableName,

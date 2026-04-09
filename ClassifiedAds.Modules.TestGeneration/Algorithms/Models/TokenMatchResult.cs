@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿namespace ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 
 /// <summary>
 /// Result of semantic token matching between two identifier tokens.

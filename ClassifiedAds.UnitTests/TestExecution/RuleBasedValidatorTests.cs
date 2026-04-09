@@ -78,6 +78,22 @@ public class RuleBasedValidatorTests
         result.Failures.Should().BeEmpty();
     }
 
+    [Fact]
+    public void Validate_StatusCodeNegativeAllowedSet_Should_PassWhenActual422()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 422);
+        var testCase = CreateTestCase(expectedStatus: "[400, 422]");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.StatusCodeMatched.Should().BeTrue();
+        result.Failures.Should().BeEmpty();
+    }
+
     #endregion
 
     #region Response Schema

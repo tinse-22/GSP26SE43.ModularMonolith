@@ -37,7 +37,7 @@ public class GenerateBoundaryNegativeTestCasesCommand : ICommand
 
 public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<GenerateBoundaryNegativeTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -88,11 +88,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
+
         if (command.SpecificationId == Guid.Empty)
+        {
             throw new ValidationException("SpecificationId là bắt buộc.");
+        }
+
         if (!command.IncludePathMutations && !command.IncludeBodyMutations && !command.IncludeLlmSuggestions)
+        {
             throw new ValidationException("Ít nhất một nguồn tạo test case phải được bật (PathMutations, BodyMutations, hoặc LlmSuggestions).");
+        }
 
         // 2) Load test suite with ownership check
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -100,13 +108,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Không thể generate test cases cho test suite đã archived.");
+        }
 
         // 3) Gate check: require approved API order
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(command.TestSuiteId, cancellationToken);

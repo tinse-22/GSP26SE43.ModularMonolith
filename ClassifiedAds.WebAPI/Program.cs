@@ -447,7 +447,6 @@ services.AddAuthentication(options =>
                 }
             }
 
-            Console.WriteLine($"JWT bearer accepted. Path={context.HttpContext.Request.Path} User={context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }
     };

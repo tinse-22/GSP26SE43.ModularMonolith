@@ -1,4 +1,4 @@
-using ClassifiedAds.Domain.Entities;
+﻿using ClassifiedAds.Domain.Entities;
 using System;
 
 namespace ClassifiedAds.Modules.TestGeneration.Entities;

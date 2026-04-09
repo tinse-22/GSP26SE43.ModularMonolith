@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,7 +17,7 @@ public class LlmSuggestionFeedbackContextResult
 {
     public const string EmptyFingerprint = "E3B0C44298FC1C14";
 
-    public static LlmSuggestionFeedbackContextResult Empty { get; } = new()
+    public static LlmSuggestionFeedbackContextResult Empty { get; } = new LlmSuggestionFeedbackContextResult()
     {
         EndpointFeedbackContexts = new Dictionary<Guid, string>(),
         FeedbackFingerprint = EmptyFingerprint,

@@ -30,6 +30,47 @@ var isRunningInContainer = string.Equals(
     "true",
     StringComparison.OrdinalIgnoreCase);
 
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+var preferProcessEnvOverrides = string.Equals(
+    Environment.GetEnvironmentVariable("APPHOST_PREFER_PROCESS_ENV_OVERRIDES"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
+{
+    var overwriteExistingVars = !preferProcessEnvOverrides;
+
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: overwriteExistingVars));
+
+    var processConnectionStringAfterDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+
+    if (!string.IsNullOrWhiteSpace(processConnectionStringBeforeDotEnv))
+    {
+        if (overwriteExistingVars &&
+            !string.Equals(processConnectionStringBeforeDotEnv, processConnectionStringAfterDotEnv, StringComparison.Ordinal))
+        {
+            Console.WriteLine(
+                "[AppHost] ConnectionStrings__Default from current shell was replaced by .env " +
+                "(set APPHOST_PREFER_PROCESS_ENV_OVERRIDES=true to keep shell value).");
+        }
+        else if (!overwriteExistingVars)
+        {
+            Console.WriteLine(
+                "[AppHost] ConnectionStrings__Default from current shell overrides .env " +
+                "(APPHOST_PREFER_PROCESS_ENV_OVERRIDES=true).");
+        }
+    }
+}
+
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
 if (!isRunningInContainer)
 {
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
@@ -181,7 +222,9 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
-    .WaitFor(migrator)
+    // The migrator is a one-shot process, so WebAPI must wait for successful completion
+    // instead of just waiting for the migrator resource to start running.
+    .WaitForCompletion(migrator)
     .WaitFor(rabbitmq)
     .WithExternalHttpEndpoints();
 
@@ -224,7 +267,9 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     // Configure file storage (local filesystem for development)
     .WithEnvironment("Modules__Storage__Provider", "Local")
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
-    .WaitFor(migrator)
+    // The migrator is a one-shot process, so Background must wait for successful
+    // completion instead of just waiting for the migrator resource to start running.
+    .WaitForCompletion(migrator)
     .WaitFor(rabbitmq)
     .WaitFor(mailhog);
 

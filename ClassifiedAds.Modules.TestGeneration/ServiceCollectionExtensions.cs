@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.TestGeneration.Services;
+﻿using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Infrastructure.HostedServices;

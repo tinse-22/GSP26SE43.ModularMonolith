@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+﻿using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
 using System.Collections.Generic;
@@ -14,6 +14,7 @@ public interface IBodyMutationEngine
     /// <summary>
     /// Generate body mutation variants from parameter details and schema.
     /// </summary>
+    /// <returns></returns>
     IReadOnlyList<BodyMutation> GenerateMutations(BodyMutationContext context);
 }
 

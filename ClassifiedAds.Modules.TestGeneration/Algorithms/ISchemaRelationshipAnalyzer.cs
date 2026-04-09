@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System;
 using System.Collections.Generic;
 
@@ -40,6 +40,7 @@ public interface ISchemaRelationshipAnalyzer
     /// Compute transitive closure of a schema reference graph.
     /// If A → B → C, the closure includes A → {B, C}.
     /// </summary>
+    /// <returns></returns>
     IReadOnlyDictionary<string, HashSet<string>> ComputeTransitiveClosure(
         IReadOnlyDictionary<string, HashSet<string>> directReferences);
 
@@ -62,6 +63,7 @@ public interface ISchemaRelationshipAnalyzer
     /// Matches schema names that share a common base (e.g., "CreateUserRequest" and "UserResponse"
     /// both contain "User" → potential relationship).
     /// </summary>
+    /// <returns></returns>
     IReadOnlyCollection<DependencyEdge> FindFuzzySchemaNameDependencies(
         IReadOnlyDictionary<Guid, IReadOnlyCollection<string>> operationParameterSchemaRefs,
         IReadOnlyDictionary<Guid, IReadOnlyCollection<string>> operationResponseSchemaRefs);

@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -38,7 +38,9 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
         CancellationToken cancellationToken = default)
     {
         if (query.CurrentUserId == Guid.Empty)
+        {
             throw new ValidationException("CurrentUserId la bat buoc.");
+        }
 
         // Verify suite exists
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -46,16 +48,22 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
                 .Where(x => x.Id == query.TestSuiteId && x.CreatedById == query.CurrentUserId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");
+        }
 
         var queryable = _testCaseRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);
 
         if (query.FilterByTestType.HasValue)
+        {
             queryable = queryable.Where(x => x.TestType == query.FilterByTestType.Value);
+        }
 
         if (!query.IncludeDisabled)
+        {
             queryable = queryable.Where(x => x.IsEnabled);
+        }
 
         queryable = queryable
             .Include(x => x.Request)

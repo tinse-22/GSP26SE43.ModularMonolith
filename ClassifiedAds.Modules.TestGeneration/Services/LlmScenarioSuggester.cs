@@ -80,7 +80,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"tokensUsed\": 0\n" +
         "}";
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,

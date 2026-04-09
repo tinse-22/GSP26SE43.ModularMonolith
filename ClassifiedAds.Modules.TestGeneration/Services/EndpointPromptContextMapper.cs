@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+﻿using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using System;
@@ -18,7 +18,9 @@ public static class EndpointPromptContextMapper
         TestSuite suite)
     {
         if (endpoints == null || endpoints.Count == 0)
+        {
             return Array.Empty<EndpointPromptContext>();
+        }
 
         var businessContexts = suite?.EndpointBusinessContexts ?? new Dictionary<Guid, string>();
 
@@ -87,13 +89,20 @@ public static class EndpointPromptContextMapper
     private static string CombineBusinessContext(string endpointContext, string globalRules)
     {
         if (string.IsNullOrWhiteSpace(endpointContext) && string.IsNullOrWhiteSpace(globalRules))
+        {
             return null;
+        }
 
         var parts = new List<string>(2);
         if (!string.IsNullOrWhiteSpace(globalRules))
+        {
             parts.Add($"[Global Rules] {globalRules.Trim()}");
+        }
+
         if (!string.IsNullOrWhiteSpace(endpointContext))
+        {
             parts.Add($"[Endpoint-specific] {endpointContext.Trim()}");
+        }
 
         return string.Join("\n\n", parts);
     }

@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -51,6 +51,7 @@ public class TestCasesController : ControllerBase
     /// Generate happy-path test cases from the approved API order using LLM via n8n.
     /// Requires an approved API order to exist (FE-05A gate).
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GenerateTestCases)]
     [HttpPost("generate-happy-path")]
     [Consumes("application/json")]
@@ -110,6 +111,7 @@ public class TestCasesController : ControllerBase
     /// Generate boundary/negative test cases using rule-based mutations and LLM suggestions.
     /// Requires an approved API order to exist (FE-05A gate).
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GenerateBoundaryNegativeTestCases)]
     [HttpPost("generate-boundary-negative")]
     [Consumes("application/json")]
@@ -172,6 +174,7 @@ public class TestCasesController : ControllerBase
     /// List all test cases for a test suite.
     /// Optionally filter by test type and include disabled test cases.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GetTestCases)]
     [HttpGet]
     [ProducesResponseType(typeof(List<TestCaseModel>), StatusCodes.Status200OK)]
@@ -201,6 +204,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Get a specific test case with full details (request, expectation, variables).
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GetTestCases)]
     [HttpGet("{testCaseId:guid}")]
     [ProducesResponseType(typeof(TestCaseModel), StatusCodes.Status200OK)]
@@ -220,6 +224,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Manually create a new test case with request, expectation, and variables.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.AddTestCase)]
     [HttpPost]
     [Consumes("application/json")]
@@ -281,6 +286,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Update an existing test case with request, expectation, and variables.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPut("{testCaseId:guid}")]
     [Consumes("application/json")]
@@ -342,6 +348,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Delete a test case and recalculate order for remaining cases.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.DeleteTestCase)]
     [HttpDelete("{testCaseId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -367,6 +374,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Toggle a test case enabled/disabled status.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPatch("{testCaseId:guid}/toggle")]
     [Consumes("application/json")]
@@ -397,6 +405,7 @@ public class TestCasesController : ControllerBase
     /// <summary>
     /// Reorder test cases by providing an ordered list of test case IDs.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPatch("reorder")]
     [Consumes("application/json")]

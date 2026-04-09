@@ -51,7 +51,20 @@ public class ProjectsController : ControllerBase
         [FromQuery] int pageSize = 20)
     {
         var safeSearch = search?.Replace("\r", string.Empty).Replace("\n", string.Empty);
-        _logger.LogInformation("Fetching projects. Status={Status}, Search={Search}, Page={Page}", status, safeSearch, page);
+        var origin = Request.Headers.Origin.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var referer = Request.Headers.Referer.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var userAgent = Request.Headers.UserAgent.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation(
+            "Fetching projects. Status={Status}, Search={Search}, Page={Page}, PageSize={PageSize}, TraceId={TraceId}, UserId={UserId}, Origin={Origin}, Referer={Referer}, UserAgent={UserAgent}",
+            status,
+            safeSearch,
+            page,
+            pageSize,
+            HttpContext.TraceIdentifier,
+            _currentUser.UserId,
+            string.IsNullOrWhiteSpace(origin) ? null : origin,
+            string.IsNullOrWhiteSpace(referer) ? null : referer,
+            string.IsNullOrWhiteSpace(userAgent) ? null : userAgent);
 
         var result = await _dispatcher.DispatchAsync(new GetProjectsQuery
         {

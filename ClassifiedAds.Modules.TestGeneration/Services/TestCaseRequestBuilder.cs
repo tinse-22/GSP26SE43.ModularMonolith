@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
 using System.Collections.Generic;
@@ -15,18 +15,19 @@ public interface ITestCaseRequestBuilder
     /// <summary>
     /// Build a <see cref="TestCaseRequest"/> entity from n8n response data.
     /// </summary>
+    /// <returns></returns>
     TestCaseRequest Build(Guid testCaseId, N8nTestCaseRequest source, ApiOrderItemModel orderItem);
 }
 
 public class TestCaseRequestBuilder : ITestCaseRequestBuilder
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly Regex HttpMethodTokenRegex = new(
+    private static readonly Regex HttpMethodTokenRegex = new (
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -127,7 +128,10 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
 
     private static BodyType ParseBodyType(string bodyType)
     {
-        if (string.IsNullOrWhiteSpace(bodyType)) return BodyType.None;
+        if (string.IsNullOrWhiteSpace(bodyType))
+        {
+            return BodyType.None;
+        }
 
         return bodyType.Trim().ToUpperInvariant() switch
         {
@@ -142,7 +146,11 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
 
     private static string SerializeDict(Dictionary<string, string> dict)
     {
-        if (dict == null || dict.Count == 0) return null;
+        if (dict == null || dict.Count == 0)
+        {
+            return null;
+        }
+
         return JsonSerializer.Serialize(dict, JsonOpts);
     }
 }

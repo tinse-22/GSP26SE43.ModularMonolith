@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,7 +19,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Algorithms;
 /// </summary>
 public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
 {
-    private static readonly Regex SchemaRefRegex = new(
+    private static readonly Regex SchemaRefRegex = new (
         @"#/(?:components/schemas|definitions)/(?<name>[A-Za-z0-9_.\-]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -417,6 +417,7 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
     /// <summary>
     /// Extract all $ref schema names from a JSON payload.
     /// </summary>
+    /// <returns></returns>
     internal static HashSet<string> ExtractSchemaRefsFromPayload(string payload)
     {
         var refs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -442,6 +443,7 @@ public class SchemaRelationshipAnalyzer : ISchemaRelationshipAnalyzer
     /// "CreateUserRequest" → "User", "UserResponse" → "User", "OrderItemDto" → "OrderItem".
     /// Uses pre-sorted arrays for better performance.
     /// </summary>
+    /// <returns></returns>
     internal static string ExtractSchemaBaseName(string schemaName)
     {
         if (string.IsNullOrWhiteSpace(schemaName))

@@ -1,4 +1,5 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
+using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
 
@@ -22,9 +23,29 @@ public class BodyMutation
     /// <summary>Expected HTTP status code (400, 422, etc.).</summary>
     public int ExpectedStatusCode { get; set; } = 400;
 
+    /// <summary>
+    /// List of all acceptable status codes for this mutation.
+    /// If null or empty, falls back to <see cref="ExpectedStatusCode"/>.
+    /// </summary>
+    public List<int> ExpectedStatusCodes { get; set; }
+
     /// <summary>Description of what this mutation tests.</summary>
     public string Description { get; set; } = string.Empty;
 
     /// <summary>Whether this is a Boundary or Negative test case.</summary>
     public TestType SuggestedTestType { get; set; } = TestType.Negative;
+
+    /// <summary>
+    /// Gets the effective list of expected status codes, preferring the full list if available.
+    /// </summary>
+    /// <returns></returns>
+    public List<int> GetEffectiveExpectedStatusCodes()
+    {
+        if (ExpectedStatusCodes != null && ExpectedStatusCodes.Count > 0)
+        {
+            return ExpectedStatusCodes;
+        }
+
+        return new List<int> { ExpectedStatusCode };
+    }
 }
