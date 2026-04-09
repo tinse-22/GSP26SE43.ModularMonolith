@@ -49,6 +49,20 @@ if (!isRunningInContainer)
     }
 }
 
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (!isRunningInContainer)
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
+
 var builder = DistributedApplication.CreateBuilder(args);
 var externalConnectionString = shellProvidedConnectionString;
 var externalRedisUrl = builder.Configuration["REDIS_URL"];
