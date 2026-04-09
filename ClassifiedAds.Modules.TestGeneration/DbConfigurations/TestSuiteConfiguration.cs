@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using System;
@@ -66,7 +66,7 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
                 v => JsonSerializer.Deserialize<Dictionary<Guid, string>>(v, (JsonSerializerOptions)null) ?? new Dictionary<Guid, string>(),
                 new ValueComparer<Dictionary<Guid, string>>(
                     (c1, c2) => c1.Count == c2.Count && !c1.Except(c2).Any(),
-                    c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.Key.GetHashCode(), (v.Value != null ? v.Value.GetHashCode() : 0))),
+                    c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.Key.GetHashCode(), v.Value != null ? v.Value.GetHashCode() : 0)),
                     c => new Dictionary<Guid, string>(c)));
 
         builder.Property(x => x.GlobalBusinessRules)

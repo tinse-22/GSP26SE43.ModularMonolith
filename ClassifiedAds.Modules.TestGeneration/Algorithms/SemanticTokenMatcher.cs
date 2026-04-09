@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,7 +22,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
     /// Common API abbreviations: abbreviation → full form.
     /// Sourced from SPDG paper analysis of GitLab/Stripe/GitHub APIs.
     /// </summary>
-    private static readonly Dictionary<string, string[]> Abbreviations = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string[]> Abbreviations = new (StringComparer.OrdinalIgnoreCase)
     {
         ["cat"] = new[] { "category", "categories" },
         ["org"] = new[] { "organization", "organisations", "organizations" },
@@ -54,6 +54,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
         ["sess"] = new[] { "session", "sessions" },
         ["tx"] = new[] { "transaction", "transactions" },
         ["svc"] = new[] { "service", "services" },
+
         // Additional common API abbreviations
         ["id"] = new[] { "identifier", "identifiers", "identity", "identities" },
         ["num"] = new[] { "number", "numbers" },
@@ -156,7 +157,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
     /// <summary>
     /// Irregular plural → singular mappings common in APIs.
     /// </summary>
-    private static readonly Dictionary<string, string> IrregularPlurals = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> IrregularPlurals = new (StringComparer.OrdinalIgnoreCase)
     {
         ["people"] = "person",
         ["children"] = "child",
@@ -319,6 +320,7 @@ public class SemanticTokenMatcher : ISemanticTokenMatcher
     /// Convert a plural English word to singular.
     /// Handles common patterns: -ies, -ses, -zes, -xes, -ches, -shes, -s.
     /// </summary>
+    /// <returns></returns>
     internal static string Singularize(string word)
     {
         if (string.IsNullOrWhiteSpace(word) || word.Length < 3)

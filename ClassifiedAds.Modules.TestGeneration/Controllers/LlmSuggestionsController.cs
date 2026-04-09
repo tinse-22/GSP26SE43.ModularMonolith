@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -43,6 +43,7 @@ public class LlmSuggestionsController : ControllerBase
     /// Generate LLM suggestion previews for review.
     /// Calls LLM pipeline and persists suggestions as pending rows (not test cases).
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GenerateBoundaryNegativeTestCases)]
     [HttpPost("generate")]
     [Consumes("application/json")]
@@ -77,6 +78,7 @@ public class LlmSuggestionsController : ControllerBase
     /// <summary>
     /// List LLM suggestions for a test suite with optional filters.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GetTestCases)]
     [HttpGet]
     [ProducesResponseType(typeof(List<LlmSuggestionModel>), StatusCodes.Status200OK)]
@@ -102,6 +104,7 @@ public class LlmSuggestionsController : ControllerBase
     /// <summary>
     /// Get full details of a specific LLM suggestion.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GetTestCases)]
     [HttpGet("{suggestionId:guid}")]
     [ProducesResponseType(typeof(LlmSuggestionModel), StatusCodes.Status200OK)]
@@ -121,6 +124,7 @@ public class LlmSuggestionsController : ControllerBase
     /// <summary>
     /// Review an LLM suggestion: approve, reject, or modify and approve.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPut("{suggestionId:guid}/review")]
     [Consumes("application/json")]
@@ -156,6 +160,7 @@ public class LlmSuggestionsController : ControllerBase
     /// <summary>
     /// Create or update current-user feedback for an LLM suggestion.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPut("{suggestionId:guid}/feedback")]
     [Consumes("application/json")]
@@ -191,6 +196,7 @@ public class LlmSuggestionsController : ControllerBase
     /// Bulk review pending LLM suggestions with optional FE-15 style filters.
     /// FE-17 supports bulk approve and bulk reject actions.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.UpdateTestCase)]
     [HttpPost("bulk-review")]
     [Consumes("application/json")]

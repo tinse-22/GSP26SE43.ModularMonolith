@@ -14,7 +14,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -191,6 +191,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         {
             n8nRequest = DeserializeOrDefault<N8nTestCaseRequest>(suggestion.SuggestedRequest);
         }
+
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
         // Use modified expectation if provided, else fall back to original suggestion
@@ -212,6 +213,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         {
             n8nExpectation = DeserializeOrDefault<N8nTestCaseExpectation>(suggestion.SuggestedExpectation);
         }
+
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
 
         // Use modified variables if provided, else fall back to original suggestion
@@ -259,7 +261,6 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
     }
 
     // --- Static helpers (shared with BoundaryNegativeTestCaseGenerator) ---
-
     internal static string SanitizeName(string name, ApiOrderItemModel orderItem)
     {
         if (!string.IsNullOrWhiteSpace(name))
@@ -274,7 +275,10 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
     internal static TestPriority ParsePriority(string priority)
     {
-        if (string.IsNullOrWhiteSpace(priority)) return TestPriority.Medium;
+        if (string.IsNullOrWhiteSpace(priority))
+        {
+            return TestPriority.Medium;
+        }
 
         return priority.Trim().ToLowerInvariant() switch
         {
@@ -288,7 +292,10 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
     internal static ExtractFrom ParseExtractFrom(string extractFrom)
     {
-        if (string.IsNullOrWhiteSpace(extractFrom)) return ExtractFrom.ResponseBody;
+        if (string.IsNullOrWhiteSpace(extractFrom))
+        {
+            return ExtractFrom.ResponseBody;
+        }
 
         return extractFrom.Trim().ToLowerInvariant() switch
         {
@@ -326,22 +333,41 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         return JsonSerializer.Serialize(tags, JsonOpts);
     }
 
-    private static T DeserializeOrDefault<T>(string json) where T : class, new()
+    private static T DeserializeOrDefault<T>(string json)
+        where T : class, new()
     {
-        if (string.IsNullOrWhiteSpace(json)) return new T();
-        try { return JsonSerializer.Deserialize<T>(json, JsonOpts) ?? new T(); }
-        catch { return new T(); }
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new T();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, JsonOpts) ?? new T();
+        }
+        catch
+        {
+            return new T();
+        }
     }
 
     private static TestType? ParseTestType(string testType)
     {
-        if (string.IsNullOrWhiteSpace(testType)) return null;
+        if (string.IsNullOrWhiteSpace(testType))
+        {
+            return null;
+        }
+
         return Enum.TryParse<TestType>(testType, true, out var parsed) ? parsed : null;
     }
 
     private static TestPriority? ParsePriorityOrDefault(string priority)
     {
-        if (string.IsNullOrWhiteSpace(priority)) return null;
+        if (string.IsNullOrWhiteSpace(priority))
+        {
+            return null;
+        }
+
         return priority.Trim().ToLowerInvariant() switch
         {
             "critical" => TestPriority.Critical,

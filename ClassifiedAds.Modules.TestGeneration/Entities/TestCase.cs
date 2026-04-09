@@ -1,4 +1,4 @@
-using ClassifiedAds.Domain.Entities;
+﻿using ClassifiedAds.Domain.Entities;
 using System;
 using System.Collections.Generic;
 

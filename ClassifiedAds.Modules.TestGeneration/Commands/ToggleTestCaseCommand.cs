@@ -20,7 +20,7 @@ public class ToggleTestCaseCommand : ICommand
 
 public class ToggleTestCaseCommandHandler : ICommandHandler<ToggleTestCaseCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -44,10 +44,14 @@ public class ToggleTestCaseCommandHandler : ICommandHandler<ToggleTestCaseComman
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
 
         if (command.TestCaseId == Guid.Empty)
+        {
             throw new ValidationException("TestCaseId là bắt buộc.");
+        }
 
         // 2) Load and verify suite
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -55,10 +59,14 @@ public class ToggleTestCaseCommandHandler : ICommandHandler<ToggleTestCaseComman
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         // 3) Load test case
         var testCase = await _testCaseRepository.FirstOrDefaultAsync(
@@ -66,7 +74,9 @@ public class ToggleTestCaseCommandHandler : ICommandHandler<ToggleTestCaseComman
                 .Where(x => x.Id == command.TestCaseId && x.TestSuiteId == command.TestSuiteId));
 
         if (testCase == null)
+        {
             throw new NotFoundException($"Không tìm thấy test case với mã '{command.TestCaseId}'.");
+        }
 
         var now = DateTimeOffset.UtcNow;
         var oldValue = testCase.IsEnabled;

@@ -61,16 +61,22 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
     public async Task HandleAsync(GenerateTestCasesCommand command, CancellationToken cancellationToken = default)
     {
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
 
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         // Get the latest approved proposal to get the applied order
         var approvedProposal = await _proposalRepository.FirstOrDefaultAsync(
@@ -81,7 +87,9 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
                 .OrderByDescending(x => x.ProposalNumber));
 
         if (approvedProposal == null)
+        {
             throw new ValidationException("Cần approve test order trước khi generate test cases.");
+        }
 
         _logger.LogInformation(
             "Creating test generation job. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}",
@@ -160,12 +168,14 @@ public class N8nGenerateTestsPayload
     public Guid TestSuiteId { get; set; }
     public string TestSuiteName { get; set; } = string.Empty;
     public Guid SpecificationId { get; set; }
-    public N8nUnifiedPromptConfig PromptConfig { get; set; } = new();
-    public List<N8nOrderedEndpoint> Endpoints { get; set; } = new();
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+    public N8nUnifiedPromptConfig PromptConfig { get; set; } = new ();
+    public List<N8nOrderedEndpoint> Endpoints { get; set; } = new ();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new ();
     public string GlobalBusinessRules { get; set; }
+
     /// <summary>BE endpoint n8n should POST generated test cases back to.</summary>
     public string CallbackUrl { get; set; } = string.Empty;
+
     /// <summary>Sent back by n8n in the x-callback-api-key header so BE can validate it.</summary>
     public string CallbackApiKey { get; set; } = string.Empty;
 }
@@ -177,13 +187,13 @@ public class N8nOrderedEndpoint
     public string Path { get; set; }
     public string OperationId { get; set; }
     public int OrderIndex { get; set; }
-    public List<Guid> DependsOnEndpointIds { get; set; } = new();
-    public List<string> ReasonCodes { get; set; } = new();
+    public List<Guid> DependsOnEndpointIds { get; set; } = new ();
+    public List<string> ReasonCodes { get; set; } = new ();
     public bool IsAuthRelated { get; set; }
     public string BusinessContext { get; set; }
     public Models.N8nPromptPayload Prompt { get; set; }
-    public List<string> ParameterSchemaPayloads { get; set; } = new();
-    public List<string> ResponseSchemaPayloads { get; set; } = new();
+    public List<string> ParameterSchemaPayloads { get; set; } = new ();
+    public List<string> ResponseSchemaPayloads { get; set; } = new ();
 }
 
 public class N8nUnifiedPromptConfig

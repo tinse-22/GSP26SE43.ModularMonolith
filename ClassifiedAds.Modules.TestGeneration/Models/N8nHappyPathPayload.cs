@@ -12,7 +12,7 @@ public class N8nHappyPathPayload
     public Guid TestSuiteId { get; set; }
     public string TestSuiteName { get; set; }
     public string GlobalBusinessRules { get; set; }
-    public List<N8nEndpointPayload> Endpoints { get; set; } = new();
+    public List<N8nEndpointPayload> Endpoints { get; set; } = new ();
 }
 
 public class N8nEndpointPayload
@@ -22,7 +22,7 @@ public class N8nEndpointPayload
     public string Path { get; set; }
     public string OperationId { get; set; }
     public int OrderIndex { get; set; }
-    public List<Guid> DependsOnEndpointIds { get; set; } = new();
+    public List<Guid> DependsOnEndpointIds { get; set; } = new ();
     public bool IsAuthRelated { get; set; }
     public string BusinessContext { get; set; }
 
@@ -34,12 +34,12 @@ public class N8nEndpointPayload
     /// <summary>
     /// Raw JSON schemas for request parameters (from OpenAPI spec).
     /// </summary>
-    public List<string> ParameterSchemaPayloads { get; set; } = new();
+    public List<string> ParameterSchemaPayloads { get; set; } = new ();
 
     /// <summary>
     /// Raw JSON schemas for response objects (from OpenAPI spec).
     /// </summary>
-    public List<string> ResponseSchemaPayloads { get; set; } = new();
+    public List<string> ResponseSchemaPayloads { get; set; } = new ();
 }
 
 public class N8nPromptPayload

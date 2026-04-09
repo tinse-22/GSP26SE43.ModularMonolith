@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.Authorization;
+﻿namespace ClassifiedAds.Modules.TestGeneration.Authorization;
 
 public static class Permissions
 {

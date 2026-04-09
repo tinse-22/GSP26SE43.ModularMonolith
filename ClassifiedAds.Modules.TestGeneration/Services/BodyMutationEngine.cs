@@ -15,7 +15,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class BodyMutationEngine : IBodyMutationEngine
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -25,7 +25,7 @@ public class BodyMutationEngine : IBodyMutationEngine
     {
         // Only applies to POST/PUT/PATCH. For GET/DELETE/HEAD/OPTIONS → return empty list.
         var method = (context.HttpMethod ?? string.Empty).ToUpperInvariant();
-        if (method is not ("POST" or "PUT" or "PATCH"))
+        if (method is not("POST" or "PUT" or "PATCH"))
         {
             return Array.Empty<BodyMutation>();
         }
@@ -73,7 +73,7 @@ public class BodyMutationEngine : IBodyMutationEngine
         {
             MutationType = "emptyBody",
             Label = "empty body (empty string)",
-            MutatedBody = "",
+            MutatedBody = string.Empty,
             TargetFieldName = null,
             ExpectedStatusCode = 400,
             ExpectedStatusCodes = GetExpectedStatusesForMutation("emptyBody"),

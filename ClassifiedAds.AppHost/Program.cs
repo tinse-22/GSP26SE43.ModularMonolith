@@ -191,7 +191,9 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
-    .WaitFor(migrator)
+    // The migrator is a one-shot process, so WebAPI must wait for successful completion
+    // instead of just waiting for the migrator resource to start running.
+    .WaitForCompletion(migrator)
     .WaitFor(rabbitmq)
     .WithExternalHttpEndpoints();
 
@@ -234,7 +236,9 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     // Configure file storage (local filesystem for development)
     .WithEnvironment("Modules__Storage__Provider", "Local")
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
-    .WaitFor(migrator)
+    // The migrator is a one-shot process, so Background must wait for successful
+    // completion instead of just waiting for the migrator resource to start running.
+    .WaitForCompletion(migrator)
     .WaitFor(rabbitmq)
     .WaitFor(mailhog);
 

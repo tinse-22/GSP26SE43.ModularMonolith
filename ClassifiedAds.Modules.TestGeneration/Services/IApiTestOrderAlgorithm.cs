@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+﻿using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System.Collections.Generic;
 

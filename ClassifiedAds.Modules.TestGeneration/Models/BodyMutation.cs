@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
@@ -38,6 +38,7 @@ public class BodyMutation
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>
+    /// <returns></returns>
     public List<int> GetEffectiveExpectedStatusCodes()
     {
         if (ExpectedStatusCodes != null && ExpectedStatusCodes.Count > 0)

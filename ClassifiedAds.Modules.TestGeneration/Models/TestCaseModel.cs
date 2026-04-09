@@ -19,11 +19,11 @@ public class TestCaseModel
     public string TestType { get; set; }
     public string Priority { get; set; }
     public bool IsEnabled { get; set; }
-    public List<Guid> DependsOnIds { get; set; } = new();
+    public List<Guid> DependsOnIds { get; set; } = new ();
     public int OrderIndex { get; set; }
     public int? CustomOrderIndex { get; set; }
     public bool IsOrderCustomized { get; set; }
-    public List<string> Tags { get; set; } = new();
+    public List<string> Tags { get; set; } = new ();
     public int Version { get; set; }
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
@@ -32,7 +32,7 @@ public class TestCaseModel
     // Nested models
     public TestCaseRequestModel Request { get; set; }
     public TestCaseExpectationModel Expectation { get; set; }
-    public List<TestCaseVariableModel> Variables { get; set; } = new();
+    public List<TestCaseVariableModel> Variables { get; set; } = new ();
 
     public static TestCaseModel FromEntity(TestCase entity)
     {
@@ -63,17 +63,34 @@ public class TestCaseModel
 
     private static List<string> DeserializeTags(string tagsJson)
     {
-        if (string.IsNullOrWhiteSpace(tagsJson)) return new List<string>();
-        try { return JsonSerializer.Deserialize<List<string>>(tagsJson) ?? new List<string>(); }
-        catch { return new List<string>(); }
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tagsJson) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private static List<TestCaseVariableModel> MapVariables(ICollection<TestCaseVariable> variables)
     {
-        if (variables == null || variables.Count == 0) return new List<TestCaseVariableModel>();
+        if (variables == null || variables.Count == 0)
+        {
+            return new List<TestCaseVariableModel>();
+        }
+
         var result = new List<TestCaseVariableModel>();
         foreach (var v in variables)
+        {
             result.Add(TestCaseVariableModel.FromEntity(v));
+        }
+
         return result;
     }
 }

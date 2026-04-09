@@ -22,13 +22,13 @@ public class GenerateLlmSuggestionPreviewCommand : ICommand
     public Guid CurrentUserId { get; set; }
     public Guid SpecificationId { get; set; }
     public bool ForceRefresh { get; set; }
-    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new ();
     public GenerateLlmSuggestionPreviewResultModel Result { get; set; }
 }
 
 public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<GenerateLlmSuggestionPreviewCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -70,7 +70,9 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         ValidationException.Requires(
             suite.CreatedById == command.CurrentUserId,

@@ -25,7 +25,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -263,9 +263,20 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 
         foreach (var tc in testCases)
         {
-            if (!tc.EndpointId.HasValue) continue;
-            if (!orderItemMap.TryGetValue(tc.EndpointId.Value, out var orderItem)) continue;
-            if (orderItem.DependsOnEndpointIds == null || orderItem.DependsOnEndpointIds.Count == 0) continue;
+            if (!tc.EndpointId.HasValue)
+            {
+                continue;
+            }
+
+            if (!orderItemMap.TryGetValue(tc.EndpointId.Value, out var orderItem))
+            {
+                continue;
+            }
+
+            if (orderItem.DependsOnEndpointIds == null || orderItem.DependsOnEndpointIds.Count == 0)
+            {
+                continue;
+            }
 
             // Link to ALL dependencies that have generated test cases
             foreach (var depEndpointId in orderItem.DependsOnEndpointIds)
@@ -286,7 +297,9 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
     private static string SanitizeName(string name, ApiOrderItemModel orderItem)
     {
         if (!string.IsNullOrWhiteSpace(name))
+        {
             return name.Length > 200 ? name[..200] : name;
+        }
 
         // Fallback name from order item
         return orderItem != null
@@ -296,7 +309,10 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 
     private static TestPriority ParsePriority(string priority)
     {
-        if (string.IsNullOrWhiteSpace(priority)) return TestPriority.Medium;
+        if (string.IsNullOrWhiteSpace(priority))
+        {
+            return TestPriority.Medium;
+        }
 
         return priority.Trim().ToLowerInvariant() switch
         {
@@ -310,7 +326,10 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 
     private static ExtractFrom ParseExtractFrom(string extractFrom)
     {
-        if (string.IsNullOrWhiteSpace(extractFrom)) return ExtractFrom.ResponseBody;
+        if (string.IsNullOrWhiteSpace(extractFrom))
+        {
+            return ExtractFrom.ResponseBody;
+        }
 
         return extractFrom.Trim().ToLowerInvariant() switch
         {
@@ -324,14 +343,20 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
     private static string SerializeTags(List<string> tags)
     {
         if (tags == null || tags.Count == 0)
+        {
             return JsonSerializer.Serialize(new[] { "happy-path", "auto-generated" }, JsonOpts);
+        }
 
         // Ensure happy-path tag is present
         if (!tags.Contains("happy-path", StringComparer.OrdinalIgnoreCase))
+        {
             tags.Insert(0, "happy-path");
+        }
 
         if (!tags.Contains("auto-generated", StringComparer.OrdinalIgnoreCase))
+        {
             tags.Add("auto-generated");
+        }
 
         return JsonSerializer.Serialize(tags, JsonOpts);
     }

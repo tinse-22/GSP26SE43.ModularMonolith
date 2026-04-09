@@ -42,8 +42,10 @@ public class AiGeneratedTestCaseDto
     public Guid? EndpointId { get; set; }
     public string Name { get; set; }
     public string Description { get; set; }
+
     /// <summary>e.g. "HappyPath", "Boundary", "Negative", "Performance", "Security"</summary>
     public string TestType { get; set; } = "HappyPath";
+
     /// <summary>e.g. "Critical", "High", "Medium", "Low"</summary>
     public string Priority { get; set; } = "Medium";
     public int OrderIndex { get; set; }
@@ -56,18 +58,18 @@ public class AiGeneratedTestCaseDto
 public class SaveAiGeneratedTestCasesCommand : ICommand
 {
     public Guid TestSuiteId { get; set; }
-    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new();
+    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new ();
 }
 
 public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGeneratedTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly Regex HttpMethodTokenRegex = new(
+    private static readonly Regex HttpMethodTokenRegex = new (
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -100,20 +102,28 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     public async Task HandleAsync(SaveAiGeneratedTestCasesCommand command, CancellationToken cancellationToken = default)
     {
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId is required.");
+        }
 
         if (command.TestCases == null || command.TestCases.Count == 0)
+        {
             throw new ValidationException("At least one AI-generated test case is required.");
+        }
 
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet()
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Test suite '{command.TestSuiteId}' was not found.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Cannot save AI-generated test cases for an archived test suite.");
+        }
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
@@ -385,7 +395,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         var trimmed = value.Trim();
         try
         {
-            using var _ = JsonDocument.Parse(trimmed);
+            using var doc = JsonDocument.Parse(trimmed);
             return trimmed;
         }
         catch
@@ -404,7 +414,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         var trimmed = value.Trim();
         try
         {
-            using var _ = JsonDocument.Parse(trimmed);
+            using var doc = JsonDocument.Parse(trimmed);
             return trimmed;
         }
         catch

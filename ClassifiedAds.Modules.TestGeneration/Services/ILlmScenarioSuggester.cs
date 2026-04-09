@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+﻿using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
@@ -35,7 +35,7 @@ public class LlmScenarioSuggestionContext
 
     public IReadOnlyDictionary<Guid, EndpointParameterDetailDto> EndpointParameterDetails { get; set; } = new Dictionary<Guid, EndpointParameterDetailDto>();
 
-    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new GenerationAlgorithmProfile();
 }
 
 public class LlmScenarioSuggestionResult
@@ -85,13 +85,14 @@ public class LlmSuggestedScenario
 
     public string Priority { get; set; }
 
-    public List<string> Tags { get; set; } = new();
+    public List<string> Tags { get; set; } = new List<string>();
 
-    public List<N8nTestCaseVariable> Variables { get; set; } = new();
+    public List<N8nTestCaseVariable> Variables { get; set; } = new List<N8nTestCaseVariable>();
 
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>
+    /// <returns></returns>
     public List<int> GetEffectiveExpectedStatusCodes()
     {
         if (ExpectedStatusCodes != null && ExpectedStatusCodes.Count > 0)
