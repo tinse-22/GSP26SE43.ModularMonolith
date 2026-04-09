@@ -24,28 +24,45 @@ const string AppHostPostgresDatabaseName = "ClassifiedAds";
 const int DefaultAppHostPostgresHostPort = 55433;
 const int AppHostPostgresFallbackPortFloor = 55434;
 const int AppHostPostgresFallbackPortCeiling = 55483;
-var shellProvidedConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
 
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+var preferProcessEnvOverrides = string.Equals(
+    Environment.GetEnvironmentVariable("APPHOST_PREFER_PROCESS_ENV_OVERRIDES"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
 if (!isRunningInContainer)
 {
+    var overwriteExistingVars = !preferProcessEnvOverrides;
+
     dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
         probeForEnv: true,
         probeLevelsToSearch: 6,
         trimValues: true,
-        overwriteExistingVars: false));
+        overwriteExistingVars: overwriteExistingVars));
 
-    if (string.IsNullOrWhiteSpace(shellProvidedConnectionString) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ConnectionStrings__Default")))
+    var processConnectionStringAfterDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+
+    if (!string.IsNullOrWhiteSpace(processConnectionStringBeforeDotEnv))
     {
-        Console.WriteLine(
-            "[AppHost] Ignoring ConnectionStrings__Default loaded from .env. " +
-            "Export it in the current shell to force external DB mode.");
-        Environment.SetEnvironmentVariable("ConnectionStrings__Default", null);
+        if (overwriteExistingVars &&
+            !string.Equals(processConnectionStringBeforeDotEnv, processConnectionStringAfterDotEnv, StringComparison.Ordinal))
+        {
+            Console.WriteLine(
+                "[AppHost] ConnectionStrings__Default from current shell was replaced by .env " +
+                "(set APPHOST_PREFER_PROCESS_ENV_OVERRIDES=true to keep shell value).");
+        }
+        else if (!overwriteExistingVars)
+        {
+            Console.WriteLine(
+                "[AppHost] ConnectionStrings__Default from current shell overrides .env " +
+                "(APPHOST_PREFER_PROCESS_ENV_OVERRIDES=true).");
+        }
     }
 }
 
@@ -64,7 +81,7 @@ if (!isRunningInContainer)
 }
 
 var builder = DistributedApplication.CreateBuilder(args);
-var externalConnectionString = shellProvidedConnectionString;
+var externalConnectionString = builder.Configuration.GetConnectionString("Default");
 var externalRedisUrl = builder.Configuration["REDIS_URL"];
 var redisInstanceName = builder.Configuration["Caching__Distributed__Redis__InstanceName"] ?? "ClassifiedAds_";
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
