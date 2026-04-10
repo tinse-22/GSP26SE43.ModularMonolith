@@ -478,21 +478,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return response.Scenarios.Select(s =>
         {
-            var expectedStatuses = s.Expectation?.ExpectedStatus ?? new List<int>();
-            var primaryStatus = expectedStatuses.Count > 0 ? expectedStatuses[0] : 400;
+            var parsedType = ParseTestType(s.TestType);
+            var defaultStatus = parsedType == TestType.HappyPath ? 200 : 400;
 
             return new LlmSuggestedScenario
             {
                 EndpointId = s.EndpointId,
                 ScenarioName = s.ScenarioName,
                 Description = s.Description,
-                SuggestedTestType = ParseTestType(s.TestType),
+                SuggestedTestType = parsedType,
                 SuggestedBody = s.Request?.Body,
                 SuggestedPathParams = s.Request?.PathParams,
                 SuggestedQueryParams = s.Request?.QueryParams,
                 SuggestedHeaders = s.Request?.Headers,
-                ExpectedStatusCode = primaryStatus,
-                ExpectedStatusCodes = expectedStatuses.Count > 0 ? expectedStatuses : null,
+                ExpectedStatusCode = s.Expectation?.ExpectedStatus?.FirstOrDefault() ?? defaultStatus,
                 ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),

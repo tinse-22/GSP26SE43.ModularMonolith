@@ -40,6 +40,8 @@ public static class AspireResourceEnvironmentBridge
 
         var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
         var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT");
+        var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
+        var redisSsl = Environment.GetEnvironmentVariable("REDIS_SSL");
 
         if (string.IsNullOrWhiteSpace(redisHost) || string.IsNullOrWhiteSpace(redisPort))
         {
