@@ -185,6 +185,43 @@ public class BoundaryNegativeTestCaseGeneratorTests
     }
 
     [Fact]
+    public async Task GenerateAsync_Should_PreservePathMutationExpectedStatuses_WhenBuildingExpectation()
+    {
+        // Arrange
+        var suite = CreateSuite();
+        var endpoints = CreateOrderedEndpoints();
+        SetupEndpointMetadata(endpoints);
+        SetupParameterDetails(Endpoint1Id, CreatePathParameter("id", "integer", "int64"));
+        SetupPathMutations("id", new PathParameterMutationDto
+        {
+            MutationType = "boundary_max_int64",
+            Label = "id - Max int64",
+            Value = "9223372036854775807",
+            ExpectedStatusCode = 200,
+            ExpectedStatusCodes = new List<int> { 200, 404 },
+            Description = "Send max int64 path parameter",
+        });
+
+        var options = new BoundaryNegativeOptions
+        {
+            IncludePathMutations = true,
+            IncludeBodyMutations = false,
+            IncludeLlmSuggestions = false,
+            UserId = DefaultUserId,
+        };
+
+        // Act
+        var result = await _generator.GenerateAsync(suite, endpoints, DefaultSpecId, options);
+
+        // Assert
+        result.TestCases.Should().HaveCount(1);
+
+        var expectedStatuses = JsonSerializer.Deserialize<List<int>>(
+            result.TestCases[0].Expectation.ExpectedStatus);
+        expectedStatuses.Should().Equal(200, 404);
+    }
+
+    [Fact]
     public async Task GenerateAsync_Should_OnlyIncludeLlmSuggestions_WhenOnlyLlmFlagTrue()
     {
         // Arrange

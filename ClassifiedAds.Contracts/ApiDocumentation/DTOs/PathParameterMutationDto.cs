@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 
 /// <summary>
@@ -18,6 +20,25 @@ public class PathParameterMutationDto
     /// <summary>Expected HTTP status code when using this mutated value (400, 404, etc.).</summary>
     public int ExpectedStatusCode { get; set; }
 
+    /// <summary>
+    /// List of all acceptable HTTP status codes for this mutation.
+    /// If null or empty, falls back to <see cref="ExpectedStatusCode"/>.
+    /// </summary>
+    public List<int> ExpectedStatusCodes { get; set; }
+
     /// <summary>Description of what this mutation tests.</summary>
     public string Description { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the effective list of expected status codes, preferring the full list if available.
+    /// </summary>
+    public List<int> GetEffectiveExpectedStatusCodes()
+    {
+        if (ExpectedStatusCodes != null && ExpectedStatusCodes.Count > 0)
+        {
+            return ExpectedStatusCodes;
+        }
+
+        return new List<int> { ExpectedStatusCode };
+    }
 }
