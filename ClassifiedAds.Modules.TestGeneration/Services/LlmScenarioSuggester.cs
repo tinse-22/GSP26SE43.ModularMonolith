@@ -479,7 +479,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return response.Scenarios.Select(s =>
         {
             var parsedType = ParseTestType(s.TestType);
-            var defaultStatus = parsedType == TestType.HappyPath ? 200 : 400;
+            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus);
 
             return new LlmSuggestedScenario
             {
@@ -491,13 +491,43 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 SuggestedPathParams = s.Request?.PathParams,
                 SuggestedQueryParams = s.Request?.QueryParams,
                 SuggestedHeaders = s.Request?.Headers,
-                ExpectedStatusCode = s.Expectation?.ExpectedStatus?.FirstOrDefault() ?? defaultStatus,
+                ExpectedStatusCode = expectedStatuses.First(),
+                ExpectedStatusCodes = expectedStatuses,
                 ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
             };
         }).ToList();
+    }
+
+    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source)
+    {
+        var normalized = source?
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList() ?? new List<int>();
+
+        if (testType == TestType.HappyPath)
+        {
+            var happyStatuses = normalized.Where(code => code >= 200 && code <= 299).ToList();
+            if (happyStatuses.Count > 0)
+            {
+                return happyStatuses;
+            }
+
+            return new List<int> { 200 };
+        }
+
+        // Boundary/Negative should not accept success statuses.
+        var nonSuccessStatuses = normalized.Where(code => code < 200 || code >= 300).ToList();
+        if (nonSuccessStatuses.Count > 0)
+        {
+            return nonSuccessStatuses;
+        }
+
+        // For Boundary/Negative, accept common client-error variants by default.
+        return new List<int> { 400, 401, 403, 404, 409, 422 };
     }
 
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(

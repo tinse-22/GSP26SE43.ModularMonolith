@@ -11,6 +11,8 @@ public class TestCaseExecutionResult
 
     public string Name { get; set; }
 
+    public string TestType { get; set; }
+
     public int OrderIndex { get; set; }
 
     public string Status { get; set; }
@@ -20,6 +22,18 @@ public class TestCaseExecutionResult
     public long DurationMs { get; set; }
 
     public string ResolvedUrl { get; set; }
+
+    public string HttpMethod { get; set; }
+
+    public string BodyType { get; set; }
+
+    public string RequestBody { get; set; }
+
+    public Dictionary<string, string> QueryParams { get; set; } = new();
+
+    public int TimeoutMs { get; set; }
+
+    public string ExpectedStatus { get; set; }
 
     public Dictionary<string, string> RequestHeaders { get; set; } = new();
 
