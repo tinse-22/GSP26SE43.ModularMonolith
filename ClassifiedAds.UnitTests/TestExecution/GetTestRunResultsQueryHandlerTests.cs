@@ -46,7 +46,6 @@ public class GetTestRunResultsQueryHandlerTests
 
         _handler = new GetTestRunResultsQueryHandler(
             _runRepoMock.Object,
-            _resultRepoMock.Object,
             _cacheMock.Object,
             _gatewayMock.Object,
             new Mock<ILogger<GetTestRunResultsQueryHandler>>().Object);
@@ -168,7 +167,7 @@ public class GetTestRunResultsQueryHandlerTests
 
         // Cache returns null
         _cacheMock.Setup(x => x.GetAsync(run.RedisKey, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((byte[])null);
+            .ReturnsAsync((byte[])null!);
 
         // Act
         var result = await _handler.HandleAsync(query);
@@ -231,14 +230,12 @@ public class GetTestRunResultsQueryHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_CacheThrows_ShouldFallBackToDatabase()
+    public async Task HandleAsync_CacheThrows_ShouldReturnUnavailable()
     {
         // Arrange
         var runId = Guid.NewGuid();
         var suiteId = Guid.NewGuid();
         var run = CreateTestRun(runId, suiteId, resultsExpireAt: DateTimeOffset.UtcNow.AddDays(1));
-        var testCaseId = Guid.NewGuid();
-
         var query = new GetTestRunResultsQuery
         {
             TestSuiteId = suiteId,
@@ -248,21 +245,6 @@ public class GetTestRunResultsQueryHandlerTests
 
         SetupGateway(suiteId, _ownerId);
         SetupRunRepository(run);
-        _resultRepoMock.Setup(x => x.GetQueryableSet())
-            .Returns(new[]
-            {
-                new TestCaseResult
-                {
-                    Id = Guid.NewGuid(),
-                    TestRunId = runId,
-                    TestCaseId = testCaseId,
-                    Name = "Recovered case",
-                    OrderIndex = 1,
-                    Status = "Passed",
-                    DurationMs = 42,
-                    StatusCodeMatched = true,
-                },
-            }.AsQueryable());
 
         _cacheMock.Setup(x => x.GetAsync(run.RedisKey, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("redis offline"));
@@ -271,9 +253,8 @@ public class GetTestRunResultsQueryHandlerTests
         var result = await _handler.HandleAsync(query);
 
         // Assert
-        result.ResultsSource.Should().Be("database");
-        result.Cases.Should().ContainSingle();
-        result.Cases[0].Name.Should().Be("Recovered case");
+        result.ResultsSource.Should().Be("unavailable");
+        result.Cases.Should().BeEmpty();
         result.Run.Id.Should().Be(runId);
     }
 
@@ -291,7 +272,7 @@ public class GetTestRunResultsQueryHandlerTests
             });
     }
 
-    private void SetupRunRepository(TestRun run)
+    private void SetupRunRepository(TestRun? run)
     {
         _runRepoMock.Setup(x => x.GetQueryableSet())
             .Returns(run != null
@@ -299,13 +280,13 @@ public class GetTestRunResultsQueryHandlerTests
                 : new List<TestRun>().AsQueryable());
 
         _runRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestRun>>()))
-            .ReturnsAsync(run);
+            .ReturnsAsync(run!);
     }
 
     private static TestRun CreateTestRun(
         Guid runId,
         Guid suiteId,
-        string redisKey = null,
+        string? redisKey = null,
         DateTimeOffset? resultsExpireAt = null)
     {
         return new TestRun

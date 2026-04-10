@@ -23,14 +23,12 @@ public class TestResultCollectorTests
     };
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
-    private readonly Mock<IRepository<TestCaseResult, Guid>> _resultRepoMock;
     private readonly Mock<IDistributedCache> _cacheMock;
     private readonly TestResultCollector _collector;
 
     public TestResultCollectorTests()
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
-        _resultRepoMock = new Mock<IRepository<TestCaseResult, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
 
         var unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -40,12 +38,8 @@ public class TestResultCollectorTests
         unitOfWorkMock.Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
-        _resultRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseResult>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         _collector = new TestResultCollector(
             _runRepoMock.Object,
-            _resultRepoMock.Object,
             _cacheMock.Object,
             new Mock<ILogger<TestResultCollector>>().Object);
     }
@@ -264,7 +258,7 @@ public class TestResultCollectorTests
     }
 
     [Fact]
-    public async Task CollectAsync_CacheFail_ShouldReturnDatabaseAndPersistSummary()
+    public async Task CollectAsync_CacheFail_ShouldReturnUnavailableAndPersistSummary()
     {
         // Arrange
         var run = CreateTestRun();
@@ -284,7 +278,7 @@ public class TestResultCollectorTests
         var result = await _collector.CollectAsync(run, caseResults, 7, "Dev");
 
         // Assert
-        result.ResultsSource.Should().Be("database");
+        result.ResultsSource.Should().Be("unavailable");
         run.Status.Should().Be(TestRunStatus.Completed);
         _runRepoMock.Verify(x => x.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
         _runRepoMock.Verify(x => x.UnitOfWork.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
@@ -334,8 +328,8 @@ public class TestResultCollectorTests
     private static TestCaseExecutionResult CreateCaseResult(
         string status,
         long durationMs = 50,
-        string responseBody = null,
-        Dictionary<string, string> extractedVariables = null)
+        string? responseBody = null,
+        Dictionary<string, string>? extractedVariables = null)
     {
         return new TestCaseExecutionResult
         {

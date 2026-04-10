@@ -161,7 +161,9 @@ public class PathParameterTemplateServiceTests
         mutations.Should().Contain(m =>
             m.MutationType == "boundary_max_int64" &&
             m.Value == "9223372036854775807" &&
-            m.ExpectedStatusCode == 200);
+            m.ExpectedStatusCode == 200 &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }));
         mutations.Should().Contain(m =>
             m.MutationType == "nonExistent" &&
             m.Value == "999999999" &&
@@ -178,7 +180,9 @@ public class PathParameterTemplateServiceTests
         mutations.Should().Contain(m =>
             m.MutationType == "boundary_max_int32" &&
             m.Value == "2147483647" &&
-            m.ExpectedStatusCode == 200);
+            m.ExpectedStatusCode == 200 &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }));
         mutations.Should().Contain(m =>
             m.MutationType == "boundary_overflow_int32" &&
             m.Value == "2147483648" &&
@@ -210,11 +214,15 @@ public class PathParameterTemplateServiceTests
         mutations.Should().Contain(m =>
             m.MutationType == "boundary_verySmall" &&
             m.Value == "0.0000001" &&
-            m.ExpectedStatusCode == 200);
+            m.ExpectedStatusCode == 200 &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }));
         mutations.Should().Contain(m =>
             m.MutationType == "boundary_zero" &&
             m.Value == "0" &&
-            m.ExpectedStatusCode == 200);
+            m.ExpectedStatusCode == 200 &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }));
     }
 
     [Fact]

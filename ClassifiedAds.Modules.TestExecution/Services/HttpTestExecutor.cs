@@ -132,9 +132,18 @@ public class HttpTestExecutor : IHttpTestExecutor
             return url;
         }
 
+        var queryItems = queryParams
+            .Where(kvp => !string.IsNullOrWhiteSpace(kvp.Key) && kvp.Value != null)
+            .Select(kvp => $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}")
+            .ToList();
+
+        if (queryItems.Count == 0)
+        {
+            return url;
+        }
+
         var separator = url.Contains('?') ? "&" : "?";
-        var queryString = string.Join("&", queryParams.Select(kvp =>
-            $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
+        var queryString = string.Join("&", queryItems);
 
         return $"{url}{separator}{queryString}";
     }

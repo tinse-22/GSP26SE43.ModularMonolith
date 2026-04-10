@@ -99,6 +99,64 @@ public class HttpTestExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithNullQueryParamValue_ShouldOmitThatParam()
+    {
+        // Arrange
+        Uri capturedUri = null;
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{}"),
+        }, msg => capturedUri = msg.RequestUri);
+
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest("GET", "https://api.example.com/search");
+        request.QueryParams = new Dictionary<string, string>
+        {
+            ["q"] = "test",
+            ["optional"] = null,
+        };
+
+        // Act
+        var result = await _executor.ExecuteAsync(request);
+
+        // Assert
+        result.TransportError.Should().BeNullOrEmpty();
+        capturedUri.Should().NotBeNull();
+        capturedUri.Query.Should().Contain("q=test");
+        capturedUri.Query.Should().NotContain("optional");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithEmptyQueryParamValue_ShouldKeepEmptyAssignment()
+    {
+        // Arrange
+        Uri capturedUri = null;
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{}"),
+        }, msg => capturedUri = msg.RequestUri);
+
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest("GET", "https://api.example.com/search");
+        request.QueryParams = new Dictionary<string, string>
+        {
+            ["q"] = string.Empty,
+        };
+
+        // Act
+        var result = await _executor.ExecuteAsync(request);
+
+        // Assert
+        result.TransportError.Should().BeNullOrEmpty();
+        capturedUri.Should().NotBeNull();
+        capturedUri.Query.Should().Contain("q=");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_HttpRequestException_ShouldReturnTransportError()
     {
         // Arrange
