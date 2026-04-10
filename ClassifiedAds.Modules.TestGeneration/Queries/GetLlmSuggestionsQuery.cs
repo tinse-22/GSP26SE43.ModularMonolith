@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -18,6 +18,7 @@ public class GetLlmSuggestionsQuery : IQuery<List<LlmSuggestionModel>>
     public string FilterByReviewStatus { get; set; }
     public string FilterByTestType { get; set; }
     public Guid? FilterByEndpointId { get; set; }
+    public bool IncludeDeleted { get; set; }
 }
 
 public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuery, List<LlmSuggestionModel>>
@@ -56,6 +57,12 @@ public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuer
 
         var queryable = _suggestionRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);
+
+        // Filter deleted (default: exclude)
+        if (!query.IncludeDeleted)
+        {
+            queryable = queryable.Where(x => !x.IsDeleted);
+        }
 
         // Filter by review status
         if (!string.IsNullOrWhiteSpace(query.FilterByReviewStatus)

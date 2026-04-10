@@ -25,6 +25,9 @@ public class TestCaseModel
     public bool IsOrderCustomized { get; set; }
     public List<string> Tags { get; set; } = new ();
     public int Version { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+    public Guid? DeletedById { get; set; }
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
     public string RowVersion { get; set; }
@@ -52,6 +55,9 @@ public class TestCaseModel
             IsOrderCustomized = entity.IsOrderCustomized,
             Tags = DeserializeTags(entity.Tags),
             Version = entity.Version,
+            IsDeleted = entity.IsDeleted,
+            DeletedAt = entity.DeletedAt,
+            DeletedById = entity.DeletedById,
             CreatedDateTime = entity.CreatedDateTime,
             UpdatedDateTime = entity.UpdatedDateTime,
             RowVersion = entity.RowVersion != null ? Convert.ToBase64String(entity.RowVersion) : null,

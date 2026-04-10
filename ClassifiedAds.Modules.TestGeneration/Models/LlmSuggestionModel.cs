@@ -37,6 +37,9 @@ public class LlmSuggestionModel
     public Guid? AppliedTestCaseId { get; set; }
     public string LlmModel { get; set; }
     public int? TokensUsed { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+    public Guid? DeletedById { get; set; }
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
     public string RowVersion { get; set; }
@@ -69,6 +72,9 @@ public class LlmSuggestionModel
             AppliedTestCaseId = entity.AppliedTestCaseId,
             LlmModel = entity.LlmModel,
             TokensUsed = entity.TokensUsed,
+            IsDeleted = entity.IsDeleted,
+            DeletedAt = entity.DeletedAt,
+            DeletedById = entity.DeletedById,
             CreatedDateTime = entity.CreatedDateTime,
             UpdatedDateTime = entity.UpdatedDateTime,
             RowVersion = entity.RowVersion != null ? Convert.ToBase64String(entity.RowVersion) : null,

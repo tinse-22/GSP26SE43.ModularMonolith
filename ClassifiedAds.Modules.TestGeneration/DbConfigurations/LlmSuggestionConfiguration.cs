@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace ClassifiedAds.Modules.TestGeneration.DbConfigurations;
@@ -76,6 +76,10 @@ public class LlmSuggestionConfiguration : IEntityTypeConfiguration<Entities.LlmS
         builder.HasIndex(x => x.CacheKey);
         builder.HasIndex(x => x.AppliedTestCaseId);
         builder.HasIndex(x => x.ReviewedById);
+
+        builder.Property(x => x.IsDeleted).HasDefaultValue(false);
+        builder.HasIndex(x => new { x.TestSuiteId, x.IsDeleted });
+        builder.HasIndex(x => x.DeletedById);
 
         // FK to TestSuite (cascade delete, no reverse navigation collection)
         builder.HasOne(x => x.TestSuite)

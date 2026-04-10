@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -84,7 +84,7 @@ public class TestCasesController : ControllerBase
                 JobId = queueCommand.JobId,
                 TestSuiteId = suiteId,
                 Mode = "callback",
-                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
+                Message = "ÄÃ£ táº¡o job vÃ  Ä‘Æ°a yÃªu cáº§u trigger n8n vÃ o hÃ ng Ä‘á»£i. Test cases sáº½ Ä‘Æ°á»£c lÆ°u qua callback endpoint.",
             });
         }
 
@@ -144,7 +144,7 @@ public class TestCasesController : ControllerBase
                 JobId = queueCommand.JobId,
                 TestSuiteId = suiteId,
                 Mode = "callback",
-                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
+                Message = "ÄÃ£ táº¡o job vÃ  Ä‘Æ°a yÃªu cáº§u trigger n8n vÃ o hÃ ng Ä‘á»£i. Test cases sáº½ Ä‘Æ°á»£c lÆ°u qua callback endpoint.",
             });
         }
 
@@ -182,7 +182,8 @@ public class TestCasesController : ControllerBase
     public async Task<ActionResult<List<TestCaseModel>>> GetAll(
         Guid suiteId,
         [FromQuery] string testType = null,
-        [FromQuery] bool includeDisabled = false)
+        [FromQuery] bool includeDisabled = false,
+        [FromQuery] bool includeDeleted = false)
     {
         TestType? filterType = null;
         if (!string.IsNullOrWhiteSpace(testType) && Enum.TryParse<TestType>(testType, true, out var parsed))
@@ -196,6 +197,7 @@ public class TestCasesController : ControllerBase
             CurrentUserId = _currentUser.UserId,
             FilterByTestType = filterType,
             IncludeDisabled = includeDisabled,
+            IncludeDeleted = includeDeleted,
         });
 
         return Ok(result);
@@ -351,9 +353,10 @@ public class TestCasesController : ControllerBase
     /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.DeleteTestCase)]
     [HttpDelete("{testCaseId:guid}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(TestCaseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(Guid suiteId, Guid testCaseId)
+    public async Task<ActionResult<TestCaseModel>> Delete(Guid suiteId, Guid testCaseId)
     {
         var command = new DeleteTestCaseCommand
         {
@@ -368,7 +371,7 @@ public class TestCasesController : ControllerBase
             "Deleted test case. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, ActorUserId={ActorUserId}",
             suiteId, testCaseId, _currentUser.UserId);
 
-        return NoContent();
+        return Ok(command.Result);
     }
 
     /// <summary>
@@ -429,5 +432,92 @@ public class TestCasesController : ControllerBase
             suiteId, request.TestCaseIds?.Count, _currentUser.UserId);
 
         return Ok();
+    }
+
+    /// <summary>
+    /// Restore a soft-deleted test case.
+    /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPost("{testCaseId:guid}/restore")]
+    [ProducesResponseType(typeof(TestCaseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TestCaseModel>> Restore(Guid suiteId, Guid testCaseId)
+    {
+        var command = new RestoreTestCaseCommand
+        {
+            TestSuiteId = suiteId,
+            TestCaseId = testCaseId,
+            CurrentUserId = _currentUser.UserId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Restored test case. TestSuiteId={TestSuiteId}, TestCaseId={TestCaseId}, ActorUserId={ActorUserId}",
+            suiteId, testCaseId, _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
+
+    /// <summary>
+    /// Bulk soft-delete multiple test cases.
+    /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
+    [Authorize(Permissions.DeleteTestCase)]
+    [HttpPost("bulk-delete")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(BulkOperationResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BulkOperationResultModel>> BulkDelete(
+        Guid suiteId,
+        [FromBody] BulkDeleteTestCasesRequest request)
+    {
+        var command = new BulkDeleteTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            TestCaseIds = request.TestCaseIds,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Bulk soft-deleted test cases. TestSuiteId={TestSuiteId}, ProcessedCount={ProcessedCount}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.ProcessedCount, _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
+
+    /// <summary>
+    /// Bulk restore multiple soft-deleted test cases.
+    /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPost("bulk-restore")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(BulkOperationResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BulkOperationResultModel>> BulkRestore(
+        Guid suiteId,
+        [FromBody] BulkRestoreTestCasesRequest request)
+    {
+        var command = new BulkRestoreTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            TestCaseIds = request.TestCaseIds,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Bulk restored test cases. TestSuiteId={TestSuiteId}, ProcessedCount={ProcessedCount}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.ProcessedCount, _currentUser.UserId);
+
+        return Ok(command.Result);
     }
 }

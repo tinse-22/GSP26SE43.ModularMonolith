@@ -1,0 +1,488 @@
+{
+  "reportTitle": "API Changes Report — Soft Delete, Restore & Bulk Operations",
+  "module": "TestGeneration",
+  "version": "2026-04-10",
+  "migrationId": "20260410064820_AddSoftDeleteToTestCasesAndLlmSuggestions",
+  "summary": "Chuyển delete test case từ hard delete sang soft delete. Thêm restore và bulk operations cho TestCase và LlmSuggestion. Tất cả list endpoint mặc định ẩn item đã xóa, dùng query param includeDeleted=true để hiện.",
+
+  "breakingChanges": [
+    {
+      "endpoint": "DELETE /api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "change": "Response thay đổi từ 204 NoContent (không có body) sang 200 OK với body chứa TestCaseModel đã bị soft-delete.",
+      "action": "FE cần cập nhật handler: không check status 204 nữa, đọc response body để lấy trạng thái mới của test case (IsDeleted=true)."
+    }
+  ],
+
+  "modelChanges": {
+    "TestCaseModel": {
+      "addedFields": [
+        {
+          "name": "isDeleted",
+          "type": "boolean",
+          "description": "Test case đã bị xóa mềm hay chưa.",
+          "defaultValue": false
+        },
+        {
+          "name": "deletedAt",
+          "type": "string (ISO 8601 DateTimeOffset) | null",
+          "description": "Thời điểm xóa mềm. Null nếu chưa xóa.",
+          "example": "2026-04-10T07:00:00+00:00"
+        },
+        {
+          "name": "deletedById",
+          "type": "string (UUID) | null",
+          "description": "ID user đã thực hiện xóa. Null nếu chưa xóa.",
+          "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        }
+      ]
+    },
+    "LlmSuggestionModel": {
+      "addedFields": [
+        {
+          "name": "isDeleted",
+          "type": "boolean",
+          "description": "Suggestion đã bị xóa mềm hay chưa.",
+          "defaultValue": false
+        },
+        {
+          "name": "deletedAt",
+          "type": "string (ISO 8601 DateTimeOffset) | null",
+          "description": "Thời điểm xóa mềm. Null nếu chưa xóa."
+        },
+        {
+          "name": "deletedById",
+          "type": "string (UUID) | null",
+          "description": "ID user đã thực hiện xóa. Null nếu chưa xóa."
+        }
+      ]
+    },
+    "BulkOperationResultModel": {
+      "description": "Model kết quả chung cho tất cả bulk operations (delete/restore).",
+      "fields": [
+        {
+          "name": "testSuiteId",
+          "type": "string (UUID)",
+          "description": "ID của test suite chứa các item."
+        },
+        {
+          "name": "operation",
+          "type": "string",
+          "enum": ["Delete", "Restore"],
+          "description": "Loại thao tác đã thực hiện."
+        },
+        {
+          "name": "entityType",
+          "type": "string",
+          "enum": ["TestCase", "LlmSuggestion"],
+          "description": "Loại entity được thao tác."
+        },
+        {
+          "name": "requestedCount",
+          "type": "integer",
+          "description": "Tổng số ID yêu cầu (sau dedup)."
+        },
+        {
+          "name": "processedCount",
+          "type": "integer",
+          "description": "Số item xử lý thành công."
+        },
+        {
+          "name": "skippedCount",
+          "type": "integer",
+          "description": "Số item bị bỏ qua (đã ở trạng thái đích hoặc không tìm thấy)."
+        },
+        {
+          "name": "processedIds",
+          "type": "array of string (UUID)",
+          "description": "Danh sách ID đã xử lý thành công."
+        },
+        {
+          "name": "skippedIds",
+          "type": "array of string (UUID)",
+          "description": "Danh sách ID bị bỏ qua."
+        },
+        {
+          "name": "skipReason",
+          "type": "string | null",
+          "description": "Lý do bỏ qua. Null nếu không có item bị skip.",
+          "examples": [
+            "Đã ở trạng thái xóa hoặc không tìm thấy.",
+            "Chưa bị xóa hoặc không tìm thấy."
+          ]
+        },
+        {
+          "name": "operatedAt",
+          "type": "string (ISO 8601 DateTimeOffset)",
+          "description": "Thời điểm thực hiện thao tác.",
+          "example": "2026-04-10T07:00:00+00:00"
+        }
+      ]
+    }
+  },
+
+  "endpoints": {
+    "testCases": {
+      "basePath": "/api/test-suites/{suiteId}/test-cases",
+      "pathParams": {
+        "suiteId": {
+          "type": "string (UUID)",
+          "required": true,
+          "description": "ID của test suite."
+        }
+      },
+      "endpoints": [
+        {
+          "id": "TC-LIST",
+          "status": "MODIFIED",
+          "method": "GET",
+          "path": "/api/test-suites/{suiteId}/test-cases",
+          "description": "Lấy danh sách test case. Mặc định ẩn item đã xóa.",
+          "auth": "Permissions.GetTestCases",
+          "queryParams": [
+            {
+              "name": "testType",
+              "type": "string | null",
+              "required": false,
+              "default": null,
+              "description": "Lọc theo loại test: HappyPath, Boundary, Negative, EdgeCase, ErrorHandling, Performance, Security.",
+              "existed": true
+            },
+            {
+              "name": "includeDisabled",
+              "type": "boolean",
+              "required": false,
+              "default": false,
+              "description": "Bao gồm test case bị disable (IsEnabled=false).",
+              "existed": true
+            },
+            {
+              "name": "includeDeleted",
+              "type": "boolean",
+              "required": false,
+              "default": false,
+              "description": "Bao gồm test case đã bị xóa mềm (IsDeleted=true). Dùng khi cần hiện danh sách recycle bin.",
+              "existed": false,
+              "isNew": true
+            }
+          ],
+          "response": {
+            "status": 200,
+            "body": "Array<TestCaseModel>",
+            "note": "Mỗi item giờ có thêm isDeleted, deletedAt, deletedById."
+          },
+          "changeNote": "Thêm query param includeDeleted. Response model có thêm 3 field mới."
+        },
+        {
+          "id": "TC-DELETE",
+          "status": "BREAKING_CHANGE",
+          "method": "DELETE",
+          "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+          "description": "Xóa mềm 1 test case. Dữ liệu được giữ lại, có thể khôi phục.",
+          "auth": "Permissions.DeleteTestCase",
+          "pathParams": {
+            "testCaseId": {
+              "type": "string (UUID)",
+              "required": true,
+              "description": "ID của test case cần xóa."
+            }
+          },
+          "requestBody": null,
+          "response": {
+            "status": 200,
+            "body": "TestCaseModel",
+            "note": "Trả về entity đã bị soft-delete (isDeleted=true, deletedAt, deletedById được set)."
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "Test case đã bị xóa rồi." },
+            { "status": 404, "condition": "Không tìm thấy test suite hoặc test case." }
+          ],
+          "changeNote": "BREAKING: Trước đây trả 204 NoContent (không body). Giờ trả 200 OK với TestCaseModel body. FE phải cập nhật handler."
+        },
+        {
+          "id": "TC-RESTORE",
+          "status": "NEW",
+          "method": "POST",
+          "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}/restore",
+          "description": "Khôi phục 1 test case đã bị xóa mềm. Test case sẽ được thêm vào cuối danh sách (OrderIndex cao nhất + 1), IsEnabled=true.",
+          "auth": "Permissions.UpdateTestCase",
+          "pathParams": {
+            "testCaseId": {
+              "type": "string (UUID)",
+              "required": true,
+              "description": "ID của test case cần khôi phục."
+            }
+          },
+          "requestBody": null,
+          "response": {
+            "status": 200,
+            "body": "TestCaseModel",
+            "note": "Trả về entity đã khôi phục (isDeleted=false, deletedAt=null, deletedById=null, isEnabled=true)."
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "Test case chưa bị xóa (IsDeleted=false) hoặc suite đã archived." },
+            { "status": 404, "condition": "Không tìm thấy test suite hoặc test case." }
+          ]
+        },
+        {
+          "id": "TC-BULK-DELETE",
+          "status": "NEW",
+          "method": "POST",
+          "path": "/api/test-suites/{suiteId}/test-cases/bulk-delete",
+          "description": "Xóa mềm nhiều test case cùng lúc. Item đã xóa rồi sẽ bị bỏ qua (skip), không lỗi.",
+          "auth": "Permissions.DeleteTestCase",
+          "requestBody": {
+            "contentType": "application/json",
+            "schema": {
+              "testCaseIds": {
+                "type": "array of string (UUID)",
+                "required": true,
+                "minLength": 1,
+                "description": "Danh sách ID test case cần xóa.",
+                "example": ["id-1", "id-2", "id-3"]
+              }
+            },
+            "example": {
+              "testCaseIds": [
+                "a1b2c3d4-0001-0000-0000-000000000000",
+                "a1b2c3d4-0002-0000-0000-000000000000",
+                "a1b2c3d4-0003-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": "BulkOperationResultModel",
+            "example": {
+              "testSuiteId": "suite-uuid",
+              "operation": "Delete",
+              "entityType": "TestCase",
+              "requestedCount": 3,
+              "processedCount": 2,
+              "skippedCount": 1,
+              "processedIds": ["id-1", "id-2"],
+              "skippedIds": ["id-3"],
+              "skipReason": "Đã ở trạng thái xóa hoặc không tìm thấy.",
+              "operatedAt": "2026-04-10T07:00:00+00:00"
+            }
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "testCaseIds rỗng, suite đã archived, hoặc không phải chủ sở hữu." },
+            { "status": 404, "condition": "Không tìm thấy test suite." }
+          ]
+        },
+        {
+          "id": "TC-BULK-RESTORE",
+          "status": "NEW",
+          "method": "POST",
+          "path": "/api/test-suites/{suiteId}/test-cases/bulk-restore",
+          "description": "Khôi phục nhiều test case đã xóa mềm. Item chưa xóa sẽ bị bỏ qua.",
+          "auth": "Permissions.UpdateTestCase",
+          "requestBody": {
+            "contentType": "application/json",
+            "schema": {
+              "testCaseIds": {
+                "type": "array of string (UUID)",
+                "required": true,
+                "minLength": 1,
+                "description": "Danh sách ID test case cần khôi phục.",
+                "example": ["id-1", "id-2"]
+              }
+            },
+            "example": {
+              "testCaseIds": [
+                "a1b2c3d4-0001-0000-0000-000000000000",
+                "a1b2c3d4-0002-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": "BulkOperationResultModel",
+            "example": {
+              "testSuiteId": "suite-uuid",
+              "operation": "Restore",
+              "entityType": "TestCase",
+              "requestedCount": 2,
+              "processedCount": 2,
+              "skippedCount": 0,
+              "processedIds": ["id-1", "id-2"],
+              "skippedIds": [],
+              "skipReason": null,
+              "operatedAt": "2026-04-10T07:00:00+00:00"
+            }
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "testCaseIds rỗng, suite đã archived, hoặc không phải chủ sở hữu." },
+            { "status": 404, "condition": "Không tìm thấy test suite." }
+          ]
+        }
+      ]
+    },
+
+    "llmSuggestions": {
+      "basePath": "/api/test-suites/{suiteId}/llm-suggestions",
+      "pathParams": {
+        "suiteId": {
+          "type": "string (UUID)",
+          "required": true,
+          "description": "ID của test suite."
+        }
+      },
+      "endpoints": [
+        {
+          "id": "LS-LIST",
+          "status": "MODIFIED",
+          "method": "GET",
+          "path": "/api/test-suites/{suiteId}/llm-suggestions",
+          "description": "Lấy danh sách LLM suggestions. Mặc định ẩn item đã xóa.",
+          "auth": "Permissions.GetTestCases",
+          "queryParams": [
+            {
+              "name": "reviewStatus",
+              "type": "string | null",
+              "required": false,
+              "default": null,
+              "description": "Lọc theo trạng thái review: Pending, Approved, Rejected, Applied.",
+              "existed": true
+            },
+            {
+              "name": "testType",
+              "type": "string | null",
+              "required": false,
+              "default": null,
+              "description": "Lọc theo loại test.",
+              "existed": true
+            },
+            {
+              "name": "endpointId",
+              "type": "string (UUID) | null",
+              "required": false,
+              "default": null,
+              "description": "Lọc theo endpoint ID.",
+              "existed": true
+            },
+            {
+              "name": "includeDeleted",
+              "type": "boolean",
+              "required": false,
+              "default": false,
+              "description": "Bao gồm suggestion đã bị xóa mềm. Dùng khi cần hiện danh sách recycle bin.",
+              "existed": false,
+              "isNew": true
+            }
+          ],
+          "response": {
+            "status": 200,
+            "body": "Array<LlmSuggestionModel>",
+            "note": "Mỗi item giờ có thêm isDeleted, deletedAt, deletedById."
+          },
+          "changeNote": "Thêm query param includeDeleted. Response model có thêm 3 field mới."
+        },
+        {
+          "id": "LS-BULK-DELETE",
+          "status": "NEW",
+          "method": "POST",
+          "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-delete",
+          "description": "Xóa mềm nhiều LLM suggestions cùng lúc.",
+          "auth": "Permissions.UpdateTestCase",
+          "requestBody": {
+            "contentType": "application/json",
+            "schema": {
+              "suggestionIds": {
+                "type": "array of string (UUID)",
+                "required": true,
+                "minLength": 1,
+                "description": "Danh sách ID suggestion cần xóa.",
+                "example": ["id-1", "id-2"]
+              }
+            },
+            "example": {
+              "suggestionIds": [
+                "b2c3d4e5-0001-0000-0000-000000000000",
+                "b2c3d4e5-0002-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": "BulkOperationResultModel",
+            "example": {
+              "testSuiteId": "suite-uuid",
+              "operation": "Delete",
+              "entityType": "LlmSuggestion",
+              "requestedCount": 2,
+              "processedCount": 2,
+              "skippedCount": 0,
+              "processedIds": ["id-1", "id-2"],
+              "skippedIds": [],
+              "skipReason": null,
+              "operatedAt": "2026-04-10T07:00:00+00:00"
+            }
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "suggestionIds rỗng hoặc không phải chủ sở hữu suite." },
+            { "status": 404, "condition": "Không tìm thấy test suite." }
+          ]
+        },
+        {
+          "id": "LS-BULK-RESTORE",
+          "status": "NEW",
+          "method": "POST",
+          "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-restore",
+          "description": "Khôi phục nhiều LLM suggestions đã xóa mềm.",
+          "auth": "Permissions.UpdateTestCase",
+          "requestBody": {
+            "contentType": "application/json",
+            "schema": {
+              "suggestionIds": {
+                "type": "array of string (UUID)",
+                "required": true,
+                "minLength": 1,
+                "description": "Danh sách ID suggestion cần khôi phục.",
+                "example": ["id-1", "id-2"]
+              }
+            },
+            "example": {
+              "suggestionIds": [
+                "b2c3d4e5-0001-0000-0000-000000000000",
+                "b2c3d4e5-0002-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": "BulkOperationResultModel",
+            "example": {
+              "testSuiteId": "suite-uuid",
+              "operation": "Restore",
+              "entityType": "LlmSuggestion",
+              "requestedCount": 2,
+              "processedCount": 1,
+              "skippedCount": 1,
+              "processedIds": ["id-1"],
+              "skippedIds": ["id-2"],
+              "skipReason": "Chưa bị xóa hoặc không tìm thấy.",
+              "operatedAt": "2026-04-10T07:00:00+00:00"
+            }
+          },
+          "errorResponses": [
+            { "status": 400, "condition": "suggestionIds rỗng hoặc không phải chủ sở hữu suite." },
+            { "status": 404, "condition": "Không tìm thấy test suite." }
+          ]
+        }
+      ]
+    }
+  },
+
+  "feIntegrationNotes": {
+    "recycleBin": "Để hiển thị 'thùng rác', gọi GET với includeDeleted=true. FE nên filter riêng isDeleted=true từ response để tách UI thùng rác và danh sách chính.",
+    "bulkSelection": "FE cần thêm UI checkbox multi-select. Khi user chọn nhiều item và nhấn Xóa/Khôi phục, gửi danh sách ID vào endpoint bulk tương ứng.",
+    "idempotency": "Bulk operations không lỗi khi gặp item đã ở trạng thái đích — chúng được skip. FE có thể hiện toast thông báo: 'Đã xóa {processedCount}/{requestedCount} item, bỏ qua {skippedCount} item.'",
+    "deleteConfirmation": "Vì xóa giờ là soft-delete (có thể khôi phục), FE có thể giảm mức cảnh báo confirm dialog. Ví dụ: 'Test case sẽ được chuyển vào thùng rác. Bạn có thể khôi phục sau.' thay vì 'Xóa vĩnh viễn?'",
+    "retentionPolicy": "Sẽ có auto-purge (hard delete) sau X ngày trong phiên bản tiếp theo. FE nên hiển thị thông tin deletedAt để user biết thời gian còn lại trước khi bị xóa vĩnh viễn.",
+    "permissionMapping": {
+      "deleteTestCase": "Quyền cần cho: DELETE test-case, POST bulk-delete test-cases",
+      "updateTestCase": "Quyền cần cho: POST restore, POST bulk-restore (cả TestCase và LlmSuggestion), POST bulk-delete/bulk-restore LlmSuggestion"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -18,6 +18,7 @@ public class GetTestCasesByTestSuiteQuery : IQuery<List<TestCaseModel>>
     public Guid CurrentUserId { get; set; }
     public TestType? FilterByTestType { get; set; }
     public bool IncludeDisabled { get; set; }
+    public bool IncludeDeleted { get; set; }
 }
 
 public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByTestSuiteQuery, List<TestCaseModel>>
@@ -54,6 +55,12 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
 
         var queryable = _testCaseRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);
+
+        // Filter deleted (default: exclude)
+        if (!query.IncludeDeleted)
+        {
+            queryable = queryable.Where(x => !x.IsDeleted);
+        }
 
         if (query.FilterByTestType.HasValue)
         {
