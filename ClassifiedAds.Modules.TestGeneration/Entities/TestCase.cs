@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Domain.Entities;
+using ClassifiedAds.Domain.Entities;
 using System;
 using System.Collections.Generic;
 
@@ -78,6 +78,21 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     /// Current version number.
     /// </summary>
     public int Version { get; set; } = 1;
+
+    /// <summary>
+    /// Whether this test case has been soft-deleted.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
+    /// <summary>
+    /// When this test case was soft-deleted.
+    /// </summary>
+    public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>
+    /// User who soft-deleted this test case.
+    /// </summary>
+    public Guid? DeletedById { get; set; }
 
     // Navigation properties
     public TestSuite TestSuite { get; set; }

@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -87,7 +87,8 @@ public class LlmSuggestionsController : ControllerBase
         Guid suiteId,
         [FromQuery] string reviewStatus = null,
         [FromQuery] string testType = null,
-        [FromQuery] Guid? endpointId = null)
+        [FromQuery] Guid? endpointId = null,
+        [FromQuery] bool includeDeleted = false)
     {
         var result = await _dispatcher.DispatchAsync(new GetLlmSuggestionsQuery
         {
@@ -96,6 +97,7 @@ public class LlmSuggestionsController : ControllerBase
             FilterByReviewStatus = reviewStatus,
             FilterByTestType = testType,
             FilterByEndpointId = endpointId,
+            IncludeDeleted = includeDeleted,
         });
 
         return Ok(result);
@@ -227,6 +229,66 @@ public class LlmSuggestionsController : ControllerBase
             command.Result?.Action,
             command.Result?.ProcessedCount,
             _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
+
+    /// <summary>
+    /// Bulk soft-delete LLM suggestions.
+    /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPost("bulk-delete")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(BulkOperationResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BulkOperationResultModel>> BulkDelete(
+        Guid suiteId,
+        [FromBody] BulkDeleteLlmSuggestionsRequest request)
+    {
+        var command = new BulkDeleteLlmSuggestionsCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            SuggestionIds = request.SuggestionIds,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Bulk soft-deleted LLM suggestions. TestSuiteId={TestSuiteId}, ProcessedCount={ProcessedCount}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.ProcessedCount, _currentUser.UserId);
+
+        return Ok(command.Result);
+    }
+
+    /// <summary>
+    /// Bulk restore soft-deleted LLM suggestions.
+    /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
+    [Authorize(Permissions.UpdateTestCase)]
+    [HttpPost("bulk-restore")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(BulkOperationResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BulkOperationResultModel>> BulkRestore(
+        Guid suiteId,
+        [FromBody] BulkRestoreLlmSuggestionsRequest request)
+    {
+        var command = new BulkRestoreLlmSuggestionsCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            SuggestionIds = request.SuggestionIds,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Bulk restored LLM suggestions. TestSuiteId={TestSuiteId}, ProcessedCount={ProcessedCount}, ActorUserId={ActorUserId}",
+            suiteId, command.Result?.ProcessedCount, _currentUser.UserId);
 
         return Ok(command.Result);
     }
