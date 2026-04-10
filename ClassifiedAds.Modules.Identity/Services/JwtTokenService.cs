@@ -18,6 +18,11 @@ namespace ClassifiedAds.Modules.Identity.Services;
 
 public class JwtTokenService : IJwtTokenService
 {
+    private const string TokenLoginProvider = "ClassifiedAds";
+    private const string RefreshTokenName = "RefreshToken";
+    private const string RefreshTokenExpirationName = "RefreshTokenExpiration";
+    private const string RefreshTokenUserIdName = "RefreshTokenUserId";
+
     private readonly IdentityModuleOptions _options;
     private readonly UserManager<User> _userManager;
     private readonly IdentityDbContext _dbContext;
@@ -44,25 +49,23 @@ public class JwtTokenService : IJwtTokenService
         // Store refresh token with hash for security
         var refreshTokenHash = HashRefreshToken(refreshToken);
 
-        // Store refresh token
+        // Persist token metadata via UserManager to keep Identity update semantics.
         await _userManager.SetAuthenticationTokenAsync(
             user,
-            "ClassifiedAds",
-            "RefreshToken",
+            TokenLoginProvider,
+            RefreshTokenName,
             refreshTokenHash);
 
-        // Store refresh token expiration
         await _userManager.SetAuthenticationTokenAsync(
             user,
-            "ClassifiedAds",
-            "RefreshTokenExpiration",
+            TokenLoginProvider,
+            RefreshTokenExpirationName,
             DateTime.UtcNow.AddDays(RefreshTokenExpirationDays).ToString("O"));
 
-        // Store user ID with refresh token for faster lookup
         await _userManager.SetAuthenticationTokenAsync(
             user,
-            "ClassifiedAds",
-            "RefreshTokenUserId",
+            TokenLoginProvider,
+            RefreshTokenUserIdName,
             user.Id.ToString());
 
         return (accessToken, refreshToken, AccessTokenExpirationMinutes * 60);
@@ -87,8 +90,8 @@ public class JwtTokenService : IJwtTokenService
         // Revoke old refresh token immediately (token rotation)
         await _userManager.RemoveAuthenticationTokenAsync(
             user,
-            "ClassifiedAds",
-            "RefreshToken");
+            TokenLoginProvider,
+            RefreshTokenName);
 
         // Generate new tokens
         var roles = await _userManager.GetRolesAsync(user);
@@ -103,8 +106,8 @@ public class JwtTokenService : IJwtTokenService
 
         // Optimized: Query directly instead of scanning all users
         var userToken = await _dbContext.Set<UserToken>()
-            .Where(t => t.LoginProvider == "ClassifiedAds"
-                     && t.TokenName == "RefreshToken"
+            .Where(t => t.LoginProvider == TokenLoginProvider
+                     && t.TokenName == RefreshTokenName
                      && t.TokenValue == refreshTokenHash)
             .FirstOrDefaultAsync();
 
@@ -128,8 +131,8 @@ public class JwtTokenService : IJwtTokenService
         // Check expiration
         var expirationStr = await _userManager.GetAuthenticationTokenAsync(
             user,
-            "ClassifiedAds",
-            "RefreshTokenExpiration");
+            TokenLoginProvider,
+            RefreshTokenExpirationName);
 
         if (string.IsNullOrEmpty(expirationStr) || !DateTime.TryParse(expirationStr, out var expiration))
         {
@@ -170,13 +173,13 @@ public class JwtTokenService : IJwtTokenService
         {
             await _userManager.RemoveAuthenticationTokenAsync(
                 user,
-                "ClassifiedAds",
-                "RefreshToken");
+                TokenLoginProvider,
+                RefreshTokenName);
 
             await _userManager.RemoveAuthenticationTokenAsync(
                 user,
-                "ClassifiedAds",
-                "RefreshTokenExpiration");
+                TokenLoginProvider,
+                RefreshTokenExpirationName);
         }
     }
 
@@ -191,8 +194,8 @@ public class JwtTokenService : IJwtTokenService
         {
             await _userManager.RemoveAuthenticationTokenAsync(
                 user,
-                "ClassifiedAds",
-                "RefreshTokenUserId");
+                TokenLoginProvider,
+                RefreshTokenUserIdName);
         }
     }
 

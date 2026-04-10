@@ -49,6 +49,8 @@ if (!isRunningInContainer)
         overwriteExistingVars: false));
 }
 
+AspireResourceEnvironmentBridge.Apply();
+
 var shouldWaitForDependency = bool.TryParse(
     Environment.GetEnvironmentVariable("CheckDependency__Enabled"),
     out var checkDependencyEnabled) && checkDependencyEnabled;
@@ -71,6 +73,7 @@ Host.CreateDefaultBuilder(args)
     var configuration = hostContext.Configuration;
 
     StartupDiagnostics.LogDatabaseTarget("Background", configuration, isRunningInContainer);
+    StartupDiagnostics.LogCacheTarget("Background", configuration);
 
     // Bind and validate AppSettings (fail-fast on misconfiguration)
     var appSettings = new AppSettings();

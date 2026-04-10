@@ -45,14 +45,14 @@ public class UpdateTestCaseCommand : ICommand
     public int? MaxResponseTime { get; set; }
 
     // Variables
-    public List<VariableInput> Variables { get; set; } = new();
+    public List<VariableInput> Variables { get; set; } = new ();
 
     public TestCaseModel Result { get; set; }
 }
 
 public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -85,16 +85,24 @@ public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseComman
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
 
         if (command.TestCaseId == Guid.Empty)
+        {
             throw new ValidationException("TestCaseId là bắt buộc.");
+        }
 
         if (string.IsNullOrWhiteSpace(command.Name))
+        {
             throw new ValidationException("Tên test case là bắt buộc.");
+        }
 
         if (command.Name.Trim().Length > 200)
+        {
             throw new ValidationException("Tên test case không được vượt quá 200 ký tự.");
+        }
 
         // 2) Load and verify suite
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -102,13 +110,19 @@ public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseComman
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Không thể cập nhật test case cho test suite đã archived.");
+        }
 
         // 3) Load test case
         var testCase = await _testCaseRepository.FirstOrDefaultAsync(
@@ -116,7 +130,9 @@ public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseComman
                 .Where(x => x.Id == command.TestCaseId && x.TestSuiteId == command.TestSuiteId));
 
         if (testCase == null)
+        {
             throw new NotFoundException($"Không tìm thấy test case với mã '{command.TestCaseId}'.");
+        }
 
         var now = DateTimeOffset.UtcNow;
 

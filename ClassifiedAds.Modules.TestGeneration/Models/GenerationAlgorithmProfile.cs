@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.Models;
+﻿namespace ClassifiedAds.Modules.TestGeneration.Models;
 
 /// <summary>
 /// Controls algorithm families used in LLM-assisted generation flows.

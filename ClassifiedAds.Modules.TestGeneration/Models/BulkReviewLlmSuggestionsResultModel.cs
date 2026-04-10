@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
@@ -20,7 +20,7 @@ public class BulkReviewLlmSuggestionsResultModel
 
     public DateTimeOffset ReviewedAt { get; set; }
 
-    public List<Guid> SuggestionIds { get; set; } = new();
+    public List<Guid> SuggestionIds { get; set; } = new List<Guid>();
 
-    public List<Guid> AppliedTestCaseIds { get; set; } = new();
+    public List<Guid> AppliedTestCaseIds { get; set; } = new List<Guid>();
 }

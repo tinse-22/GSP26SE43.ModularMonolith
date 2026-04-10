@@ -67,6 +67,8 @@ if (!isRunningInContainer)
         overwriteExistingVars: false));
 }
 
+AspireResourceEnvironmentBridge.Apply();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add Aspire ServiceDefaults (OpenTelemetry, health checks, service discovery)
@@ -445,7 +447,6 @@ services.AddAuthentication(options =>
                 }
             }
 
-            Console.WriteLine($"JWT bearer accepted. Path={context.HttpContext.Request.Path} User={context.Principal?.Identity?.Name}");
             return Task.CompletedTask;
         }
     };

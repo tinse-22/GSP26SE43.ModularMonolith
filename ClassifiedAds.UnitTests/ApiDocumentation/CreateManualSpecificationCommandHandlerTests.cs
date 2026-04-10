@@ -184,6 +184,119 @@ public class CreateManualSpecificationCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithJsonFields_Should_NormalizeJsonbValuesBeforePersisting()
+    {
+        // Arrange
+        SetupValidProject();
+        var createdParameters = new List<EndpointParameter>();
+        var createdResponses = new List<EndpointResponse>();
+
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
+        _responseRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointResponse>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointResponse, CancellationToken>((response, _) => createdResponses.Add(response))
+            .Returns(Task.CompletedTask);
+
+        var command = new CreateManualSpecificationCommand
+        {
+            ProjectId = _projectId,
+            CurrentUserId = _userId,
+            Model = new CreateManualSpecificationModel
+            {
+                Name = "Spec with JSON",
+                Endpoints = new List<ManualEndpointDefinition>
+                {
+                    new()
+                    {
+                        HttpMethod = "POST",
+                        Path = "/api/users",
+                        Parameters = new List<ManualParameterDefinition>
+                        {
+                            new()
+                            {
+                                Name = "body",
+                                Location = "Body",
+                                DataType = EndpointParameterDataType.Object,
+                                Schema = "  { \"type\": \"object\" }  ",
+                                Examples = "plain-example",
+                            },
+                        },
+                        Responses = new List<ManualResponseDefinition>
+                        {
+                            new()
+                            {
+                                StatusCode = 200,
+                                Schema = "{ \"type\": \"object\", \"properties\": { \"id\": { \"type\": \"string\" } } }",
+                                Examples = "ok",
+                                Headers = " { \"X-Trace-Id\": { \"schema\": { \"type\": \"string\" } } } ",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        createdParameters.Should().ContainSingle();
+        createdParameters[0].Schema.Should().Be("{\"type\":\"object\"}");
+        createdParameters[0].Examples.Should().Be("\"plain-example\"");
+
+        createdResponses.Should().ContainSingle();
+        createdResponses[0].Schema.Should().Be("{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}");
+        createdResponses[0].Examples.Should().Be("\"ok\"");
+        createdResponses[0].Headers.Should().Be("{\"X-Trace-Id\":{\"schema\":{\"type\":\"string\"}}}");
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithMalformedJsonLikeSchema_Should_ThrowValidationExceptionBeforeConsumingLimit()
+    {
+        // Arrange
+        var command = new CreateManualSpecificationCommand
+        {
+            ProjectId = _projectId,
+            CurrentUserId = _userId,
+            Model = new CreateManualSpecificationModel
+            {
+                Name = "Invalid JSON Spec",
+                Endpoints = new List<ManualEndpointDefinition>
+                {
+                    new()
+                    {
+                        HttpMethod = "POST",
+                        Path = "/api/users",
+                        Parameters = new List<ManualParameterDefinition>
+                        {
+                            new()
+                            {
+                                Name = "body",
+                                Location = "Body",
+                                DataType = EndpointParameterDataType.Object,
+                                Schema = "{bad json}",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        // Act
+        var act = () => _handler.HandleAsync(command);
+
+        // Assert
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Schema của parameter 'body' ở endpoint #1*");
+        _subscriptionLimitMock.Verify(x => x.TryConsumeLimitAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<LimitType>(),
+            It.IsAny<decimal>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task HandleAsync_WithAutoActivate_Should_ActivateSpecAndUpdateProject()
     {
         // Arrange

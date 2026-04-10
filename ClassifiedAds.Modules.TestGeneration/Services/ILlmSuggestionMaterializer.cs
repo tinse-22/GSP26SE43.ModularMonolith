@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Models.Requests;
 using System;
@@ -15,6 +15,7 @@ public interface ILlmSuggestionMaterializer
     /// Materializes an LlmSuggestedScenario (from the LLM pipeline) into a TestCase entity.
     /// Used by FE-06 BoundaryNegativeTestCaseGenerator.
     /// </summary>
+    /// <returns></returns>
     TestCase MaterializeFromScenario(
         LlmSuggestedScenario scenario,
         Guid testSuiteId,
@@ -25,6 +26,7 @@ public interface ILlmSuggestionMaterializer
     /// Materializes a persisted LlmSuggestion entity into a TestCase entity.
     /// Used by FE-15 approve flow.
     /// </summary>
+    /// <returns></returns>
     TestCase MaterializeFromSuggestion(
         LlmSuggestion suggestion,
         ApiOrderItemModel orderItem,
@@ -34,6 +36,7 @@ public interface ILlmSuggestionMaterializer
     /// Materializes a persisted LlmSuggestion using user-modified content.
     /// Used by FE-15 modify-and-approve flow.
     /// </summary>
+    /// <returns></returns>
     TestCase MaterializeFromModifiedContent(
         LlmSuggestion suggestion,
         EditableLlmSuggestionInput modified,

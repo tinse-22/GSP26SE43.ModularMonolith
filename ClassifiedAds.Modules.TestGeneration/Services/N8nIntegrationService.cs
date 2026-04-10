@@ -1,4 +1,4 @@
-using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+﻿using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -29,7 +29,7 @@ public class WebhookTriggerResult
 
 public class N8nIntegrationService : IN8nIntegrationService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -150,6 +150,7 @@ public class N8nIntegrationService : IN8nIntegrationService
     /// Triggers an n8n webhook and returns a result object instead of throwing.
     /// Use this for background processing where you want to handle errors gracefully.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     public async Task<WebhookTriggerResult> TriggerWebhookWithResultAsync<TPayload>(
         string webhookName,
         TPayload payload,
@@ -286,6 +287,7 @@ public class N8nIntegrationService : IN8nIntegrationService
     /// <summary>
     /// Resolves the full webhook URL for a given webhook name.
     /// </summary>
+    /// <returns></returns>
     public string GetResolvedWebhookUrl(string webhookName)
     {
         return ResolveWebhookUrl(webhookName);

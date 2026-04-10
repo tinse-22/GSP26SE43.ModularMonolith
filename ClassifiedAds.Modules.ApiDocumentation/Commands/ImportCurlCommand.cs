@@ -99,6 +99,10 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
 
         // 2. Parse cURL command
         var parseResult = CurlParser.Parse(command.Model.CurlCommand);
+        var normalizedBody = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+            parseResult.Body,
+            "Body của cURL",
+            allowPlainText: true);
 
         // 3. Load project, verify ownership
         var project = await _projectRepository.FirstOrDefaultAsync(
@@ -228,7 +232,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
                     Name = "body",
                     Location = ParameterLocation.Body,
                     DataType = parseResult.ContentType ?? "application/x-www-form-urlencoded",
-                    Schema = parseResult.Body,
+                    Schema = normalizedBody,
                     IsRequired = true,
                 }, ct);
             }

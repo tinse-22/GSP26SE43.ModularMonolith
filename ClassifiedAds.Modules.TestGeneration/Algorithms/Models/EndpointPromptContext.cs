@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 
@@ -18,9 +18,9 @@ public class EndpointPromptContext
 
     public string Description { get; set; }
 
-    public List<ParameterPromptContext> Parameters { get; set; } = new();
+    public List<ParameterPromptContext> Parameters { get; set; } = new List<ParameterPromptContext>();
 
-    public List<ResponsePromptContext> Responses { get; set; } = new();
+    public List<ResponsePromptContext> Responses { get; set; } = new List<ResponsePromptContext>();
 
     /// <summary>
     /// Raw JSON schema of the request body (if applicable).

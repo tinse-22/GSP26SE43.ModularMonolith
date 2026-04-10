@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+﻿namespace ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 
 public class TestGenerationModuleOptions
 {

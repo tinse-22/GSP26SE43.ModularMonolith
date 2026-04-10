@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -254,6 +255,46 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _unitOfWorkMock.Verify(
             x => x.SaveChangesAsync(It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PersistFullExpectedStatusList_FromScenario()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved();
+        SetupSubscriptionAllowed();
+        SetupNoPendingSuggestions();
+
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = Guid.NewGuid(),
+            ScenarioName = "Validation should reject request",
+            Description = "Scenario with multiple acceptable error statuses",
+            SuggestedTestType = TestType.Negative,
+            ExpectedStatusCode = 400,
+            ExpectedStatusCodes = new List<int> { 400, 422 },
+            ExpectedBehavior = "validation",
+        };
+
+        LlmSuggestion persistedSuggestion = null;
+        _suggestionRepoMock.Setup(x => x.AddAsync(It.IsAny<LlmSuggestion>(), It.IsAny<CancellationToken>()))
+            .Callback<LlmSuggestion, CancellationToken>((suggestion, _) => persistedSuggestion = suggestion)
+            .Returns(Task.CompletedTask);
+
+        SetupLlmSuggesterReturns(new List<LlmSuggestedScenario> { scenario });
+
+        var command = CreateValidCommand();
+        await _handler.HandleAsync(command);
+
+        persistedSuggestion.Should().NotBeNull();
+
+        var expectation = JsonSerializer.Deserialize<N8nTestCaseExpectation>(
+            persistedSuggestion.SuggestedExpectation,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        expectation.Should().NotBeNull();
+        expectation.ExpectedStatus.Should().Equal(400, 422);
     }
 
     [Fact]

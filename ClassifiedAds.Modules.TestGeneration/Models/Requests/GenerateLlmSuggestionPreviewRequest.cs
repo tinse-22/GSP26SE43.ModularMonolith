@@ -1,5 +1,5 @@
-using System;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using System;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models.Requests;
 
@@ -22,5 +22,5 @@ public class GenerateLlmSuggestionPreviewRequest
     /// Optional algorithm profile for suggestion generation.
     /// If omitted, all algorithms are enabled.
     /// </summary>
-    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new ();
 }

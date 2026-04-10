@@ -19,7 +19,7 @@ public class DeleteTestCaseCommand : ICommand
 
 public class DeleteTestCaseCommandHandler : ICommandHandler<DeleteTestCaseCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -52,10 +52,14 @@ public class DeleteTestCaseCommandHandler : ICommandHandler<DeleteTestCaseComman
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
 
         if (command.TestCaseId == Guid.Empty)
+        {
             throw new ValidationException("TestCaseId là bắt buộc.");
+        }
 
         // 2) Load and verify suite
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -63,13 +67,19 @@ public class DeleteTestCaseCommandHandler : ICommandHandler<DeleteTestCaseComman
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Không thể xoá test case cho test suite đã archived.");
+        }
 
         // 3) Load test case
         var testCase = await _testCaseRepository.FirstOrDefaultAsync(
@@ -77,7 +87,9 @@ public class DeleteTestCaseCommandHandler : ICommandHandler<DeleteTestCaseComman
                 .Where(x => x.Id == command.TestCaseId && x.TestSuiteId == command.TestSuiteId));
 
         if (testCase == null)
+        {
             throw new NotFoundException($"Không tìm thấy test case với mã '{command.TestCaseId}'.");
+        }
 
         var now = DateTimeOffset.UtcNow;
 
@@ -107,19 +119,25 @@ public class DeleteTestCaseCommandHandler : ICommandHandler<DeleteTestCaseComman
             _requestRepository.GetQueryableSet()
                 .Where(x => x.TestCaseId == command.TestCaseId));
         if (request != null)
+        {
             _requestRepository.Delete(request);
+        }
 
         var expectation = await _expectationRepository.FirstOrDefaultAsync(
             _expectationRepository.GetQueryableSet()
                 .Where(x => x.TestCaseId == command.TestCaseId));
         if (expectation != null)
+        {
             _expectationRepository.Delete(expectation);
+        }
 
         var variables = await _variableRepository.ToListAsync(
             _variableRepository.GetQueryableSet()
                 .Where(x => x.TestCaseId == command.TestCaseId));
         foreach (var v in variables)
+        {
             _variableRepository.Delete(v);
+        }
 
         // 6) Delete test case
         _testCaseRepository.Delete(testCase);

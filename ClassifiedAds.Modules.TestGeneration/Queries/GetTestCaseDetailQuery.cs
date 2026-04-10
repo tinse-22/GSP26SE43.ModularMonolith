@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -32,7 +32,9 @@ public class GetTestCaseDetailQueryHandler : IQueryHandler<GetTestCaseDetailQuer
         CancellationToken cancellationToken = default)
     {
         if (query.CurrentUserId == Guid.Empty)
+        {
             throw new ValidationException("CurrentUserId la bat buoc.");
+        }
 
         var testCase = await _testCaseRepository.FirstOrDefaultAsync(
             _testCaseRepository.GetQueryableSet()
@@ -45,7 +47,9 @@ public class GetTestCaseDetailQueryHandler : IQueryHandler<GetTestCaseDetailQuer
                 .Include(x => x.Dependencies));
 
         if (testCase == null)
+        {
             throw new NotFoundException($"Không tìm thấy test case với mã '{query.TestCaseId}' trong test suite '{query.TestSuiteId}'.");
+        }
 
         return TestCaseModel.FromEntity(testCase);
     }

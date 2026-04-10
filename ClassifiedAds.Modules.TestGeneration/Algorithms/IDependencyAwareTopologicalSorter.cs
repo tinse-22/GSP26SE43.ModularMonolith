@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System;
 using System.Collections.Generic;
 
@@ -69,15 +69,15 @@ public class SortedOperationResult
     /// <summary>
     /// Reason codes explaining why this operation is at this position.
     /// </summary>
-    public List<string> ReasonCodes { get; set; } = new();
+    public List<string> ReasonCodes { get; set; } = new List<string>();
 
     /// <summary>
     /// Direct dependencies (operations that must execute before this one).
     /// </summary>
-    public List<Guid> Dependencies { get; set; } = new();
+    public List<Guid> Dependencies { get; set; } = new List<Guid>();
 
     /// <summary>
     /// Edges that led to the dependencies.
     /// </summary>
-    public List<DependencyEdge> DependencyEdges { get; set; } = new();
+    public List<DependencyEdge> DependencyEdges { get; set; } = new List<DependencyEdge>();
 }

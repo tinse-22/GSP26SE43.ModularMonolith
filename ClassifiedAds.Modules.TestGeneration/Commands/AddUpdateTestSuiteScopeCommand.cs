@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -36,7 +36,7 @@ public class AddUpdateTestSuiteScopeCommand : ICommand
     /// <summary>
     /// Optional user-provided business rules per endpoint (plain text).
     /// </summary>
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new Dictionary<Guid, string>();
 
     /// <summary>
     /// Optional global business rules (free text) for the entire suite scope.

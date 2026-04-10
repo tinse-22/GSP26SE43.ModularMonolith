@@ -7,7 +7,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Models;
 
 public class LlmSuggestionFeedbackSummaryModel
 {
-    public static LlmSuggestionFeedbackSummaryModel Empty { get; } = new();
+    public static LlmSuggestionFeedbackSummaryModel Empty { get; } = new ();
 
     public int HelpfulCount { get; set; }
 

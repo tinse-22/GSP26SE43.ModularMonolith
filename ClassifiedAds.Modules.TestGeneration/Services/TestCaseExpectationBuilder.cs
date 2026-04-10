@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
 using System.Collections.Generic;
@@ -14,12 +14,13 @@ public interface ITestCaseExpectationBuilder
     /// <summary>
     /// Build a <see cref="TestCaseExpectation"/> entity from n8n response data.
     /// </summary>
+    /// <returns></returns>
     TestCaseExpectation Build(Guid testCaseId, N8nTestCaseExpectation source);
 }
 
 public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -55,19 +56,30 @@ public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
     private static string SerializeList(List<int> list)
     {
         if (list == null || list.Count == 0)
+        {
             return JsonSerializer.Serialize(new[] { 200 }, JsonOpts);
+        }
+
         return JsonSerializer.Serialize(list, JsonOpts);
     }
 
     private static string SerializeStringList(List<string> list)
     {
-        if (list == null || list.Count == 0) return null;
+        if (list == null || list.Count == 0)
+        {
+            return null;
+        }
+
         return JsonSerializer.Serialize(list, JsonOpts);
     }
 
     private static string SerializeDict(Dictionary<string, string> dict)
     {
-        if (dict == null || dict.Count == 0) return null;
+        if (dict == null || dict.Count == 0)
+        {
+            return null;
+        }
+
         return JsonSerializer.Serialize(dict, JsonOpts);
     }
 }

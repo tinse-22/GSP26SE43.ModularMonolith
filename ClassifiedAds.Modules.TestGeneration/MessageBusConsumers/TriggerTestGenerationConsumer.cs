@@ -1,4 +1,4 @@
-using ClassifiedAds.Domain.Infrastructure.Messaging;
+﻿using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;

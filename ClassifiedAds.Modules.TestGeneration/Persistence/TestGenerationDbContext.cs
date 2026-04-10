@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;

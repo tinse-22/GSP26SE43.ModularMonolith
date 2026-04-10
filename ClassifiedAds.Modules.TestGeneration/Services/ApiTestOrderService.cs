@@ -14,13 +14,13 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 
 public class ApiTestOrderService : IApiTestOrderService
 {
-    private static readonly JsonSerializerOptions SerializeOptions = new()
+    private static readonly JsonSerializerOptions SerializeOptions = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly JsonSerializerOptions DeserializeOptions = new()
+    private static readonly JsonSerializerOptions DeserializeOptions = new ()
     {
         PropertyNameCaseInsensitive = true,
     };
