@@ -163,6 +163,8 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
             return;
         }
 
+        GeneratedTestCaseDependencyEnricher.Enrich(generationResult.TestCases, approvedOrder);
+
         // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;
 

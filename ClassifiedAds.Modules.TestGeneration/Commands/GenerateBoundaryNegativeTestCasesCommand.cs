@@ -126,10 +126,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(command.TestSuiteId, cancellationToken);
 
         // 4) Check if boundary/negative test cases already exist
-        var existingCases = await _testCaseRepository.ToListAsync(
+        var existingSuiteCases = await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == command.TestSuiteId
-                    && (x.TestType == TestType.Boundary || x.TestType == TestType.Negative)));
+                    && x.IsEnabled
+                    && !x.IsDeleted));
+
+        var existingCases = existingSuiteCases
+            .Where(x => x.TestType == TestType.Boundary || x.TestType == TestType.Negative)
+            .ToList();
+
+        var existingHappyPathCases = existingSuiteCases
+            .Where(x => x.TestType == TestType.HappyPath)
+            .ToList();
 
         if (existingCases.Count > 0 && !command.ForceRegenerate)
         {
@@ -204,6 +213,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             return;
         }
 
+        var existingHappyPathIds = existingHappyPathCases.Select(x => x.Id).ToList();
+        var existingHappyPathVariables = existingHappyPathIds.Count == 0
+            ? new List<TestCaseVariable>()
+            : await _variableRepository.ToListAsync(
+                _variableRepository.GetQueryableSet()
+                    .Where(x => existingHappyPathIds.Contains(x.TestCaseId)));
+
+        var enrichmentResult = GeneratedTestCaseDependencyEnricher.Enrich(
+            generationResult.TestCases,
+            approvedOrder,
+            existingHappyPathCases,
+            existingHappyPathVariables);
+
         // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;
 
@@ -262,6 +284,12 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
                     VersionAfterChange = 1,
                     CreatedDateTime = now,
                 }, ct);
+            }
+
+            foreach (var variable in enrichmentResult.ExistingProducerVariablesToPersist)
+            {
+                variable.CreatedDateTime = now;
+                await _variableRepository.AddAsync(variable, ct);
             }
 
             // Create suite version snapshot

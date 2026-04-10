@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace ClassifiedAds.Modules.TestGeneration.DbConfigurations;
@@ -38,6 +38,10 @@ public class TestCaseConfiguration : IEntityTypeConfiguration<Entities.TestCase>
         builder.HasIndex(x => new { x.TestSuiteId, x.OrderIndex });
         builder.HasIndex(x => new { x.TestSuiteId, x.CustomOrderIndex });
         builder.HasIndex(x => x.LastModifiedById);
+
+        builder.Property(x => x.IsDeleted).HasDefaultValue(false);
+        builder.HasIndex(x => new { x.TestSuiteId, x.IsDeleted });
+        builder.HasIndex(x => x.DeletedById);
 
         builder.HasOne(x => x.TestSuite)
             .WithMany(x => x.TestCases)
