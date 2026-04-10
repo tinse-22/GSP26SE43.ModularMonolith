@@ -23,13 +23,13 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenerator
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly Regex HttpMethodTokenRegex = new (
+    private static readonly Regex HttpMethodTokenRegex = new(
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -259,7 +259,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         {
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
-            ExpectedStatus = JsonSerializer.Serialize(new[] { mutation.ExpectedStatusCode }, JsonOpts),
+            ExpectedStatus = JsonSerializer.Serialize(mutation.GetEffectiveExpectedStatusCodes(), JsonOpts),
         };
 
         return testCase;

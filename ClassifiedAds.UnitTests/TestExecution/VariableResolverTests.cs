@@ -123,6 +123,22 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_ThrowUnresolvedException_WhenPathRouteTokenRemains()
+    {
+        // Arrange
+        var testCase = CreateTestCase(url: "/api/items/{id}");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var act = () => _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        act.Should().Throw<UnresolvedVariableException>()
+            .WithMessage("*Path parameter '{id}'*");
+    }
+
+    [Fact]
     public void Resolve_Should_ClampTimeout_BelowMinimum()
     {
         // Arrange

@@ -321,6 +321,8 @@ public class GetPathParamMutationsQueryHandlerTests
             .OnlyContain(m => !string.IsNullOrWhiteSpace(m.ResolvedUrl));
         userIdGroup.Mutations.Should().Contain(m =>
             m.MutationType == "boundary_max_int32" &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }) &&
             m.ResolvedUrl == $"/api/users/2147483647/orders/{defaultOrderId}");
 
         var orderIdGroup = result.ParameterMutations.Single(g => g.ParameterName == "orderId");

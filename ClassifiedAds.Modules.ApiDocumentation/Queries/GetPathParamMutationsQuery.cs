@@ -124,6 +124,7 @@ public class GetPathParamMutationsQueryHandler : IQueryHandler<GetPathParamMutat
                     Label = m.Label,
                     Value = m.Value,
                     ExpectedStatusCode = m.ExpectedStatusCode,
+                    ExpectedStatusCodes = m.ExpectedStatusCodes?.ToList(),
                     Description = m.Description,
                     ResolvedUrl = resolved.ResolvedUrl,
                 };

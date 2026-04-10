@@ -15,6 +15,7 @@ public class VariableResolver : IVariableResolver
     };
 
     private static readonly Regex PlaceholderRegex = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
+    private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
 
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
@@ -102,6 +103,7 @@ public class VariableResolver : IVariableResolver
 
         // Check for unresolved placeholders
         CheckUnresolvedPlaceholders(finalUrl, "URL");
+        CheckUnresolvedRouteTokens(finalUrl);
         foreach (var kvp in resolvedHeaders)
         {
             CheckUnresolvedPlaceholders(kvp.Value, $"Header:{kvp.Key}");
@@ -161,6 +163,22 @@ public class VariableResolver : IVariableResolver
         }
     }
 
+    private static void CheckUnresolvedRouteTokens(string url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return;
+        }
+
+        var pathOnly = ExtractPathOnly(url);
+        var match = RouteTokenRegex.Match(pathOnly);
+        if (match.Success)
+        {
+            throw new UnresolvedVariableException(
+                $"Path parameter '{{{match.Groups[1].Value}}}' chưa được giải quyết trong URL.");
+        }
+    }
+
     private static string BuildFinalUrl(string resolvedUrl, string baseUrl)
     {
         if (string.IsNullOrEmpty(resolvedUrl))
@@ -194,6 +212,19 @@ public class VariableResolver : IVariableResolver
         }
 
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json, JsonOptions) ?? new Dictionary<string, string>();
+    }
+
+    private static string ExtractPathOnly(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            var path = absolute.GetComponents(UriComponents.Path, UriFormat.Unescaped);
+            return path.StartsWith('/') ? path : $"/{path}";
+        }
+
+        var queryIndex = url.IndexOfAny(new[] { '?', '#' });
+        return queryIndex >= 0 ? url[..queryIndex] : url;
     }
 }
 

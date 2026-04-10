@@ -28,6 +28,7 @@ public class PathParameterMutationGatewayService : IPathParameterMutationGateway
             Label = m.Label,
             Value = m.Value,
             ExpectedStatusCode = m.ExpectedStatusCode,
+            ExpectedStatusCodes = m.ExpectedStatusCodes?.ToList(),
             Description = m.Description,
         }).ToList();
     }

@@ -349,6 +349,7 @@ public class PathParameterTemplateService : IPathParameterTemplateService
                 Label = $"{parameterName} - max int32",
                 Value = "2147483647",
                 ExpectedStatusCode = 200,
+                ExpectedStatusCodes = new List<int> { 200, 404 },
                 Description = $"Path parameter '{parameterName}' = Int32.MaxValue (boundary test).",
             });
 
@@ -369,6 +370,7 @@ public class PathParameterTemplateService : IPathParameterTemplateService
                 Label = $"{parameterName} - max int64",
                 Value = "9223372036854775807",
                 ExpectedStatusCode = 200,
+                ExpectedStatusCodes = new List<int> { 200, 404 },
                 Description = $"Path parameter '{parameterName}' = Int64.MaxValue (boundary test).",
             });
         }
@@ -391,6 +393,7 @@ public class PathParameterTemplateService : IPathParameterTemplateService
             Label = $"{parameterName} - boundary: zero",
             Value = "0",
             ExpectedStatusCode = 200,
+            ExpectedStatusCodes = new List<int> { 200, 404 },
             Description = $"Path parameter '{parameterName}' = 0.",
         });
 
@@ -409,6 +412,7 @@ public class PathParameterTemplateService : IPathParameterTemplateService
             Label = $"{parameterName} - very large number",
             Value = "999999999.999",
             ExpectedStatusCode = 200,
+            ExpectedStatusCodes = new List<int> { 200, 404 },
             Description = $"Path parameter '{parameterName}' = giá trị rất lớn.",
         });
 
@@ -418,6 +422,7 @@ public class PathParameterTemplateService : IPathParameterTemplateService
             Label = $"{parameterName} - very small number",
             Value = "0.0000001",
             ExpectedStatusCode = 200,
+            ExpectedStatusCodes = new List<int> { 200, 404 },
             Description = $"Path parameter '{parameterName}' = giá trị rất nhỏ.",
         });
     }
