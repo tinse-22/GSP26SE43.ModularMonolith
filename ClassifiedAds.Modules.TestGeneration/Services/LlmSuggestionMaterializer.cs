@@ -69,8 +69,9 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         // Build expectation from LLM suggestion
         var n8nExpectation = new N8nTestCaseExpectation
         {
-            ExpectedStatus = new List<int> { scenario.ExpectedStatusCode },
-            BodyContains = !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
+            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
+            BodyContains = scenario.SuggestedTestType == TestType.HappyPath &&
+                           !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
                 ? new List<string> { scenario.ExpectedBehavior }
                 : new List<string>(),
         };

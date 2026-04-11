@@ -93,16 +93,11 @@ var rabbitmq = builder.AddRabbitMQ("rabbitmq")
     .WithManagementPlugin();  // Aspire automatically uses rabbitmq:3-management image
 
 // Redis - Distributed cache
-// When REDIS_URL is present, AppHost reuses the external Redis instead of starting a local container.
-var redis = default(IResourceBuilder<RedisResource>);
-
-if (!useExternalRedis)
-{
-    // Matches docker-compose local fallback: redis:7-alpine, port 6379
-    redis = builder.AddRedis("redis")
-        .WithHostPort(6379)
-        .WithDataVolume("redis_data");
-}
+// Matches docker-compose: redis:7-alpine, port 6379
+// Used for distributed caching across multiple instances
+var redis = builder.AddRedis("redis")
+    .WithHostPort(6379)
+    .WithDataVolume("redis_data");  // Aspire uses latest stable Redis image
 
 // MailHog - Email testing (SMTP + Web UI)
 // Matches docker-compose: mailhog/mailhog, ports 1025 (SMTP), 8025 (Web UI)
@@ -149,26 +144,16 @@ else
 // Depends on: selected database mode, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
-    .WithReference(rabbitmq)
+    .WithReference(rabbitmq)         // Injects RabbitMQ connection details
+    .WithReference(redis)            // Injects Redis connection details
+                                     // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
-    // The migrator is a one-shot process, so WebAPI must wait for successful completion
-    // instead of just waiting for the migrator resource to start running.
-    .WaitForCompletion(migrator)
+    .WaitFor(migrator)  // Ensures migrations complete first
     .WaitFor(rabbitmq)
-    .WithExternalHttpEndpoints();
-
-if (useExternalRedis)
-{
-    webapi = webapi.WithEnvironment("REDIS_URL", externalRedisUrl!);
-}
-else
-{
-    webapi = webapi
-        .WithReference(redis!)
-        .WaitFor(redis!);
-}
+    .WaitFor(redis)
+    .WithExternalHttpEndpoints();  // Exposes to localhost for external access
 
 if (useExternalDatabase)
 {
@@ -187,8 +172,10 @@ else
 // Responsibilities: Publish outbox messages, send emails/SMS, consume message bus events
 var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
     .WithReference(rabbitmq)
+    .WithReference(redis)
+    // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     // Configure email via MailHog (for testing, no real emails sent)
     .WithEnvironment("Modules__Notification__Email__Provider", "SmtpClient")
@@ -200,22 +187,10 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     // Configure file storage (local filesystem for development)
     .WithEnvironment("Modules__Storage__Provider", "Local")
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
-    // The migrator is a one-shot process, so Background must wait for successful
-    // completion instead of just waiting for the migrator resource to start running.
-    .WaitForCompletion(migrator)
+    .WaitFor(migrator)
     .WaitFor(rabbitmq)
+    .WaitFor(redis)
     .WaitFor(mailhog);
-
-if (useExternalRedis)
-{
-    background = background.WithEnvironment("REDIS_URL", externalRedisUrl!);
-}
-else
-{
-    background = background
-        .WithReference(redis!)
-        .WaitFor(redis!);
-}
 
 if (useExternalDatabase)
 {
