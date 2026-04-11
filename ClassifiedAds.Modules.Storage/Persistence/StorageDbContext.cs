@@ -10,6 +10,8 @@ namespace ClassifiedAds.Modules.Storage.Persistence;
 
 public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
 {
+    public const string DefaultSchema = "classifiedads_storage";
+
     public StorageDbContext(DbContextOptions<StorageDbContext> options)
         : base(options)
     {
@@ -18,7 +20,7 @@ public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-        builder.HasDefaultSchema("storage");
+        builder.HasDefaultSchema(DefaultSchema);
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 

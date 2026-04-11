@@ -155,6 +155,12 @@ Host.CreateDefaultBuilder(args)
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
+    .AddLlmAssistantModule(opt =>
+    {
+        configuration.GetSection("Modules:LlmAssistant").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
     .AddApplicationServices();
 
     // Add HTML and PDF utilities (used by notification module)
