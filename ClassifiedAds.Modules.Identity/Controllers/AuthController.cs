@@ -104,93 +104,84 @@ public class AuthController : ControllerBase
             return BadRequest(new { Error = "Email đã được đăng ký." });
         }
 
-        // Create new user with minimal required fields
-        var user = new User
-        {
-            UserName = model.Email,
-            NormalizedUserName = model.Email.ToUpper(),
-            Email = model.Email,
-            NormalizedEmail = model.Email.ToUpper(),
-            EmailConfirmed = false,
-            PhoneNumberConfirmed = false,
-            TwoFactorEnabled = false,
-            LockoutEnabled = true,
-            AccessFailedCount = 0,
-        };
-
-        UserProfile profile = null;
-
         var executionStrategy = _dbContext.Database.CreateExecutionStrategy();
-        var transactionFailureResult = await executionStrategy.ExecuteAsync(async () =>
+        var result = await executionStrategy.ExecuteAsync(async () =>
         {
-            await _dbContext.BeginTransactionAsync();
-            try
+            _dbContext.ChangeTracker.Clear();
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+
+            var user = new User
             {
-                // Create user with password
-                var result = await _userManager.CreateAsync(user, model.Password);
-                if (!result.Succeeded)
-                {
-                    await _dbContext.RollbackTransactionAsync();
-                    return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
-                }
+                UserName = model.Email,
+                Email = model.Email,
+                EmailConfirmed = false,
+                PhoneNumberConfirmed = false,
+                TwoFactorEnabled = false,
+                LockoutEnabled = true,
+                AccessFailedCount = 0,
+            };
 
-                var defaultRoles = new[] { "User" };
-                foreach (var roleName in defaultRoles)
-                {
-                    var role = await _roleManager.FindByNameAsync(roleName);
-                    if (role != null)
-                    {
-                        continue;
-                    }
-
-                    await _dbContext.RollbackTransactionAsync();
-                    return StatusCode(
-                        StatusCodes.Status500InternalServerError,
-                        new { Error = $"Vai tro mac dinh '{roleName}' khong ton tai." });
-                }
-
-                var roleResult = await _userManager.AddToRolesAsync(user, defaultRoles);
-                if (!roleResult.Succeeded)
-                {
-                    await _dbContext.RollbackTransactionAsync();
-                    return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = roleResult.Errors.Select(e => e.Description) });
-                }
-
-                profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
-                await _dbContext.SaveChangesAsync();
-                await _dbContext.CommitTransactionAsync();
-                return null;
-            }
-            catch
+            var createResult = await _userManager.CreateAsync(user, model.Password);
+            if (!createResult.Succeeded)
             {
-                await _dbContext.RollbackTransactionAsync();
-                throw;
+                return (IsSuccess: false, ResultCode: "ValidationErrorCode", Errors: createResult.Errors.Select(e => e.Description), CreatedUser: default(User), UserProfile: default(UserProfile));
             }
+
+            var defaultRoles = new[] { "User" };
+            foreach (var roleName in defaultRoles)
+            {
+                var role = await _roleManager.FindByNameAsync(roleName);
+                if (role == null)
+                {
+                    return (IsSuccess: false, ResultCode: "InternalErrorCode", Errors: new[] { $"Vai tro mac dinh '{roleName}' khong ton tai." }.AsEnumerable(), CreatedUser: default(User), UserProfile: default(UserProfile));
+                }
+            }
+
+            var roleResult = await _userManager.AddToRolesAsync(user, defaultRoles);
+            if (!roleResult.Succeeded)
+            {
+                return (IsSuccess: false, ResultCode: "InternalErrorCode", Errors: roleResult.Errors.Select(e => e.Description), CreatedUser: default(User), UserProfile: default(UserProfile));
+            }
+
+            var profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
+            await _dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return (IsSuccess: true, ResultCode: "Ok", Errors: Enumerable.Empty<string>(), CreatedUser: user, UserProfile: profile);
         });
 
-        if (transactionFailureResult != null)
+        if (!result.IsSuccess)
         {
-            return transactionFailureResult;
+            if (result.ResultCode == "ValidationErrorCode")
+            {
+                return BadRequest(new { Errors = result.Errors });
+            }
+
+            return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = result.Errors });
         }
 
-        // Send confirmation email
-        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-        var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
-        var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
+        var createdUser = result.CreatedUser;
+        var userProfile = result.UserProfile;
 
-        var displayName = profile.DisplayName ?? user.Email.Split('@')[0];
+        // Send confirmation email
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(createdUser);
+        var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
+        var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(createdUser.Email)}";
+
+        var displayName = userProfile.DisplayName ?? createdUser.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
-            Tos = user.Email,
+            Tos = createdUser.Email,
             Subject = "Chào mừng bạn! Vui lòng xác nhận email",
             Body = _emailTemplates.WelcomeConfirmEmail(displayName, confirmationUrl),
         });
 
         return Created($"/api/auth/me", new RegisterResponseModel
         {
-            UserId = user.Id,
-            Email = user.Email,
+            UserId = createdUser.Id,
+            Email = createdUser.Email,
             Message = "Đăng ký thành công. Vui lòng kiểm tra email để xác nhận tài khoản.",
             EmailConfirmationRequired = true,
         });

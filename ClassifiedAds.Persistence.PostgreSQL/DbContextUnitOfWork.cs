@@ -100,7 +100,7 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
         }
         catch
         {
-            await RollbackTransactionAsync(cancellationToken);
+            await RollbackTransactionAsync(CancellationToken.None);
             throw;
         }
     }
@@ -126,7 +126,7 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
         }
         catch
         {
-            await RollbackTransactionAsync(cancellationToken);
+            await RollbackTransactionAsync(CancellationToken.None);
             throw;
         }
     }

@@ -24,7 +24,6 @@ var isRunningInContainer = string.Equals(
     StringComparison.OrdinalIgnoreCase);
 
 var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
-var explicitDatabaseMode = Environment.GetEnvironmentVariable("APPHOST_DATABASE_MODE");
 
 if (!isRunningInContainer)
 {
@@ -35,6 +34,7 @@ if (!isRunningInContainer)
         overwriteExistingVars: false));
 }
 
+var explicitDatabaseMode = Environment.GetEnvironmentVariable("APPHOST_DATABASE_MODE");
 var builder = DistributedApplication.CreateBuilder(args);
 var configuredConnectionString = builder.Configuration.GetConnectionString("Default");
 var useExternalDatabase = ResolveUseExternalDatabase(explicitDatabaseMode, processConnectionStringBeforeDotEnv);
