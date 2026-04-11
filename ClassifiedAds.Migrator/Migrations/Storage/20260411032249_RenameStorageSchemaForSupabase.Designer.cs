@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ClassifiedAds.Migrator.Migrations.Storage
 {
     [DbContext(typeof(StorageDbContext))]
-    [Migration("20260201101114_InitialStorage")]
-    partial class InitialStorage
+    [Migration("20260411032249_RenameStorageSchemaForSupabase")]
+    partial class RenameStorageSchemaForSupabase
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
