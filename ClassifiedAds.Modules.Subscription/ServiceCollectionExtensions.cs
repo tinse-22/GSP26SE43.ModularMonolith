@@ -7,6 +7,7 @@ using ClassifiedAds.Modules.Subscription.HostedServices;
 using ClassifiedAds.Modules.Subscription.Persistence;
 using ClassifiedAds.Modules.Subscription.RateLimiterPolicies;
 using ClassifiedAds.Modules.Subscription.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -30,7 +31,9 @@ public static class SubscriptionServiceCollectionExtensions
             throw new InvalidOperationException("Connection string for Subscription module is not configured.");
         }
 
-        services.AddDbContext<SubscriptionDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
+
+        services.AddDbContext<SubscriptionDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {

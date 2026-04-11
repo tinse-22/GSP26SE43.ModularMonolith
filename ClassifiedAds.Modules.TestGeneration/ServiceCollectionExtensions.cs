@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.TestGeneration.MessageBusConsumers;
 using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using ClassifiedAds.Modules.TestGeneration.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -24,10 +25,11 @@ public static class TestGenerationServiceCollectionExtensions
     {
         var settings = new TestGenerationModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<TestGenerationDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<TestGenerationDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {

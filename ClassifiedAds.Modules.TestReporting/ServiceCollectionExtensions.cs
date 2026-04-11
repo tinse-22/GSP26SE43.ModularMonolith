@@ -3,6 +3,7 @@ using ClassifiedAds.Modules.TestReporting.ConfigurationOptions;
 using ClassifiedAds.Modules.TestReporting.Entities;
 using ClassifiedAds.Modules.TestReporting.Persistence;
 using ClassifiedAds.Modules.TestReporting.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -19,10 +20,11 @@ public static class TestReportingServiceCollectionExtensions
         configureOptions(settings);
         settings.ConnectionStrings ??= new ConnectionStringsOptions();
         settings.ReportGeneration ??= new ReportGenerationOptions();
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<TestReportingDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<TestReportingDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {

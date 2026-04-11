@@ -6,6 +6,7 @@ using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using ClassifiedAds.Modules.ApiDocumentation.HostedServices;
 using ClassifiedAds.Modules.ApiDocumentation.Persistence;
 using ClassifiedAds.Modules.ApiDocumentation.RateLimiterPolicies;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -21,10 +22,11 @@ public static class ApiDocumentationServiceCollectionExtensions
     {
         var settings = new ApiDocumentationModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<ApiDocumentationDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<ApiDocumentationDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {

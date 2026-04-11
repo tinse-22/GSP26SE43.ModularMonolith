@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.Identity.PasswordValidators;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -25,10 +26,11 @@ public static class ServiceCollectionExtensions
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
         settings.ConnectionStrings ??= new ConnectionStringsOptions();
+        var identityConnectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(identityConnectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -40,6 +42,8 @@ public static class ServiceCollectionExtensions
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
 
+            // Keep Identity writes as single-statement commands when running through Supabase poolers.
+            sql.MaxBatchSize(1);
             sql.EnableRetryOnFailure(
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(10),
@@ -101,10 +105,11 @@ public static class ServiceCollectionExtensions
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
         settings.ConnectionStrings ??= new ConnectionStringsOptions();
+        var identityConnectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(identityConnectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -116,6 +121,8 @@ public static class ServiceCollectionExtensions
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
 
+            // Match the main Identity registration so worker/migrator paths behave the same way.
+            sql.MaxBatchSize(1);
             sql.EnableRetryOnFailure(
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(10),

@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.Storage.HostedServices;
 using ClassifiedAds.Modules.Storage.MessageBusConsumers;
 using ClassifiedAds.Modules.Storage.Persistence;
 using ClassifiedAds.Modules.Storage.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -23,10 +24,11 @@ public static class ServiceCollectionExtensions
     {
         var settings = new StorageModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<StorageDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<StorageDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {

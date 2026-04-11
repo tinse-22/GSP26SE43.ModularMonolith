@@ -4,6 +4,7 @@ using ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions;
 using ClassifiedAds.Modules.LlmAssistant.Entities;
 using ClassifiedAds.Modules.LlmAssistant.Persistence;
 using ClassifiedAds.Modules.LlmAssistant.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -19,10 +20,11 @@ public static class LlmAssistantServiceCollectionExtensions
         var settings = new LlmAssistantModuleOptions();
         configureOptions(settings);
         settings.FailureExplanation ??= new FailureExplanationOptions();
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<LlmAssistantDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<LlmAssistantDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
