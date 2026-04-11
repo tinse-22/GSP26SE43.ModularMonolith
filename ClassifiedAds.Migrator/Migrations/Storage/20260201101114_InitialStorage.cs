@@ -12,11 +12,11 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.EnsureSchema(
-                name: "storage");
+                name: "classifiedads_storage");
 
             migrationBuilder.CreateTable(
                 name: "ArchivedOutboxMessages",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -37,7 +37,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
             migrationBuilder.CreateTable(
                 name: "AuditLogEntries",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
@@ -56,7 +56,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
             migrationBuilder.CreateTable(
                 name: "DeletedFileEntries",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
@@ -72,7 +72,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
             migrationBuilder.CreateTable(
                 name: "FileEntries",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
@@ -104,7 +104,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
             migrationBuilder.CreateTable(
                 name: "OutboxMessages",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
@@ -125,37 +125,37 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
             migrationBuilder.CreateIndex(
                 name: "IX_ArchivedOutboxMessages_CreatedDateTime",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "ArchivedOutboxMessages",
                 column: "CreatedDateTime");
 
             migrationBuilder.CreateIndex(
                 name: "IX_FileEntries_Deleted",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "FileEntries",
                 column: "Deleted");
 
             migrationBuilder.CreateIndex(
                 name: "IX_FileEntries_FileCategory",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "FileEntries",
                 column: "FileCategory");
 
             migrationBuilder.CreateIndex(
                 name: "IX_FileEntries_OwnerId",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "FileEntries",
                 column: "OwnerId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_OutboxMessages_CreatedDateTime",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "OutboxMessages",
                 column: "CreatedDateTime");
 
             migrationBuilder.CreateIndex(
                 name: "IX_OutboxMessages_Published_CreatedDateTime",
-                schema: "storage",
+                schema: "classifiedads_storage",
                 table: "OutboxMessages",
                 columns: new[] { "Published", "CreatedDateTime" });
         }
@@ -165,23 +165,23 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
         {
             migrationBuilder.DropTable(
                 name: "ArchivedOutboxMessages",
-                schema: "storage");
+                schema: "classifiedads_storage");
 
             migrationBuilder.DropTable(
                 name: "AuditLogEntries",
-                schema: "storage");
+                schema: "classifiedads_storage");
 
             migrationBuilder.DropTable(
                 name: "DeletedFileEntries",
-                schema: "storage");
+                schema: "classifiedads_storage");
 
             migrationBuilder.DropTable(
                 name: "FileEntries",
-                schema: "storage");
+                schema: "classifiedads_storage");
 
             migrationBuilder.DropTable(
                 name: "OutboxMessages",
-                schema: "storage");
+                schema: "classifiedads_storage");
         }
     }
 }
