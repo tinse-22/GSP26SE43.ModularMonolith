@@ -1,23 +1,4 @@
 services:
-  db:
-    image: "postgres:16"
-    profiles:
-      - "local-db"
-    ports:
-      - "${POSTGRES_HOST_PORT:-55432}:5432"
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   rabbitmq:
     image: "rabbitmq:3-management"
     environment:
@@ -41,8 +22,6 @@ services:
 
   redis:
     image: "redis:7-alpine"
-    profiles:
-      - "local-redis"
     ports:
       - "6379:6379"
     volumes:
@@ -61,8 +40,8 @@ services:
       context: .
       dockerfile: ./ClassifiedAds.Migrator/Dockerfile
     environment:
-      DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
-      ConnectionStrings__Default: ${ConnectionStrings__Default}
+      DOTNET_ENVIRONMENT: "${DOTNET_ENVIRONMENT:-Development}"
+      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
       CheckDependency__Enabled: "true"
       CheckDependency__Host: "${CheckDependency__Host:-127.0.0.1:55432}"
 
@@ -82,8 +61,8 @@ services:
         condition: service_healthy
         required: false
     environment:
-      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
-      ConnectionStrings__Default: ${ConnectionStrings__Default}
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
+      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
       Messaging__Provider: "RabbitMQ"
       Messaging__RabbitMQ__HostName: "rabbitmq"
       Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
@@ -92,9 +71,9 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       Caching__Distributed__Redis__InstanceName: "${Caching__Distributed__Redis__InstanceName:-ClassifiedAds_}"
       Modules__Identity__BootstrapDevelopmentData: "true"
-      Modules__Identity__Jwt__SecretKey: ${Modules__Identity__Jwt__SecretKey}
-      Modules__Identity__Jwt__Issuer: ${Modules__Identity__Jwt__Issuer}
-      Modules__Identity__Jwt__Audience: ${Modules__Identity__Jwt__Audience}
+      Modules__Identity__Jwt__SecretKey: "${Modules__Identity__Jwt__SecretKey:-ClassifiedAds-JWT-Secret-Key-Must-Be-At-Least-32-Characters-Long-2026!}"
+      Modules__Identity__Jwt__Issuer: "${Modules__Identity__Jwt__Issuer:-ClassifiedAds}"
+      Modules__Identity__Jwt__Audience: "${Modules__Identity__Jwt__Audience:-ClassifiedAds.WebAPI}"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
 
@@ -114,7 +93,7 @@ services:
       mailhog:
         condition: service_started
     environment:
-      DOTNET_ENVIRONMENT: ${DOTNET_ENVIRONMENT}
+      DOTNET_ENVIRONMENT: "${DOTNET_ENVIRONMENT:-Development}"
       CheckDependency__Enabled: "true"
       CheckDependency__Host: "rabbitmq:5672"
       Messaging__Provider: "RabbitMQ"
@@ -124,7 +103,7 @@ services:
       Caching__Distributed__Provider: "Redis"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       Caching__Distributed__Redis__InstanceName: "${Caching__Distributed__Redis__InstanceName:-ClassifiedAds_}"
-      ConnectionStrings__Default: ${ConnectionStrings__Default}
+      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
       Modules__Notification__Email__Provider: "SmtpClient"
       Modules__Notification__Email__SmtpClient__Host: "mailhog"
       Modules__Notification__Email__SmtpClient__Port: "1025"
@@ -143,5 +122,4 @@ services:
       Modules__Storage__Local__Path: "/files"
 
 volumes:
-  postgres_data:
   redis_data:
