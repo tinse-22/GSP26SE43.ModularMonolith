@@ -43,7 +43,7 @@ services:
       DOTNET_ENVIRONMENT: "${DOTNET_ENVIRONMENT:-Development}"
       ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
       CheckDependency__Enabled: "true"
-      CheckDependency__Host: "${CheckDependency__Host:?CheckDependency__Host must be set for Supabase deployment}"
+      CheckDependency__Host: "${CheckDependency__Host:-127.0.0.1:55432}"
 
   webapi:
     image: classifiedads.modularmonolith.webapi

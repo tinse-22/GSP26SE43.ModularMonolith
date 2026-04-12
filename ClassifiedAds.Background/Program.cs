@@ -37,6 +37,7 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 AspireResourceEnvironmentBridge.Apply();
 
@@ -48,6 +49,8 @@ if (!isRunningInContainer)
         trimValues: true,
         overwriteExistingVars: false));
 }
+
+StandaloneDevelopmentDatabaseBridge.Apply(isRunningInContainer, processConnectionStringBeforeDotEnv);
 
 AspireResourceEnvironmentBridge.Apply();
 

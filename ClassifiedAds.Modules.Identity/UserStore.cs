@@ -67,7 +67,8 @@ public class UserStore : IUserStore<User>,
 
     public Task<User> FindByEmailAsync(string normalizedEmail, CancellationToken cancellationToken)
     {
-        return _userRepository.Get(new UserQueryOptions { IncludeTokens = true }).FirstOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken: cancellationToken);
+        return _userRepository.Get(new UserQueryOptions())
+            .FirstOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken: cancellationToken);
     }
 
     public Task<User> FindByIdAsync(string userId, CancellationToken cancellationToken)
@@ -77,7 +78,8 @@ public class UserStore : IUserStore<User>,
 
     public Task<User> FindByNameAsync(string normalizedUserName, CancellationToken cancellationToken)
     {
-        return _userRepository.Get(new UserQueryOptions { IncludeTokens = true }).FirstOrDefaultAsync(x => x.NormalizedUserName == normalizedUserName, cancellationToken: cancellationToken);
+        return _userRepository.Get(new UserQueryOptions())
+            .FirstOrDefaultAsync(x => x.NormalizedUserName == normalizedUserName, cancellationToken: cancellationToken);
     }
 
     public Task<int> GetAccessFailedCountAsync(User user, CancellationToken cancellationToken)

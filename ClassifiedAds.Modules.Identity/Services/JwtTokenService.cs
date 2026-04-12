@@ -1,10 +1,12 @@
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Persistence;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
@@ -49,26 +51,176 @@ public class JwtTokenService : IJwtTokenService
         // Store refresh token with hash for security
         var refreshTokenHash = HashRefreshToken(refreshToken);
 
-        // Persist token metadata via UserManager to keep Identity update semantics.
-        await _userManager.SetAuthenticationTokenAsync(
-            user,
-            TokenLoginProvider,
-            RefreshTokenName,
-            refreshTokenHash);
-
-        await _userManager.SetAuthenticationTokenAsync(
-            user,
-            TokenLoginProvider,
-            RefreshTokenExpirationName,
-            DateTime.UtcNow.AddDays(RefreshTokenExpirationDays).ToString("O"));
-
-        await _userManager.SetAuthenticationTokenAsync(
-            user,
-            TokenLoginProvider,
-            RefreshTokenUserIdName,
-            user.Id.ToString());
+        await PersistRefreshTokensWithRetryAsync(user, refreshTokenHash);
 
         return (accessToken, refreshToken, AccessTokenExpirationMinutes * 60);
+    }
+
+    /// <summary>
+    /// Persists refresh token data to the database with retry logic.
+    /// Supabase's Supavisor/PgBouncer proxy can cause Npgsql's internal
+    /// ManualResetEventSlim to be disposed due to a race condition during
+    /// connection recycling. This is not classified as a transient error
+    /// by EF Core's retry strategy, so we add explicit retry handling.
+    /// </summary>
+    private async Task PersistRefreshTokensWithRetryAsync(User user, string refreshTokenHash)
+    {
+        const int maxRetries = 3;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                await PersistRefreshTokensOnceAsync(user, refreshTokenHash);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+            {
+                await Task.Delay(100 * attempt);
+            }
+        }
+    }
+
+    private Task PersistRefreshTokensOnceAsync(User user, string refreshTokenHash)
+    {
+        var commandTimestamp = DateTimeOffset.UtcNow;
+        var expirationValue = commandTimestamp.UtcDateTime.AddDays(RefreshTokenExpirationDays).ToString("O");
+        var tokenData = new Dictionary<string, string>
+        {
+            [RefreshTokenName] = refreshTokenHash,
+            [RefreshTokenExpirationName] = expirationValue,
+            [RefreshTokenUserIdName] = user.Id.ToString(),
+        };
+
+        var newConcurrencyStamp = Guid.NewGuid().ToString();
+        using var connection = CreateDedicatedTokenConnection();
+        connection.Open();
+
+        using var upsertTokensCommand = new NpgsqlCommand(
+            """
+            WITH updated_user AS (
+                UPDATE identity."Users"
+                SET "ConcurrencyStamp" = @concurrencyStamp,
+                    "UpdatedDateTime" = @updatedDateTime
+                WHERE "Id" = @userId
+                RETURNING 1
+            ),
+            token_data("Id", "TokenName", "TokenValue") AS (
+                VALUES
+                    (@tokenId1, @tokenName1, @tokenValue1),
+                    (@tokenId2, @tokenName2, @tokenValue2),
+                    (@tokenId3, @tokenName3, @tokenValue3)
+            ),
+            updated_tokens AS (
+                UPDATE identity."UserTokens" ut
+                SET "TokenValue" = td."TokenValue",
+                    "UpdatedDateTime" = @updatedDateTime
+                FROM token_data td
+                WHERE ut."UserId" = @userId
+                  AND ut."LoginProvider" = @loginProvider
+                  AND ut."TokenName" = td."TokenName"
+                RETURNING td."TokenName"
+            ),
+            inserted_tokens AS (
+                INSERT INTO identity."UserTokens" (
+                    "Id",
+                    "UserId",
+                    "LoginProvider",
+                    "TokenName",
+                    "TokenValue",
+                    "CreatedDateTime",
+                    "UpdatedDateTime"
+                )
+                SELECT
+                    td."Id",
+                    @userId,
+                    @loginProvider,
+                    td."TokenName",
+                    td."TokenValue",
+                    @updatedDateTime,
+                    @updatedDateTime
+                FROM token_data td
+                WHERE EXISTS (SELECT 1 FROM updated_user)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM identity."UserTokens" ut
+                      WHERE ut."UserId" = @userId
+                        AND ut."LoginProvider" = @loginProvider
+                        AND ut."TokenName" = td."TokenName"
+                  )
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM updated_user;
+            """,
+            connection);
+        upsertTokensCommand.Parameters.AddWithValue("concurrencyStamp", newConcurrencyStamp);
+        upsertTokensCommand.Parameters.AddWithValue("updatedDateTime", commandTimestamp);
+        upsertTokensCommand.Parameters.AddWithValue("userId", user.Id);
+        upsertTokensCommand.Parameters.AddWithValue("loginProvider", TokenLoginProvider);
+        upsertTokensCommand.Parameters.AddWithValue("tokenId1", Guid.NewGuid());
+        upsertTokensCommand.Parameters.AddWithValue("tokenName1", RefreshTokenName);
+        upsertTokensCommand.Parameters.AddWithValue("tokenValue1", tokenData[RefreshTokenName]);
+        upsertTokensCommand.Parameters.AddWithValue("tokenId2", Guid.NewGuid());
+        upsertTokensCommand.Parameters.AddWithValue("tokenName2", RefreshTokenExpirationName);
+        upsertTokensCommand.Parameters.AddWithValue("tokenValue2", tokenData[RefreshTokenExpirationName]);
+        upsertTokensCommand.Parameters.AddWithValue("tokenId3", Guid.NewGuid());
+        upsertTokensCommand.Parameters.AddWithValue("tokenName3", RefreshTokenUserIdName);
+        upsertTokensCommand.Parameters.AddWithValue("tokenValue3", tokenData[RefreshTokenUserIdName]);
+
+        var updatedUsers = Convert.ToInt64(upsertTokensCommand.ExecuteScalar());
+
+        if (updatedUsers == 0)
+        {
+            throw new InvalidOperationException($"Could not persist refresh tokens because user '{user.Id}' was not found.");
+        }
+
+        user.ConcurrencyStamp = newConcurrencyStamp;
+        SetTokensInMemory(user, tokenData);
+        return Task.CompletedTask;
+    }
+
+    private void SetTokensInMemory(User user, IReadOnlyDictionary<string, string> tokenData)
+    {
+        // Ensure the Tokens collection is loaded
+        user.Tokens ??= new List<Entities.UserToken>();
+
+        foreach (var (name, value) in tokenData)
+        {
+            var existing = user.Tokens.SingleOrDefault(
+                t => t.LoginProvider == TokenLoginProvider && t.TokenName == name);
+
+            if (existing != null)
+            {
+                existing.TokenValue = value;
+            }
+            else
+            {
+                user.Tokens.Add(new Entities.UserToken
+                {
+                    UserId = user.Id,
+                    LoginProvider = TokenLoginProvider,
+                    TokenName = name,
+                    TokenValue = value,
+                });
+            }
+        }
+    }
+
+    private void RemoveTokensInMemory(User user, IReadOnlyCollection<string> tokenNames)
+    {
+        if (user.Tokens == null || user.Tokens.Count == 0)
+        {
+            return;
+        }
+
+        var tokensToRemove = user.Tokens
+            .Where(t => t.LoginProvider == TokenLoginProvider && tokenNames.Contains(t.TokenName))
+            .ToList();
+
+        foreach (var token in tokensToRemove)
+        {
+            user.Tokens.Remove(token);
+        }
     }
 
     public async Task<ClaimsPrincipal?> ValidateRefreshTokenAsync(string refreshToken)
@@ -88,10 +240,7 @@ public class JwtTokenService : IJwtTokenService
         var (user, principal) = validation.Value;
 
         // Revoke old refresh token immediately (token rotation)
-        await _userManager.RemoveAuthenticationTokenAsync(
-            user,
-            TokenLoginProvider,
-            RefreshTokenName);
+        await DeleteRefreshTokensWithRetryAsync(user, includeLookupToken: false);
 
         // Generate new tokens
         var roles = await _userManager.GetRolesAsync(user);
@@ -171,32 +320,97 @@ public class JwtTokenService : IJwtTokenService
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user != null)
         {
-            await _userManager.RemoveAuthenticationTokenAsync(
-                user,
-                TokenLoginProvider,
-                RefreshTokenName);
-
-            await _userManager.RemoveAuthenticationTokenAsync(
-                user,
-                TokenLoginProvider,
-                RefreshTokenExpirationName);
+            await DeleteRefreshTokensWithRetryAsync(user, includeLookupToken: false);
         }
     }
 
     public async Task RevokeAllRefreshTokensAsync(Guid userId)
     {
-        // This effectively logs out the user from all devices
-        await RevokeRefreshTokenAsync(userId);
-
-        // Also remove the user ID lookup token
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user != null)
         {
-            await _userManager.RemoveAuthenticationTokenAsync(
-                user,
-                TokenLoginProvider,
-                RefreshTokenUserIdName);
+            await DeleteRefreshTokensWithRetryAsync(user, includeLookupToken: true);
         }
+    }
+
+    private async Task DeleteRefreshTokensWithRetryAsync(User user, bool includeLookupToken)
+    {
+        const int maxRetries = 3;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                await DeleteRefreshTokensOnceAsync(user, includeLookupToken);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+            {
+                await Task.Delay(100 * attempt);
+            }
+        }
+    }
+
+    private Task DeleteRefreshTokensOnceAsync(User user, bool includeLookupToken)
+    {
+        var commandTimestamp = DateTimeOffset.UtcNow;
+        var tokenNames = GetRefreshTokenNames(includeLookupToken);
+        var newConcurrencyStamp = Guid.NewGuid().ToString();
+
+        using var connection = CreateDedicatedTokenConnection();
+        connection.Open();
+
+        using var deleteTokensCommand = new NpgsqlCommand(
+            """
+            WITH updated_user AS (
+                UPDATE identity."Users"
+                SET "ConcurrencyStamp" = @concurrencyStamp,
+                    "UpdatedDateTime" = @updatedDateTime
+                WHERE "Id" = @userId
+                RETURNING 1
+            ),
+            deleted_tokens AS (
+                DELETE FROM identity."UserTokens"
+                WHERE "UserId" = @userId
+                  AND "LoginProvider" = @loginProvider
+                  AND "TokenName" = ANY (@tokenNames)
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM updated_user;
+            """,
+            connection);
+        deleteTokensCommand.Parameters.AddWithValue("concurrencyStamp", newConcurrencyStamp);
+        deleteTokensCommand.Parameters.AddWithValue("updatedDateTime", commandTimestamp);
+        deleteTokensCommand.Parameters.AddWithValue("userId", user.Id);
+        deleteTokensCommand.Parameters.AddWithValue("loginProvider", TokenLoginProvider);
+        deleteTokensCommand.Parameters.AddWithValue("tokenNames", tokenNames);
+
+        var updatedUsers = Convert.ToInt64(deleteTokensCommand.ExecuteScalar());
+
+        if (updatedUsers == 0)
+        {
+            throw new InvalidOperationException($"Could not revoke refresh tokens because user '{user.Id}' was not found.");
+        }
+
+        user.ConcurrencyStamp = newConcurrencyStamp;
+        RemoveTokensInMemory(user, tokenNames);
+        return Task.CompletedTask;
+    }
+
+    private NpgsqlConnection CreateDedicatedTokenConnection()
+    {
+        // Use the same Supabase-aware normalization as EF DbContext registration
+        // so connections get Pooling=true + NoResetOnClose=true on pooler hosts.
+        var connectionString = PostgresConnectionStringNormalizer
+            .NormalizeForSupabasePooler(_options.ConnectionStrings.Default);
+        return new NpgsqlConnection(connectionString);
+    }
+
+    private static string[] GetRefreshTokenNames(bool includeLookupToken)
+    {
+        return includeLookupToken
+            ? new[] { RefreshTokenName, RefreshTokenExpirationName, RefreshTokenUserIdName }
+            : new[] { RefreshTokenName, RefreshTokenExpirationName };
     }
 
     private string GenerateAccessToken(User user, IList<string> roles)
