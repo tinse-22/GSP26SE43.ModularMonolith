@@ -36,6 +36,10 @@ public static class TestExecutionServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            // Supabase pooler safety: single-statement batches prevent connector state corruption.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }));
 
         services

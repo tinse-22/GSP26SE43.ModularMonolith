@@ -44,10 +44,7 @@ public static class ServiceCollectionExtensions
 
             // Keep Identity writes as single-statement commands when running through Supabase poolers.
             sql.MaxBatchSize(1);
-            sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorCodesToAdd: null);
+            sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
@@ -123,10 +120,7 @@ public static class ServiceCollectionExtensions
 
             // Match the main Identity registration so worker/migrator paths behave the same way.
             sql.MaxBatchSize(1);
-            sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorCodesToAdd: null);
+            sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))

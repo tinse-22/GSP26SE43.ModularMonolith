@@ -89,7 +89,8 @@ Console.WriteLine(
 // RabbitMQ - Message broker with management UI
 // Matches docker-compose: rabbitmq:3-management, ports 5672 (AMQP), 15672 (Management UI)
 // Used for async cross-module communication via message bus
-var rabbitmq = builder.AddRabbitMQ("rabbitmq")
+var rabbitmqPassword = builder.AddParameter("rabbitmq-password", secret: true);
+var rabbitmq = builder.AddRabbitMQ("rabbitmq", password: rabbitmqPassword)
     .WithManagementPlugin();  // Aspire automatically uses rabbitmq:3-management image
 
 // Redis - Distributed cache
@@ -111,7 +112,9 @@ var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
 IResourceBuilder<PostgresDatabaseResource>? localDatabase = null;
 if (!useExternalDatabase)
 {
-    var postgres = builder.AddPostgres("db", port: 55433)
+    var pgPassword = builder.AddParameter("postgres-password", secret: true);
+    var postgres = builder.AddPostgres("db", password: pgPassword, port: 55433)
+        .WithImageTag("16")
         .WithDataVolume("classifiedads_apphost_postgres_data");
 
     localDatabase = postgres.AddDatabase("classifiedads", "ClassifiedAds");
@@ -146,12 +149,13 @@ else
 // Depends on: selected database mode, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
+    .WithEndpoint("http", endpoint => endpoint.Port = 9002)  // Keep the existing HTTP endpoint, pin its host port
     .WithReference(rabbitmq)         // Injects RabbitMQ connection details
                                      // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
-    .WaitFor(migrator)  // Ensures migrations complete first
+    .WaitForCompletion(migrator)  // Ensures migrations complete before startup
     .WaitFor(rabbitmq)
     .WithExternalHttpEndpoints();  // Exposes to localhost for external access
 
@@ -184,6 +188,7 @@ else
 // Waits for migrator to complete before starting
 // Responsibilities: Publish outbox messages, send emails/SMS, consume message bus events
 var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
+    .WithHttpEndpoint(port: 9003, name: "http")  // Fixed host port
     .WithReference(rabbitmq)
     // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
@@ -199,7 +204,7 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     // Configure file storage (local filesystem for development)
     .WithEnvironment("Modules__Storage__Provider", "Local")
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
-    .WaitFor(migrator)
+    .WaitForCompletion(migrator)
     .WaitFor(rabbitmq)
     .WaitFor(mailhog);
 

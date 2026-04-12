@@ -44,6 +44,10 @@ public static class SubscriptionServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            // Supabase pooler safety: single-statement batches prevent connector state corruption.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }));
         services
             .AddScoped<IRepository<SubscriptionPlan, Guid>, Repository<SubscriptionPlan, Guid>>()

@@ -209,8 +209,8 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "File upload to storage gateway failed.");
-            throw new ValidationException("Không thể upload file. Vui lòng thử lại.");
+            _logger.LogError(ex, "File upload to storage gateway failed. Type={ExType}, Message={ExMsg}", ex.GetType().FullName, ex.Message);
+            throw new ValidationException($"Không thể upload file: [{ex.GetType().Name}] {ex.Message}");
         }
 
         // 5. Parse the OpenAPI/Postman file content into endpoints

@@ -2,6 +2,8 @@ using ClassifiedAds.CrossCuttingConcerns.DateTimes;
 using ClassifiedAds.Infrastructure.Notification.Email;
 using ClassifiedAds.Modules.Notification.Entities;
 using ClassifiedAds.Modules.Notification.Persistence;
+using ClassifiedAds.Persistence.PostgreSQL;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -142,7 +144,23 @@ public sealed class EmailSendingWorker : BackgroundService
                 email.Log = (email.Log ?? string.Empty) + log + "Sent successfully.";
                 email.Log = email.Log.Trim();
                 email.UpdatedDateTime = dateTime.OffsetUtcNow;
-                await repository.UnitOfWork.SaveChangesAsync(ct);
+
+                const int maxSaveRetries = 3;
+                for (int saveAttempt = 1; saveAttempt <= maxSaveRetries; saveAttempt++)
+                {
+                    try
+                    {
+                        await repository.UnitOfWork.SaveChangesAsync(CancellationToken.None);
+                        break;
+                    }
+                    catch (DbUpdateException ex) when (saveAttempt < maxSaveRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+                    {
+                        _logger.LogWarning(ex,
+                            "ManualResetEventSlim disposed on SaveChanges attempt {Attempt}/{Max}, retrying",
+                            saveAttempt, maxSaveRetries);
+                        await Task.Delay(200 * saveAttempt);
+                    }
+                }
 
                 Interlocked.Increment(ref _sentCount);
                 _logger.LogInformation(
@@ -163,7 +181,23 @@ public sealed class EmailSendingWorker : BackgroundService
                     // ─── Dead-letter ─────────────────────────────────────
                     email.ExpiredDateTime = dateTime.OffsetUtcNow; // mark as dead-letter
                     email.Log += Environment.NewLine + "[DEAD-LETTER] Max retry attempts exhausted.";
-                    await repository.UnitOfWork.SaveChangesAsync(ct);
+
+                    const int maxSaveRetriesDl = 3;
+                    for (int saveAttempt = 1; saveAttempt <= maxSaveRetriesDl; saveAttempt++)
+                    {
+                        try
+                        {
+                            await repository.UnitOfWork.SaveChangesAsync(CancellationToken.None);
+                            break;
+                        }
+                        catch (DbUpdateException dlEx) when (saveAttempt < maxSaveRetriesDl && NpgsqlTransientHelper.IsManualResetEventDisposed(dlEx))
+                        {
+                            _logger.LogWarning(dlEx,
+                                "ManualResetEventSlim disposed on SaveChanges attempt {Attempt}/{Max}, retrying",
+                                saveAttempt, maxSaveRetriesDl);
+                            await Task.Delay(200 * saveAttempt);
+                        }
+                    }
 
                     Interlocked.Increment(ref _deadLetterCount);
                     _logger.LogError(ex,
@@ -181,7 +215,22 @@ public sealed class EmailSendingWorker : BackgroundService
                         email.MaxAttemptCount = _options.MaxRetryAttempts;
                     }
 
-                    await repository.UnitOfWork.SaveChangesAsync(ct);
+                    const int maxSaveRetriesReq = 3;
+                    for (int saveAttempt = 1; saveAttempt <= maxSaveRetriesReq; saveAttempt++)
+                    {
+                        try
+                        {
+                            await repository.UnitOfWork.SaveChangesAsync(CancellationToken.None);
+                            break;
+                        }
+                        catch (DbUpdateException reqEx) when (saveAttempt < maxSaveRetriesReq && NpgsqlTransientHelper.IsManualResetEventDisposed(reqEx))
+                        {
+                            _logger.LogWarning(reqEx,
+                                "ManualResetEventSlim disposed on SaveChanges attempt {Attempt}/{Max}, retrying",
+                                saveAttempt, maxSaveRetriesReq);
+                            await Task.Delay(200 * saveAttempt);
+                        }
+                    }
 
                     _logger.LogWarning(ex,
                         "Email {EmailId} failed (attempt {Attempt}/{Max}). Re-enqueue after {Delay}s.",

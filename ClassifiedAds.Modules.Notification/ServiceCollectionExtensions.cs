@@ -37,6 +37,10 @@ public static class ServiceCollectionExtensions
                 {
                     sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
                 }
+
+                // Supabase pooler safety: single-statement batches prevent connector state corruption.
+                sql.MaxBatchSize(1);
+                sql.UseSupabaseRetryPolicy();
             }))
             .AddScoped<IRepository<EmailMessage, Guid>, Repository<EmailMessage, Guid>>()
             .AddScoped<IRepository<SmsMessage, Guid>, Repository<SmsMessage, Guid>>()

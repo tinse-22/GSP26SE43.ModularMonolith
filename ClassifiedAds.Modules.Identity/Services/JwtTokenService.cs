@@ -1,6 +1,7 @@
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Persistence;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -73,7 +74,7 @@ public class JwtTokenService : IJwtTokenService
                 await PersistRefreshTokensOnceAsync(user, refreshTokenHash);
                 return;
             }
-            catch (Exception ex) when (attempt < maxRetries && IsManualResetEventDisposed(ex))
+            catch (Exception ex) when (attempt < maxRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
             {
                 await Task.Delay(100 * attempt);
             }
@@ -176,17 +177,6 @@ public class JwtTokenService : IJwtTokenService
         user.ConcurrencyStamp = newConcurrencyStamp;
         SetTokensInMemory(user, tokenData);
         return Task.CompletedTask;
-    }
-
-    private static bool IsManualResetEventDisposed(Exception exception)
-    {
-        if (exception is ObjectDisposedException disposedException)
-        {
-            return string.Equals(disposedException.ObjectName, "System.Threading.ManualResetEventSlim", StringComparison.Ordinal)
-                || disposedException.Message.Contains("ManualResetEventSlim", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return exception.InnerException is not null && IsManualResetEventDisposed(exception.InnerException);
     }
 
     private void SetTokensInMemory(User user, IReadOnlyDictionary<string, string> tokenData)
@@ -354,7 +344,7 @@ public class JwtTokenService : IJwtTokenService
                 await DeleteRefreshTokensOnceAsync(user, includeLookupToken);
                 return;
             }
-            catch (Exception ex) when (attempt < maxRetries && IsManualResetEventDisposed(ex))
+            catch (Exception ex) when (attempt < maxRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
             {
                 await Task.Delay(100 * attempt);
             }
@@ -409,13 +399,11 @@ public class JwtTokenService : IJwtTokenService
 
     private NpgsqlConnection CreateDedicatedTokenConnection()
     {
-        var builder = new NpgsqlConnectionStringBuilder(_options.ConnectionStrings.Default)
-        {
-            Pooling = false,
-            NoResetOnClose = false,
-        };
-
-        return new NpgsqlConnection(builder.ConnectionString);
+        // Use the same Supabase-aware normalization as EF DbContext registration
+        // so connections get Pooling=true + NoResetOnClose=true on pooler hosts.
+        var connectionString = PostgresConnectionStringNormalizer
+            .NormalizeForSupabasePooler(_options.ConnectionStrings.Default);
+        return new NpgsqlConnection(connectionString);
     }
 
     private static string[] GetRefreshTokenNames(bool includeLookupToken)

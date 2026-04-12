@@ -5,6 +5,10 @@ using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.Modules.Subscription.Commands;
 using ClassifiedAds.Modules.Subscription.Models;
 using ClassifiedAds.Modules.Subscription.Queries;
+using ClassifiedAds.Persistence.PostgreSQL;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,10 +20,14 @@ namespace ClassifiedAds.Modules.Subscription.Services;
 public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
 {
     private readonly Dispatcher _dispatcher;
+    private readonly ILogger<SubscriptionLimitGatewayService> _logger;
 
-    public SubscriptionLimitGatewayService(Dispatcher dispatcher)
+    public SubscriptionLimitGatewayService(
+        Dispatcher dispatcher,
+        ILogger<SubscriptionLimitGatewayService> logger)
     {
         _dispatcher = dispatcher;
+        _logger = logger;
     }
 
     public async Task<LimitCheckResultDTO> CheckLimitAsync(
@@ -254,8 +262,68 @@ public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
             IncrementValue = incrementValue,
         };
 
-        await _dispatcher.DispatchAsync(command, cancellationToken);
+        try
+        {
+            await _dispatcher.DispatchAsync(command, cancellationToken);
+            return command.Result;
+        }
+        catch (Exception ex) when (IsTransientSubscriptionDbFailure(ex))
+        {
+            _logger.LogWarning(
+                ex,
+                "TryConsumeLimitAsync fallback to soft-check due to transient Subscription DB failure. UserId={UserId} LimitType={LimitType}",
+                userId,
+                limitType);
 
-        return command.Result;
+            try
+            {
+                return await CheckLimitAsync(
+                    userId,
+                    limitType,
+                    incrementValue,
+                    cancellationToken);
+            }
+            catch (Exception softCheckEx) when (IsTransientSubscriptionDbFailure(softCheckEx))
+            {
+                // Last-resort degradation path: allow the request to proceed
+                // when the subscription store is temporarily unavailable.
+                _logger.LogWarning(
+                    softCheckEx,
+                    "TryConsumeLimitAsync soft-check also failed transiently; allowing request without usage increment. UserId={UserId} LimitType={LimitType}",
+                    userId,
+                    limitType);
+
+                return new LimitCheckResultDTO
+                {
+                    IsAllowed = true,
+                    IsUnlimited = false,
+                    CurrentUsage = 0,
+                    LimitValue = null,
+                    DenialReason = null,
+                };
+            }
+        }
+    }
+
+    private static bool IsTransientSubscriptionDbFailure(Exception ex)
+    {
+        if (NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+        {
+            return true;
+        }
+
+        if (ex is RetryLimitExceededException)
+        {
+            return true;
+        }
+
+        if (ex is PostgresException pgEx
+            && pgEx.SqlState == "XX000"
+            && pgEx.MessageText?.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        return ex.InnerException != null && IsTransientSubscriptionDbFailure(ex.InnerException);
     }
 }
