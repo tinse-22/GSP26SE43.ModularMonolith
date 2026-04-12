@@ -21,6 +21,12 @@ public class GetSpecificationsQuery : IQuery<List<SpecificationModel>>
     public ParseStatus? ParseStatus { get; set; }
 
     public SourceType? SourceType { get; set; }
+
+    /// <summary>
+    /// When true, returns only soft-deleted specifications (trash view).
+    /// When false (default), returns only non-deleted specifications.
+    /// </summary>
+    public bool IncludeDeleted { get; set; } = false;
 }
 
 public class GetSpecificationsQueryHandler : IQueryHandler<GetSpecificationsQuery, List<SpecificationModel>>
@@ -53,7 +59,7 @@ public class GetSpecificationsQueryHandler : IQueryHandler<GetSpecificationsQuer
         }
 
         var specsQuery = _specRepository.GetQueryableSet()
-            .Where(s => s.ProjectId == query.ProjectId);
+            .Where(s => s.ProjectId == query.ProjectId && s.IsDeleted == query.IncludeDeleted);
 
         if (query.ParseStatus.HasValue)
         {
@@ -82,6 +88,8 @@ public class GetSpecificationsQueryHandler : IQueryHandler<GetSpecificationsQuer
             OriginalFileId = s.OriginalFileId,
             CreatedDateTime = s.CreatedDateTime,
             UpdatedDateTime = s.UpdatedDateTime,
+            IsDeleted = s.IsDeleted,
+            DeletedAt = s.DeletedAt,
         }).ToList();
     }
 }

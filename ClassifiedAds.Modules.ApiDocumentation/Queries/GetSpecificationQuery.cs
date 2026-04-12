@@ -95,6 +95,8 @@ public class GetSpecificationQueryHandler : IQueryHandler<GetSpecificationQuery,
             OriginalFileId = spec.OriginalFileId,
             CreatedDateTime = spec.CreatedDateTime,
             UpdatedDateTime = spec.UpdatedDateTime,
+            IsDeleted = spec.IsDeleted,
+            DeletedAt = spec.DeletedAt,
             EndpointCount = endpointCount,
             ParseErrors = parseErrors,
         };
