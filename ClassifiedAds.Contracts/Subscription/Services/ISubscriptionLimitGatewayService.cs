@@ -44,4 +44,15 @@ public interface ISubscriptionLimitGatewayService
         LimitType limitType,
         decimal incrementValue = 1,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases (decrements) usage when a resource is soft-deleted.
+    /// The usage counter is floored at zero and never goes negative.
+    /// Best-effort: failures are logged but do not propagate to callers.
+    /// </summary>
+    /// <param name="request">Describes which user, which limit type, and by how much to release.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ReleaseUsageAsync(
+        IncrementUsageRequest request,
+        CancellationToken cancellationToken = default);
 }

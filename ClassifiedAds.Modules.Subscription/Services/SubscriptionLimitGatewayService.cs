@@ -170,6 +170,95 @@ public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
             cancellationToken);
     }
 
+    public async Task ReleaseUsageAsync(
+        IncrementUsageRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var subscription = await _dispatcher.DispatchAsync(
+                new GetCurrentSubscriptionByUserQuery { UserId = request.UserId },
+                cancellationToken);
+
+            if (subscription == null)
+            {
+                return; // No subscription, nothing to release
+            }
+
+            var (periodStart, periodEnd) = GetUsagePeriod(request.LimitType, subscription);
+
+            var usageList = await _dispatcher.DispatchAsync(
+                new GetUsageTrackingsQuery
+                {
+                    UserId = request.UserId,
+                    PeriodStart = periodStart,
+                    PeriodEnd = periodEnd,
+                },
+                cancellationToken);
+
+            if (usageList == null || usageList.Count == 0)
+            {
+                return; // No usage record, nothing to release
+            }
+
+            // Read current values and floor-decrement the target field
+            var current = usageList.First();
+            var release = (int)request.IncrementValue;
+
+            var model = new UpsertUsageTrackingModel
+            {
+                PeriodStart = periodStart,
+                PeriodEnd = periodEnd,
+                ReplaceValues = true, // Write exact values to avoid under-flooring
+                ProjectCount = current.ProjectCount,
+                EndpointCount = current.EndpointCount,
+                TestSuiteCount = current.TestSuiteCount,
+                TestCaseCount = current.TestCaseCount,
+                TestRunCount = current.TestRunCount,
+                LlmCallCount = current.LlmCallCount,
+                StorageUsedMB = current.StorageUsedMB,
+            };
+
+            switch (request.LimitType)
+            {
+                case LimitType.MaxProjects:
+                    model.ProjectCount = Math.Max(0, current.ProjectCount - release);
+                    break;
+                case LimitType.MaxEndpointsPerProject:
+                    model.EndpointCount = Math.Max(0, current.EndpointCount - release);
+                    break;
+                case LimitType.MaxTestCasesPerSuite:
+                    model.TestCaseCount = Math.Max(0, current.TestCaseCount - release);
+                    break;
+                case LimitType.MaxTestRunsPerMonth:
+                    model.TestRunCount = Math.Max(0, current.TestRunCount - release);
+                    break;
+                case LimitType.MaxLlmCallsPerMonth:
+                    model.LlmCallCount = Math.Max(0, current.LlmCallCount - release);
+                    break;
+                case LimitType.MaxStorageMB:
+                    model.StorageUsedMB = Math.Max(0, current.StorageUsedMB - request.IncrementValue);
+                    break;
+            }
+
+            await _dispatcher.DispatchAsync(
+                new UpsertUsageTrackingCommand
+                {
+                    UserId = request.UserId,
+                    Model = model,
+                },
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "ReleaseUsageAsync failed non-fatally. UserId={UserId} LimitType={LimitType}. Usage counter may be slightly high until next recalculation.",
+                request.UserId,
+                request.LimitType);
+        }
+    }
+
     private static (DateOnly periodStart, DateOnly periodEnd) GetUsagePeriod(
         LimitType limitType,
         SubscriptionModel subscription)
