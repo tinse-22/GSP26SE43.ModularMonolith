@@ -12,6 +12,7 @@ public static class Permissions
     public const string AddSpecification = "Permission:AddSpecification";
     public const string UpdateSpecification = "Permission:UpdateSpecification";
     public const string DeleteSpecification = "Permission:DeleteSpecification";
+    public const string RestoreSpecification = "Permission:RestoreSpecification";
     public const string ActivateSpecification = "Permission:ActivateSpecification";
 
     public const string GetEndpoints = "Permission:GetEndpoints";

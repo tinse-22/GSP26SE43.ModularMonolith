@@ -74,6 +74,8 @@ services:
       Modules__Identity__Jwt__SecretKey: "${Modules__Identity__Jwt__SecretKey:-ClassifiedAds-JWT-Secret-Key-Must-Be-At-Least-32-Characters-Long-2026!}"
       Modules__Identity__Jwt__Issuer: "${Modules__Identity__Jwt__Issuer:-ClassifiedAds}"
       Modules__Identity__Jwt__Audience: "${Modules__Identity__Jwt__Audience:-ClassifiedAds.WebAPI}"
+      Modules__Identity__Providers__Google__Enabled: "${Modules__Identity__Providers__Google__Enabled:-false}"
+      Modules__Identity__Providers__Google__ClientId: "${Modules__Identity__Providers__Google__ClientId:-}"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
 
