@@ -37,6 +37,7 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 AspireResourceEnvironmentBridge.Apply();
 
@@ -48,6 +49,8 @@ if (!isRunningInContainer)
         trimValues: true,
         overwriteExistingVars: false));
 }
+
+StandaloneDevelopmentDatabaseBridge.Apply(isRunningInContainer, processConnectionStringBeforeDotEnv);
 
 AspireResourceEnvironmentBridge.Apply();
 
@@ -153,6 +156,12 @@ Host.CreateDefaultBuilder(args)
     {
         configuration.GetSection("Modules:TestGeneration").Bind(opt);
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddLlmAssistantModule(opt =>
+    {
+        configuration.GetSection("Modules:LlmAssistant").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
     .AddApplicationServices();

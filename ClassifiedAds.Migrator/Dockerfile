@@ -31,7 +31,7 @@ RUN dotnet restore ./ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj
 # Copy everything else and build
 COPY . ./
 RUN dotnet publish ./ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj -c Release -o out
-RUN ConnectionStrings__Default="Host=127.0.0.1;Port=5432;Database=ClassifiedAds;Username=postgres;Password=postgres" \
+RUN ConnectionStrings__Default="Host=aws-1-ap-southeast-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.pdmbghlidmoobbjsuxgx;Password=placeholder;SSL Mode=Require;Trust Server Certificate=true" \
     dotnet ./out/ClassifiedAds.Migrator.dll --verify-migrations
 
 # Build runtime image

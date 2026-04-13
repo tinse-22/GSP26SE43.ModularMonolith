@@ -1,6 +1,7 @@
 ﻿using ClassifiedAds.Modules.Storage.Entities;
 using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.EntityFrameworkCore;
+using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -10,6 +11,8 @@ namespace ClassifiedAds.Modules.Storage.Persistence;
 
 public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
 {
+    public const string DefaultSchema = "classifiedads_storage";
+
     public StorageDbContext(DbContextOptions<StorageDbContext> options)
         : base(options)
     {
@@ -18,7 +21,7 @@ public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-        builder.HasDefaultSchema("storage");
+        builder.HasDefaultSchema(DefaultSchema);
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 
@@ -33,7 +36,17 @@ public class StorageDbContext : DbContextUnitOfWork<StorageDbContext>
     {
         SetOutboxActivityId();
         HandleFileEntriesDeleted();
-        return await base.SaveChangesAsync(cancellationToken);
+        try
+        {
+            return await base.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is ObjectDisposedException ode
+            && ode.Message.Contains("ManualResetEventSlim"))
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[TRANSIENT-NPGSQL] {GetType().Name}.SaveChangesAsync failed: {ode.Message}");
+            throw;
+        }
     }
 
     private void SetOutboxActivityId()

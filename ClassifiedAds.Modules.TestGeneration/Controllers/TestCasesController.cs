@@ -84,7 +84,7 @@ public class TestCasesController : ControllerBase
                 JobId = queueCommand.JobId,
                 TestSuiteId = suiteId,
                 Mode = "callback",
-                Message = "ÄÃ£ táº¡o job vÃ  Ä‘Æ°a yÃªu cáº§u trigger n8n vÃ o hÃ ng Ä‘á»£i. Test cases sáº½ Ä‘Æ°á»£c lÆ°u qua callback endpoint.",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
             });
         }
 
@@ -144,7 +144,7 @@ public class TestCasesController : ControllerBase
                 JobId = queueCommand.JobId,
                 TestSuiteId = suiteId,
                 Mode = "callback",
-                Message = "ÄÃ£ táº¡o job vÃ  Ä‘Æ°a yÃªu cáº§u trigger n8n vÃ o hÃ ng Ä‘á»£i. Test cases sáº½ Ä‘Æ°á»£c lÆ°u qua callback endpoint.",
+                Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Test cases sẽ được lưu qua callback endpoint.",
             });
         }
 

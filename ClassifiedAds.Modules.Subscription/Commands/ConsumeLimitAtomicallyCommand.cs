@@ -4,6 +4,7 @@ using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.Subscription.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Data;
@@ -60,13 +61,31 @@ public class ConsumeLimitAtomicallyCommandHandler : ICommandHandler<ConsumeLimit
 
     public async Task HandleAsync(ConsumeLimitAtomicallyCommand command, CancellationToken cancellationToken = default)
     {
+        // Fast-path: if user has no active subscription, return denial immediately
+        // and skip the serializable transaction + retry loop.
+        var hasActiveSubscription = await _subscriptionRepository.GetQueryableSet()
+            .AnyAsync(
+                x => x.UserId == command.UserId && CurrentStatuses.Contains(x.Status),
+                cancellationToken);
+
+        if (!hasActiveSubscription)
+        {
+            command.Result = new LimitCheckResultDTO
+            {
+                IsAllowed = false,
+                DenialReason = "Không tìm thấy gói đăng ký đang hoạt động. Vui lòng đăng ký gói dịch vụ.",
+            };
+
+            return;
+        }
+
         for (int attempt = 1; attempt <= MaxRetries; attempt++)
         {
             try
             {
                 command.Result = await _usageTrackingRepository.UnitOfWork.ExecuteInTransactionAsync(
                     async ct => await ExecuteAtomicConsume(command, ct),
-                    IsolationLevel.Serializable,
+                    IsolationLevel.ReadCommitted,
                     cancellationToken);
                 return;
             }
@@ -78,6 +97,17 @@ public class ConsumeLimitAtomicallyCommandHandler : ICommandHandler<ConsumeLimit
 
                 // Small backoff before retry
                 await Task.Delay(attempt * 50, cancellationToken);
+            }
+            catch (RetryLimitExceededException ex) when (ex.InnerException is ObjectDisposedException && attempt < MaxRetries)
+            {
+                // All execution-strategy retries exhausted for ManualResetEventSlim.
+                // Wait longer then retry at the handler level — the pool should
+                // have stabilised by now after the strategy's backoff delays.
+                _logger.LogWarning(
+                    "ManualResetEventSlim retry exhaustion on ConsumeLimitAtomically attempt {Attempt}/{MaxRetries} for user {UserId}, limitType {LimitType}. Retrying...",
+                    attempt, MaxRetries, command.UserId, command.LimitType);
+
+                await Task.Delay(attempt * 500, cancellationToken);
             }
         }
     }
