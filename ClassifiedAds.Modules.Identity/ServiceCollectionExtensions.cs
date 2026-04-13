@@ -87,6 +87,21 @@ public static class ServiceCollectionExtensions
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
+        if (settings.Providers?.Auth0?.Enabled ?? false)
+        {
+            services.AddSingleton(new Auth0IdentityProvider(settings.Providers.Auth0));
+        }
+
+        if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
+        {
+            services.AddSingleton(new AzureActiveDirectoryB2CIdentityProvider(settings.Providers.AzureActiveDirectoryB2C));
+        }
+
+        if (settings.Providers?.Google?.Enabled ?? false)
+        {
+            services.AddSingleton(new GoogleIdentityProvider(settings.Providers.Google));
+        }
+
         // Add Rate Limiting policies
         services.AddRateLimiter(options =>
         {
