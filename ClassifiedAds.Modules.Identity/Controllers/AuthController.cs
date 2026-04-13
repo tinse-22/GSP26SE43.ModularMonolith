@@ -7,11 +7,13 @@ using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Persistence.PostgreSQL;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Helpers;
+using ClassifiedAds.Modules.Identity.IdentityProviders.Google;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
 using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -55,6 +57,7 @@ public class AuthController : ControllerBase
     private readonly ITokenBlacklistService _tokenBlacklistService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AuthController> _logger;
+    private readonly GoogleIdentityProvider _googleIdentityProvider;
 
     public AuthController(
         UserManager<User> userManager,
@@ -69,7 +72,8 @@ public class AuthController : ControllerBase
         IFileStorageManager fileStorageManager,
         ITokenBlacklistService tokenBlacklistService,
         IServiceScopeFactory scopeFactory,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        GoogleIdentityProvider googleIdentityProvider = null)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -84,6 +88,7 @@ public class AuthController : ControllerBase
         _tokenBlacklistService = tokenBlacklistService;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _googleIdentityProvider = googleIdentityProvider;
     }
 
     /// <summary>
@@ -336,11 +341,131 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Login with Google — validate Google ID token and issue JWT.
+    /// Frontend obtains the ID token from Google Sign-In and sends it here.
+    /// A new local account is auto-created on first login (email confirmed by default).
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
+    [HttpPost("login/google")]
+    [ProducesResponseType(typeof(LoginResponseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<LoginResponseModel>> LoginWithGoogle([FromBody] GoogleLoginModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (_googleIdentityProvider == null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { Error = "Đăng nhập Google chưa được kích hoạt." });
+        }
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await _googleIdentityProvider.VerifyIdTokenAsync(model.IdToken);
+        }
+        catch (InvalidJwtException ex)
+        {
+            _logger.LogWarning(ex, "Google login failed: invalid ID token");
+            return BadRequest(new { Error = "Google ID token không hợp lệ hoặc đã hết hạn." });
+        }
+
+        var email = payload.Email;
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return BadRequest(new { Error = "Không lấy được email từ tài khoản Google." });
+        }
+
+        var user = await _userManager.FindByEmailAsync(email);
+        if (user == null)
+        {
+            // Auto-register: Google has already verified the email
+            user = new User
+            {
+                UserName = email,
+                Email = email,
+                NormalizedUserName = email.ToUpperInvariant(),
+                NormalizedEmail = email.ToUpperInvariant(),
+                EmailConfirmed = true,
+                PhoneNumberConfirmed = false,
+                TwoFactorEnabled = false,
+                LockoutEnabled = true,
+                AccessFailedCount = 0,
+                SecurityStamp = Guid.NewGuid().ToString(),
+            };
+
+            var createResult = await _userManager.CreateAsync(user);
+            if (!createResult.Succeeded)
+            {
+                return BadRequest(new { Errors = createResult.Errors.Select(e => e.Description) });
+            }
+
+            var roleResult = await _userManager.AddToRolesAsync(user, new[] { "User" });
+            var realRoleErrors = roleResult.Errors
+                .Where(e => e.Code != "UserAlreadyInRole")
+                .ToList();
+            if (realRoleErrors.Any())
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new { Errors = realRoleErrors.Select(e => e.Description) });
+            }
+
+            // Create default profile using Google display name if available
+            var displayName = payload.Name ?? email.Split('@')[0];
+            var profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                DisplayName = displayName,
+            };
+            _dbContext.UserProfiles.Add(profile);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("New user auto-registered via Google. UserId={UserId} Email={Email}", user.Id, email);
+        }
+        else
+        {
+            if (await _userManager.IsLockedOutAsync(user))
+            {
+                return BadRequest(new { Code = "account_locked", Error = "Tài khoản đã bị khóa. Vui lòng thử lại sau." });
+            }
+
+            // Ensure email is confirmed (Google already verified it)
+            if (!user.EmailConfirmed)
+            {
+                user.EmailConfirmed = true;
+                await _userManager.UpdateAsync(user);
+            }
+        }
+
+        await _userManager.ResetAccessFailedCountAsync(user);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var userProfile = await GetOrCreateUserProfileAsync(user);
+        var (jwtAccessToken, jwtRefreshToken, jwtExpiresIn) = await _jwtTokenService.GenerateTokensAsync(user, roles);
+        SetRefreshTokenCookie(jwtRefreshToken);
+
+        _logger.LogInformation("Google login succeeded. UserId={UserId} Email={Email}", user.Id, email);
+
+        return Ok(new LoginResponseModel
+        {
+            AccessToken = jwtAccessToken,
+            TokenType = "Bearer",
+            ExpiresIn = jwtExpiresIn,
+            User = ToUserInfoModel(user, userProfile, roles),
+        });
+    }
+
+    /// <summary>
     /// Refresh access token using refresh token.
     /// Implements token rotation: old refresh token is invalidated and a new one is issued.
     /// </summary>
-    /// <remarks>
-    /// Token rotation is a security best practice that:
     /// - Limits the window of opportunity if a refresh token is compromised
     /// - Enables detection of token theft (if old token is reused)
     /// - Forces attackers to constantly steal new tokens

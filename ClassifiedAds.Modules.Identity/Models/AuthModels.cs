@@ -235,3 +235,12 @@ public class AvatarUploadResponseModel
 
     public string Message { get; set; }
 }
+
+/// <summary>
+/// Model for Google OAuth login — frontend passes the ID token from Google Sign-In.
+/// </summary>
+public class GoogleLoginModel
+{
+    [Required(ErrorMessage = "Google ID token is required")]
+    public string IdToken { get; set; }
+}

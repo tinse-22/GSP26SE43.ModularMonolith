@@ -5,6 +5,7 @@ using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.HostedServices;
 using ClassifiedAds.Modules.Identity.IdentityProviders.Auth0;
 using ClassifiedAds.Modules.Identity.IdentityProviders.Azure;
+using ClassifiedAds.Modules.Identity.IdentityProviders.Google;
 using ClassifiedAds.Modules.Identity.PasswordValidators;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
@@ -157,6 +158,11 @@ public static class ServiceCollectionExtensions
         if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
         {
             services.AddSingleton(new AzureActiveDirectoryB2CIdentityProvider(settings.Providers.AzureActiveDirectoryB2C));
+        }
+
+        if (settings.Providers?.Google?.Enabled ?? false)
+        {
+            services.AddSingleton(new GoogleIdentityProvider(settings.Providers.Google));
         }
 
         return services;

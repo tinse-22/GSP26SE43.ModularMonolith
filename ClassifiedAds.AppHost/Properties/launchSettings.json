@@ -12,7 +12,7 @@
         "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:21152",
         "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:22196",
-        "APPHOST_DATABASE_MODE": "external"
+        "APPHOST_DATABASE_MODE": "local"
       }
     },
     "https": {
@@ -26,7 +26,7 @@
         "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21152",
         "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22196",
-        "APPHOST_DATABASE_MODE": "external"
+        "APPHOST_DATABASE_MODE": "local"
       }
     }
   }
