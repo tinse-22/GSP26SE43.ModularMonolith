@@ -53,8 +53,8 @@ public class PlanLimitConfiguration : IEntityTypeConfiguration<PlanLimit>
             new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000022"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxEndpointsPerProject, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
             new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000023"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxTestCasesPerSuite, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
             new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000024"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxTestRunsPerMonth, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
-            new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000025"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxConcurrentRuns, LimitValue = 10, IsUnlimited = false, CreatedDateTime = Epoch },
-            new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000026"), PlanId = EnterprisePlanId, LimitType = LimitType.RetentionDays, LimitValue = 365, IsUnlimited = false, CreatedDateTime = Epoch },
+            new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000025"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxConcurrentRuns, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
+            new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000026"), PlanId = EnterprisePlanId, LimitType = LimitType.RetentionDays, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
             new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000027"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxLlmCallsPerMonth, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch },
             new PlanLimit { Id = Guid.Parse("20000000-0000-0000-0000-000000000028"), PlanId = EnterprisePlanId, LimitType = LimitType.MaxStorageMB, LimitValue = null, IsUnlimited = true, CreatedDateTime = Epoch });
     }

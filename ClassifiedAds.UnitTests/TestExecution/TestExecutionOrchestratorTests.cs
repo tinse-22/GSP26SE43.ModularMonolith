@@ -31,6 +31,7 @@ public class TestExecutionOrchestratorTests
     private readonly Mock<IVariableExtractor> _variableExtractorMock;
     private readonly Mock<IRuleBasedValidator> _validatorMock;
     private readonly Mock<ITestResultCollector> _resultCollectorMock;
+    private readonly Mock<IPreExecutionValidator> _preValidatorMock;
     private readonly TestExecutionOrchestrator _orchestrator;
 
     private readonly Guid _runId = Guid.NewGuid();
@@ -52,6 +53,16 @@ public class TestExecutionOrchestratorTests
         _variableExtractorMock = new Mock<IVariableExtractor>();
         _validatorMock = new Mock<IRuleBasedValidator>();
         _resultCollectorMock = new Mock<ITestResultCollector>();
+        _preValidatorMock = new Mock<IPreExecutionValidator>();
+
+        // Default: pre-validation always passes
+        _preValidatorMock
+            .Setup(x => x.Validate(
+                It.IsAny<ExecutionTestCaseDto>(),
+                It.IsAny<ResolvedExecutionEnvironment>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(),
+                It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new PreExecutionValidationResult());
 
         var unitOfWorkMock = new Mock<IUnitOfWork>();
         _runRepoMock.Setup(x => x.UnitOfWork).Returns(unitOfWorkMock.Object);
@@ -70,6 +81,7 @@ public class TestExecutionOrchestratorTests
             _variableExtractorMock.Object,
             _validatorMock.Object,
             _resultCollectorMock.Object,
+            _preValidatorMock.Object,
             new Mock<ILogger<TestExecutionOrchestrator>>().Object);
     }
 
