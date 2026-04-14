@@ -11,12 +11,15 @@ namespace ClassifiedAds.Modules.Identity.IdentityProviders.Auth0;
 public class Auth0IdentityProvider : IIdentityProvider
 {
     private readonly Auth0Options _options;
-    private HttpClient _httpClient = new HttpClient();
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public Auth0IdentityProvider(Auth0Options options)
+    public Auth0IdentityProvider(Auth0Options options, IHttpClientFactory httpClientFactory)
     {
         _options = options;
+        _httpClientFactory = httpClientFactory;
     }
+
+    private HttpClient CreateClient() => _httpClientFactory.CreateClient(nameof(Auth0IdentityProvider));
 
     public async Task<string> GetAccessToken()
     {
@@ -28,22 +31,25 @@ public class Auth0IdentityProvider : IIdentityProvider
             { "audience", _options.Audience }
         };
 
+        using var httpClient = CreateClient();
         var content = new FormUrlEncodedContent(paramters);
-        var response = await _httpClient.PostAsync(_options.TokenUrl, content);
+        var response = await httpClient.PostAsync(_options.TokenUrl, content);
         var responseText = await response.Content.ReadAsStringAsync();
         var tokens = JsonSerializer.Deserialize<Dictionary<string, object>>(responseText);
         return tokens["access_token"].ToString();
     }
 
-    public async Task SetAccessToken()
+    private async Task<HttpClient> CreateAuthenticatedClient()
     {
+        var httpClient = CreateClient();
         var accessToken = await GetAccessToken();
-        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        return httpClient;
     }
 
     public async Task CreateUserAsync(IUser user)
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
         var options = new JsonSerializerOptions()
         {
@@ -62,7 +68,7 @@ public class Auth0IdentityProvider : IIdentityProvider
         }, options));
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        var response = await _httpClient.PostAsync(_options.Audience + "users", content);
+        var response = await httpClient.PostAsync(_options.Audience + "users", content);
 
         response.EnsureSuccessStatusCode();
 
@@ -75,18 +81,18 @@ public class Auth0IdentityProvider : IIdentityProvider
 
     public async Task DeleteUserAsync(string userId)
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
-        var response = await _httpClient.DeleteAsync(_options.Audience + $"users/{userId}");
+        var response = await httpClient.DeleteAsync(_options.Audience + $"users/{userId}");
 
         response.EnsureSuccessStatusCode();
     }
 
     public async Task<IUser> GetUserById(string userId)
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
-        var response = await _httpClient.GetAsync(_options.Audience + $"users/{userId}");
+        var response = await httpClient.GetAsync(_options.Audience + $"users/{userId}");
 
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -107,9 +113,9 @@ public class Auth0IdentityProvider : IIdentityProvider
 
     public async Task<IUser> GetUserByUsernameAsync(string username)
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
-        var response = await _httpClient.GetAsync(_options.Audience + $"users-by-email?email={username}");
+        var response = await httpClient.GetAsync(_options.Audience + $"users-by-email?email={username}");
         var responseText = await response.Content.ReadAsStringAsync();
 
         var users = JsonSerializer.Deserialize<List<Auth0User>>(responseText);
@@ -131,9 +137,9 @@ public class Auth0IdentityProvider : IIdentityProvider
 
     public async Task<IList<IUser>> GetUsersAsync()
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
-        var response = await _httpClient.GetAsync(_options.Audience + "users");
+        var response = await httpClient.GetAsync(_options.Audience + "users");
         var responseText = await response.Content.ReadAsStringAsync();
 
         var users = JsonSerializer.Deserialize<List<Auth0User>>(responseText);
@@ -148,7 +154,7 @@ public class Auth0IdentityProvider : IIdentityProvider
 
     public async Task UpdateUserAsync(string userId, IUser user)
     {
-        await SetAccessToken();
+        using var httpClient = await CreateAuthenticatedClient();
 
         var options = new JsonSerializerOptions()
         {
@@ -163,7 +169,7 @@ public class Auth0IdentityProvider : IIdentityProvider
         }, options));
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        var response = await _httpClient.PatchAsync(_options.Audience + $"users/{userId}", content);
+        var response = await httpClient.PatchAsync(_options.Audience + $"users/{userId}", content);
 
         response.EnsureSuccessStatusCode();
 
