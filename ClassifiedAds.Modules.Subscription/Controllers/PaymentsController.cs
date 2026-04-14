@@ -176,7 +176,7 @@ public class PaymentsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "PayOS webhook processing failed.");
-            return Ok(new { status = "error", error = ex.Message });
+            return Ok(new { status = "error" });
         }
     }
 

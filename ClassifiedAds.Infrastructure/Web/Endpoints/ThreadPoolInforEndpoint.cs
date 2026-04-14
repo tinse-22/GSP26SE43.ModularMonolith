@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using System;
@@ -11,7 +12,7 @@ public static class ThreadPoolInforEndpoint
 {
     public static void MapThreadPoolInforEndpoint(this IEndpointRouteBuilder builder, string path = "/threadpoolinfor")
     {
-        builder.MapGet(path, () =>
+        builder.MapGet(path, [Authorize] () =>
         {
             ThreadPool.GetAvailableThreads(out var availableWorkerThreads, out var availableCompletionPortThreads);
             ThreadPool.GetMinThreads(out var minWorkerThreads, out var minCompletionPortThreads);
@@ -32,6 +33,6 @@ public static class ThreadPoolInforEndpoint
                 MaxWorkerThreads = maxWorkerThreads,
                 MaxCompletionPortThreads = maxCompletionPortThreads,
             });
-        });
+        }).RequireAuthorization();
     }
 }
