@@ -34,6 +34,17 @@ public class ApiSpecificationConfiguration : IEntityTypeConfiguration<Entities.A
         builder.HasIndex(x => x.IsActive);
         builder.HasIndex(x => x.IsDeleted);
 
+        // Composite index for the main listing query:
+        // WHERE ProjectId = @p AND IsDeleted = @p ORDER BY CreatedDateTime DESC
+        builder.HasIndex(x => new { x.ProjectId, x.IsDeleted, x.CreatedDateTime })
+            .HasDatabaseName("IX_ApiSpecifications_ProjectId_IsDeleted_CreatedDateTime")
+            .IsDescending(false, false, true);
+
+        // Composite index for deactivation during project deletion:
+        // WHERE ProjectId = @p AND IsActive = true
+        builder.HasIndex(x => new { x.ProjectId, x.IsActive })
+            .HasDatabaseName("IX_ApiSpecifications_ProjectId_IsActive");
+
         builder.HasOne(x => x.Project)
             .WithMany(x => x.ApiSpecifications)
             .HasForeignKey(x => x.ProjectId)
