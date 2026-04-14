@@ -22,6 +22,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     private readonly Mock<IRepository<TestCase, Guid>> _testCaseRepoMock;
     private readonly Mock<IRepository<TestCaseRequest, Guid>> _requestRepoMock;
     private readonly Mock<IRepository<TestCaseExpectation, Guid>> _expectationRepoMock;
+    private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
     private readonly Mock<IRepository<TestSuiteVersion, Guid>> _versionRepoMock;
     private readonly Mock<IRepository<TestGenerationJob, Guid>> _jobRepoMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
@@ -33,6 +34,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _testCaseRepoMock = new Mock<IRepository<TestCase, Guid>>();
         _requestRepoMock = new Mock<IRepository<TestCaseRequest, Guid>>();
         _expectationRepoMock = new Mock<IRepository<TestCaseExpectation, Guid>>();
+        _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
         _versionRepoMock = new Mock<IRepository<TestSuiteVersion, Guid>>();
         _jobRepoMock = new Mock<IRepository<TestGenerationJob, Guid>>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -64,11 +66,15 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _unitOfWorkMock.Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
+        _variableRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseVariable>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         _handler = new SaveAiGeneratedTestCasesCommandHandler(
             _suiteRepoMock.Object,
             _testCaseRepoMock.Object,
             _requestRepoMock.Object,
             _expectationRepoMock.Object,
+            _variableRepoMock.Object,
             _versionRepoMock.Object,
             _jobRepoMock.Object,
             new Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>>().Object);
@@ -191,6 +197,158 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _requestRepoMock.Verify(x => x.AddAsync(
             It.Is<TestCaseRequest>(r => r.HttpMethod == TestGenerationHttpMethod.POST),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PersistVariablesFromDto()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var command = new SaveAiGeneratedTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            TestCases = new List<AiGeneratedTestCaseDto>
+            {
+                new()
+                {
+                    EndpointId = Guid.NewGuid(),
+                    Name = "Login",
+                    Request = new AiTestCaseRequestDto { HttpMethod = "POST", Url = "/api/auth/login" },
+                    Variables = new List<AiTestCaseVariableDto>
+                    {
+                        new()
+                        {
+                            VariableName = "accessToken",
+                            ExtractFrom = "ResponseBody",
+                            JsonPath = "$.data.accessToken",
+                        },
+                        new()
+                        {
+                            VariableName = "userId",
+                            ExtractFrom = "body",
+                            JsonPath = "$.data.userId",
+                            DefaultValue = "fallback-id",
+                        },
+                    },
+                },
+            },
+        };
+
+        await _handler.HandleAsync(command);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v =>
+                v.VariableName == "accessToken" &&
+                v.ExtractFrom == ExtractFrom.ResponseBody &&
+                v.JsonPath == "$.data.accessToken"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v =>
+                v.VariableName == "userId" &&
+                v.ExtractFrom == ExtractFrom.ResponseBody &&
+                v.DefaultValue == "fallback-id"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ParseExtractFrom_HeaderAndStatus()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var command = new SaveAiGeneratedTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            TestCases = new List<AiGeneratedTestCaseDto>
+            {
+                new()
+                {
+                    EndpointId = Guid.NewGuid(),
+                    Name = "Get with headers",
+                    Request = new AiTestCaseRequestDto { HttpMethod = "GET", Url = "/api/test" },
+                    Variables = new List<AiTestCaseVariableDto>
+                    {
+                        new() { VariableName = "reqId", ExtractFrom = "ResponseHeader", HeaderName = "X-Request-Id" },
+                        new() { VariableName = "headerVar", ExtractFrom = "header", HeaderName = "X-Custom" },
+                        new() { VariableName = "status", ExtractFrom = "Status" },
+                    },
+                },
+            },
+        };
+
+        await _handler.HandleAsync(command);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v => v.VariableName == "reqId" && v.ExtractFrom == ExtractFrom.ResponseHeader),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v => v.VariableName == "headerVar" && v.ExtractFrom == ExtractFrom.ResponseHeader),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v => v.VariableName == "status" && v.ExtractFrom == ExtractFrom.Status),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_SkipVariables_WhenNameOrExtractFromBlank()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var command = new SaveAiGeneratedTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            TestCases = new List<AiGeneratedTestCaseDto>
+            {
+                new()
+                {
+                    EndpointId = Guid.NewGuid(),
+                    Name = "Test",
+                    Request = new AiTestCaseRequestDto { HttpMethod = "GET", Url = "/api/test" },
+                    Variables = new List<AiTestCaseVariableDto>
+                    {
+                        new() { VariableName = "", ExtractFrom = "ResponseBody", JsonPath = "$.id" },
+                        new() { VariableName = "token", ExtractFrom = "", JsonPath = "$.token" },
+                        new() { VariableName = null, ExtractFrom = "body", JsonPath = "$.x" },
+                        new() { VariableName = "valid", ExtractFrom = "body", JsonPath = "$.val" },
+                    },
+                },
+            },
+        };
+
+        await _handler.HandleAsync(command);
+
+        // Only the "valid" variable should be persisted
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.IsAny<TestCaseVariable>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseVariable>(v => v.VariableName == "valid"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_NotCallVariableRepo_WhenNoVariablesProvided()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var command = CreateValidCommand(); // default: no variables
+
+        await _handler.HandleAsync(command);
+
+        _variableRepoMock.Verify(x => x.AddAsync(
+            It.IsAny<TestCaseVariable>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

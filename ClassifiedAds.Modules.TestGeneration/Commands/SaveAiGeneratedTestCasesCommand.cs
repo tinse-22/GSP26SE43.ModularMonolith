@@ -37,6 +37,16 @@ public class AiTestCaseExpectationDto
     public int? MaxResponseTime { get; set; }
 }
 
+public class AiTestCaseVariableDto
+{
+    public string VariableName { get; set; }
+    public string ExtractFrom { get; set; }
+    public string JsonPath { get; set; }
+    public string HeaderName { get; set; }
+    public string Regex { get; set; }
+    public string DefaultValue { get; set; }
+}
+
 public class AiGeneratedTestCaseDto
 {
     public Guid? EndpointId { get; set; }
@@ -52,24 +62,25 @@ public class AiGeneratedTestCaseDto
     public string Tags { get; set; }
     public AiTestCaseRequestDto Request { get; set; }
     public AiTestCaseExpectationDto Expectation { get; set; }
+    public List<AiTestCaseVariableDto> Variables { get; set; } = new();
 }
 
 // ─────────────────────────────────────────────────────────────────
 public class SaveAiGeneratedTestCasesCommand : ICommand
 {
     public Guid TestSuiteId { get; set; }
-    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new ();
+    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new();
 }
 
 public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGeneratedTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly Regex HttpMethodTokenRegex = new (
+    private static readonly Regex HttpMethodTokenRegex = new(
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -77,6 +88,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _testCaseExpectationRepository;
+    private readonly IRepository<TestCaseVariable, Guid> _testCaseVariableRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
     private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
@@ -86,6 +98,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestCase, Guid> testCaseRepository,
         IRepository<TestCaseRequest, Guid> testCaseRequestRepository,
         IRepository<TestCaseExpectation, Guid> testCaseExpectationRepository,
+        IRepository<TestCaseVariable, Guid> testCaseVariableRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
         IRepository<TestGenerationJob, Guid> jobRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
@@ -94,6 +107,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         _testCaseRepository = testCaseRepository;
         _testCaseRequestRepository = testCaseRequestRepository;
         _testCaseExpectationRepository = testCaseExpectationRepository;
+        _testCaseVariableRepository = testCaseVariableRepository;
         _versionRepository = versionRepository;
         _jobRepository = jobRepository;
         _logger = logger;
@@ -199,6 +213,31 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         CreatedDateTime = now,
                     };
                     await _testCaseExpectationRepository.AddAsync(exp, ct);
+                }
+
+                // Persist variable extraction rules from LLM
+                if (dto.Variables is { Count: > 0 })
+                {
+                    foreach (var v in dto.Variables)
+                    {
+                        if (string.IsNullOrWhiteSpace(v.VariableName) || string.IsNullOrWhiteSpace(v.ExtractFrom))
+                        {
+                            continue;
+                        }
+
+                        var variable = new TestCaseVariable
+                        {
+                            Id = Guid.NewGuid(),
+                            TestCaseId = testCase.Id,
+                            VariableName = v.VariableName,
+                            ExtractFrom = ParseExtractFrom(v.ExtractFrom),
+                            JsonPath = v.JsonPath,
+                            HeaderName = v.HeaderName,
+                            Regex = v.Regex,
+                            DefaultValue = v.DefaultValue,
+                        };
+                        await _testCaseVariableRepository.AddAsync(variable, ct);
+                    }
                 }
 
                 orderIdx++;
@@ -421,5 +460,21 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         {
             return JsonSerializer.Serialize(trimmed);
         }
+    }
+
+    private static ExtractFrom ParseExtractFrom(string extractFrom)
+    {
+        if (string.IsNullOrWhiteSpace(extractFrom))
+        {
+            return ExtractFrom.ResponseBody;
+        }
+
+        return extractFrom.Trim().ToLowerInvariant() switch
+        {
+            "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
+            "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
+            "status" => ExtractFrom.Status,
+            _ => ExtractFrom.ResponseBody,
+        };
     }
 }

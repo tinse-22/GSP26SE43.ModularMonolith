@@ -6,6 +6,7 @@ using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
 using ClassifiedAds.Modules.Identity.Controllers;
 using ClassifiedAds.Modules.Identity.Entities;
+using ClassifiedAds.Modules.Identity.IdentityProviders.Google;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Services;
@@ -16,6 +17,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
@@ -83,7 +85,9 @@ public class AuthControllerTests : IDisposable
             dispatcher,
             _fileStorageManagerMock.Object,
             _tokenBlacklistServiceMock.Object,
-            new Mock<ILogger<AuthController>>().Object);
+            new Mock<IServiceScopeFactory>().Object,
+            new Mock<ILogger<AuthController>>().Object,
+            new GoogleIdentityProvider(new GoogleOptions { ClientId = "test" }));
     }
 
     [Fact]
