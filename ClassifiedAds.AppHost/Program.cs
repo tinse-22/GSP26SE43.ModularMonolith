@@ -156,9 +156,9 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
     .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     .WithEnvironment("Modules__Identity__Providers__Google__Enabled",
-        builder.Configuration["Modules:Identity:Providers:Google:Enabled"] ?? "false")
+        Environment.GetEnvironmentVariable("Modules__Identity__Providers__Google__Enabled") ?? "false")
     .WithEnvironment("Modules__Identity__Providers__Google__ClientId",
-        builder.Configuration["Modules:Identity:Providers:Google:ClientId"] ?? "")
+        Environment.GetEnvironmentVariable("Modules__Identity__Providers__Google__ClientId") ?? "")
     .WaitForCompletion(migrator)  // Ensures migrations complete before startup
     .WaitFor(rabbitmq)
     .WithExternalHttpEndpoints();  // Exposes to localhost for external access

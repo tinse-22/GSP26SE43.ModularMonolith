@@ -58,6 +58,7 @@ public static class TestExecutionServiceCollectionExtensions
         services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
         services.AddScoped<IExecutionEnvironmentRuntimeResolver, ExecutionEnvironmentRuntimeResolver>();
         services.AddScoped<IVariableResolver, VariableResolver>();
+        services.AddScoped<IPreExecutionValidator, PreExecutionValidator>();
         services.AddScoped<IHttpTestExecutor, HttpTestExecutor>();
         services.AddScoped<IVariableExtractor, VariableExtractor>();
         services.AddScoped<IRuleBasedValidator, RuleBasedValidator>();
