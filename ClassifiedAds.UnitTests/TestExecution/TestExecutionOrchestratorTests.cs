@@ -272,6 +272,107 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ChainAuthTokenThroughMultipleCrudRequests()
+    {
+        // Arrange — 3 sequential test cases:
+        // Case 1: Login → extracts accessToken and userId
+        // Case 2: Create resource → uses accessToken in header, extracts resourceId
+        // Case 3: Get resource → uses accessToken + resourceId
+        var loginId = Guid.NewGuid();
+        var createId = Guid.NewGuid();
+        var getId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var loginCase = CreateTestCase(loginId, endpointId, 0);
+        var createCase = CreateTestCase(createId, endpointId, 1, dependencyIds: new[] { loginId });
+        var getCase = CreateTestCase(getId, endpointId, 2, dependencyIds: new[] { loginId, createId });
+
+        SetupDefaultMocks(new[] { loginCase, createCase, getCase }, new[] { endpointId });
+
+        // Track variable bags received by each Resolve call
+        Dictionary<string, string> createVars = null;
+        Dictionary<string, string> getVars = null;
+
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == createId)
+                {
+                    createVars = new Dictionary<string, string>(vars);
+                }
+                else if (tc.TestCaseId == getId)
+                {
+                    getVars = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = "POST",
+                    ResolvedUrl = "https://api.example.com/test",
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 30,
+            });
+
+        // Login extracts accessToken + userId
+        // Create extracts resourceId
+        // Get extracts nothing
+        var callIndex = 0;
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>>((_, _) =>
+            {
+                callIndex++;
+                return callIndex switch
+                {
+                    1 => new Dictionary<string, string>
+                    {
+                        ["accessToken"] = "jwt-abc-123",
+                        ["userId"] = "user-42",
+                    },
+                    2 => new Dictionary<string, string>
+                    {
+                        ["resourceId"] = "res-789",
+                    },
+                    _ => new Dictionary<string, string>(),
+                };
+            });
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert — Create case receives both login-extracted variables
+        createVars.Should().NotBeNull();
+        createVars.Should().ContainKey("accessToken").WhoseValue.Should().Be("jwt-abc-123");
+        createVars.Should().ContainKey("userId").WhoseValue.Should().Be("user-42");
+        createVars.Should().NotContainKey("resourceId"); // not yet extracted
+
+        // Assert — Get case receives ALL accumulated variables (login + create)
+        getVars.Should().NotBeNull();
+        getVars.Should().ContainKey("accessToken").WhoseValue.Should().Be("jwt-abc-123");
+        getVars.Should().ContainKey("userId").WhoseValue.Should().Be("user-42");
+        getVars.Should().ContainKey("resourceId").WhoseValue.Should().Be("res-789");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_FailCase_WhenUnresolvedVariable()
     {
         // Arrange
