@@ -5,6 +5,10 @@ using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.Modules.Subscription.Commands;
 using ClassifiedAds.Modules.Subscription.Models;
 using ClassifiedAds.Modules.Subscription.Queries;
+using ClassifiedAds.Persistence.PostgreSQL;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,10 +20,14 @@ namespace ClassifiedAds.Modules.Subscription.Services;
 public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
 {
     private readonly Dispatcher _dispatcher;
+    private readonly ILogger<SubscriptionLimitGatewayService> _logger;
 
-    public SubscriptionLimitGatewayService(Dispatcher dispatcher)
+    public SubscriptionLimitGatewayService(
+        Dispatcher dispatcher,
+        ILogger<SubscriptionLimitGatewayService> logger)
     {
         _dispatcher = dispatcher;
+        _logger = logger;
     }
 
     public async Task<LimitCheckResultDTO> CheckLimitAsync(
@@ -162,6 +170,95 @@ public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
             cancellationToken);
     }
 
+    public async Task ReleaseUsageAsync(
+        IncrementUsageRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var subscription = await _dispatcher.DispatchAsync(
+                new GetCurrentSubscriptionByUserQuery { UserId = request.UserId },
+                cancellationToken);
+
+            if (subscription == null)
+            {
+                return; // No subscription, nothing to release
+            }
+
+            var (periodStart, periodEnd) = GetUsagePeriod(request.LimitType, subscription);
+
+            var usageList = await _dispatcher.DispatchAsync(
+                new GetUsageTrackingsQuery
+                {
+                    UserId = request.UserId,
+                    PeriodStart = periodStart,
+                    PeriodEnd = periodEnd,
+                },
+                cancellationToken);
+
+            if (usageList == null || usageList.Count == 0)
+            {
+                return; // No usage record, nothing to release
+            }
+
+            // Read current values and floor-decrement the target field
+            var current = usageList.First();
+            var release = (int)request.IncrementValue;
+
+            var model = new UpsertUsageTrackingModel
+            {
+                PeriodStart = periodStart,
+                PeriodEnd = periodEnd,
+                ReplaceValues = true, // Write exact values to avoid under-flooring
+                ProjectCount = current.ProjectCount,
+                EndpointCount = current.EndpointCount,
+                TestSuiteCount = current.TestSuiteCount,
+                TestCaseCount = current.TestCaseCount,
+                TestRunCount = current.TestRunCount,
+                LlmCallCount = current.LlmCallCount,
+                StorageUsedMB = current.StorageUsedMB,
+            };
+
+            switch (request.LimitType)
+            {
+                case LimitType.MaxProjects:
+                    model.ProjectCount = Math.Max(0, current.ProjectCount - release);
+                    break;
+                case LimitType.MaxEndpointsPerProject:
+                    model.EndpointCount = Math.Max(0, current.EndpointCount - release);
+                    break;
+                case LimitType.MaxTestCasesPerSuite:
+                    model.TestCaseCount = Math.Max(0, current.TestCaseCount - release);
+                    break;
+                case LimitType.MaxTestRunsPerMonth:
+                    model.TestRunCount = Math.Max(0, current.TestRunCount - release);
+                    break;
+                case LimitType.MaxLlmCallsPerMonth:
+                    model.LlmCallCount = Math.Max(0, current.LlmCallCount - release);
+                    break;
+                case LimitType.MaxStorageMB:
+                    model.StorageUsedMB = Math.Max(0, current.StorageUsedMB - request.IncrementValue);
+                    break;
+            }
+
+            await _dispatcher.DispatchAsync(
+                new UpsertUsageTrackingCommand
+                {
+                    UserId = request.UserId,
+                    Model = model,
+                },
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "ReleaseUsageAsync failed non-fatally. UserId={UserId} LimitType={LimitType}. Usage counter may be slightly high until next recalculation.",
+                request.UserId,
+                request.LimitType);
+        }
+    }
+
     private static (DateOnly periodStart, DateOnly periodEnd) GetUsagePeriod(
         LimitType limitType,
         SubscriptionModel subscription)
@@ -254,8 +351,68 @@ public class SubscriptionLimitGatewayService : ISubscriptionLimitGatewayService
             IncrementValue = incrementValue,
         };
 
-        await _dispatcher.DispatchAsync(command, cancellationToken);
+        try
+        {
+            await _dispatcher.DispatchAsync(command, cancellationToken);
+            return command.Result;
+        }
+        catch (Exception ex) when (IsTransientSubscriptionDbFailure(ex))
+        {
+            _logger.LogWarning(
+                ex,
+                "TryConsumeLimitAsync fallback to soft-check due to transient Subscription DB failure. UserId={UserId} LimitType={LimitType}",
+                userId,
+                limitType);
 
-        return command.Result;
+            try
+            {
+                return await CheckLimitAsync(
+                    userId,
+                    limitType,
+                    incrementValue,
+                    cancellationToken);
+            }
+            catch (Exception softCheckEx) when (IsTransientSubscriptionDbFailure(softCheckEx))
+            {
+                // Last-resort degradation path: allow the request to proceed
+                // when the subscription store is temporarily unavailable.
+                _logger.LogWarning(
+                    softCheckEx,
+                    "TryConsumeLimitAsync soft-check also failed transiently; allowing request without usage increment. UserId={UserId} LimitType={LimitType}",
+                    userId,
+                    limitType);
+
+                return new LimitCheckResultDTO
+                {
+                    IsAllowed = true,
+                    IsUnlimited = false,
+                    CurrentUsage = 0,
+                    LimitValue = null,
+                    DenialReason = null,
+                };
+            }
+        }
+    }
+
+    private static bool IsTransientSubscriptionDbFailure(Exception ex)
+    {
+        if (NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+        {
+            return true;
+        }
+
+        if (ex is RetryLimitExceededException)
+        {
+            return true;
+        }
+
+        if (ex is PostgresException pgEx
+            && pgEx.SqlState == "XX000"
+            && pgEx.MessageText?.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        return ex.InnerException != null && IsTransientSubscriptionDbFailure(ex.InnerException);
     }
 }

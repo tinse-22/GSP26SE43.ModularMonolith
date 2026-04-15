@@ -45,7 +45,8 @@ public class SpecificationsController : ControllerBase
     public async Task<ActionResult<List<SpecificationModel>>> Get(
         Guid projectId,
         [FromQuery] ParseStatus? parseStatus,
-        [FromQuery] SourceType? sourceType)
+        [FromQuery] SourceType? sourceType,
+        [FromQuery] bool includeDeleted = false)
     {
         _logger.LogInformation("Fetching specifications for project {ProjectId}.", projectId);
 
@@ -55,6 +56,7 @@ public class SpecificationsController : ControllerBase
             OwnerId = _currentUser.UserId,
             ParseStatus = parseStatus,
             SourceType = sourceType,
+            IncludeDeleted = includeDeleted,
         });
 
         return Ok(result);
@@ -252,5 +254,28 @@ public class SpecificationsController : ControllerBase
         });
 
         return NoContent();
+    }
+
+    [Authorize(Permissions.RestoreSpecification)]
+    [HttpPost("{specId}/restore")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SpecificationDetailModel>> Restore(Guid projectId, Guid specId)
+    {
+        await _dispatcher.DispatchAsync(new RestoreSpecificationCommand
+        {
+            ProjectId = projectId,
+            SpecId = specId,
+            CurrentUserId = _currentUser.UserId,
+        });
+
+        var result = await _dispatcher.DispatchAsync(new GetSpecificationQuery
+        {
+            SpecId = specId,
+            ProjectId = projectId,
+            OwnerId = _currentUser.UserId,
+        });
+
+        return Ok(result);
     }
 }

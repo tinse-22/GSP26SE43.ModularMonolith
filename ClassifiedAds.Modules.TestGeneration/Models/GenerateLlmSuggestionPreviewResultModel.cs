@@ -15,5 +15,5 @@ public class GenerateLlmSuggestionPreviewResultModel
     public int? LlmTokensUsed { get; set; }
     public bool FromCache { get; set; }
     public DateTimeOffset GeneratedAt { get; set; }
-    public List<LlmSuggestionModel> Suggestions { get; set; } = new();
+    public List<LlmSuggestionModel> Suggestions { get; set; } = new ();
 }

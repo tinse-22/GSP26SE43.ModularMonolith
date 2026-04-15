@@ -5,6 +5,7 @@ using ClassifiedAds.Modules.Configuration.Entities;
 using ClassifiedAds.Modules.Configuration.Excel;
 using ClassifiedAds.Modules.Configuration.Excel.ClosedXML;
 using ClassifiedAds.Modules.Configuration.Persistence;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -19,10 +20,11 @@ public static class ServiceCollectionExtensions
     {
         var settings = new ConfigurationModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<ConfigurationDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<ConfigurationDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -33,6 +35,10 @@ public static class ServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            // Supabase pooler safety: single-statement batches prevent connector state corruption.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped<IRepository<ConfigurationEntry, Guid>, Repository<ConfigurationEntry, Guid>>();
 

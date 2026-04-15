@@ -18,6 +18,7 @@ public class GetTestCasesByTestSuiteQuery : IQuery<List<TestCaseModel>>
     public Guid CurrentUserId { get; set; }
     public TestType? FilterByTestType { get; set; }
     public bool IncludeDisabled { get; set; }
+    public bool IncludeDeleted { get; set; }
 }
 
 public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByTestSuiteQuery, List<TestCaseModel>>
@@ -38,7 +39,9 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
         CancellationToken cancellationToken = default)
     {
         if (query.CurrentUserId == Guid.Empty)
+        {
             throw new ValidationException("CurrentUserId la bat buoc.");
+        }
 
         // Verify suite exists
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -46,16 +49,28 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
                 .Where(x => x.Id == query.TestSuiteId && x.CreatedById == query.CurrentUserId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{query.TestSuiteId}'.");
+        }
 
         var queryable = _testCaseRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);
 
+        // Filter deleted (default: exclude)
+        if (!query.IncludeDeleted)
+        {
+            queryable = queryable.Where(x => !x.IsDeleted);
+        }
+
         if (query.FilterByTestType.HasValue)
+        {
             queryable = queryable.Where(x => x.TestType == query.FilterByTestType.Value);
+        }
 
         if (!query.IncludeDisabled)
+        {
             queryable = queryable.Where(x => x.IsEnabled);
+        }
 
         queryable = queryable
             .Include(x => x.Request)

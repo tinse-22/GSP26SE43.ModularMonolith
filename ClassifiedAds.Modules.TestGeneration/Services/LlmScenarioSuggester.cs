@@ -80,7 +80,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"tokensUsed\": 0\n" +
         "}";
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -478,27 +478,56 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return response.Scenarios.Select(s =>
         {
-            var expectedStatuses = s.Expectation?.ExpectedStatus ?? new List<int>();
-            var primaryStatus = expectedStatuses.Count > 0 ? expectedStatuses[0] : 400;
+            var parsedType = ParseTestType(s.TestType);
+            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus);
 
             return new LlmSuggestedScenario
             {
                 EndpointId = s.EndpointId,
                 ScenarioName = s.ScenarioName,
                 Description = s.Description,
-                SuggestedTestType = ParseTestType(s.TestType),
+                SuggestedTestType = parsedType,
                 SuggestedBody = s.Request?.Body,
                 SuggestedPathParams = s.Request?.PathParams,
                 SuggestedQueryParams = s.Request?.QueryParams,
                 SuggestedHeaders = s.Request?.Headers,
-                ExpectedStatusCode = primaryStatus,
-                ExpectedStatusCodes = expectedStatuses.Count > 0 ? expectedStatuses : null,
+                ExpectedStatusCode = expectedStatuses.First(),
+                ExpectedStatusCodes = expectedStatuses,
                 ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
             };
         }).ToList();
+    }
+
+    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source)
+    {
+        var normalized = source?
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList() ?? new List<int>();
+
+        if (testType == TestType.HappyPath)
+        {
+            var happyStatuses = normalized.Where(code => code >= 200 && code <= 299).ToList();
+            if (happyStatuses.Count > 0)
+            {
+                return happyStatuses;
+            }
+
+            return new List<int> { 200 };
+        }
+
+        // Boundary/Negative should not accept success statuses.
+        var nonSuccessStatuses = normalized.Where(code => code < 200 || code >= 300).ToList();
+        if (nonSuccessStatuses.Count > 0)
+        {
+            return nonSuccessStatuses;
+        }
+
+        // For Boundary/Negative, accept common client-error variants by default.
+        return new List<int> { 400, 401, 403, 404, 409, 422 };
     }
 
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(

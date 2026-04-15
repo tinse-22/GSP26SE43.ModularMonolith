@@ -141,7 +141,8 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
 
         var authBootstrapEndpointIds = endpoints
             .Where(x => isAuthRelatedByEndpointId[x.Id])
-            .OrderBy(x => GetMethodWeight(x.HttpMethod))
+            .OrderBy(x => GetAuthBootstrapPriority(x))
+            .ThenBy(x => GetMethodWeight(x.HttpMethod))
             .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Id)
             .Select(x => x.Id)
@@ -364,12 +365,30 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
         }
 
         // Rule 4: secured endpoint should bootstrap auth token first.
+        // Use the LAST auth bootstrap endpoint (login/signin produces the token).
+        // With Rule 5 chain, this transitively ensures all prior auth steps
+        // (e.g., register) execute first.
         if (securedEndpointIds.Contains(endpoint.Id))
         {
-            var authDependencyId = authBootstrapEndpointIds.FirstOrDefault(x => x != endpoint.Id);
-            if (authDependencyId != Guid.Empty)
+            for (int i = authBootstrapEndpointIds.Count - 1; i >= 0; i--)
             {
-                dependencyIds.Add(authDependencyId);
+                if (authBootstrapEndpointIds[i] != endpoint.Id)
+                {
+                    dependencyIds.Add(authBootstrapEndpointIds[i]);
+                    break;
+                }
+            }
+        }
+
+        // Rule 5: auth bootstrap chain — each auth-related endpoint depends on the
+        // preceding one in bootstrap priority order (register → login → others).
+        // This ensures Register runs before Login (login requires an existing account).
+        for (int i = 0; i < authBootstrapEndpointIds.Count; i++)
+        {
+            if (authBootstrapEndpointIds[i] == endpoint.Id && i > 0)
+            {
+                dependencyIds.Add(authBootstrapEndpointIds[i - 1]);
+                break;
             }
         }
 
@@ -610,6 +629,23 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
                 }
             }
         }
+    }
+
+    private static int GetAuthBootstrapPriority(ApiEndpoint endpoint)
+    {
+        var signature = $"{endpoint.Path} {endpoint.OperationId}".ToLowerInvariant();
+
+        if (signature.Contains("register") || signature.Contains("signup") || signature.Contains("sign-up") || signature.Contains("sign_up"))
+        {
+            return 0;
+        }
+
+        if (signature.Contains("login") || signature.Contains("signin") || signature.Contains("sign-in") || signature.Contains("sign_in") || signature.Contains("authenticate"))
+        {
+            return 1;
+        }
+
+        return 2;
     }
 
     private static int GetMethodWeight(Entities.HttpMethod method)

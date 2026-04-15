@@ -17,7 +17,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasDefaultSchema("storage")
+                .HasDefaultSchema("classifiedads_storage")
                 .HasAnnotation("ProductVersion", "10.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -62,7 +62,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
                     b.HasIndex("CreatedDateTime");
 
-                    b.ToTable("ArchivedOutboxMessages", "storage");
+                    b.ToTable("ArchivedOutboxMessages", "classifiedads_storage");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.Storage.Entities.AuditLogEntry", b =>
@@ -97,7 +97,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
                     b.HasKey("Id");
 
-                    b.ToTable("AuditLogEntries", "storage");
+                    b.ToTable("AuditLogEntries", "classifiedads_storage");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.Storage.Entities.DeletedFileEntry", b =>
@@ -123,7 +123,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
                     b.HasKey("Id");
 
-                    b.ToTable("DeletedFileEntries", "storage");
+                    b.ToTable("DeletedFileEntries", "classifiedads_storage");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.Storage.Entities.FileEntry", b =>
@@ -206,7 +206,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
                     b.HasIndex("OwnerId");
 
-                    b.ToTable("FileEntries", "storage");
+                    b.ToTable("FileEntries", "classifiedads_storage");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.Storage.Entities.OutboxMessage", b =>
@@ -251,7 +251,7 @@ namespace ClassifiedAds.Migrator.Migrations.Storage
 
                     b.HasIndex("Published", "CreatedDateTime");
 
-                    b.ToTable("OutboxMessages", "storage");
+                    b.ToTable("OutboxMessages", "classifiedads_storage");
                 });
 #pragma warning restore 612, 618
         }

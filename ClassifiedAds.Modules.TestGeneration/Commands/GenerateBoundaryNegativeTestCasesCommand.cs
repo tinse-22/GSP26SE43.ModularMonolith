@@ -37,7 +37,7 @@ public class GenerateBoundaryNegativeTestCasesCommand : ICommand
 
 public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<GenerateBoundaryNegativeTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -88,11 +88,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
+
         if (command.SpecificationId == Guid.Empty)
+        {
             throw new ValidationException("SpecificationId là bắt buộc.");
+        }
+
         if (!command.IncludePathMutations && !command.IncludeBodyMutations && !command.IncludeLlmSuggestions)
+        {
             throw new ValidationException("Ít nhất một nguồn tạo test case phải được bật (PathMutations, BodyMutations, hoặc LlmSuggestions).");
+        }
 
         // 2) Load test suite with ownership check
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -100,22 +108,37 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Không thể generate test cases cho test suite đã archived.");
+        }
 
         // 3) Gate check: require approved API order
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(command.TestSuiteId, cancellationToken);
 
         // 4) Check if boundary/negative test cases already exist
-        var existingCases = await _testCaseRepository.ToListAsync(
+        var existingSuiteCases = await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == command.TestSuiteId
-                    && (x.TestType == TestType.Boundary || x.TestType == TestType.Negative)));
+                    && x.IsEnabled
+                    && !x.IsDeleted));
+
+        var existingCases = existingSuiteCases
+            .Where(x => x.TestType == TestType.Boundary || x.TestType == TestType.Negative)
+            .ToList();
+
+        var existingHappyPathCases = existingSuiteCases
+            .Where(x => x.TestType == TestType.HappyPath)
+            .ToList();
 
         if (existingCases.Count > 0 && !command.ForceRegenerate)
         {
@@ -190,6 +213,19 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             return;
         }
 
+        var existingHappyPathIds = existingHappyPathCases.Select(x => x.Id).ToList();
+        var existingHappyPathVariables = existingHappyPathIds.Count == 0
+            ? new List<TestCaseVariable>()
+            : await _variableRepository.ToListAsync(
+                _variableRepository.GetQueryableSet()
+                    .Where(x => existingHappyPathIds.Contains(x.TestCaseId)));
+
+        var enrichmentResult = GeneratedTestCaseDependencyEnricher.Enrich(
+            generationResult.TestCases,
+            approvedOrder,
+            existingHappyPathCases,
+            existingHappyPathVariables);
+
         // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;
 
@@ -248,6 +284,12 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
                     VersionAfterChange = 1,
                     CreatedDateTime = now,
                 }, ct);
+            }
+
+            foreach (var variable in enrichmentResult.ExistingProducerVariablesToPersist)
+            {
+                variable.CreatedDateTime = now;
+                await _variableRepository.AddAsync(variable, ct);
             }
 
             // Create suite version snapshot

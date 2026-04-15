@@ -90,65 +90,62 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
 
         if (price.Value <= 0)
         {
-            await _planRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
+            var now = DateOnly.FromDateTime(DateTime.UtcNow);
+            var subscription = existingSubscription ?? new UserSubscription
             {
-                var now = DateOnly.FromDateTime(DateTime.UtcNow);
-                var subscription = existingSubscription ?? new UserSubscription
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = command.UserId,
-                    AutoRenew = true,
-                };
+                Id = Guid.NewGuid(),
+                UserId = command.UserId,
+                AutoRenew = true,
+            };
 
-                var oldPlanId = existingSubscription?.PlanId;
-                subscription.PlanId = plan.Id;
-                subscription.BillingCycle = billingCycle;
-                subscription.Status = SubscriptionStatus.Active;
-                subscription.StartDate = now;
-                subscription.EndDate = null;
-                subscription.NextBillingDate = null;
-                subscription.CancelledAt = null;
-                subscription.TrialEndsAt = null;
+            var oldPlanId = existingSubscription?.PlanId;
+            subscription.PlanId = plan.Id;
+            subscription.BillingCycle = billingCycle;
+            subscription.Status = SubscriptionStatus.Active;
+            subscription.StartDate = now;
+            subscription.EndDate = null;
+            subscription.NextBillingDate = null;
+            subscription.CancelledAt = null;
+            subscription.TrialEndsAt = null;
 
-                // Snapshot plan details at activation time
-                subscription.SnapshotPriceMonthly = plan.PriceMonthly;
-                subscription.SnapshotPriceYearly = plan.PriceYearly;
-                subscription.SnapshotCurrency = plan.Currency;
-                subscription.SnapshotPlanName = plan.DisplayName ?? plan.Name;
+            // Snapshot plan details at activation time
+            subscription.SnapshotPriceMonthly = plan.PriceMonthly;
+            subscription.SnapshotPriceYearly = plan.PriceYearly;
+            subscription.SnapshotCurrency = plan.Currency;
+            subscription.SnapshotPlanName = plan.DisplayName ?? plan.Name;
 
-                if (existingSubscription == null)
-                {
-                    await _subscriptionRepository.AddAsync(subscription, ct);
-                }
-                else
-                {
-                    await _subscriptionRepository.UpdateAsync(subscription, ct);
-                }
+            if (existingSubscription == null)
+            {
+                await _subscriptionRepository.AddAsync(subscription, cancellationToken);
+            }
+            else
+            {
+                await _subscriptionRepository.UpdateAsync(subscription, cancellationToken);
+            }
 
-                var changeType = existingSubscription == null
-                    ? ChangeType.Created
-                    : oldPlanId == plan.Id ? ChangeType.Reactivated : ChangeType.Upgraded;
+            var changeType = existingSubscription == null
+                ? ChangeType.Created
+                : oldPlanId == plan.Id ? ChangeType.Reactivated : ChangeType.Upgraded;
 
-                var history = new SubscriptionHistory
-                {
-                    Id = Guid.NewGuid(),
-                    SubscriptionId = subscription.Id,
-                    OldPlanId = oldPlanId,
-                    NewPlanId = plan.Id,
-                    ChangeType = changeType,
-                    ChangeReason = changeType.ToString(),
-                    EffectiveDate = now,
-                };
-                await _historyRepository.AddAsync(history, ct);
+            var history = new SubscriptionHistory
+            {
+                Id = Guid.NewGuid(),
+                SubscriptionId = subscription.Id,
+                OldPlanId = oldPlanId,
+                NewPlanId = plan.Id,
+                ChangeType = changeType,
+                ChangeReason = changeType.ToString(),
+                EffectiveDate = now,
+            };
+            await _historyRepository.AddAsync(history, cancellationToken);
 
-                await _planRepository.UnitOfWork.SaveChangesAsync(ct);
+            await _planRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-                command.Result = new SubscriptionPurchaseResultModel
-                {
-                    RequiresPayment = false,
-                    Subscription = subscription.ToModel(plan),
-                };
-            }, cancellationToken: cancellationToken);
+            command.Result = new SubscriptionPurchaseResultModel
+            {
+                RequiresPayment = false,
+                Subscription = subscription.ToModel(plan),
+            };
 
             return;
         }
@@ -157,30 +154,27 @@ public class CreateSubscriptionPaymentCommandHandler : ICommandHandler<CreateSub
             ? PaymentPurpose.SubscriptionUpgrade
             : PaymentPurpose.SubscriptionPurchase;
 
-        await _planRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
+        var paymentIntent = new PaymentIntent
         {
-            var paymentIntent = new PaymentIntent
-            {
-                Id = Guid.NewGuid(),
-                UserId = command.UserId,
-                Amount = price.Value,
-                Currency = string.IsNullOrWhiteSpace(plan.Currency) ? "VND" : plan.Currency,
-                Purpose = purpose,
-                PlanId = plan.Id,
-                BillingCycle = billingCycle,
-                SubscriptionId = existingSubscription?.Id,
-                Status = PaymentIntentStatus.RequiresPayment,
-                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _payOsOptions.IntentExpirationMinutes)),
-            };
+            Id = Guid.NewGuid(),
+            UserId = command.UserId,
+            Amount = price.Value,
+            Currency = string.IsNullOrWhiteSpace(plan.Currency) ? "VND" : plan.Currency,
+            Purpose = purpose,
+            PlanId = plan.Id,
+            BillingCycle = billingCycle,
+            SubscriptionId = existingSubscription?.Id,
+            Status = PaymentIntentStatus.RequiresPayment,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _payOsOptions.IntentExpirationMinutes)),
+        };
 
-            await _paymentIntentRepository.AddAsync(paymentIntent, ct);
-            await _planRepository.UnitOfWork.SaveChangesAsync(ct);
+        await _paymentIntentRepository.AddAsync(paymentIntent, cancellationToken);
+        await _planRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-            command.Result = new SubscriptionPurchaseResultModel
-            {
-                RequiresPayment = true,
-                PaymentIntentId = paymentIntent.Id,
-            };
-        }, cancellationToken: cancellationToken);
+        command.Result = new SubscriptionPurchaseResultModel
+        {
+            RequiresPayment = true,
+            PaymentIntentId = paymentIntent.Id,
+        };
     }
 }

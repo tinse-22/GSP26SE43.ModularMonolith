@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
@@ -14,7 +14,7 @@ public class GenerateHappyPathResultModel
     public string LlmModel { get; set; }
     public int? TokensUsed { get; set; }
     public DateTimeOffset GeneratedAt { get; set; }
-    public List<GeneratedTestCaseSummary> TestCases { get; set; } = new();
+    public List<GeneratedTestCaseSummary> TestCases { get; set; } = new List<GeneratedTestCaseSummary>();
 }
 
 public class GeneratedTestCaseSummary

@@ -1,6 +1,7 @@
-using ClassifiedAds.Modules.TestGeneration.Entities;
+﻿using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.EntityFrameworkCore;
+using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -46,7 +47,17 @@ public class TestGenerationDbContext : DbContextUnitOfWork<TestGenerationDbConte
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SetOutboxActivityId();
-        return await base.SaveChangesAsync(cancellationToken);
+        try
+        {
+            return await base.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is ObjectDisposedException ode
+            && ode.Message.Contains("ManualResetEventSlim"))
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[TRANSIENT-NPGSQL] {GetType().Name}.SaveChangesAsync failed: {ode.Message}");
+            throw;
+        }
     }
 
     private void SetOutboxActivityId()

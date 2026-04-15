@@ -137,6 +137,7 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
         // Ensure path parameter consistency (validate + auto-create missing)
         command.Model.Parameters = _pathParamService.EnsurePathParameterConsistency(
             command.Model.Path, command.Model.Parameters ?? new());
+        NormalizeModelJsonFields(command.Model);
 
         bool isCreate = command.EndpointId == null || command.EndpointId == Guid.Empty;
 
@@ -281,6 +282,50 @@ public class AddUpdateEndpointCommandHandler : ICommandHandler<AddUpdateEndpoint
         foreach (var r in existingResponses)
         {
             _responseRepository.Delete(r);
+        }
+    }
+
+    private static void NormalizeModelJsonFields(CreateUpdateEndpointModel model)
+    {
+        if (model?.Parameters != null)
+        {
+            for (int i = 0; i < model.Parameters.Count; i++)
+            {
+                var parameter = model.Parameters[i];
+                var parameterLabel = !string.IsNullOrWhiteSpace(parameter?.Name)
+                    ? $"parameter '{parameter.Name.Trim()}'"
+                    : $"parameter #{i + 1}";
+
+                parameter.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    parameter.Schema,
+                    $"Schema của {parameterLabel}");
+                parameter.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    parameter.Examples,
+                    $"Examples của {parameterLabel}",
+                    allowPlainText: true);
+            }
+        }
+
+        if (model?.Responses != null)
+        {
+            for (int i = 0; i < model.Responses.Count; i++)
+            {
+                var response = model.Responses[i];
+                var responseLabel = response?.StatusCode > 0
+                    ? $"response {response.StatusCode}"
+                    : $"response #{i + 1}";
+
+                response.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Schema,
+                    $"Schema của {responseLabel}");
+                response.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Examples,
+                    $"Examples của {responseLabel}",
+                    allowPlainText: true);
+                response.Headers = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                    response.Headers,
+                    $"Headers của {responseLabel}");
+            }
         }
     }
 }

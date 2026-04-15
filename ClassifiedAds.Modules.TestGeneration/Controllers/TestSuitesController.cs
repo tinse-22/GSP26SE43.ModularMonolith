@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;

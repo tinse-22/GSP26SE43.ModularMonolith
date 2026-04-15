@@ -150,6 +150,16 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
             return;
         }
 
+        try
+        {
+            NormalizeParsedJsonFields(parseResult.Endpoints);
+        }
+        catch (ValidationException ex)
+        {
+            await SetFailedStatusAsync(spec, new List<string> { ex.Message }, cancellationToken);
+            return;
+        }
+
         // 8. Persist parsed data (replace-all in transaction)
         try
         {
@@ -297,6 +307,61 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
 
             // Rethrow to trigger outbox retry for transient infrastructure errors
             throw;
+        }
+    }
+
+    private static void NormalizeParsedJsonFields(IReadOnlyCollection<ParsedEndpoint> endpoints)
+    {
+        if (endpoints == null)
+        {
+            return;
+        }
+
+        var endpointNumber = 0;
+        foreach (var endpoint in endpoints)
+        {
+            endpointNumber++;
+
+            if (endpoint?.Parameters != null)
+            {
+                for (int i = 0; i < endpoint.Parameters.Count; i++)
+                {
+                    var parameter = endpoint.Parameters[i];
+                    var parameterLabel = !string.IsNullOrWhiteSpace(parameter?.Name)
+                        ? $"parameter '{parameter.Name.Trim()}' ở endpoint #{endpointNumber}"
+                        : $"parameter #{i + 1} ở endpoint #{endpointNumber}";
+
+                    parameter.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                        parameter.Schema,
+                        $"Schema của {parameterLabel}");
+                    parameter.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                        parameter.Examples,
+                        $"Examples của {parameterLabel}",
+                        allowPlainText: true);
+                }
+            }
+
+            if (endpoint?.Responses != null)
+            {
+                for (int i = 0; i < endpoint.Responses.Count; i++)
+                {
+                    var response = endpoint.Responses[i];
+                    var responseLabel = response?.StatusCode > 0
+                        ? $"response {response.StatusCode} ở endpoint #{endpointNumber}"
+                        : $"response #{i + 1} ở endpoint #{endpointNumber}";
+
+                    response.Schema = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                        response.Schema,
+                        $"Schema của {responseLabel}");
+                    response.Examples = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                        response.Examples,
+                        $"Examples của {responseLabel}",
+                        allowPlainText: true);
+                    response.Headers = Services.JsonbFieldNormalizer.NormalizeOptionalJson(
+                        response.Headers,
+                        $"Headers của {responseLabel}");
+                }
+            }
         }
     }
 

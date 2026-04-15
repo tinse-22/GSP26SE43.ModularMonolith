@@ -54,6 +54,16 @@ public class ApiSpecification : Entity<Guid>, IAggregateRoot
     /// </summary>
     public string ParseErrors { get; set; }
 
+    /// <summary>
+    /// Whether this specification has been soft-deleted.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
+    /// <summary>
+    /// When the specification was soft-deleted.
+    /// </summary>
+    public DateTimeOffset? DeletedAt { get; set; }
+
     // Navigation properties
     public Project Project { get; set; }
     public ICollection<ApiEndpoint> Endpoints { get; set; } = new List<ApiEndpoint>();

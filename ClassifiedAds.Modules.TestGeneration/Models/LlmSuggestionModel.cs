@@ -10,7 +10,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Models;
 /// </summary>
 public class LlmSuggestionModel
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
@@ -26,8 +26,8 @@ public class LlmSuggestionModel
     public string SuggestedDescription { get; set; }
     public string SuggestedRequest { get; set; }
     public string SuggestedExpectation { get; set; }
-    public List<SuggestionVariableModel> SuggestedVariables { get; set; } = new();
-    public List<string> SuggestedTags { get; set; } = new();
+    public List<SuggestionVariableModel> SuggestedVariables { get; set; } = new ();
+    public List<string> SuggestedTags { get; set; } = new ();
     public string Priority { get; set; }
     public string ReviewStatus { get; set; }
     public Guid? ReviewedById { get; set; }
@@ -37,6 +37,9 @@ public class LlmSuggestionModel
     public Guid? AppliedTestCaseId { get; set; }
     public string LlmModel { get; set; }
     public int? TokensUsed { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+    public Guid? DeletedById { get; set; }
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
     public string RowVersion { get; set; }
@@ -69,6 +72,9 @@ public class LlmSuggestionModel
             AppliedTestCaseId = entity.AppliedTestCaseId,
             LlmModel = entity.LlmModel,
             TokensUsed = entity.TokensUsed,
+            IsDeleted = entity.IsDeleted,
+            DeletedAt = entity.DeletedAt,
+            DeletedById = entity.DeletedById,
             CreatedDateTime = entity.CreatedDateTime,
             UpdatedDateTime = entity.UpdatedDateTime,
             RowVersion = entity.RowVersion != null ? Convert.ToBase64String(entity.RowVersion) : null,
@@ -77,18 +83,36 @@ public class LlmSuggestionModel
 
     private static List<string> DeserializeTags(string tagsJson)
     {
-        if (string.IsNullOrWhiteSpace(tagsJson)) return new List<string>();
-        try { return JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOpts) ?? new List<string>(); }
-        catch { return new List<string>(); }
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOpts) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private static List<SuggestionVariableModel> DeserializeVariables(string variablesJson)
     {
-        if (string.IsNullOrWhiteSpace(variablesJson)) return new List<SuggestionVariableModel>();
+        if (string.IsNullOrWhiteSpace(variablesJson))
+        {
+            return new List<SuggestionVariableModel>();
+        }
+
         try
         {
             var items = JsonSerializer.Deserialize<List<N8nTestCaseVariable>>(variablesJson, JsonOpts);
-            if (items == null) return new List<SuggestionVariableModel>();
+            if (items == null)
+            {
+                return new List<SuggestionVariableModel>();
+            }
+
             var result = new List<SuggestionVariableModel>();
             foreach (var v in items)
             {
@@ -102,9 +126,13 @@ public class LlmSuggestionModel
                     DefaultValue = v.DefaultValue,
                 });
             }
+
             return result;
         }
-        catch { return new List<SuggestionVariableModel>(); }
+        catch
+        {
+            return new List<SuggestionVariableModel>();
+        }
     }
 }
 

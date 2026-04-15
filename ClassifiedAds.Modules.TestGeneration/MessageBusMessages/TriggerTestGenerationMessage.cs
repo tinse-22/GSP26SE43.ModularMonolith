@@ -1,4 +1,4 @@
-using ClassifiedAds.Domain.Infrastructure.Messaging;
+﻿using ClassifiedAds.Domain.Infrastructure.Messaging;
 using System;
 
 namespace ClassifiedAds.Modules.TestGeneration.MessageBusMessages;

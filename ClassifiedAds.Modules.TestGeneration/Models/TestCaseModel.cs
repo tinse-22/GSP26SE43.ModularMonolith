@@ -19,12 +19,15 @@ public class TestCaseModel
     public string TestType { get; set; }
     public string Priority { get; set; }
     public bool IsEnabled { get; set; }
-    public List<Guid> DependsOnIds { get; set; } = new();
+    public List<Guid> DependsOnIds { get; set; } = new ();
     public int OrderIndex { get; set; }
     public int? CustomOrderIndex { get; set; }
     public bool IsOrderCustomized { get; set; }
-    public List<string> Tags { get; set; } = new();
+    public List<string> Tags { get; set; } = new ();
     public int Version { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+    public Guid? DeletedById { get; set; }
     public DateTimeOffset CreatedDateTime { get; set; }
     public DateTimeOffset? UpdatedDateTime { get; set; }
     public string RowVersion { get; set; }
@@ -32,7 +35,7 @@ public class TestCaseModel
     // Nested models
     public TestCaseRequestModel Request { get; set; }
     public TestCaseExpectationModel Expectation { get; set; }
-    public List<TestCaseVariableModel> Variables { get; set; } = new();
+    public List<TestCaseVariableModel> Variables { get; set; } = new ();
 
     public static TestCaseModel FromEntity(TestCase entity)
     {
@@ -52,6 +55,9 @@ public class TestCaseModel
             IsOrderCustomized = entity.IsOrderCustomized,
             Tags = DeserializeTags(entity.Tags),
             Version = entity.Version,
+            IsDeleted = entity.IsDeleted,
+            DeletedAt = entity.DeletedAt,
+            DeletedById = entity.DeletedById,
             CreatedDateTime = entity.CreatedDateTime,
             UpdatedDateTime = entity.UpdatedDateTime,
             RowVersion = entity.RowVersion != null ? Convert.ToBase64String(entity.RowVersion) : null,
@@ -63,17 +69,34 @@ public class TestCaseModel
 
     private static List<string> DeserializeTags(string tagsJson)
     {
-        if (string.IsNullOrWhiteSpace(tagsJson)) return new List<string>();
-        try { return JsonSerializer.Deserialize<List<string>>(tagsJson) ?? new List<string>(); }
-        catch { return new List<string>(); }
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tagsJson) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private static List<TestCaseVariableModel> MapVariables(ICollection<TestCaseVariable> variables)
     {
-        if (variables == null || variables.Count == 0) return new List<TestCaseVariableModel>();
+        if (variables == null || variables.Count == 0)
+        {
+            return new List<TestCaseVariableModel>();
+        }
+
         var result = new List<TestCaseVariableModel>();
         foreach (var v in variables)
+        {
             result.Add(TestCaseVariableModel.FromEntity(v));
+        }
+
         return result;
     }
 }

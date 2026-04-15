@@ -23,12 +23,12 @@ public class TestSuiteScopeModel
 
     public ApprovalStatus ApprovalStatus { get; set; }
 
-    public List<Guid> SelectedEndpointIds { get; set; } = new();
+    public List<Guid> SelectedEndpointIds { get; set; } = new ();
 
     /// <summary>
     /// User-provided business rules per endpoint (plain text).
     /// </summary>
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new ();
 
     /// <summary>
     /// Global business rules that apply to all endpoints in this suite (free text).

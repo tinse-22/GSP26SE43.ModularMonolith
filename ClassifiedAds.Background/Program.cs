@@ -37,6 +37,7 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 AspireResourceEnvironmentBridge.Apply();
 
@@ -48,6 +49,10 @@ if (!isRunningInContainer)
         trimValues: true,
         overwriteExistingVars: false));
 }
+
+StandaloneDevelopmentDatabaseBridge.Apply(isRunningInContainer, processConnectionStringBeforeDotEnv);
+
+AspireResourceEnvironmentBridge.Apply();
 
 var shouldWaitForDependency = bool.TryParse(
     Environment.GetEnvironmentVariable("CheckDependency__Enabled"),
@@ -71,6 +76,7 @@ Host.CreateDefaultBuilder(args)
     var configuration = hostContext.Configuration;
 
     StartupDiagnostics.LogDatabaseTarget("Background", configuration, isRunningInContainer);
+    StartupDiagnostics.LogCacheTarget("Background", configuration);
 
     // Bind and validate AppSettings (fail-fast on misconfiguration)
     var appSettings = new AppSettings();
@@ -150,6 +156,12 @@ Host.CreateDefaultBuilder(args)
     {
         configuration.GetSection("Modules:TestGeneration").Bind(opt);
         opt.ConnectionStrings ??= new ClassifiedAds.Modules.TestGeneration.ConfigurationOptions.ConnectionStringsOptions();
+        opt.ConnectionStrings.Default = sharedConnectionString;
+    })
+    .AddLlmAssistantModule(opt =>
+    {
+        configuration.GetSection("Modules:LlmAssistant").Bind(opt);
+        opt.ConnectionStrings ??= new ClassifiedAds.Modules.LlmAssistant.ConfigurationOptions.ConnectionStringsOptions();
         opt.ConnectionStrings.Default = sharedConnectionString;
     })
     .AddApplicationServices();

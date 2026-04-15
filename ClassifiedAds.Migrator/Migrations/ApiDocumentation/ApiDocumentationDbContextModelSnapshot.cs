@@ -18,7 +18,7 @@ namespace ClassifiedAds.Migrator.Migrations.ApiDocumentation
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("apidoc")
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.4")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -90,7 +90,13 @@ namespace ClassifiedAds.Migrator.Migrations.ApiDocumentation
                     b.Property<DateTimeOffset>("CreatedDateTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
                     b.Property<string>("Name")
@@ -135,6 +141,8 @@ namespace ClassifiedAds.Migrator.Migrations.ApiDocumentation
                     b.HasKey("Id");
 
                     b.HasIndex("IsActive");
+
+                    b.HasIndex("IsDeleted");
 
                     b.HasIndex("ProjectId");
 

@@ -146,6 +146,33 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             return true;
         }
+        else if (IsNpgsqlTransientDisposed(exception))
+        {
+            _logger.LogWarning(exception, "[TRANSIENT-NPGSQL] ManualResetEventSlim ObjectDisposedException [{Ticks}-{ThreadId}]",
+                DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
+
+            var problemDetails = new ProblemDetails
+            {
+                Detail = "Loi ket noi tam thoi voi co so du lieu. Vui long thu lai sau vai giay.",
+                Instance = null,
+                Status = (int)HttpStatusCode.ServiceUnavailable,
+                Title = "Service Unavailable",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.6.4"
+            };
+
+            problemDetails.Extensions.Add("message", problemDetails.Detail);
+            problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+            problemDetails.Extensions.Add("reasonCode", "TRANSIENT_NPGSQL_CONNECTION");
+
+            response.ContentType = "application/problem+json";
+            response.StatusCode = problemDetails.Status.Value;
+            response.Headers["Retry-After"] = "2";
+
+            var result = JsonSerializer.Serialize(problemDetails);
+            await response.WriteAsync(result, cancellationToken: cancellationToken);
+
+            return true;
+        }
         else
         {
             _logger.LogError(exception, "[{Ticks}-{ThreadId}]", DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
@@ -187,5 +214,20 @@ public class GlobalExceptionHandler : IExceptionHandler
             .GetValue(exception.InnerException) as string;
 
         return string.Equals(sqlState, PostgreSqlUniqueViolationSqlState, StringComparison.Ordinal);
+    }
+
+    private static bool IsNpgsqlTransientDisposed(Exception exception)
+    {
+        if (exception is ObjectDisposedException disposedException)
+        {
+            return string.Equals(
+                disposedException.ObjectName,
+                "System.Threading.ManualResetEventSlim",
+                StringComparison.Ordinal)
+                || disposedException.Message.Contains("ManualResetEventSlim");
+        }
+
+        return exception.InnerException is not null
+            && IsNpgsqlTransientDisposed(exception.InnerException);
     }
 }

@@ -5,6 +5,7 @@ using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models.Validators;
 using ClassifiedAds.Modules.TestExecution.Persistence;
 using ClassifiedAds.Modules.TestExecution.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
@@ -20,10 +21,11 @@ public static class TestExecutionServiceCollectionExtensions
     {
         var settings = new TestExecutionModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<TestExecutionDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<TestExecutionDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -34,6 +36,10 @@ public static class TestExecutionServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            // Supabase pooler safety: single-statement batches prevent connector state corruption.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }));
 
         services
@@ -52,6 +58,7 @@ public static class TestExecutionServiceCollectionExtensions
         services.AddScoped<ITestExecutionOrchestrator, TestExecutionOrchestrator>();
         services.AddScoped<IExecutionEnvironmentRuntimeResolver, ExecutionEnvironmentRuntimeResolver>();
         services.AddScoped<IVariableResolver, VariableResolver>();
+        services.AddScoped<IPreExecutionValidator, PreExecutionValidator>();
         services.AddScoped<IHttpTestExecutor, HttpTestExecutor>();
         services.AddScoped<IVariableExtractor, VariableExtractor>();
         services.AddScoped<IRuleBasedValidator, RuleBasedValidator>();

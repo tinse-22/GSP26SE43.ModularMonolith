@@ -158,12 +158,12 @@ public class DependencyAwareTopologicalSorter : IDependencyAwareTopologicalSorte
 
             // Select the best candidate using enhanced tie-breaking.
             var selectedId = available
-                .OrderBy(id => operationById[id].IsAuthRelated ? 0 : 1)        // Auth first
-                .ThenByDescending(id => fanOut[id])                              // Fan-out ranking (KAT)
-                .ThenBy(id => inDegree[id])                                      // Lower in-degree preferred
-                .ThenBy(id => GetMethodWeight(operationById[id].HttpMethod))     // POST before GET before DELETE
+                .OrderBy(id => operationById[id].IsAuthRelated ? 0 : 1) // Auth first
+                .ThenByDescending(id => fanOut[id]) // Fan-out ranking (KAT)
+                .ThenBy(id => inDegree[id]) // Lower in-degree preferred
+                .ThenBy(id => GetMethodWeight(operationById[id].HttpMethod)) // POST before GET before DELETE
                 .ThenBy(id => operationById[id].Path, StringComparer.OrdinalIgnoreCase) // Path alphabetical
-                .ThenBy(id => id)                                                // Guid for absolute determinism
+                .ThenBy(id => id) // Guid for absolute determinism
                 .First();
 
             available.Remove(selectedId);

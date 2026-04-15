@@ -5,10 +5,12 @@ using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.HostedServices;
 using ClassifiedAds.Modules.Identity.IdentityProviders.Auth0;
 using ClassifiedAds.Modules.Identity.IdentityProviders.Azure;
+using ClassifiedAds.Modules.Identity.IdentityProviders.Google;
 using ClassifiedAds.Modules.Identity.PasswordValidators;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -25,10 +27,11 @@ public static class ServiceCollectionExtensions
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
         settings.ConnectionStrings ??= new ConnectionStringsOptions();
+        var identityConnectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(identityConnectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -40,10 +43,9 @@ public static class ServiceCollectionExtensions
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
 
-            sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorCodesToAdd: null);
+            // Keep Identity writes as single-statement commands when running through Supabase poolers.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
@@ -85,6 +87,21 @@ public static class ServiceCollectionExtensions
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 
+        if (settings.Providers?.Auth0?.Enabled ?? false)
+        {
+            services.AddSingleton(new Auth0IdentityProvider(settings.Providers.Auth0));
+        }
+
+        if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
+        {
+            services.AddSingleton(new AzureActiveDirectoryB2CIdentityProvider(settings.Providers.AzureActiveDirectoryB2C));
+        }
+
+        if (settings.Providers?.Google?.Enabled ?? false)
+        {
+            services.AddSingleton(new GoogleIdentityProvider(settings.Providers.Google));
+        }
+
         // Add Rate Limiting policies
         services.AddRateLimiter(options =>
         {
@@ -101,10 +118,11 @@ public static class ServiceCollectionExtensions
         var settings = new IdentityModuleOptions();
         configureOptions(settings);
         settings.ConnectionStrings ??= new ConnectionStringsOptions();
+        var identityConnectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<IdentityDbContext>(options => options.UseNpgsql(identityConnectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -116,10 +134,9 @@ public static class ServiceCollectionExtensions
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
 
-            sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorCodesToAdd: null);
+            // Match the main Identity registration so worker/migrator paths behave the same way.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped(typeof(IUserRepository), typeof(UserRepository))
             .AddScoped(typeof(IRoleRepository), typeof(RoleRepository))
@@ -156,6 +173,11 @@ public static class ServiceCollectionExtensions
         if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
         {
             services.AddSingleton(new AzureActiveDirectoryB2CIdentityProvider(settings.Providers.AzureActiveDirectoryB2C));
+        }
+
+        if (settings.Providers?.Google?.Enabled ?? false)
+        {
+            services.AddSingleton(new GoogleIdentityProvider(settings.Providers.Google));
         }
 
         return services;

@@ -1,6 +1,7 @@
 using ClassifiedAds.Domain.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using System;
 using System.Data;
 using System.Threading;
@@ -12,11 +13,11 @@ namespace ClassifiedAds.Persistence.PostgreSQL;
 /// Base DbContext implementing IUnitOfWork with production-grade transaction management.
 /// Provides explicit transaction control with safety guards against misuse.
 /// </summary>
+/// <typeparam name="TDbContext">The concrete EF Core DbContext type.</typeparam>
 public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
     where TDbContext : DbContext
 {
     private IDbContextTransaction? _dbContextTransaction;
-    private readonly object _transactionLock = new();
 
     public DbContextUnitOfWork(DbContextOptions<TDbContext> options)
         : base(options)
@@ -91,18 +92,66 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
             throw new ArgumentNullException(nameof(operation));
         }
 
-        await BeginTransactionAsync(isolationLevel, cancellationToken);
+        // Wrap in execution strategy so UseSupabaseRetryPolicy works with explicit transactions.
+        var strategy = Database.CreateExecutionStrategy();
+        bool isRetry = false;
+        bool needsPoolClear = false;
+        await strategy.ExecuteAsync(async ct =>
+        {
+            if (isRetry)
+            {
+                // Clear tracked entities from the previous failed attempt so
+                // the retry starts with a clean change tracker — stale Added /
+                // Modified entries would otherwise conflict with fresh reads.
+                ChangeTracker.Clear();
 
-        try
-        {
-            await operation(cancellationToken);
-            await CommitTransactionAsync(cancellationToken);
-        }
-        catch
-        {
-            await RollbackTransactionAsync(cancellationToken);
-            throw;
-        }
+                // When the previous attempt failed with ManualResetEventSlim,
+                // clear the Npgsql connection pool AGAIN right before opening
+                // the new connection.  The first ClearPool (inside
+                // ShouldRetryOn) removed idle connectors, but during the
+                // exponential-backoff delay other concurrent requests may have
+                // returned their own broken connectors to the pool.  A second
+                // clear at this point evicts those late arrivals so the retry
+                // gets a genuinely fresh physical connection.
+                if (needsPoolClear)
+                {
+                    ClearConnectionPool();
+                    needsPoolClear = false;
+                }
+            }
+
+            isRetry = true;
+
+            await BeginTransactionAsync(isolationLevel, ct);
+            try
+            {
+                await operation(ct);
+                await CommitTransactionAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                // Swallow rollback exceptions so the *original* exception (e.g. the
+                // ManualResetEventSlim ObjectDisposedException) propagates intact to
+                // the execution strategy.  A broken connection is auto-rolled back
+                // server-side when the connection drops, so losing the ROLLBACK ACK
+                // is safe.
+                try
+                {
+                    await RollbackTransactionAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Intentionally swallowed — see comment above.
+                }
+
+                if (NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+                {
+                    needsPoolClear = true;
+                }
+
+                throw;
+            }
+        }, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -116,18 +165,85 @@ public class DbContextUnitOfWork<TDbContext> : DbContext, IUnitOfWork
             throw new ArgumentNullException(nameof(operation));
         }
 
-        await BeginTransactionAsync(isolationLevel, cancellationToken);
+        // Wrap in execution strategy so UseSupabaseRetryPolicy works with explicit transactions.
+        var strategy = Database.CreateExecutionStrategy();
+        bool isRetry = false;
+        bool needsPoolClear = false;
+        return await strategy.ExecuteAsync(async ct =>
+        {
+            if (isRetry)
+            {
+                ChangeTracker.Clear();
 
+                if (needsPoolClear)
+                {
+                    ClearConnectionPool();
+                    needsPoolClear = false;
+                }
+            }
+
+            isRetry = true;
+
+            await BeginTransactionAsync(isolationLevel, ct);
+            try
+            {
+                var result = await operation(ct);
+                await CommitTransactionAsync(ct);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                // Swallow rollback exceptions so the *original* exception (e.g. the
+                // ManualResetEventSlim ObjectDisposedException) propagates intact to
+                // the execution strategy.  A broken connection is auto-rolled back
+                // server-side when the connection drops, so losing the ROLLBACK ACK
+                // is safe.
+                try
+                {
+                    await RollbackTransactionAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Intentionally swallowed — see comment above.
+                }
+
+                if (NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
+                {
+                    needsPoolClear = true;
+                }
+
+                throw;
+            }
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Best-effort clear of only the current context's Npgsql connection
+    /// pool. Used before transaction retries to evict broken connectors
+    /// that were returned to the pool during the backoff delay without
+    /// disrupting healthy pools owned by other modules.
+    /// </summary>
+    private void ClearConnectionPool()
+    {
         try
         {
-            var result = await operation(cancellationToken);
-            await CommitTransactionAsync(cancellationToken);
-            return result;
+            if (Database.GetDbConnection() is NpgsqlConnection connection)
+            {
+                try
+                {
+                    connection.Close();
+                }
+                catch
+                {
+                    // Ignore close failures for already-broken connectors.
+                }
+
+                NpgsqlConnection.ClearPool(connection);
+            }
         }
         catch
         {
-            await RollbackTransactionAsync(cancellationToken);
-            throw;
+            // Best-effort — don't let cleanup failure block the retry.
         }
     }
 

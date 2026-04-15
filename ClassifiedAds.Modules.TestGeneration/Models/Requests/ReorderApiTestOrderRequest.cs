@@ -10,7 +10,7 @@ public class ReorderApiTestOrderRequest
     public string RowVersion { get; set; }
 
     [Required]
-    public List<Guid> OrderedEndpointIds { get; set; } = new();
+    public List<Guid> OrderedEndpointIds { get; set; } = new ();
 
     [MaxLength(4000)]
     public string ReviewNotes { get; set; }

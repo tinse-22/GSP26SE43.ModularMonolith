@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -208,6 +208,7 @@ public class TestOrderController : ControllerBase
     /// <summary>
     /// Get the status of a test generation job.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GenerateTestCases)]
     [HttpGet("generation-status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -231,6 +232,7 @@ public class TestOrderController : ControllerBase
     /// Callback endpoint called by n8n after AI test-case generation.
     /// Authentication is via the x-callback-api-key header (shared secret) instead of JWT.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [AllowAnonymous]
     [HttpPost("test-cases/from-ai")]
     [Consumes("application/json")]
@@ -271,7 +273,7 @@ public class TestOrderController : ControllerBase
 
 public class N8nTestCasesCallbackRequest
 {
-    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new();
+    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new List<AiGeneratedTestCaseDto>();
 }
 
 public class GenerateTestsAcceptedResponse

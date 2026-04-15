@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Algorithms;
@@ -21,12 +21,14 @@ public interface IObservationConfirmationPromptBuilder
     /// <summary>
     /// Build a complete Observation-Confirmation prompt for a single endpoint.
     /// </summary>
+    /// <returns></returns>
     ObservationConfirmationPrompt BuildForEndpoint(EndpointPromptContext context);
 
     /// <summary>
     /// Build prompts for multiple endpoints in dependency order.
     /// Includes cross-endpoint context (e.g., "POST /users creates the user consumed by GET /users/{id}").
     /// </summary>
+    /// <returns></returns>
     IReadOnlyList<ObservationConfirmationPrompt> BuildForSequence(
         IReadOnlyList<EndpointPromptContext> orderedEndpoints);
 }

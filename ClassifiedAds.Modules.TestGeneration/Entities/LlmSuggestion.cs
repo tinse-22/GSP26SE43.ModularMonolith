@@ -69,6 +69,21 @@ public class LlmSuggestion : Entity<Guid>, IAggregateRoot
 
     public int? TokensUsed { get; set; }
 
+    /// <summary>
+    /// Whether this suggestion has been soft-deleted.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
+    /// <summary>
+    /// When this suggestion was soft-deleted.
+    /// </summary>
+    public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>
+    /// User who soft-deleted this suggestion.
+    /// </summary>
+    public Guid? DeletedById { get; set; }
+
     // Navigation
     public TestSuite TestSuite { get; set; }
 }

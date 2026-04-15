@@ -136,6 +136,50 @@ public class GetResolvedUrlQueryHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_UseSingleJsonStringExampleValue()
+    {
+        // Arrange
+        var ownerId = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        SetupRepositories(
+            projects: new List<Project>
+            {
+                new() { Id = projectId, OwnerId = ownerId, Name = "P", Status = ProjectStatus.Active },
+            },
+            specs: new List<ApiSpecification>
+            {
+                new() { Id = specId, ProjectId = projectId, Name = "Spec", ParseStatus = ParseStatus.Success, SourceType = SourceType.Manual },
+            },
+            endpoints: new List<ApiEndpoint>
+            {
+                new() { Id = endpointId, ApiSpecId = specId, HttpMethod = ClassifiedAds.Modules.ApiDocumentation.Entities.HttpMethod.GET, Path = "/api/orders/{orderId}" },
+            },
+            parameters: new List<EndpointParameter>
+            {
+                new() { Id = Guid.NewGuid(), EndpointId = endpointId, Name = "orderId", Location = ParameterLocation.Path, Examples = "\"ord-777\"", DataType = "string", IsRequired = true },
+            });
+
+        var query = new GetResolvedUrlQuery
+        {
+            ProjectId = projectId,
+            SpecId = specId,
+            EndpointId = endpointId,
+            OwnerId = ownerId,
+        };
+
+        // Act
+        var result = await _handler.HandleAsync(query);
+
+        // Assert
+        result.IsFullyResolved.Should().BeTrue();
+        result.ResolvedUrl.Should().Be("/api/orders/ord-777");
+        result.ResolvedParameters["orderId"].Should().Be("ord-777");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ThrowNotFound_WhenProjectOwnerMismatch()
     {
         // Arrange
@@ -277,6 +321,8 @@ public class GetPathParamMutationsQueryHandlerTests
             .OnlyContain(m => !string.IsNullOrWhiteSpace(m.ResolvedUrl));
         userIdGroup.Mutations.Should().Contain(m =>
             m.MutationType == "boundary_max_int32" &&
+            m.ExpectedStatusCodes != null &&
+            m.ExpectedStatusCodes.SequenceEqual(new[] { 200, 404 }) &&
             m.ResolvedUrl == $"/api/users/2147483647/orders/{defaultOrderId}");
 
         var orderIdGroup = result.ParameterMutations.Single(g => g.ParameterName == "orderId");

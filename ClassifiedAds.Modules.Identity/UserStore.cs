@@ -67,7 +67,8 @@ public class UserStore : IUserStore<User>,
 
     public Task<User> FindByEmailAsync(string normalizedEmail, CancellationToken cancellationToken)
     {
-        return _userRepository.Get(new UserQueryOptions { IncludeTokens = true }).FirstOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken: cancellationToken);
+        return _userRepository.Get(new UserQueryOptions())
+            .FirstOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken: cancellationToken);
     }
 
     public Task<User> FindByIdAsync(string userId, CancellationToken cancellationToken)
@@ -77,7 +78,8 @@ public class UserStore : IUserStore<User>,
 
     public Task<User> FindByNameAsync(string normalizedUserName, CancellationToken cancellationToken)
     {
-        return _userRepository.Get(new UserQueryOptions { IncludeTokens = true }).FirstOrDefaultAsync(x => x.NormalizedUserName == normalizedUserName, cancellationToken: cancellationToken);
+        return _userRepository.Get(new UserQueryOptions())
+            .FirstOrDefaultAsync(x => x.NormalizedUserName == normalizedUserName, cancellationToken: cancellationToken);
     }
 
     public Task<int> GetAccessFailedCountAsync(User user, CancellationToken cancellationToken)
@@ -265,6 +267,7 @@ public class UserStore : IUserStore<User>,
 
     public async Task SetTokenAsync(User user, string loginProvider, string name, string value, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         EnsureCollectionsInitialized(user);
 
         var tokenEntity = user.Tokens.SingleOrDefault(
@@ -283,12 +286,12 @@ public class UserStore : IUserStore<User>,
                 TokenValue = value,
             });
         }
-
-        await PersistChangesAsync();
     }
 
     public async Task RemoveTokenAsync(User user, string loginProvider, string name, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (user.Tokens == null || user.Tokens.Count == 0)
         {
             return;
@@ -299,7 +302,6 @@ public class UserStore : IUserStore<User>,
         if (tokenEntity != null)
         {
             user.Tokens.Remove(tokenEntity);
-            await PersistChangesAsync();
         }
     }
 

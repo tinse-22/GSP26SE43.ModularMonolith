@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,6 +24,7 @@ public interface IN8nIntegrationService
     /// Triggers a named n8n webhook with the given payload (fire-and-forget, no response body expected).
     /// Throws ValidationException on failure.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     Task TriggerWebhookAsync<TPayload>(
         string webhookName,
         TPayload payload,
@@ -33,6 +34,7 @@ public interface IN8nIntegrationService
     /// Triggers a named n8n webhook and returns a result object instead of throwing.
     /// Use this for background processing where you want to handle errors gracefully.
     /// </summary>
+    /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     Task<WebhookTriggerResult> TriggerWebhookWithResultAsync<TPayload>(
         string webhookName,
         TPayload payload,
@@ -41,5 +43,6 @@ public interface IN8nIntegrationService
     /// <summary>
     /// Resolves the full webhook URL for a given webhook name.
     /// </summary>
+    /// <returns></returns>
     string GetResolvedWebhookUrl(string webhookName);
 }

@@ -15,12 +15,12 @@ public class ReorderTestCasesCommand : ICommand
 {
     public Guid TestSuiteId { get; set; }
     public Guid CurrentUserId { get; set; }
-    public List<Guid> TestCaseIds { get; set; } = new();
+    public List<Guid> TestCaseIds { get; set; } = new ();
 }
 
 public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -44,10 +44,14 @@ public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCo
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
 
         if (command.TestCaseIds == null || command.TestCaseIds.Count == 0)
+        {
             throw new ValidationException("Danh sách TestCaseIds là bắt buộc.");
+        }
 
         // 2) Load and verify suite
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -55,10 +59,14 @@ public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCo
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         // 3) Load all test cases for suite
         var testCases = await _testCaseRepository.ToListAsync(
@@ -70,8 +78,10 @@ public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCo
         // 4) Validate all IDs belong to suite
         var invalidIds = command.TestCaseIds.Where(id => !testCaseMap.ContainsKey(id)).ToList();
         if (invalidIds.Count > 0)
+        {
             throw new ValidationException(
                 $"Các test case không thuộc test suite này: {string.Join(", ", invalidIds)}.");
+        }
 
         var now = DateTimeOffset.UtcNow;
 

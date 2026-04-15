@@ -29,6 +29,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
     private readonly IVariableExtractor _variableExtractor;
     private readonly IRuleBasedValidator _validator;
     private readonly ITestResultCollector _resultCollector;
+    private readonly IPreExecutionValidator _preValidator;
     private readonly ILogger<TestExecutionOrchestrator> _logger;
 
     public TestExecutionOrchestrator(
@@ -43,6 +44,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         IVariableExtractor variableExtractor,
         IRuleBasedValidator validator,
         ITestResultCollector resultCollector,
+        IPreExecutionValidator preValidator,
         ILogger<TestExecutionOrchestrator> logger)
     {
         _runRepository = runRepository;
@@ -56,6 +58,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         _variableExtractor = variableExtractor;
         _validator = validator;
         _resultCollector = resultCollector;
+        _preValidator = preValidator;
         _logger = logger;
     }
 
@@ -162,6 +165,30 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             };
         }
 
+        // Pre-execution validation: catch ALL issues before HTTP call
+        endpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
+        var preValidation = _preValidator.Validate(testCase, resolvedEnv, variableBag, endpointMetadata);
+
+        if (preValidation.HasErrors)
+        {
+            _logger.LogWarning(
+                "Pre-execution validation failed for TestCase={TestCaseName} ({TestCaseId}). Errors={ErrorCount}",
+                testCase.Name, testCase.TestCaseId, preValidation.Errors.Count);
+
+            return new TestCaseExecutionResult
+            {
+                TestCaseId = testCase.TestCaseId,
+                EndpointId = testCase.EndpointId,
+                Name = testCase.Name,
+                TestType = testCase.TestType,
+                OrderIndex = testCase.OrderIndex,
+                Status = "Failed",
+                DependencyIds = testCase.DependencyIds,
+                FailureReasons = preValidation.ToFailureReasons(),
+                Warnings = preValidation.Warnings,
+            };
+        }
+
         // Resolve request
         ResolvedTestCaseRequest resolvedRequest;
         try
@@ -200,7 +227,6 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         // Validate response
-        endpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
         var validation = _validator.Validate(response, testCase, endpointMetadata, strictValidation);
 
         var caseStatus = validation.IsPassed ? "Passed" : "Failed";
@@ -210,16 +236,23 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             TestCaseId = testCase.TestCaseId,
             EndpointId = testCase.EndpointId,
             Name = testCase.Name,
+            TestType = testCase.TestType,
             OrderIndex = testCase.OrderIndex,
             Status = caseStatus,
             HttpStatusCode = response.StatusCode,
             DurationMs = response.LatencyMs,
             ResolvedUrl = resolvedRequest.ResolvedUrl,
+            HttpMethod = resolvedRequest.HttpMethod,
+            BodyType = resolvedRequest.BodyType,
+            RequestBody = resolvedRequest.Body,
+            QueryParams = resolvedRequest.QueryParams,
+            TimeoutMs = resolvedRequest.TimeoutMs,
+            ExpectedStatus = testCase.Expectation?.ExpectedStatus,
             RequestHeaders = resolvedRequest.Headers,
             ResponseHeaders = response.Headers,
             ResponseBody = response.Body,
             FailureReasons = validation.Failures?.ToList() ?? new List<ValidationFailureModel>(),
-            Warnings = validation.Warnings?.ToList() ?? new List<ValidationWarningModel>(),
+            Warnings = MergeWarnings(preValidation.Warnings, validation.Warnings),
             ChecksPerformed = validation.ChecksPerformed,
             ChecksSkipped = validation.ChecksSkipped,
             ExtractedVariables = extracted.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
@@ -232,5 +265,24 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             JsonPathChecksPassed = validation.JsonPathChecksPassed,
             ResponseTimePassed = validation.ResponseTimePassed,
         };
+    }
+
+    private static List<ValidationWarningModel> MergeWarnings(
+        List<ValidationWarningModel> preValidationWarnings,
+        IReadOnlyList<ValidationWarningModel> validationWarnings)
+    {
+        var merged = new List<ValidationWarningModel>();
+
+        if (preValidationWarnings?.Count > 0)
+        {
+            merged.AddRange(preValidationWarnings);
+        }
+
+        if (validationWarnings?.Count > 0)
+        {
+            merged.AddRange(validationWarnings);
+        }
+
+        return merged;
     }
 }

@@ -123,6 +123,78 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_ReplaceMultiplePlaceholders_InSameBody()
+    {
+        // Arrange — realistic scenario: body references token + userId from prior login
+        var testCase = CreateTestCase(
+            body: "{\"createdBy\": \"{{userId}}\", \"token\": \"{{accessToken}}\", \"note\": \"Created by {{userId}}\"}");
+        var variables = new Dictionary<string, string>
+        {
+            ["userId"] = "user-42",
+            ["accessToken"] = "jwt-abc-123",
+        };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Be("{\"createdBy\": \"user-42\", \"token\": \"jwt-abc-123\", \"note\": \"Created by user-42\"}");
+    }
+
+    [Fact]
+    public void Resolve_Should_SubstituteVarsInUrlAndHeadersAndBody_Simultaneously()
+    {
+        // Arrange — full auth→CRUD test: token in header, userId in path, resourceId in body
+        var headers = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer {{accessToken}}",
+            ["X-User-Id"] = "{{userId}}",
+        });
+        var pathParams = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["resourceId"] = "{{resourceId}}",
+        });
+        var testCase = CreateTestCase(
+            url: "/api/resources/{resourceId}",
+            headers: headers,
+            pathParams: pathParams,
+            body: "{\"updatedBy\": \"{{userId}}\"}");
+        var variables = new Dictionary<string, string>
+        {
+            ["accessToken"] = "jwt-token",
+            ["userId"] = "user-1",
+            ["resourceId"] = "res-99",
+        };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/resources/res-99");
+        result.Headers["Authorization"].Should().Be("Bearer jwt-token");
+        result.Headers["X-User-Id"].Should().Be("user-1");
+        result.Body.Should().Be("{\"updatedBy\": \"user-1\"}");
+    }
+
+    [Fact]
+    public void Resolve_Should_ThrowUnresolvedException_WhenPathRouteTokenRemains()
+    {
+        // Arrange
+        var testCase = CreateTestCase(url: "/api/items/{id}");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var act = () => _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        act.Should().Throw<UnresolvedVariableException>()
+            .WithMessage("*Path parameter 'id'*");
+    }
+
+    [Fact]
     public void Resolve_Should_ClampTimeout_BelowMinimum()
     {
         // Arrange

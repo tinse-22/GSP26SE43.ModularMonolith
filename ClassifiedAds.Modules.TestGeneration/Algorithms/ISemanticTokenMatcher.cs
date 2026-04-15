@@ -1,4 +1,4 @@
-using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+﻿using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using System.Collections.Generic;
 
 namespace ClassifiedAds.Modules.TestGeneration.Algorithms;
@@ -22,6 +22,7 @@ public interface ISemanticTokenMatcher
     /// <param name="sourceTokens">Tokens from consumer side (e.g., parameter names).</param>
     /// <param name="targetTokens">Tokens from producer side (e.g., resource path segments).</param>
     /// <param name="minScore">Minimum similarity score to include (default: 0.65).</param>
+    /// <returns></returns>
     IReadOnlyCollection<TokenMatchResult> FindMatches(
         IReadOnlyCollection<string> sourceTokens,
         IReadOnlyCollection<string> targetTokens,
@@ -30,10 +31,12 @@ public interface ISemanticTokenMatcher
     /// <summary>
     /// Check if two individual tokens are semantically related.
     /// </summary>
+    /// <returns></returns>
     TokenMatchResult Match(string sourceToken, string targetToken);
 
     /// <summary>
     /// Normalize a token for comparison (lowercase, trim, singularize).
     /// </summary>
+    /// <returns></returns>
     string NormalizeToken(string token);
 }

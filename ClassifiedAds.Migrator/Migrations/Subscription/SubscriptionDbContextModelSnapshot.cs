@@ -18,7 +18,7 @@ namespace ClassifiedAds.Migrator.Migrations.Subscription
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("subscription")
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.4")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -525,18 +525,16 @@ namespace ClassifiedAds.Migrator.Migrations.Subscription
                         {
                             Id = new Guid("20000000-0000-0000-0000-000000000025"),
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsUnlimited = false,
+                            IsUnlimited = true,
                             LimitType = 4,
-                            LimitValue = 10,
                             PlanId = new Guid("10000000-0000-0000-0000-000000000003")
                         },
                         new
                         {
                             Id = new Guid("20000000-0000-0000-0000-000000000026"),
                             CreatedDateTime = new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsUnlimited = false,
+                            IsUnlimited = true,
                             LimitType = 5,
-                            LimitValue = 365,
                             PlanId = new Guid("10000000-0000-0000-0000-000000000003")
                         },
                         new

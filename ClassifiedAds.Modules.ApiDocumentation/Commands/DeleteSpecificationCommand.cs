@@ -60,7 +60,7 @@ public class DeleteSpecificationCommandHandler : ICommandHandler<DeleteSpecifica
             throw new NotFoundException($"Không tìm thấy specification với mã '{command.SpecId}'.");
         }
 
-        // 3. Delete within transaction (deactivate if active, then delete)
+        // 3. Soft-delete within transaction
         await _specRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             if (project.ActiveSpecId == command.SpecId)
@@ -69,7 +69,10 @@ public class DeleteSpecificationCommandHandler : ICommandHandler<DeleteSpecifica
                 await _projectRepository.UpdateAsync(project, ct);
             }
 
-            _specRepository.Delete(spec);
+            spec.IsDeleted = true;
+            spec.DeletedAt = DateTimeOffset.UtcNow;
+            spec.IsActive = false;
+            await _specRepository.UpdateAsync(spec, ct);
             await _specRepository.UnitOfWork.SaveChangesAsync(ct);
         }, cancellationToken: cancellationToken);
 

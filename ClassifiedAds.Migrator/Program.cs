@@ -1,4 +1,5 @@
 using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Infrastructure.Configuration;
 using ClassifiedAds.Infrastructure.HealthChecks;
 using ClassifiedAds.Infrastructure.Logging;
 using ClassifiedAds.Modules.Identity.Persistence;
@@ -33,6 +34,7 @@ var isRunningInContainer = string.Equals(
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
     "true",
     StringComparison.OrdinalIgnoreCase);
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 
 if (!isRunningInContainer)
 {
@@ -42,6 +44,8 @@ if (!isRunningInContainer)
         trimValues: true,
         overwriteExistingVars: false));
 }
+
+StandaloneDevelopmentDatabaseBridge.Apply(isRunningInContainer, processConnectionStringBeforeDotEnv);
 
 var verifyMigrationsOnly = args.Any(x => string.Equals(x, "--verify-migrations", StringComparison.OrdinalIgnoreCase));
 

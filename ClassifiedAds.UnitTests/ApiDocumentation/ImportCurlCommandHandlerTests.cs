@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -143,6 +144,38 @@ public class ImportCurlCommandHandlerTests
                 p.Name == "body" &&
                 p.Location == ParameterLocation.Body),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_PostCurlWithPlainTextBody_Should_SerializeBodyForJsonColumn()
+    {
+        // Arrange
+        SetupValidProject();
+        var createdParameters = new List<EndpointParameter>();
+
+        _parameterRepoMock.Setup(x => x.AddAsync(It.IsAny<EndpointParameter>(), It.IsAny<CancellationToken>()))
+            .Callback<EndpointParameter, CancellationToken>((parameter, _) => createdParameters.Add(parameter))
+            .Returns(Task.CompletedTask);
+
+        var command = new ImportCurlCommand
+        {
+            ProjectId = _projectId,
+            CurrentUserId = _userId,
+            Model = new ImportCurlModel
+            {
+                Name = "Form Post",
+                CurlCommand = "curl -X POST -H 'Content-Type: text/plain' -d 'name=test&role=admin' https://api.example.com/users",
+            },
+        };
+
+        // Act
+        await _handler.HandleAsync(command);
+
+        // Assert
+        var bodyParameter = createdParameters.Should().ContainSingle(x =>
+            x.Name == "body" &&
+            x.Location == ParameterLocation.Body).Subject;
+        JsonSerializer.Deserialize<string>(bodyParameter.Schema).Should().Be("name=test&role=admin");
     }
 
     [Fact]

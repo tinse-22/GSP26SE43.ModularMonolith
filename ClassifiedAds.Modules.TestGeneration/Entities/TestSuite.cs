@@ -1,4 +1,4 @@
-using ClassifiedAds.Domain.Entities;
+﻿using ClassifiedAds.Domain.Entities;
 using System;
 using System.Collections.Generic;
 
@@ -22,14 +22,14 @@ public class TestSuite : Entity<Guid>, IAggregateRoot
     /// <summary>
     /// Snapshot of selected endpoint IDs for this test suite scope (stored as jsonb).
     /// </summary>
-    public List<Guid> SelectedEndpointIds { get; set; } = new();
+    public List<Guid> SelectedEndpointIds { get; set; } = new List<Guid>();
 
     /// <summary>
     /// User-provided business rules/context per endpoint (stored as jsonb).
     /// Key = EndpointId, Value = free-text business rule description.
     /// Injected into LLM prompts as supplementary context alongside OAS spec.
     /// </summary>
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new Dictionary<Guid, string>();
 
     /// <summary>
     /// User-provided global business rules that apply to the entire test suite scope (free text).

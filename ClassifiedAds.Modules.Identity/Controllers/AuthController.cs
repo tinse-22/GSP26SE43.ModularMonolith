@@ -4,13 +4,16 @@ using ClassifiedAds.Contracts.Notification.DTOs;
 using ClassifiedAds.Contracts.Notification.Services;
 using ClassifiedAds.Infrastructure.Storages;
 using ClassifiedAds.Modules.Identity.ConfigurationOptions;
+using ClassifiedAds.Persistence.PostgreSQL;
 using ClassifiedAds.Modules.Identity.Entities;
 using ClassifiedAds.Modules.Identity.Helpers;
+using ClassifiedAds.Modules.Identity.IdentityProviders.Google;
 using ClassifiedAds.Modules.Identity.Models;
 using ClassifiedAds.Modules.Identity.Persistence;
 using ClassifiedAds.Modules.Identity.Queries.Roles;
 using ClassifiedAds.Modules.Identity.RateLimiterPolicies;
 using ClassifiedAds.Modules.Identity.Services;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -18,6 +21,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -51,7 +55,9 @@ public class AuthController : ControllerBase
     private readonly Dispatcher _dispatcher;
     private readonly IFileStorageManager _fileStorageManager;
     private readonly ITokenBlacklistService _tokenBlacklistService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AuthController> _logger;
+    private readonly GoogleIdentityProvider _googleIdentityProvider;
 
     public AuthController(
         UserManager<User> userManager,
@@ -65,7 +71,9 @@ public class AuthController : ControllerBase
         Dispatcher dispatcher,
         IFileStorageManager fileStorageManager,
         ITokenBlacklistService tokenBlacklistService,
-        ILogger<AuthController> logger)
+        IServiceScopeFactory scopeFactory,
+        ILogger<AuthController> logger,
+        GoogleIdentityProvider googleIdentityProvider = null)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -78,7 +86,9 @@ public class AuthController : ControllerBase
         _dispatcher = dispatcher;
         _fileStorageManager = fileStorageManager;
         _tokenBlacklistService = tokenBlacklistService;
+        _scopeFactory = scopeFactory;
         _logger = logger;
+        _googleIdentityProvider = googleIdentityProvider;
     }
 
     /// <summary>
@@ -97,88 +107,137 @@ public class AuthController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        // Check if email already exists
-        var existingUser = await _userManager.FindByEmailAsync(model.Email);
-        if (existingUser != null)
+        // Retry with fresh DI scope to avoid reusing a poisoned Npgsql connection
+        // when Supabase pooler disposes the connector's ManualResetEventSlim.
+        const int maxRetries = 3;
+        for (int attempt = 1; ; attempt++)
         {
-            return BadRequest(new { Error = "Email đã được đăng ký." });
-        }
-
-        // Create new user with minimal required fields
-        var user = new User
-        {
-            UserName = model.Email,
-            NormalizedUserName = model.Email.ToUpper(),
-            Email = model.Email,
-            NormalizedEmail = model.Email.ToUpper(),
-            EmailConfirmed = false,
-            PhoneNumberConfirmed = false,
-            TwoFactorEnabled = false,
-            LockoutEnabled = true,
-            AccessFailedCount = 0,
-        };
-
-        UserProfile profile = null;
-
-        var executionStrategy = _dbContext.Database.CreateExecutionStrategy();
-        var transactionFailureResult = await executionStrategy.ExecuteAsync(async () =>
-        {
-            await _dbContext.BeginTransactionAsync();
             try
             {
-                // Create user with password
-                var result = await _userManager.CreateAsync(user, model.Password);
-                if (!result.Succeeded)
-                {
-                    await _dbContext.RollbackTransactionAsync();
-                    return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
-                }
-
-                var defaultRoles = new[] { "User" };
-                foreach (var roleName in defaultRoles)
-                {
-                    var role = await _roleManager.FindByNameAsync(roleName);
-                    if (role != null)
-                    {
-                        continue;
-                    }
-
-                    await _dbContext.RollbackTransactionAsync();
-                    return StatusCode(
-                        StatusCodes.Status500InternalServerError,
-                        new { Error = $"Vai tro mac dinh '{roleName}' khong ton tai." });
-                }
-
-                var roleResult = await _userManager.AddToRolesAsync(user, defaultRoles);
-                if (!roleResult.Succeeded)
-                {
-                    await _dbContext.RollbackTransactionAsync();
-                    return StatusCode(StatusCodes.Status500InternalServerError, new { Errors = roleResult.Errors.Select(e => e.Description) });
-                }
-
-                profile = await GetOrCreateUserProfileAsync(user, saveChanges: false);
-                await _dbContext.SaveChangesAsync();
-                await _dbContext.CommitTransactionAsync();
-                return null;
+                return await RegisterCoreAsync(model);
             }
-            catch
+            catch (Exception ex) when (attempt < maxRetries && NpgsqlTransientHelper.IsManualResetEventDisposed(ex))
             {
-                await _dbContext.RollbackTransactionAsync();
-                throw;
+                _logger.LogWarning(ex, "ManualResetEventSlim disposed on Register attempt {Attempt}/{MaxRetries}, retrying with fresh scope", attempt, maxRetries);
+                // Do NOT call ClearAllPools() — it is nuclear (kills ALL healthy
+                // connections across every data source) and counter-productive now
+                // that Npgsql pooling is enabled: the new scope will get a validated
+                // connection from the pool automatically.
+                await Task.Delay(200 * attempt);
             }
-        });
+        }
+    }
 
-        if (transactionFailureResult != null)
+    private async Task<ActionResult<RegisterResponseModel>> RegisterCoreAsync(RegisterModel model)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>();
+
+        // ── Step 1: Check existing user or resume partial registration ──
+        var user = await userManager.FindByEmailAsync(model.Email);
+
+        // Close the connection opened by FindByEmailAsync so it doesn't
+        // sit idle during the password validation HTTP calls (HIBP).
+        await dbContext.Database.CloseConnectionAsync();
+
+        if (user != null)
         {
-            return transactionFailureResult;
+            // If the user already has the "User" role, full registration
+            // completed previously — reject as duplicate.
+            var hasRole = await userManager.IsInRoleAsync(user, "User");
+            await dbContext.Database.CloseConnectionAsync();
+            if (hasRole)
+            {
+                return BadRequest(new { Error = "Email đã được đăng ký." });
+            }
+
+            // Partial registration (user created but role/profile missing).
+            // Fall through to complete the remaining steps.
+            _logger.LogWarning("Resuming partial registration for {Email}", model.Email);
         }
 
-        // Send confirmation email
-        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        // ── Step 2: Pre-validate password & hash OUTSIDE any DB work ──
+        // Password validators (especially HIBP) make external HTTP calls
+        // (~300-500ms).  No DB connection is held during this time.
+        if (user == null)
+        {
+            var tempUser = new User { UserName = model.Email, Email = model.Email };
+            foreach (var validator in userManager.PasswordValidators)
+            {
+                var vResult = await validator.ValidateAsync(userManager, tempUser, model.Password);
+                if (!vResult.Succeeded)
+                {
+                    return BadRequest(new { Errors = vResult.Errors.Select(e => e.Description) });
+                }
+            }
+
+            var hashedPassword = userManager.PasswordHasher.HashPassword(tempUser, model.Password);
+
+            // ── Step 3: Create user ──
+            // Each SaveChanges call uses EF Core's implicit transaction
+            // with the retry execution strategy.  No explicit
+            // BeginTransactionAsync — this avoids holding a connection
+            // open across multiple commands when Supabase pooler may
+            // recycle the backend at any time.
+            user = new User
+            {
+                UserName = model.Email,
+                Email = model.Email,
+                NormalizedUserName = model.Email.ToUpperInvariant(),
+                NormalizedEmail = model.Email.ToUpperInvariant(),
+                PasswordHash = hashedPassword,
+                EmailConfirmed = false,
+                PhoneNumberConfirmed = false,
+                TwoFactorEnabled = false,
+                LockoutEnabled = true,
+                AccessFailedCount = 0,
+                SecurityStamp = Guid.NewGuid().ToString(),
+            };
+
+            var createResult = await userManager.CreateAsync(user);
+            if (!createResult.Succeeded)
+            {
+                return BadRequest(new { Errors = createResult.Errors.Select(e => e.Description) });
+            }
+        }
+
+        // ── Step 4: Add to default role ──
+        var roleResult = await userManager.AddToRolesAsync(user, new[] { "User" });
+        if (!roleResult.Succeeded)
+        {
+            // "User is already in role" is OK for idempotent retries.
+            var realErrors = roleResult.Errors
+                .Where(e => e.Code != "UserAlreadyInRole")
+                .ToList();
+            if (realErrors.Any())
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new { Errors = realErrors.Select(e => e.Description) });
+            }
+        }
+
+        // ── Step 5: Ensure user profile ──
+        var profile = await dbContext.UserProfiles
+            .FirstOrDefaultAsync(p => p.UserId == user.Id);
+        if (profile == null)
+        {
+            profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                DisplayName = user.Email?.Split('@')[0],
+            };
+            dbContext.UserProfiles.Add(profile);
+            await dbContext.SaveChangesAsync();
+        }
+
+        // ── Step 6: Send confirmation email ──
+        var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
         var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
         var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
 
-        var displayName = profile.DisplayName ?? user.Email.Split('@')[0];
+        var displayName = profile?.DisplayName ?? user.Email.Split('@')[0];
         await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
         {
             From = "noreply@classifiedads.com",
@@ -252,7 +311,17 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Code = "invalid_credentials", Error = "Email hoặc mật khẩu không đúng." });
         }
 
-        _logger.LogInformation("Login succeeded. UserId={UserId} Email={Email}", user.Id, model.Email);
+        var origin = Request.Headers.Origin.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var referer = Request.Headers.Referer.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        var userAgent = Request.Headers.UserAgent.ToString().Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation(
+            "Login succeeded. UserId={UserId} Email={Email} TraceId={TraceId} Origin={Origin} Referer={Referer} UserAgent={UserAgent}",
+            user.Id,
+            model.Email,
+            HttpContext.TraceIdentifier,
+            string.IsNullOrWhiteSpace(origin) ? null : origin,
+            string.IsNullOrWhiteSpace(referer) ? null : referer,
+            string.IsNullOrWhiteSpace(userAgent) ? null : userAgent);
 
         // Get user roles
         var roles = await _userManager.GetRolesAsync(user);
@@ -272,11 +341,131 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Login with Google — validate Google ID token and issue JWT.
+    /// Frontend obtains the ID token from Google Sign-In and sends it here.
+    /// A new local account is auto-created on first login (email confirmed by default).
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimiterPolicyNames.AuthPolicy)]
+    [HttpPost("login/google")]
+    [ProducesResponseType(typeof(LoginResponseModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<LoginResponseModel>> LoginWithGoogle([FromBody] GoogleLoginModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (_googleIdentityProvider == null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { Error = "Đăng nhập Google chưa được kích hoạt." });
+        }
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await _googleIdentityProvider.VerifyIdTokenAsync(model.IdToken);
+        }
+        catch (InvalidJwtException ex)
+        {
+            _logger.LogWarning(ex, "Google login failed: invalid ID token");
+            return BadRequest(new { Error = "Google ID token không hợp lệ hoặc đã hết hạn." });
+        }
+
+        var email = payload.Email;
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return BadRequest(new { Error = "Không lấy được email từ tài khoản Google." });
+        }
+
+        var user = await _userManager.FindByEmailAsync(email);
+        if (user == null)
+        {
+            // Auto-register: Google has already verified the email
+            user = new User
+            {
+                UserName = email,
+                Email = email,
+                NormalizedUserName = email.ToUpperInvariant(),
+                NormalizedEmail = email.ToUpperInvariant(),
+                EmailConfirmed = true,
+                PhoneNumberConfirmed = false,
+                TwoFactorEnabled = false,
+                LockoutEnabled = true,
+                AccessFailedCount = 0,
+                SecurityStamp = Guid.NewGuid().ToString(),
+            };
+
+            var createResult = await _userManager.CreateAsync(user);
+            if (!createResult.Succeeded)
+            {
+                return BadRequest(new { Errors = createResult.Errors.Select(e => e.Description) });
+            }
+
+            var roleResult = await _userManager.AddToRolesAsync(user, new[] { "User" });
+            var realRoleErrors = roleResult.Errors
+                .Where(e => e.Code != "UserAlreadyInRole")
+                .ToList();
+            if (realRoleErrors.Any())
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    new { Errors = realRoleErrors.Select(e => e.Description) });
+            }
+
+            // Create default profile using Google display name if available
+            var displayName = payload.Name ?? email.Split('@')[0];
+            var profile = new UserProfile
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                DisplayName = displayName,
+            };
+            _dbContext.UserProfiles.Add(profile);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("New user auto-registered via Google. UserId={UserId} Email={Email}", user.Id, email);
+        }
+        else
+        {
+            if (await _userManager.IsLockedOutAsync(user))
+            {
+                return BadRequest(new { Code = "account_locked", Error = "Tài khoản đã bị khóa. Vui lòng thử lại sau." });
+            }
+
+            // Ensure email is confirmed (Google already verified it)
+            if (!user.EmailConfirmed)
+            {
+                user.EmailConfirmed = true;
+                await _userManager.UpdateAsync(user);
+            }
+        }
+
+        await _userManager.ResetAccessFailedCountAsync(user);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var userProfile = await GetOrCreateUserProfileAsync(user);
+        var (jwtAccessToken, jwtRefreshToken, jwtExpiresIn) = await _jwtTokenService.GenerateTokensAsync(user, roles);
+        SetRefreshTokenCookie(jwtRefreshToken);
+
+        _logger.LogInformation("Google login succeeded. UserId={UserId} Email={Email}", user.Id, email);
+
+        return Ok(new LoginResponseModel
+        {
+            AccessToken = jwtAccessToken,
+            TokenType = "Bearer",
+            ExpiresIn = jwtExpiresIn,
+            User = ToUserInfoModel(user, userProfile, roles),
+        });
+    }
+
+    /// <summary>
     /// Refresh access token using refresh token.
     /// Implements token rotation: old refresh token is invalidated and a new one is issued.
     /// </summary>
-    /// <remarks>
-    /// Token rotation is a security best practice that:
     /// - Limits the window of opportunity if a refresh token is compromised
     /// - Enables detection of token theft (if old token is reused)
     /// - Forces attackers to constantly steal new tokens

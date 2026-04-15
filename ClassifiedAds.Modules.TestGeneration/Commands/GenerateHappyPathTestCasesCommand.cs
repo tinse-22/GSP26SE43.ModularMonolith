@@ -28,7 +28,7 @@ public class GenerateHappyPathTestCasesCommand : ICommand
 
 public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<GenerateHappyPathTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -79,9 +79,14 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
     {
         // 1) Validate inputs
         if (command.TestSuiteId == Guid.Empty)
+        {
             throw new ValidationException("TestSuiteId là bắt buộc.");
+        }
+
         if (command.SpecificationId == Guid.Empty)
+        {
             throw new ValidationException("SpecificationId là bắt buộc.");
+        }
 
         // 2) Load test suite with ownership check
         var suite = await _suiteRepository.FirstOrDefaultAsync(
@@ -89,13 +94,19 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
                 .Where(x => x.Id == command.TestSuiteId));
 
         if (suite == null)
+        {
             throw new NotFoundException($"Không tìm thấy test suite với mã '{command.TestSuiteId}'.");
+        }
 
         if (suite.CreatedById != command.CurrentUserId)
+        {
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
+        }
 
         if (suite.Status == TestSuiteStatus.Archived)
+        {
             throw new ValidationException("Không thể generate test cases cho test suite đã archived.");
+        }
 
         // 3) Gate check: require approved API order
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(command.TestSuiteId, cancellationToken);
@@ -151,6 +162,8 @@ public class GenerateHappyPathTestCasesCommandHandler : ICommandHandler<Generate
             };
             return;
         }
+
+        GeneratedTestCaseDependencyEnricher.Enrich(generationResult.TestCases, approvedOrder);
 
         // 7) Persist everything in a transaction
         var now = DateTimeOffset.UtcNow;

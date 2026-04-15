@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -56,6 +57,9 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _testCaseRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _variableRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestCaseVariable>().AsQueryable());
+        _variableRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()))
+            .ReturnsAsync(new List<TestCaseVariable>());
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -474,6 +478,92 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
                 cl.ChangeType == TestCaseChangeType.Created &&
                 cl.ChangedById == command.CurrentUserId),
             It.IsAny<CancellationToken>()), Times.Exactly(4));
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_LinkGeneratedCase_ToExistingHappyPathProducer()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupSubscriptionAllowed();
+
+        var createEndpointId = Guid.NewGuid();
+        var updateEndpointId = Guid.NewGuid();
+        _gateServiceMock.Setup(x => x.RequireApprovedOrderAsync(suite.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = createEndpointId, HttpMethod = "POST", Path = "/api/products", OrderIndex = 0 },
+                new()
+                {
+                    EndpointId = updateEndpointId,
+                    HttpMethod = "PUT",
+                    Path = "/api/products/{id}",
+                    OrderIndex = 1,
+                    DependsOnEndpointIds = new List<Guid> { createEndpointId },
+                },
+            });
+
+        var existingProducer = new TestCase
+        {
+            Id = Guid.NewGuid(),
+            TestSuiteId = suite.Id,
+            EndpointId = createEndpointId,
+            Name = "Create product",
+            TestType = TestType.HappyPath,
+            IsEnabled = true,
+            OrderIndex = 0,
+        };
+
+        var existingSuiteCases = new List<TestCase> { existingProducer };
+        _testCaseRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCase>>()))
+            .ReturnsAsync(existingSuiteCases);
+        _testCaseRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(existingSuiteCases.AsQueryable());
+
+        var generatedCase = new TestCase
+        {
+            Id = Guid.NewGuid(),
+            TestSuiteId = suite.Id,
+            EndpointId = updateEndpointId,
+            Name = "Invalid update body",
+            TestType = TestType.Negative,
+            OrderIndex = 0,
+            Request = new TestCaseRequest
+            {
+                Id = Guid.NewGuid(),
+                HttpMethod = HttpMethodEnum.PUT,
+                Url = "/api/products/{id}",
+                BodyType = BodyType.JSON,
+                Body = "{}",
+            },
+            Expectation = new TestCaseExpectation
+            {
+                Id = Guid.NewGuid(),
+                ExpectedStatus = "[400]",
+            },
+            Variables = new List<TestCaseVariable>(),
+            Dependencies = new List<TestCaseDependency>(),
+        };
+
+        SetupGeneratorReturns(new List<TestCase> { generatedCase });
+
+        var persistedVariables = new List<TestCaseVariable>();
+        _variableRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseVariable>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseVariable, CancellationToken>((variable, _) => persistedVariables.Add(variable))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand(suite.CreatedById);
+        await _handler.HandleAsync(command);
+
+        var pathParams = JsonSerializer.Deserialize<Dictionary<string, string>>(generatedCase.Request.PathParams);
+        pathParams.Should().ContainKey("id");
+        pathParams["id"].Should().Be("{{productId}}");
+
+        generatedCase.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == existingProducer.Id);
+        persistedVariables.Should().Contain(x => x.TestCaseId == existingProducer.Id && x.VariableName == "productId");
+        _dependencyRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseDependency>(d => d.TestCaseId == generatedCase.Id && d.DependsOnTestCaseId == existingProducer.Id),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #region Helpers

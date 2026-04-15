@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.Constants;
+﻿namespace ClassifiedAds.Modules.TestGeneration.Constants;
 
 public static class TestOrderReasonCodes
 {

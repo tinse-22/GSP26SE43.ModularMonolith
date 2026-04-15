@@ -15,7 +15,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "Modules__Identity__BootstrapDevelopmentData": "true",
-        "Caching__Distributed__Provider": "InMemory"
+        "Caching__Distributed__Provider": "Redis"
       }
     },
     "https": {
@@ -24,7 +24,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "Modules__Identity__BootstrapDevelopmentData": "true",
-        "Caching__Distributed__Provider": "InMemory"
+        "Caching__Distributed__Provider": "Redis"
       },
       "applicationUrl": "https://localhost:44312;http://localhost:5099"
     }

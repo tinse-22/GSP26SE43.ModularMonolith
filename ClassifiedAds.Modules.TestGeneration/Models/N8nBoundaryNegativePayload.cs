@@ -14,11 +14,11 @@ public class N8nBoundaryNegativePayload
 
     public string GlobalBusinessRules { get; set; }
 
-    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new ();
 
-    public N8nSuggestionPromptConfig PromptConfig { get; set; } = new();
+    public N8nSuggestionPromptConfig PromptConfig { get; set; } = new ();
 
-    public List<N8nBoundaryEndpointPayload> Endpoints { get; set; } = new();
+    public List<N8nBoundaryEndpointPayload> Endpoints { get; set; } = new ();
 }
 
 public class N8nSuggestionPromptConfig
@@ -50,11 +50,11 @@ public class N8nBoundaryEndpointPayload
 
     public N8nPromptPayload Prompt { get; set; }
 
-    public List<string> ParameterSchemaPayloads { get; set; } = new();
+    public List<string> ParameterSchemaPayloads { get; set; } = new ();
 
-    public List<string> ResponseSchemaPayloads { get; set; } = new();
+    public List<string> ResponseSchemaPayloads { get; set; } = new ();
 
-    public List<N8nParameterDetail> ParameterDetails { get; set; } = new();
+    public List<N8nParameterDetail> ParameterDetails { get; set; } = new ();
 }
 
 public class N8nParameterDetail

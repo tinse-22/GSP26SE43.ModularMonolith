@@ -15,6 +15,7 @@ public class VariableResolver : IVariableResolver
     };
 
     private static readonly Regex PlaceholderRegex = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
+    private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
 
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
@@ -100,21 +101,28 @@ public class VariableResolver : IVariableResolver
         // Clamp timeout
         var timeout = Math.Clamp(request.Timeout, 1000, 60000);
 
-        // Check for unresolved placeholders
-        CheckUnresolvedPlaceholders(finalUrl, "URL");
+        // Collect ALL unresolved placeholders — not just the first one
+        var unresolvedIssues = new List<string>();
+        CollectUnresolvedPlaceholders(finalUrl, "URL", unresolvedIssues);
+        CollectUnresolvedRouteTokens(finalUrl, unresolvedIssues);
         foreach (var kvp in resolvedHeaders)
         {
-            CheckUnresolvedPlaceholders(kvp.Value, $"Header:{kvp.Key}");
+            CollectUnresolvedPlaceholders(kvp.Value, $"Header:{kvp.Key}", unresolvedIssues);
         }
 
         foreach (var kvp in resolvedQuery)
         {
-            CheckUnresolvedPlaceholders(kvp.Value, $"QueryParam:{kvp.Key}");
+            CollectUnresolvedPlaceholders(kvp.Value, $"QueryParam:{kvp.Key}", unresolvedIssues);
         }
 
         if (resolvedBody != null)
         {
-            CheckUnresolvedPlaceholders(resolvedBody, "Body");
+            CollectUnresolvedPlaceholders(resolvedBody, "Body", unresolvedIssues);
+        }
+
+        if (unresolvedIssues.Count > 0)
+        {
+            throw new UnresolvedVariableException(string.Join(" | ", unresolvedIssues));
         }
 
         return new ResolvedTestCaseRequest
@@ -157,7 +165,50 @@ public class VariableResolver : IVariableResolver
         if (match.Success)
         {
             throw new UnresolvedVariableException(
-                $"Biến '{{{{{{match.Groups[1].Value}}}}}}' chưa được giải quyết trong {surface}.");
+                $"Biến '{{{match.Groups[1].Value}}}' chưa được giải quyết trong {surface}.");
+        }
+    }
+
+    private static void CheckUnresolvedRouteTokens(string url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return;
+        }
+
+        var pathOnly = ExtractPathOnly(url);
+        var match = RouteTokenRegex.Match(pathOnly);
+        if (match.Success)
+        {
+            throw new UnresolvedVariableException(
+                $"Path parameter '{match.Groups[1].Value}' chưa được giải quyết trong URL.");
+        }
+    }
+
+    private static void CollectUnresolvedPlaceholders(string value, string surface, List<string> issues)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return;
+        }
+
+        foreach (Match match in PlaceholderRegex.Matches(value))
+        {
+            issues.Add($"Variable '{{{{{match.Groups[1].Value}}}}}' chưa được giải quyết trong {surface}");
+        }
+    }
+
+    private static void CollectUnresolvedRouteTokens(string url, List<string> issues)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return;
+        }
+
+        var pathOnly = ExtractPathOnly(url);
+        foreach (Match match in RouteTokenRegex.Matches(pathOnly))
+        {
+            issues.Add($"Path parameter '{match.Groups[1].Value}' chưa được giải quyết trong URL");
         }
     }
 
@@ -194,6 +245,19 @@ public class VariableResolver : IVariableResolver
         }
 
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json, JsonOptions) ?? new Dictionary<string, string>();
+    }
+
+    private static string ExtractPathOnly(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            var path = absolute.GetComponents(UriComponents.Path, UriFormat.Unescaped);
+            return path.StartsWith('/') ? path : $"/{path}";
+        }
+
+        var queryIndex = url.IndexOfAny(new[] { '?', '#' });
+        return queryIndex >= 0 ? url[..queryIndex] : url;
     }
 }
 

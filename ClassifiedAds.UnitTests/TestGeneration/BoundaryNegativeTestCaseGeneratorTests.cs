@@ -4,6 +4,7 @@ using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using HttpMethodEnum = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
 
 namespace ClassifiedAds.UnitTests.TestGeneration;
@@ -142,6 +143,82 @@ public class BoundaryNegativeTestCaseGeneratorTests
             x => x.GenerateMutations(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         _llmSuggesterMock.Verify(
             x => x.SuggestScenariosAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_Should_PreserveBodyMutationExpectedStatuses_WhenBuildingExpectation()
+    {
+        // Arrange
+        var suite = CreateSuite();
+        var endpoints = CreateOrderedEndpoints();
+        SetupEndpointMetadata(endpoints);
+        SetupParameterDetails(Endpoint1Id, CreateBodyParameter("email", "string", "email"));
+        SetupBodyMutations(new BodyMutation
+        {
+            MutationType = "typeMismatch",
+            Label = "email - Type mismatch",
+            MutatedBody = "{\"email\": 12345}",
+            TargetFieldName = "email",
+            ExpectedStatusCode = 400,
+            ExpectedStatusCodes = new List<int> { 400, 422 },
+            Description = "Send numeric value for email field",
+            SuggestedTestType = TestType.Negative,
+        });
+
+        var options = new BoundaryNegativeOptions
+        {
+            IncludePathMutations = false,
+            IncludeBodyMutations = true,
+            IncludeLlmSuggestions = false,
+            UserId = DefaultUserId,
+        };
+
+        // Act
+        var result = await _generator.GenerateAsync(suite, endpoints, DefaultSpecId, options);
+
+        // Assert
+        result.TestCases.Should().HaveCount(1);
+
+        var expectedStatuses = JsonSerializer.Deserialize<List<int>>(
+            result.TestCases[0].Expectation.ExpectedStatus);
+        expectedStatuses.Should().Equal(400, 422);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_Should_PreservePathMutationExpectedStatuses_WhenBuildingExpectation()
+    {
+        // Arrange
+        var suite = CreateSuite();
+        var endpoints = CreateOrderedEndpoints();
+        SetupEndpointMetadata(endpoints);
+        SetupParameterDetails(Endpoint1Id, CreatePathParameter("id", "integer", "int64"));
+        SetupPathMutations("id", new PathParameterMutationDto
+        {
+            MutationType = "boundary_max_int64",
+            Label = "id - Max int64",
+            Value = "9223372036854775807",
+            ExpectedStatusCode = 200,
+            ExpectedStatusCodes = new List<int> { 200, 404 },
+            Description = "Send max int64 path parameter",
+        });
+
+        var options = new BoundaryNegativeOptions
+        {
+            IncludePathMutations = true,
+            IncludeBodyMutations = false,
+            IncludeLlmSuggestions = false,
+            UserId = DefaultUserId,
+        };
+
+        // Act
+        var result = await _generator.GenerateAsync(suite, endpoints, DefaultSpecId, options);
+
+        // Assert
+        result.TestCases.Should().HaveCount(1);
+
+        var expectedStatuses = JsonSerializer.Deserialize<List<int>>(
+            result.TestCases[0].Expectation.ExpectedStatus);
+        expectedStatuses.Should().Equal(200, 404);
     }
 
     [Fact]

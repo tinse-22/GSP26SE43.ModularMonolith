@@ -18,7 +18,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 
 public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -315,6 +315,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 {
                     suite.Status = TestSuiteStatus.Ready;
                 }
+
                 suite.LastModifiedById = currentUserId;
                 suite.UpdatedDateTime = now;
                 suite.RowVersion = Guid.NewGuid().ToByteArray();

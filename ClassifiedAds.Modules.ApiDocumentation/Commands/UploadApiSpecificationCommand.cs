@@ -209,8 +209,8 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "File upload to storage gateway failed.");
-            throw new ValidationException("Không thể upload file. Vui lòng thử lại.");
+            _logger.LogError(ex, "File upload to storage gateway failed. Type={ExType}, Message={ExMsg}", ex.GetType().FullName, ex.Message);
+            throw new ValidationException($"Không thể upload file: [{ex.GetType().Name}] {ex.Message}");
         }
 
         // 5. Parse the OpenAPI/Postman file content into endpoints
@@ -394,7 +394,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
 
                         if (paramEl.TryGetProperty("schema", out var schemaEl))
                         {
-                            schemaRaw = schemaEl.GetRawText();
+                            schemaRaw = Services.OpenApiSpecificationParser.ResolveSchemaJson(schemaEl, root);
                             if (schemaEl.TryGetProperty("type", out var typeEl))
                             {
                                 dataType = MapOpenApiType(typeEl.GetString());
@@ -430,7 +430,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
                         {
                             if (media.Value.TryGetProperty("schema", out var s))
                             {
-                                bodySchema = s.GetRawText();
+                                bodySchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
                                 break;
                             }
                         }
@@ -467,7 +467,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
                             {
                                 if (media.Value.TryGetProperty("schema", out var s))
                                 {
-                                    respSchema = s.GetRawText();
+                                    respSchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
                                     break;
                                 }
                             }

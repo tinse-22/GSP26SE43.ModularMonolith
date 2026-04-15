@@ -299,8 +299,8 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("Set confidence to 'high' if evidence is explicit, 'medium' if based on schema type inference.");
 
         return sb.ToString()
-            .Replace("{METHOD}", context?.HttpMethod ?? "")
-            .Replace("{PATH}", context?.Path ?? "");
+            .Replace("{METHOD}", context?.HttpMethod ?? string.Empty)
+            .Replace("{PATH}", context?.Path ?? string.Empty);
     }
 
     /// <summary>

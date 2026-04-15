@@ -1,4 +1,4 @@
-namespace ClassifiedAds.Modules.TestGeneration.Constants;
+﻿namespace ClassifiedAds.Modules.TestGeneration.Constants;
 
 /// <summary>
 /// Logical names for n8n webhooks referenced in N8nIntegration:Webhooks configuration.

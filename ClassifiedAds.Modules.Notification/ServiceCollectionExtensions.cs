@@ -6,6 +6,7 @@ using ClassifiedAds.Modules.Notification.Entities;
 using ClassifiedAds.Modules.Notification.HostedServices;
 using ClassifiedAds.Modules.Notification.Persistence;
 using ClassifiedAds.Modules.Notification.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -20,11 +21,12 @@ public static class ServiceCollectionExtensions
     {
         var settings = new NotificationModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
         services
-            .AddDbContext<NotificationDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+            .AddDbContext<NotificationDbContext>(options => options.UseNpgsql(connectionString, sql =>
             {
                 if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
                 {
@@ -35,6 +37,10 @@ public static class ServiceCollectionExtensions
                 {
                     sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
                 }
+
+                // Supabase pooler safety: single-statement batches prevent connector state corruption.
+                sql.MaxBatchSize(1);
+                sql.UseSupabaseRetryPolicy();
             }))
             .AddScoped<IRepository<EmailMessage, Guid>, Repository<EmailMessage, Guid>>()
             .AddScoped<IRepository<SmsMessage, Guid>, Repository<SmsMessage, Guid>>()

@@ -1,4 +1,8 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.Subscription.DTOs;
+using ClassifiedAds.Contracts.Subscription.Enums;
+using ClassifiedAds.Contracts.Subscription.Services;
+using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Events;
 using ClassifiedAds.Domain.Repositories;
@@ -23,15 +27,21 @@ public class DeleteProjectCommandHandler : ICommandHandler<DeleteProjectCommand>
     private readonly Dispatcher _dispatcher;
     private readonly IRepository<Project, Guid> _projectRepository;
     private readonly IRepository<ApiSpecification, Guid> _specRepository;
+    private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
+    private readonly ITestSuiteProjectService _testSuiteProjectService;
 
     public DeleteProjectCommandHandler(
         Dispatcher dispatcher,
         IRepository<Project, Guid> projectRepository,
-        IRepository<ApiSpecification, Guid> specRepository)
+        IRepository<ApiSpecification, Guid> specRepository,
+        ISubscriptionLimitGatewayService subscriptionLimitService,
+        ITestSuiteProjectService testSuiteProjectService)
     {
         _dispatcher = dispatcher;
         _projectRepository = projectRepository;
         _specRepository = specRepository;
+        _subscriptionLimitService = subscriptionLimitService;
+        _testSuiteProjectService = testSuiteProjectService;
     }
 
     public async Task HandleAsync(DeleteProjectCommand command, CancellationToken cancellationToken = default)
@@ -69,5 +79,16 @@ public class DeleteProjectCommandHandler : ICommandHandler<DeleteProjectCommand>
         await _projectRepository.UpdateAsync(project, cancellationToken);
         await _projectRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
         await _dispatcher.DispatchAsync(new EntityDeletedEvent<Project>(project, DateTime.UtcNow), cancellationToken);
+
+        // Release MaxProjects quota so user can create a new project after deletion
+        await _subscriptionLimitService.ReleaseUsageAsync(new IncrementUsageRequest
+        {
+            UserId = command.CurrentUserId,
+            LimitType = LimitType.MaxProjects,
+            IncrementValue = 1,
+        }, cancellationToken);
+
+        // Cascade-archive all TestSuites belonging to this project (cross-module)
+        await _testSuiteProjectService.ArchiveByProjectIdAsync(command.ProjectId, cancellationToken);
     }
 }

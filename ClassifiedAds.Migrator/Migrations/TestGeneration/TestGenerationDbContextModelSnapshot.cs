@@ -75,11 +75,22 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<DateTimeOffset>("CreatedDateTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedById")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("DisplayOrder")
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("EndpointId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("LlmModel")
                         .HasMaxLength(100)
@@ -157,9 +168,13 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 
                     b.HasIndex("CacheKey");
 
+                    b.HasIndex("DeletedById");
+
                     b.HasIndex("EndpointId");
 
                     b.HasIndex("ReviewedById");
+
+                    b.HasIndex("TestSuiteId", "IsDeleted");
 
                     b.HasIndex("TestSuiteId", "ReviewStatus");
 
@@ -270,11 +285,22 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<int?>("CustomOrderIndex")
                         .HasColumnType("integer");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedById")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
                     b.Property<Guid?>("EndpointId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");
@@ -324,6 +350,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeletedById");
+
                     b.HasIndex("EndpointId");
 
                     b.HasIndex("LastModifiedById");
@@ -331,6 +359,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.HasIndex("TestSuiteId");
 
                     b.HasIndex("TestSuiteId", "CustomOrderIndex");
+
+                    b.HasIndex("TestSuiteId", "IsDeleted");
 
                     b.HasIndex("TestSuiteId", "OrderIndex");
 

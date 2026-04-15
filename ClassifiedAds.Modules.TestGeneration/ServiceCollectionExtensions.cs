@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.TestGeneration.Services;
+﻿using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Infrastructure.HostedServices;
@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.TestGeneration.MessageBusConsumers;
 using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using ClassifiedAds.Modules.TestGeneration.Services;
+using ClassifiedAds.Persistence.PostgreSQL;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -24,10 +25,11 @@ public static class TestGenerationServiceCollectionExtensions
     {
         var settings = new TestGenerationModuleOptions();
         configureOptions(settings);
+        var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
 
-        services.AddDbContext<TestGenerationDbContext>(options => options.UseNpgsql(settings.ConnectionStrings.Default, sql =>
+        services.AddDbContext<TestGenerationDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {
             if (!string.IsNullOrEmpty(settings.ConnectionStrings.MigrationsAssembly))
             {
@@ -38,6 +40,10 @@ public static class TestGenerationServiceCollectionExtensions
             {
                 sql.CommandTimeout(settings.ConnectionStrings.CommandTimeout);
             }
+
+            // Supabase pooler safety: single-statement batches prevent connector state corruption.
+            sql.MaxBatchSize(1);
+            sql.UseSupabaseRetryPolicy();
         }));
 
         // Register repositories
@@ -69,7 +75,8 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IApiTestOrderAlgorithm, ApiTestOrderAlgorithm>()
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
-            .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>();
+            .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>()
+            .AddScoped<ITestSuiteProjectService, TestSuiteProjectService>();
 
         // FE-07/08: Cross-module execution read gateway
         services
