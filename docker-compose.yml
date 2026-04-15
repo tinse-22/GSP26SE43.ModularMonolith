@@ -78,6 +78,22 @@ services:
       Modules__Identity__Providers__Google__ClientId: "${Modules__Identity__Providers__Google__ClientId:-}"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
+      # n8n Integration (TestGeneration)
+      Modules__TestGeneration__N8nIntegration__BaseUrl: "${Modules__TestGeneration__N8nIntegration__BaseUrl:-}"
+      Modules__TestGeneration__N8nIntegration__ApiKey: "${Modules__TestGeneration__N8nIntegration__ApiKey:-}"
+      Modules__TestGeneration__N8nIntegration__BeBaseUrl: "http://webapi:8080"
+      Modules__TestGeneration__N8nIntegration__CallbackApiKey: "${Modules__TestGeneration__N8nIntegration__CallbackApiKey:-}"
+      # LLM Assistant
+      Modules__LlmAssistant__FailureExplanation__Provider: "${Modules__LlmAssistant__FailureExplanation__Provider:-N8n}"
+      Modules__LlmAssistant__FailureExplanation__BaseUrl: "${Modules__LlmAssistant__FailureExplanation__BaseUrl:-}"
+      Modules__LlmAssistant__FailureExplanation__ApiKey: "${Modules__LlmAssistant__FailureExplanation__ApiKey:-}"
+      Modules__LlmAssistant__FailureExplanation__WebhookPath: "${Modules__LlmAssistant__FailureExplanation__WebhookPath:-explain-failure}"
+      # PayOS (Subscription billing)
+      PayOS__ClientId: "${PayOS__ClientId:-}"
+      PayOS__ApiKey: "${PayOS__ApiKey:-}"
+      PayOS__ChecksumKey: "${PayOS__ChecksumKey:-}"
+      # CORS
+      CORS__AllowAnyOrigin: "${CORS__AllowAnyOrigin:-true}"
 
   background:
     image: classifiedads.modularmonolith.background
@@ -122,6 +138,20 @@ services:
       Modules__Notification__Web__SignalR__Endpoint: "http://notificationserver"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
+      # n8n Integration (TestGeneration)
+      Modules__TestGeneration__N8nIntegration__BaseUrl: "${Modules__TestGeneration__N8nIntegration__BaseUrl:-}"
+      Modules__TestGeneration__N8nIntegration__ApiKey: "${Modules__TestGeneration__N8nIntegration__ApiKey:-}"
+      Modules__TestGeneration__N8nIntegration__BeBaseUrl: "http://webapi:8080"
+      Modules__TestGeneration__N8nIntegration__CallbackApiKey: "${Modules__TestGeneration__N8nIntegration__CallbackApiKey:-}"
+      # LLM Assistant
+      Modules__LlmAssistant__FailureExplanation__Provider: "${Modules__LlmAssistant__FailureExplanation__Provider:-N8n}"
+      Modules__LlmAssistant__FailureExplanation__BaseUrl: "${Modules__LlmAssistant__FailureExplanation__BaseUrl:-}"
+      Modules__LlmAssistant__FailureExplanation__ApiKey: "${Modules__LlmAssistant__FailureExplanation__ApiKey:-}"
+      Modules__LlmAssistant__FailureExplanation__WebhookPath: "${Modules__LlmAssistant__FailureExplanation__WebhookPath:-explain-failure}"
+      # PayOS (Subscription billing)
+      PayOS__ClientId: "${PayOS__ClientId:-}"
+      PayOS__ApiKey: "${PayOS__ApiKey:-}"
+      PayOS__ChecksumKey: "${PayOS__ChecksumKey:-}"
 
 volumes:
   redis_data:
