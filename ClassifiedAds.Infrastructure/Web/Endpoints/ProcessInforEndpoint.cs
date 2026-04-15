@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using System;
@@ -11,7 +12,7 @@ public static class ProcessInforEndpoint
 {
     public static void MapProcessInforEndpoint(this IEndpointRouteBuilder builder, string path = "/processinfor")
     {
-        builder.MapGet(path, () =>
+        builder.MapGet(path, [Authorize] () =>
         {
             var currentProcess = Process.GetCurrentProcess();
 
@@ -20,7 +21,6 @@ public static class ProcessInforEndpoint
                 Timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture),
                 MachineName = Environment.MachineName,
                 ProcessId = Environment.ProcessId,
-                UserName = Environment.UserName,
                 TotalProcessorTime = currentProcess.TotalProcessorTime.TotalSeconds,
                 PrivateMemorySize64 = currentProcess.PrivateMemorySize64 / 1024 / 1024,
                 VirtualMemorySize64 = currentProcess.VirtualMemorySize64 / 1024 / 1024,
@@ -28,6 +28,6 @@ public static class ProcessInforEndpoint
                 PeakVirtualMemorySize64 = currentProcess.PeakVirtualMemorySize64 / 1024 / 1024,
                 PeakWorkingSet64 = currentProcess.PeakWorkingSet64 / 1024 / 1024
             });
-        });
+        }).RequireAuthorization();
     }
 }

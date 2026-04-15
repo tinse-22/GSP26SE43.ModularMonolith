@@ -25,6 +25,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 using Microsoft.OpenApi;
@@ -433,7 +434,8 @@ services.AddAuthentication(options =>
     {
         OnAuthenticationFailed = context =>
         {
-            Console.WriteLine($"JWT Auth Failed: {context.Exception.Message}");
+            var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("JwtBearer");
+            logger?.LogWarning("JWT authentication failed.");
             return Task.CompletedTask;
         },
         OnTokenValidated = context =>
@@ -554,18 +556,21 @@ app.UseRouting();
 
 app.UseCors(appSettings.CORS?.AllowAnyOrigin == true ? "AllowAnyOrigin" : "AllowedOrigins");
 
-app.UseSwagger();
-
-app.UseSwaggerUI(setupAction =>
+if (app.Environment.IsDevelopment())
 {
-    setupAction.SwaggerEndpoint("/swagger/ClassifiedAds/swagger.json", "ClassifiedAds API");
-    setupAction.RoutePrefix = "swagger";
-});
+    app.UseSwagger();
 
-app.MapScalarApiReference(options =>
-{
-    options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
-});
+    app.UseSwaggerUI(setupAction =>
+    {
+        setupAction.SwaggerEndpoint("/swagger/ClassifiedAds/swagger.json", "ClassifiedAds API");
+        setupAction.RoutePrefix = "swagger";
+    });
+
+    app.MapScalarApiReference(options =>
+    {
+        options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+    });
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

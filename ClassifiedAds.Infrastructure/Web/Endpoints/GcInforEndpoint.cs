@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using System;
@@ -13,7 +14,7 @@ public static class GcInforEndpoint
 {
     public static void MapGcInforEndpoint(this IEndpointRouteBuilder builder, string path = "/gcinfor")
     {
-        builder.MapGet(path, () =>
+        builder.MapGet(path, [Authorize] () =>
         {
             var gcMemoryInfo = GC.GetGCMemoryInfo();
 
@@ -37,6 +38,6 @@ public static class GcInforEndpoint
                     gcMemoryInfo.PinnedObjectsCount
                 }
             });
-        });
+        }).RequireAuthorization();
     }
 }
