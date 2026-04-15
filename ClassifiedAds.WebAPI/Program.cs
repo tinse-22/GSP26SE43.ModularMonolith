@@ -216,15 +216,8 @@ services.AddCors(options =>
         .WithMethods("GET", "POST")
         .AllowCredentials());
 
-    options.AddPolicy("AllowAnyOrigin", builder => builder
-        .AllowAnyOrigin()
-        .AllowAnyMethod()
-        .AllowAnyHeader());
-
-    options.AddPolicy("CustomPolicy", builder => builder
-        .AllowAnyOrigin()
-        .WithMethods("Get")
-        .WithHeaders("Content-Type"));
+    // AllowAnyOrigin and CustomPolicy removed for security.
+    // Use "AllowedOrigins" policy with explicitly configured origins.
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════
@@ -552,20 +545,23 @@ app.UseExceptionHandler(options => { });
 
 app.UseRouting();
 
-app.UseCors(appSettings.CORS?.AllowAnyOrigin == true ? "AllowAnyOrigin" : "AllowedOrigins");
+app.UseCors("AllowedOrigins");
 
-app.UseSwagger();
-
-app.UseSwaggerUI(setupAction =>
+if (app.Environment.IsDevelopment())
 {
-    setupAction.SwaggerEndpoint("/swagger/ClassifiedAds/swagger.json", "ClassifiedAds API");
-    setupAction.RoutePrefix = "swagger";
-});
+    app.UseSwagger();
 
-app.MapScalarApiReference(options =>
-{
-    options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
-});
+    app.UseSwaggerUI(setupAction =>
+    {
+        setupAction.SwaggerEndpoint("/swagger/ClassifiedAds/swagger.json", "ClassifiedAds API");
+        setupAction.RoutePrefix = "swagger";
+    });
+
+    app.MapScalarApiReference(options =>
+    {
+        options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+    });
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

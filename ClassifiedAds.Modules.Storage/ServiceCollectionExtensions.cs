@@ -77,6 +77,7 @@ public static class ServiceCollectionExtensions
 
     public static IServiceCollection AddHostedServicesStorageModule(this IServiceCollection services)
     {
+        services.AddHttpClient(nameof(WebhookConsumer));
         services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
         services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
 

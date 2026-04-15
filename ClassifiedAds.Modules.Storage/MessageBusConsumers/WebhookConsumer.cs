@@ -13,27 +13,30 @@ public sealed class WebhookConsumer :
     IMessageBusConsumer<WebhookConsumer, FileUploadedEvent>,
     IMessageBusConsumer<WebhookConsumer, FileDeletedEvent>
 {
-    private static readonly HttpClient _httpClient = new HttpClient();
-
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WebhookConsumer> _logger;
     private readonly IConfiguration _configuration;
 
     public WebhookConsumer(ILogger<WebhookConsumer> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task HandleAsync(FileUploadedEvent data, MetaData metaData, CancellationToken cancellationToken = default)
     {
         var url = _configuration["Modules:Storage:Webhooks:FileUploadedEvent:PayloadUrl"];
-        await _httpClient.PostAsJsonAsync(url, data.FileEntry, cancellationToken: cancellationToken);
+        using var httpClient = _httpClientFactory.CreateClient(nameof(WebhookConsumer));
+        await httpClient.PostAsJsonAsync(url, data.FileEntry, cancellationToken: cancellationToken);
     }
 
     public async Task HandleAsync(FileDeletedEvent data, MetaData metaData, CancellationToken cancellationToken = default)
     {
         var url = _configuration["Modules:Storage:Webhooks:FileDeletedEvent:PayloadUrl"];
-        await _httpClient.PostAsJsonAsync(url, data.FileEntry, cancellationToken: cancellationToken);
+        using var httpClient = _httpClientFactory.CreateClient(nameof(WebhookConsumer));
+        await httpClient.PostAsJsonAsync(url, data.FileEntry, cancellationToken: cancellationToken);
     }
 }

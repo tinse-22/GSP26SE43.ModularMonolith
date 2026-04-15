@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using System;
+using System.Net.Http;
 using System.Reflection;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -167,7 +168,10 @@ public static class ServiceCollectionExtensions
 
         if (settings.Providers?.Auth0?.Enabled ?? false)
         {
-            services.AddSingleton(new Auth0IdentityProvider(settings.Providers.Auth0));
+            services.AddHttpClient(nameof(Auth0IdentityProvider));
+            services.AddSingleton(sp => new Auth0IdentityProvider(
+                settings.Providers.Auth0,
+                sp.GetRequiredService<IHttpClientFactory>()));
         }
 
         if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
