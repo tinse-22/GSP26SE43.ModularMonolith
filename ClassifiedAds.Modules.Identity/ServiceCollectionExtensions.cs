@@ -110,6 +110,22 @@ public static class ServiceCollectionExtensions
             options.AddPolicy<string, PasswordRateLimiterPolicy>(RateLimiterPolicyNames.PasswordPolicy);
         });
 
+        // Register external identity providers (Google, Auth0, Azure AD B2C)
+        if (settings.Providers?.Auth0?.Enabled ?? false)
+        {
+            services.AddSingleton(new Auth0IdentityProvider(settings.Providers.Auth0));
+        }
+
+        if (settings.Providers?.AzureActiveDirectoryB2C?.Enabled ?? false)
+        {
+            services.AddSingleton(new AzureActiveDirectoryB2CIdentityProvider(settings.Providers.AzureActiveDirectoryB2C));
+        }
+
+        if (settings.Providers?.Google?.Enabled ?? false)
+        {
+            services.AddSingleton(new GoogleIdentityProvider(settings.Providers.Google));
+        }
+
         return services;
     }
 
