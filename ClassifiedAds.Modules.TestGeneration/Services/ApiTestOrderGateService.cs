@@ -69,6 +69,20 @@ public class ApiTestOrderGateService : IApiTestOrderGateService
             throw new NotFoundException($"Không tìm thấy test suite với mã '{testSuiteId}'.");
         }
 
+        if (suite.GenerationType == GenerationType.Manual)
+        {
+            return new ApiTestOrderGateStatusModel
+            {
+                TestSuiteId = testSuiteId,
+                IsGatePassed = true,
+                ReasonCode = null,
+                ActiveProposalId = null,
+                ActiveProposalStatus = null,
+                OrderSize = 0,
+                EvaluatedAt = DateTimeOffset.UtcNow,
+            };
+        }
+
         var activeProposal = await FindActiveProposalAsync(testSuiteId, cancellationToken);
         if (activeProposal == null)
         {

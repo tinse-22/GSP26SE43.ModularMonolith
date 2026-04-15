@@ -10,6 +10,8 @@ public class TestSuiteAccessContextDto
 
     public Guid? ApiSpecId { get; set; }
 
+    public string GenerationType { get; set; }
+
     public Guid CreatedById { get; set; }
 
     public string Status { get; set; }

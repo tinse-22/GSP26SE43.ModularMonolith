@@ -18,20 +18,17 @@ public class UpdateTestSuiteScopeRequest
     [MaxLength(4000)]
     public string Description { get; set; }
 
-    [Required]
-    public Guid ApiSpecId { get; set; }
+    public Guid? ApiSpecId { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public GenerationType GenerationType { get; set; } = GenerationType.Auto;
 
-    [Required]
-    [MinLength(1)]
-    public List<Guid> SelectedEndpointIds { get; set; } = new ();
+    public List<Guid> SelectedEndpointIds { get; set; } = new();
 
     /// <summary>
     /// Optional business rules per endpoint. Key = EndpointId, Value = plain text business rule.
     /// </summary>
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new ();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
 
     /// <summary>
     /// Optional global business rules (free text) that apply to all endpoints in this suite.
