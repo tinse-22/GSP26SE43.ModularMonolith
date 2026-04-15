@@ -493,4 +493,184 @@ public class OpenApiSpecificationParserTests
         endpoint.Parameters.Should().Contain(p => p.Name == "X-Request-Id" && p.Location == "Header" && p.IsRequired);
         endpoint.Parameters.Should().Contain(p => p.Name == "session" && p.Location == "Cookie");
     }
+
+    [Fact]
+    public async Task ParseAsync_RefInRequestBody_Should_ResolveToInlineSchema()
+    {
+        // Arrange — mirrors the real swagger.json pattern for /api/auth/register
+        var json = @"{
+            ""openapi"": ""3.0.0"",
+            ""info"": { ""title"": ""Test"", ""version"": ""1.0.0"" },
+            ""components"": {
+                ""schemas"": {
+                    ""AuthRegisterInput"": {
+                        ""type"": ""object"",
+                        ""properties"": {
+                            ""email"": { ""type"": ""string"", ""format"": ""email"" },
+                            ""password"": { ""type"": ""string"", ""minLength"": 6 }
+                        },
+                        ""required"": [""email"", ""password""]
+                    }
+                }
+            },
+            ""paths"": {
+                ""/api/auth/register"": {
+                    ""post"": {
+                        ""operationId"": ""registerUser"",
+                        ""requestBody"": {
+                            ""required"": true,
+                            ""content"": {
+                                ""application/json"": {
+                                    ""schema"": { ""$ref"": ""#/components/schemas/AuthRegisterInput"" }
+                                }
+                            }
+                        },
+                        ""responses"": {
+                            ""201"": {
+                                ""description"": ""User registered"",
+                                ""content"": {
+                                    ""application/json"": {
+                                        ""schema"": {
+                                            ""type"": ""object"",
+                                            ""properties"": {
+                                                ""success"": { ""type"": ""boolean"" },
+                                                ""data"": { ""$ref"": ""#/components/schemas/AuthRegisterInput"" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }";
+        var content = Encoding.UTF8.GetBytes(json);
+
+        // Act
+        var result = await _parser.ParseAsync(content, "test.json");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        var endpoint = result.Endpoints.First();
+
+        // Request body schema should be fully resolved (no $ref)
+        var bodyParam = endpoint.Parameters.First(p => p.Location == "Body");
+        bodyParam.Schema.Should().NotContain("$ref");
+        bodyParam.Schema.Should().Contain("email");
+        bodyParam.Schema.Should().Contain("password");
+        bodyParam.Schema.Should().Contain("minLength");
+
+        // Response schema should also have nested $ref resolved
+        var response201 = endpoint.Responses.First(r => r.StatusCode == 201);
+        response201.Schema.Should().NotContain("$ref");
+        response201.Schema.Should().Contain("email");
+        response201.Schema.Should().Contain("password");
+    }
+
+    [Fact]
+    public async Task ParseAsync_NestedRefInProperties_Should_ResolveRecursively()
+    {
+        // Arrange — schema references another schema
+        var json = @"{
+            ""openapi"": ""3.0.0"",
+            ""info"": { ""title"": ""Test"", ""version"": ""1.0.0"" },
+            ""components"": {
+                ""schemas"": {
+                    ""Address"": {
+                        ""type"": ""object"",
+                        ""properties"": {
+                            ""city"": { ""type"": ""string"" },
+                            ""zip"": { ""type"": ""string"" }
+                        }
+                    },
+                    ""User"": {
+                        ""type"": ""object"",
+                        ""properties"": {
+                            ""name"": { ""type"": ""string"" },
+                            ""address"": { ""$ref"": ""#/components/schemas/Address"" }
+                        }
+                    }
+                }
+            },
+            ""paths"": {
+                ""/users"": {
+                    ""post"": {
+                        ""operationId"": ""createUser"",
+                        ""requestBody"": {
+                            ""required"": true,
+                            ""content"": {
+                                ""application/json"": {
+                                    ""schema"": { ""$ref"": ""#/components/schemas/User"" }
+                                }
+                            }
+                        },
+                        ""responses"": {
+                            ""201"": { ""description"": ""Created"" }
+                        }
+                    }
+                }
+            }
+        }";
+        var content = Encoding.UTF8.GetBytes(json);
+
+        // Act
+        var result = await _parser.ParseAsync(content, "test.json");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        var bodyParam = result.Endpoints.First().Parameters.First(p => p.Location == "Body");
+        bodyParam.Schema.Should().NotContain("$ref");
+        bodyParam.Schema.Should().Contain("name");
+        bodyParam.Schema.Should().Contain("city");
+        bodyParam.Schema.Should().Contain("zip");
+    }
+
+    [Fact]
+    public async Task ParseAsync_Swagger2BodyRef_Should_ResolveSchema()
+    {
+        // Arrange — Swagger 2.0 style with definitions
+        var json = @"{
+            ""swagger"": ""2.0"",
+            ""info"": { ""title"": ""Test"", ""version"": ""1.0.0"" },
+            ""definitions"": {
+                ""LoginInput"": {
+                    ""type"": ""object"",
+                    ""properties"": {
+                        ""username"": { ""type"": ""string"" },
+                        ""password"": { ""type"": ""string"" }
+                    }
+                }
+            },
+            ""paths"": {
+                ""/login"": {
+                    ""post"": {
+                        ""operationId"": ""login"",
+                        ""parameters"": [
+                            {
+                                ""name"": ""body"",
+                                ""in"": ""body"",
+                                ""required"": true,
+                                ""schema"": { ""$ref"": ""#/definitions/LoginInput"" }
+                            }
+                        ],
+                        ""responses"": {
+                            ""200"": { ""description"": ""OK"" }
+                        }
+                    }
+                }
+            }
+        }";
+        var content = Encoding.UTF8.GetBytes(json);
+
+        // Act
+        var result = await _parser.ParseAsync(content, "test.json");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        var bodyParam = result.Endpoints.First().Parameters.First(p => p.Location == "Body");
+        bodyParam.Schema.Should().NotContain("$ref");
+        bodyParam.Schema.Should().Contain("username");
+        bodyParam.Schema.Should().Contain("password");
+    }
 }
