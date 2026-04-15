@@ -394,7 +394,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
 
                         if (paramEl.TryGetProperty("schema", out var schemaEl))
                         {
-                            schemaRaw = schemaEl.GetRawText();
+                            schemaRaw = Services.OpenApiSpecificationParser.ResolveSchemaJson(schemaEl, root);
                             if (schemaEl.TryGetProperty("type", out var typeEl))
                             {
                                 dataType = MapOpenApiType(typeEl.GetString());
@@ -430,7 +430,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
                         {
                             if (media.Value.TryGetProperty("schema", out var s))
                             {
-                                bodySchema = s.GetRawText();
+                                bodySchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
                                 break;
                             }
                         }
@@ -467,7 +467,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
                             {
                                 if (media.Value.TryGetProperty("schema", out var s))
                                 {
-                                    respSchema = s.GetRawText();
+                                    respSchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
                                     break;
                                 }
                             }
