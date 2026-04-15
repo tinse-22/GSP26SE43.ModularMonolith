@@ -32,6 +32,7 @@ public class ApiSpecificationConfiguration : IEntityTypeConfiguration<Entities.A
 
         builder.HasIndex(x => x.ProjectId);
         builder.HasIndex(x => x.IsActive);
+        builder.HasIndex(x => x.IsDeleted);
 
         builder.HasOne(x => x.Project)
             .WithMany(x => x.ApiSpecifications)

@@ -25,4 +25,8 @@ public class SpecificationModel
     public DateTimeOffset CreatedDateTime { get; set; }
 
     public DateTimeOffset? UpdatedDateTime { get; set; }
+
+    public bool IsDeleted { get; set; }
+
+    public DateTimeOffset? DeletedAt { get; set; }
 }

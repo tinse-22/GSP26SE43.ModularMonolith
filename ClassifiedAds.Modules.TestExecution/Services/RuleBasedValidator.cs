@@ -229,6 +229,7 @@ public class RuleBasedValidator : IRuleBasedValidator
     {
         // Determine which schema to use
         var schemaJson = expectation.ResponseSchema;
+        var isFromFallback = false;
 
         // If expectation has no explicit schema, check if we should skip schema validation
         // for non-2xx expected statuses (error responses don't match success schemas)
@@ -245,6 +246,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             if (endpointMetadata?.ResponseSchemaPayloads != null)
             {
                 schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
+                isFromFallback = true;
             }
         }
 
@@ -273,11 +275,24 @@ public class RuleBasedValidator : IRuleBasedValidator
         if (string.IsNullOrEmpty(response.Body))
         {
             result.SchemaMatched = false;
-            result.Failures.Add(new ValidationFailureModel
+            if (isFromFallback)
             {
-                Code = "RESPONSE_NOT_JSON",
-                Message = "Response body trống nhưng có schema validation.",
-            });
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "RESPONSE_NOT_JSON",
+                    Message = "Response body trống nhưng có schema validation (fallback từ OpenAPI spec).",
+                    Target = "ResponseSchema",
+                });
+            }
+            else
+            {
+                result.Failures.Add(new ValidationFailureModel
+                {
+                    Code = "RESPONSE_NOT_JSON",
+                    Message = "Response body trống nhưng có schema validation.",
+                });
+            }
+
             return true;
         }
 
@@ -290,11 +305,23 @@ public class RuleBasedValidator : IRuleBasedValidator
 
             if (!isValid)
             {
-                result.Failures.Add(new ValidationFailureModel
+                if (isFromFallback)
                 {
-                    Code = "RESPONSE_SCHEMA_MISMATCH",
-                    Message = "Response body không phù hợp với JSON schema mong đợi.",
-                });
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "RESPONSE_SCHEMA_MISMATCH",
+                        Message = "Response body không phù hợp với JSON schema (fallback từ OpenAPI spec).",
+                        Target = "ResponseSchema",
+                    });
+                }
+                else
+                {
+                    result.Failures.Add(new ValidationFailureModel
+                    {
+                        Code = "RESPONSE_SCHEMA_MISMATCH",
+                        Message = "Response body không phù hợp với JSON schema mong đợi.",
+                    });
+                }
             }
 
             return true;
@@ -302,10 +329,68 @@ public class RuleBasedValidator : IRuleBasedValidator
         catch (JsonException)
         {
             result.SchemaMatched = false;
+            if (isFromFallback)
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "RESPONSE_NOT_JSON",
+                    Message = "Response body không phải JSON hợp lệ (fallback schema từ OpenAPI spec).",
+                    Target = "ResponseSchema",
+                });
+            }
+            else
+            {
+                result.Failures.Add(new ValidationFailureModel
+                {
+                    Code = "RESPONSE_NOT_JSON",
+                    Message = "Response body không phải JSON hợp lệ.",
+                });
+            }
+
+            return true;
+        }
+        catch (Json.Schema.RefResolutionException ex)
+        {
+            if (isFromFallback)
+            {
+                // Fallback schema from OpenAPI spec has unresolvable $ref — treat as warning, not failure
+                result.SchemaMatched = null;
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "SCHEMA_REF_UNRESOLVABLE",
+                    Message = $"Không thể resolve $ref trong JSON schema (fallback từ OpenAPI spec): {ex.Message}",
+                    Target = "ResponseSchema",
+                });
+                return true;
+            }
+
+            result.SchemaMatched = null;
             result.Failures.Add(new ValidationFailureModel
             {
-                Code = "RESPONSE_NOT_JSON",
-                Message = "Response body không phải JSON hợp lệ.",
+                Code = "SCHEMA_REF_UNRESOLVABLE",
+                Message = $"Không thể resolve $ref trong JSON schema: {ex.Message}",
+            });
+            return true;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            if (isFromFallback)
+            {
+                result.SchemaMatched = null;
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "SCHEMA_VALIDATION_ERROR",
+                    Message = $"Lỗi khi validate response schema (fallback từ OpenAPI spec): {ex.Message}",
+                    Target = "ResponseSchema",
+                });
+                return true;
+            }
+
+            result.SchemaMatched = null;
+            result.Failures.Add(new ValidationFailureModel
+            {
+                Code = "SCHEMA_VALIDATION_ERROR",
+                Message = $"Lỗi khi validate response schema: {ex.Message}",
             });
             return true;
         }

@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Google Login - Get ID Token</title>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 700px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+      h1 {
+        color: #333;
+      }
+      .token-box {
+        background: #f5f5f5;
+        padding: 12px;
+        border-radius: 6px;
+        word-break: break-all;
+        font-family: monospace;
+        font-size: 13px;
+        margin: 12px 0;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      button {
+        padding: 8px 16px;
+        cursor: pointer;
+        margin: 4px;
+      }
+      .copy-btn {
+        background: #4285f4;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+      .step {
+        background: #e8f5e9;
+        padding: 12px;
+        border-radius: 6px;
+        margin: 12px 0;
+      }
+      #status {
+        color: #666;
+        margin: 8px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🔐 Google Login - Lấy ID Token để test BE</h1>
+
+    <div class="step">
+      <strong>Bước 1:</strong> Click nút Google Sign-In bên dưới
+    </div>
+
+    <div
+      id="g_id_onload"
+      data-client_id="573872884539-lov9g4rc77itiaucc7lovecrjel9bbnd.apps.googleusercontent.com"
+      data-callback="handleCredentialResponse"
+      data-auto_prompt="false"
+    ></div>
+    <div
+      class="g_id_signin"
+      data-type="standard"
+      data-size="large"
+      data-theme="outline"
+      data-text="sign_in_with"
+    ></div>
+
+    <p id="status"></p>
+
+    <div id="result" style="display: none">
+      <div class="step">
+        <strong>Bước 2:</strong> Copy ID Token bên dưới → paste vào Scalar
+      </div>
+
+      <h3>ID Token:</h3>
+      <div class="token-box" id="idToken"></div>
+      <button class="copy-btn" onclick="copyToken()">📋 Copy Token</button>
+
+      <h3>User Info (decoded):</h3>
+      <div class="token-box" id="userInfo"></div>
+
+      <div class="step">
+        <strong>Bước 3:</strong> Mở
+        <a href="http://localhost:9002/scalar/v1" target="_blank">Scalar UI</a>
+        → tìm <code>POST /api/auth/login/google</code> → paste body:
+        <pre
+          id="requestBody"
+          style="
+            background: #fff;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+          "
+        ></pre>
+        <button class="copy-btn" onclick="copyBody()">
+          📋 Copy Request Body
+        </button>
+      </div>
+    </div>
+
+    <script>
+      let currentToken = "";
+      let currentBody = "";
+
+      function handleCredentialResponse(response) {
+        currentToken = response.credential;
+        document.getElementById("idToken").textContent = currentToken;
+
+        // Decode JWT payload
+        const payload = JSON.parse(atob(currentToken.split(".")[1]));
+        document.getElementById("userInfo").textContent = JSON.stringify(
+          payload,
+          null,
+          2,
+        );
+
+        currentBody = JSON.stringify({ idToken: currentToken }, null, 2);
+        document.getElementById("requestBody").textContent = currentBody;
+
+        document.getElementById("result").style.display = "block";
+        document.getElementById("status").textContent =
+          "✅ Login thành công! Copy token bên dưới.";
+        document.getElementById("status").style.color = "green";
+      }
+
+      function copyToken() {
+        navigator.clipboard.writeText(currentToken);
+        alert("Đã copy ID Token!");
+      }
+
+      function copyBody() {
+        navigator.clipboard.writeText(currentBody);
+        alert("Đã copy request body!");
+      }
+    </script>
+  </body>
+</html>
