@@ -52,7 +52,11 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "2. testType must be exactly one of: \"HappyPath\", \"Boundary\", \"Negative\".\n" +
         "3. endpointId must match exact UUID from input.\n" +
         "4. Keep execution order aligned with endpoint order (orderIndex unique, 0-based, no duplicates).\n" +
-        "5. Use realistic synthetic data and consistent variable names.\n" +
+        "5. Use UNIQUE synthetic data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "   AUTH FLOW RULES:\n" +
+        "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
+        "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
+        "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
         "6. request.body must be stringified JSON or null.\n" +
         "7. expectation.expectedStatus must be an array of integers.\n" +
         "8. HappyPath expectedStatus should prefer 2xx. Boundary/Negative should prefer 4xx (or 401/403/404 where appropriate).\n" +

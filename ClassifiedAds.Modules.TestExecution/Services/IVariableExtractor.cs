@@ -8,5 +8,6 @@ public interface IVariableExtractor
 {
     IReadOnlyDictionary<string, string> Extract(
         HttpTestResponse response,
-        IReadOnlyList<ExecutionVariableRuleDto> variables);
+        IReadOnlyList<ExecutionVariableRuleDto> variables,
+        string requestBody = null);
 }

@@ -18,7 +18,8 @@ public class VariableExtractor : IVariableExtractor
 
     public IReadOnlyDictionary<string, string> Extract(
         HttpTestResponse response,
-        IReadOnlyList<ExecutionVariableRuleDto> variables)
+        IReadOnlyList<ExecutionVariableRuleDto> variables,
+        string requestBody = null)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -37,6 +38,7 @@ public class VariableExtractor : IVariableExtractor
                 {
                     "ResponseBody" => ExtractFromResponseBody(response.Body, variable.JsonPath),
                     "ResponseHeader" => ExtractFromHeader(response.Headers, variable.HeaderName),
+                    "RequestBody" => ExtractFromResponseBody(requestBody, variable.JsonPath),
                     "Status" => response.StatusCode?.ToString(),
                     _ => null,
                 };
