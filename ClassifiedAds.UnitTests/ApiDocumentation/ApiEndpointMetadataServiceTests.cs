@@ -221,4 +221,78 @@ public class ApiEndpointMetadataServiceTests
         // Assert
         await act.Should().ThrowAsync<ValidationException>();
     }
+
+    [Fact]
+    public async Task GetEndpointMetadataAsync_Should_CreateChainDependency_RegisterBeforeLogin()
+    {
+        // Arrange: Register + Login + secured endpoint
+        var specId = Guid.NewGuid();
+        var registerId = Guid.NewGuid();
+        var loginId = Guid.NewGuid();
+        var securedId = Guid.NewGuid();
+
+        _specifications.Add(new ApiSpecification { Id = specId, Name = "Spec" });
+
+        _endpoints.AddRange(new[]
+        {
+            new ApiEndpoint { Id = registerId, ApiSpecId = specId, HttpMethod = ApiHttpMethod.POST, Path = "/api/auth/register", OperationId = "register" },
+            new ApiEndpoint { Id = loginId, ApiSpecId = specId, HttpMethod = ApiHttpMethod.POST, Path = "/api/auth/login", OperationId = "login" },
+            new ApiEndpoint { Id = securedId, ApiSpecId = specId, HttpMethod = ApiHttpMethod.GET, Path = "/api/products", OperationId = "listProducts" },
+        });
+
+        _securityRequirements.Add(new EndpointSecurityReq { Id = Guid.NewGuid(), EndpointId = securedId, SecurityType = SecurityType.Bearer, SchemeName = "Bearer" });
+
+        // Act
+        var result = await _service.GetEndpointMetadataAsync(specId);
+
+        // Assert
+        var registerMeta = result.Single(x => x.EndpointId == registerId);
+        var loginMeta = result.Single(x => x.EndpointId == loginId);
+        var securedMeta = result.Single(x => x.EndpointId == securedId);
+
+        // Both should be auth-related (public endpoints under /auth)
+        registerMeta.IsAuthRelated.Should().BeTrue();
+        loginMeta.IsAuthRelated.Should().BeTrue();
+        securedMeta.IsAuthRelated.Should().BeFalse();
+
+        // Rule 5: Login depends on Register (chain)
+        loginMeta.DependsOnEndpointIds.Should().Contain(registerId);
+
+        // Rule 4: Secured depends on Login (token producer), not Register
+        securedMeta.DependsOnEndpointIds.Should().Contain(loginId);
+        securedMeta.DependsOnEndpointIds.Should().NotContain(registerId);
+
+        // Register should have no auth chain dependency
+        registerMeta.DependsOnEndpointIds.Should().NotContain(loginId);
+    }
+
+    [Fact]
+    public async Task GetEndpointMetadataAsync_Should_OrderRegisterBeforeLogin_WithOnlyTwoAuthEndpoints()
+    {
+        // Arrange: Only Register + Login (user's reported scenario)
+        var specId = Guid.NewGuid();
+        var registerId = Guid.NewGuid();
+        var loginId = Guid.NewGuid();
+
+        _specifications.Add(new ApiSpecification { Id = specId, Name = "Spec" });
+
+        _endpoints.AddRange(new[]
+        {
+            new ApiEndpoint { Id = loginId, ApiSpecId = specId, HttpMethod = ApiHttpMethod.POST, Path = "/api/auth/login", OperationId = "login" },
+            new ApiEndpoint { Id = registerId, ApiSpecId = specId, HttpMethod = ApiHttpMethod.POST, Path = "/api/auth/register", OperationId = "register" },
+        });
+
+        // Act
+        var result = await _service.GetEndpointMetadataAsync(specId);
+
+        // Assert
+        var loginMeta = result.Single(x => x.EndpointId == loginId);
+        var registerMeta = result.Single(x => x.EndpointId == registerId);
+
+        // Login should depend on Register (Rule 5 chain)
+        loginMeta.DependsOnEndpointIds.Should().Contain(registerId);
+
+        // Register should have no dependencies
+        registerMeta.DependsOnEndpointIds.Should().BeEmpty();
+    }
 }
