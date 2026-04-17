@@ -97,7 +97,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
                             continue;
                         }
 
-                        var endpoint = ParseOperation(path, operation.Name.ToUpperInvariant(), operation.Value, pathLevelParameters, securitySchemeTypeMap, isSwagger2);
+                        var endpoint = ParseOperation(path, operation.Name.ToUpperInvariant(), operation.Value, pathLevelParameters, securitySchemeTypeMap, isSwagger2, root);
                         result.Endpoints.Add(endpoint);
                     }
                 }
@@ -125,7 +125,8 @@ public class OpenApiSpecificationParser : ISpecificationParser
         JsonElement operation,
         List<JsonElement> pathLevelParameters,
         Dictionary<string, SecurityType> securitySchemeTypeMap,
-        bool isSwagger2)
+        bool isSwagger2,
+        JsonElement root)
     {
         var endpoint = new ParsedEndpoint
         {
@@ -176,7 +177,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
 
         foreach (var param in mergedParams.Values)
         {
-            var mappedParam = MapParameter(param, isSwagger2);
+            var mappedParam = MapParameter(param, isSwagger2, root);
             if (mappedParam != null)
             {
                 endpoint.Parameters.Add(mappedParam);
@@ -186,7 +187,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         // Request body (OpenAPI 3.x)
         if (!isSwagger2 && operation.TryGetProperty("requestBody", out var requestBodyElement))
         {
-            var bodyParam = MapRequestBody(requestBodyElement);
+            var bodyParam = MapRequestBody(requestBodyElement, root);
             if (bodyParam != null)
             {
                 endpoint.Parameters.Add(bodyParam);
@@ -203,7 +204,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
                     continue;
                 }
 
-                endpoint.Responses.Add(MapResponse(response.Name, response.Value));
+                endpoint.Responses.Add(MapResponse(response.Name, response.Value, root));
             }
         }
 
@@ -248,7 +249,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         return endpoint;
     }
 
-    private static ParsedParameter MapParameter(JsonElement param, bool isSwagger2)
+    private static ParsedParameter MapParameter(JsonElement param, bool isSwagger2, JsonElement root)
     {
         var name = GetStringProperty(param, "name");
         if (string.IsNullOrWhiteSpace(name))
@@ -265,7 +266,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
             string schema = null;
             if (param.TryGetProperty("schema", out var schemaElement))
             {
-                schema = schemaElement.GetRawText();
+                schema = ResolveSchemaJson(schemaElement, root);
             }
 
             return new ParsedParameter
@@ -288,7 +289,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         {
             dataType = GetStringProperty(schemaEl, "type") ?? "string";
             format = GetStringProperty(schemaEl, "format");
-            schemaJson = schemaEl.GetRawText();
+            schemaJson = ResolveSchemaJson(schemaEl, root);
 
             if (schemaEl.TryGetProperty("default", out var defaultEl))
             {
@@ -329,7 +330,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         };
     }
 
-    private static ParsedParameter MapRequestBody(JsonElement requestBody)
+    private static ParsedParameter MapRequestBody(JsonElement requestBody, JsonElement root)
     {
         if (requestBody.ValueKind != JsonValueKind.Object)
         {
@@ -365,7 +366,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
 
         if (mediaType.TryGetProperty("schema", out var schemaEl))
         {
-            schemaJson = schemaEl.GetRawText();
+            schemaJson = ResolveSchemaJson(schemaEl, root);
         }
 
         if (mediaType.TryGetProperty("example", out var exampleEl))
@@ -390,7 +391,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         };
     }
 
-    private static ParsedResponse MapResponse(string statusCodeKey, JsonElement response)
+    private static ParsedResponse MapResponse(string statusCodeKey, JsonElement response, JsonElement root)
     {
         int statusCode;
         if (string.Equals(statusCodeKey, "default", StringComparison.OrdinalIgnoreCase))
@@ -427,7 +428,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
             {
                 if (mediaType.TryGetProperty("schema", out var schemaEl))
                 {
-                    schemaJson = schemaEl.GetRawText();
+                    schemaJson = ResolveSchemaJson(schemaEl, root);
                 }
 
                 if (mediaType.TryGetProperty("example", out var exampleEl))
@@ -445,7 +446,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         else if (response.TryGetProperty("schema", out var swagger2SchemaEl))
         {
             // Swagger 2.0: schema directly on response
-            schemaJson = swagger2SchemaEl.GetRawText();
+            schemaJson = ResolveSchemaJson(swagger2SchemaEl, root);
         }
 
         if (response.TryGetProperty("headers", out var headersElement) && headersElement.ValueKind == JsonValueKind.Object)
@@ -583,6 +584,170 @@ public class OpenApiSpecificationParser : ISpecificationParser
         }
 
         return map;
+    }
+
+    /// <summary>
+    /// Resolves a JSON schema element that may contain a <c>$ref</c> pointer
+    /// (e.g. <c>{"$ref":"#/components/schemas/AuthRegisterInput"}</c>) to the
+    /// fully-inlined JSON string using the document root as the resolution base.
+    /// Handles nested <c>$ref</c> inside properties, items, allOf/oneOf/anyOf.
+    /// </summary>
+    internal static string ResolveSchemaJson(JsonElement schemaElement, JsonElement root)
+    {
+        var resolved = ResolveRefElement(schemaElement, root, depth: 0);
+        return resolved.GetRawText();
+    }
+
+    /// <summary>
+    /// Recursively resolves <c>$ref</c> pointers inside a <see cref="JsonElement"/> tree.
+    /// Uses a depth guard to prevent infinite recursion on circular references.
+    /// </summary>
+    private static JsonElement ResolveRefElement(JsonElement element, JsonElement root, int depth)
+    {
+        const int MaxDepth = 20;
+        if (depth > MaxDepth)
+        {
+            return element;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            // If the object is a pure $ref pointer, resolve it
+            if (element.TryGetProperty("$ref", out var refProp) && refProp.ValueKind == JsonValueKind.String)
+            {
+                var refPath = refProp.GetString();
+                var resolved = FollowRefPath(root, refPath);
+                if (resolved.HasValue)
+                {
+                    // Recursively resolve the target (it may contain nested $ref)
+                    return ResolveRefElement(resolved.Value, root, depth + 1);
+                }
+
+                // Could not resolve — return the original $ref element as-is
+                return element;
+            }
+
+            // Walk all properties and resolve nested $ref in schema-bearing fields
+            using var stream = new System.IO.MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                foreach (var prop in element.EnumerateObject())
+                {
+                    writer.WritePropertyName(prop.Name);
+                    WriteResolved(writer, prop.Value, root, depth + 1);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            return JsonDocument.Parse(stream.ToArray()).RootElement;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            using var stream = new System.IO.MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartArray();
+                foreach (var item in element.EnumerateArray())
+                {
+                    WriteResolved(writer, item, root, depth + 1);
+                }
+
+                writer.WriteEndArray();
+            }
+
+            return JsonDocument.Parse(stream.ToArray()).RootElement;
+        }
+
+        return element;
+    }
+
+    /// <summary>
+    /// Writes a resolved element into a <see cref="Utf8JsonWriter"/>.
+    /// </summary>
+    private static void WriteResolved(Utf8JsonWriter writer, JsonElement element, JsonElement root, int depth)
+    {
+        const int MaxDepth = 20;
+        if (depth > MaxDepth)
+        {
+            element.WriteTo(writer);
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            // Pure $ref pointer — resolve and write the target
+            if (element.TryGetProperty("$ref", out var refProp) && refProp.ValueKind == JsonValueKind.String)
+            {
+                var resolved = FollowRefPath(root, refProp.GetString());
+                if (resolved.HasValue)
+                {
+                    WriteResolved(writer, resolved.Value, root, depth + 1);
+                    return;
+                }
+            }
+
+            writer.WriteStartObject();
+            foreach (var prop in element.EnumerateObject())
+            {
+                writer.WritePropertyName(prop.Name);
+                WriteResolved(writer, prop.Value, root, depth + 1);
+            }
+
+            writer.WriteEndObject();
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            writer.WriteStartArray();
+            foreach (var item in element.EnumerateArray())
+            {
+                WriteResolved(writer, item, root, depth + 1);
+            }
+
+            writer.WriteEndArray();
+            return;
+        }
+
+        element.WriteTo(writer);
+    }
+
+    /// <summary>
+    /// Follows a JSON Pointer–style <c>$ref</c> string (e.g.
+    /// <c>#/components/schemas/AuthRegisterInput</c>) from the document root.
+    /// Returns <c>null</c> if any segment is missing.
+    /// </summary>
+    private static JsonElement? FollowRefPath(JsonElement root, string refPath)
+    {
+        if (string.IsNullOrWhiteSpace(refPath) || !refPath.StartsWith('#'))
+        {
+            return null;
+        }
+
+        var segments = refPath.TrimStart('#', '/').Split('/');
+        var current = root;
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+            {
+                continue;
+            }
+
+            // Un-escape JSON Pointer encoding (RFC 6901)
+            var decoded = segment.Replace("~1", "/").Replace("~0", "~");
+
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(decoded, out var next))
+            {
+                return null;
+            }
+
+            current = next;
+        }
+
+        return current;
     }
 
     private static string GetStringProperty(JsonElement element, string propertyName)
