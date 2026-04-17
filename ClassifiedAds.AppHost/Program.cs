@@ -2,13 +2,14 @@ using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Configuration;
 using System;
-using System.Data.Common;
+using System.Linq;
+using System.Net.NetworkInformation;
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // ClassifiedAds.AppHost - .NET Aspire Orchestration
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Responsibilities:
-// - Define infrastructure resources (RabbitMQ, Redis, MailHog)
+// - Define infrastructure resources (PostgreSQL, RabbitMQ, Redis, MailHog)
 // - Orchestrate application services (WebAPI, Background, Migrator)
 // - Manage startup dependencies (Migrator runs before WebAPI/Background)
 // - Provide Aspire Dashboard for observability (traces, metrics, logs, resources)
@@ -18,89 +19,94 @@ using System.Data.Common;
 // Dashboard: https://localhost:17274 (or URL shown in console)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
-var isRunningInContainer = string.Equals(
-    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
-    "true",
-    StringComparison.OrdinalIgnoreCase);
+const string AppHostPostgresVolumeName = "classifiedads_apphost_postgres_data";
+const string AppHostPostgresDatabaseName = "ClassifiedAds";
+const int DefaultAppHostPostgresHostPort = 55433;
+const int AppHostPostgresFallbackPortFloor = 55434;
+const int AppHostPostgresFallbackPortCeiling = 55483;
 
-var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
-
-if (!isRunningInContainer)
-{
-    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
-        probeForEnv: true,
-        probeLevelsToSearch: 6,
-        trimValues: true,
-        overwriteExistingVars: false));
-}
-
-var explicitDatabaseMode = Environment.GetEnvironmentVariable("APPHOST_DATABASE_MODE");
 var builder = DistributedApplication.CreateBuilder(args);
-var configuredConnectionString = builder.Configuration.GetConnectionString("Default");
-var useExternalDatabase = ResolveUseExternalDatabase(explicitDatabaseMode, processConnectionStringBeforeDotEnv);
-var externalConnectionString = default(string);
-
-if (useExternalDatabase)
-{
-    externalConnectionString = !string.IsNullOrWhiteSpace(processConnectionStringBeforeDotEnv)
-        ? processConnectionStringBeforeDotEnv
-        : configuredConnectionString;
-
-    if (string.IsNullOrWhiteSpace(externalConnectionString))
-    {
-        throw new InvalidOperationException(
-            "External DB mode requires ConnectionStrings__Default. " +
-            "Set it in current shell or .env before running AppHost.");
-    }
-
-    var externalDatabaseHost = ResolveDatabaseHost(externalConnectionString);
-    if (string.IsNullOrWhiteSpace(externalDatabaseHost))
-    {
-        throw new InvalidOperationException("Could not resolve database host from ConnectionStrings__Default.");
-    }
-
-    Console.WriteLine($"[AppHost] Database mode: External ({externalDatabaseHost})");
-
-    if (LooksLikeSupabaseTransactionPooler(externalConnectionString))
-    {
-        Console.WriteLine(
-            "[AppHost] Warning: ConnectionStrings__Default points to Supabase transaction pooler (port 6543). " +
-            "This path can cause intermittent Npgsql ObjectDisposedException for migrator/runtime. " +
-            "Prefer local AppHost DB mode or Supabase session mode (5432).");
-    }
-}
-else
-{
-    Console.WriteLine("[AppHost] Database mode: Local PostgreSQL container (db/ClassifiedAds, host port 55433)");
-}
-
-var externalRedisUrl = builder.Configuration["REDIS_URL"];
-var redisInstanceName = builder.Configuration["Caching__Distributed__Redis__InstanceName"] ?? "ClassifiedAds_";
-var useExternalRedis = !string.IsNullOrWhiteSpace(externalRedisUrl);
+var externalConnectionString = builder.Configuration.GetConnectionString("Default");
+var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
+var configuredAppHostPostgresHostPort = ResolveConfiguredAppHostPostgresHostPort();
+var appHostPostgresHostPort = useExternalDatabase
+    ? 0
+    : ResolveAvailableHostPort(
+        configuredAppHostPostgresHostPort,
+        AppHostPostgresFallbackPortFloor,
+        AppHostPostgresFallbackPortCeiling);
 Console.WriteLine(
-    useExternalRedis
-        ? "[AppHost] Redis mode: External (REDIS_URL)"
-        : "[AppHost] Redis mode: Local container");
+    useExternalDatabase
+        ? "[AppHost] Database mode: External (ConnectionStrings__Default)"
+        : $"[AppHost] Database mode: Local PostgreSQL container with persistent volume '{AppHostPostgresVolumeName}'");
+
+if (!useExternalDatabase && appHostPostgresHostPort != configuredAppHostPostgresHostPort)
+{
+    Console.WriteLine(
+        $"[AppHost] Requested PostgreSQL host port {configuredAppHostPostgresHostPort} is already in use. " +
+        $"Falling back to {appHostPostgresHostPort}.");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Infrastructure Resources
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+// In external mode, AppHost uses externally provided ConnectionStrings__Default (e.g. standalone docker-compose DB).
+// In local mode, AppHost provisions a local PostgreSQL container and injects ConnectionStrings__Default automatically.
+var postgres = default(IResourceBuilder<PostgresServerResource>);
+var classifiedAdsDb = default(IResourceBuilder<PostgresDatabaseResource>);
+
+if (!useExternalDatabase)
+{
+    var postgresPassword = builder.AddParameter(
+        "postgres-password",
+        new GenerateParameterDefault
+        {
+            MinLength = 24,
+            Lower = true,
+            Upper = true,
+            Numeric = true,
+            Special = false,
+            MinLower = 1,
+            MinUpper = 1,
+            MinNumeric = 1,
+        },
+        secret: true,
+        persist: true);
+
+    postgres = builder.AddPostgres("postgres", password: postgresPassword)
+        .WithImage("postgres")
+        .WithImageTag("16")
+        .WithHostPort(appHostPostgresHostPort)
+        .WithDataVolume(AppHostPostgresVolumeName)
+        .WithPgAdmin();                   // Adds PgAdmin UI for database management
+
+    // Add the main database
+    // Using "Default" as database resource name so Aspire injects ConnectionStrings__Default
+    // which matches the key used in appsettings.json
+    classifiedAdsDb = postgres.AddDatabase("Default", databaseName: AppHostPostgresDatabaseName);
+
+    Console.WriteLine($"[AppHost] Local PostgreSQL database: {AppHostPostgresDatabaseName}");
+    Console.WriteLine($"[AppHost] Local PostgreSQL host port: {appHostPostgresHostPort}");
+    Console.WriteLine($"[AppHost] Local PostgreSQL volume: {AppHostPostgresVolumeName}");
+}
+else
+{
+    Console.WriteLine("[AppHost] Local PostgreSQL container is disabled because ConnectionStrings__Default was supplied.");
+}
+
 // RabbitMQ - Message broker with management UI
 // Matches docker-compose: rabbitmq:3-management, ports 5672 (AMQP), 15672 (Management UI)
 // Used for async cross-module communication via message bus
-var rabbitmqPassword = builder.AddParameter("rabbitmq-password", secret: true);
-var rabbitmq = builder.AddRabbitMQ("rabbitmq", password: rabbitmqPassword)
+var rabbitmq = builder.AddRabbitMQ("rabbitmq")
     .WithManagementPlugin();  // Aspire automatically uses rabbitmq:3-management image
 
 // Redis - Distributed cache
 // Matches docker-compose: redis:7-alpine, port 6379
 // Used for distributed caching across multiple instances
-var redis = !useExternalRedis
-    ? builder.AddRedis("redis")
-        .WithHostPort(6379)
-        .WithDataVolume("redis_data")  // Aspire uses latest stable Redis image
-    : null;
+var redis = builder.AddRedis("redis")
+    .WithHostPort(6379)
+    .WithDataVolume("redis_data");  // Aspire uses latest stable Redis image
 
 // MailHog - Email testing (SMTP + Web UI)
 // Matches docker-compose: mailhog/mailhog, ports 1025 (SMTP), 8025 (Web UI)
@@ -108,17 +114,6 @@ var redis = !useExternalRedis
 var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog")
     .WithHttpEndpoint(port: 8025, targetPort: 8025, name: "webui")  // View captured emails
     .WithEndpoint(port: 1025, targetPort: 1025, name: "smtp", scheme: "tcp");  // SMTP server
-
-IResourceBuilder<PostgresDatabaseResource>? localDatabase = null;
-if (!useExternalDatabase)
-{
-    var pgPassword = builder.AddParameter("postgres-password", secret: true);
-    var postgres = builder.AddPostgres("db", password: pgPassword, port: 55433)
-        .WithImageTag("16")
-        .WithDataVolume("classifiedads_apphost_postgres_data");
-
-    localDatabase = postgres.AddDatabase("classifiedads", "ClassifiedAds");
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Database Migrator
@@ -137,8 +132,8 @@ if (useExternalDatabase)
 else
 {
     migrator = migrator
-        .WaitFor(localDatabase!)
-        .WithEnvironment("ConnectionStrings__Default", localDatabase!.Resource.ConnectionStringExpression);
+        .WithReference(classifiedAdsDb!) // Injects connection string automatically
+        .WaitFor(postgres!);  // Waits for PostgreSQL to be ready before starting
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════
@@ -146,14 +141,14 @@ else
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 // WebAPI - REST API host with Swagger UI
-// Depends on: selected database mode, RabbitMQ, Redis
+// Depends on: PostgreSQL, RabbitMQ, Redis
 // Waits for migrator to complete before starting
 var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj")
-    .WithEndpoint("http", endpoint => endpoint.Port = 9002)  // Keep the existing HTTP endpoint, pin its host port
     .WithReference(rabbitmq)         // Injects RabbitMQ connection details
+    .WithReference(redis)            // Injects Redis connection details
                                      // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     .WithEnvironment("Modules__Identity__Providers__Google__Enabled",
         Environment.GetEnvironmentVariable("Modules__Identity__Providers__Google__Enabled") ?? "false")
@@ -161,20 +156,8 @@ var webapi = builder.AddProject("webapi", "../ClassifiedAds.WebAPI/ClassifiedAds
         Environment.GetEnvironmentVariable("Modules__Identity__Providers__Google__ClientId") ?? "")
     .WaitForCompletion(migrator)  // Ensures migrations complete before startup
     .WaitFor(rabbitmq)
+    .WaitFor(redis)
     .WithExternalHttpEndpoints();  // Exposes to localhost for external access
-
-if (useExternalRedis)
-{
-    webapi = webapi
-        .WithEnvironment("REDIS_URL", externalRedisUrl!)
-        .WithEnvironment("Caching__Distributed__Redis__Configuration", externalRedisUrl!);
-}
-else
-{
-    webapi = webapi
-        .WithReference(redis!)           // Injects Redis connection details
-        .WaitFor(redis!);
-}
 
 if (useExternalDatabase)
 {
@@ -182,21 +165,19 @@ if (useExternalDatabase)
 }
 else
 {
-    webapi = webapi
-        .WaitFor(localDatabase!)
-        .WithEnvironment("ConnectionStrings__Default", localDatabase!.Resource.ConnectionStringExpression);
+    webapi = webapi.WithReference(classifiedAdsDb!);  // Injects ConnectionStrings__Default
 }
 
 // Background - Background worker service
-// Depends on: selected database mode, RabbitMQ, MailHog, Redis
+// Depends on: PostgreSQL, RabbitMQ, MailHog, Redis
 // Waits for migrator to complete before starting
 // Responsibilities: Publish outbox messages, send emails/SMS, consume message bus events
 var background = builder.AddProject("background", "../ClassifiedAds.Background/ClassifiedAds.Background.csproj")
-    .WithHttpEndpoint(port: 9003, name: "http")  // Fixed host port
     .WithReference(rabbitmq)
+    .WithReference(redis)
     // Override appsettings for Aspire environment
     .WithEnvironment("Caching__Distributed__Provider", "Redis")
-    .WithEnvironment("Caching__Distributed__Redis__InstanceName", redisInstanceName)
+    .WithEnvironment("Caching__Distributed__Redis__InstanceName", "ClassifiedAds_")
     .WithEnvironment("Messaging__Provider", "RabbitMQ")
     // Configure email via MailHog (for testing, no real emails sent)
     .WithEnvironment("Modules__Notification__Email__Provider", "SmtpClient")
@@ -208,22 +189,10 @@ var background = builder.AddProject("background", "../ClassifiedAds.Background/C
     // Configure file storage (local filesystem for development)
     .WithEnvironment("Modules__Storage__Provider", "Local")
     .WithEnvironment("Modules__Storage__Local__Path", "/tmp/files")
-    .WaitForCompletion(migrator)
+    .WaitFor(migrator)
     .WaitFor(rabbitmq)
+    .WaitFor(redis)
     .WaitFor(mailhog);
-
-if (useExternalRedis)
-{
-    background = background
-        .WithEnvironment("REDIS_URL", externalRedisUrl!)
-        .WithEnvironment("Caching__Distributed__Redis__Configuration", externalRedisUrl!);
-}
-else
-{
-    background = background
-        .WithReference(redis!)
-        .WaitFor(redis!);
-}
 
 if (useExternalDatabase)
 {
@@ -231,9 +200,7 @@ if (useExternalDatabase)
 }
 else
 {
-    background = background
-        .WaitFor(localDatabase!)
-        .WithEnvironment("ConnectionStrings__Default", localDatabase!.Resource.ConnectionStringExpression);
+    background = background.WithReference(classifiedAdsDb!);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════
@@ -245,63 +212,49 @@ else
 
 builder.Build().Run();
 
-bool ResolveUseExternalDatabase(string? databaseMode, string? processConnectionString)
+int ResolveConfiguredAppHostPostgresHostPort()
 {
-    if (string.Equals(databaseMode, "external", StringComparison.OrdinalIgnoreCase))
+    var configuredPortText = Environment.GetEnvironmentVariable("APPHOST_POSTGRES_HOST_PORT");
+    if (string.IsNullOrWhiteSpace(configuredPortText))
     {
-        return true;
+        return DefaultAppHostPostgresHostPort;
     }
 
-    if (string.Equals(databaseMode, "local", StringComparison.OrdinalIgnoreCase))
+    if (int.TryParse(configuredPortText, out var configuredPort) &&
+        configuredPort is > 0 and < 65536)
     {
-        return false;
+        return configuredPort;
     }
 
-    // Auto mode: only use external DB when the shell explicitly exported ConnectionStrings__Default.
-    // Values coming from .env should not force AppHost out of local DB mode.
-    return !string.IsNullOrWhiteSpace(processConnectionString);
+    Console.WriteLine(
+        $"[AppHost] APPHOST_POSTGRES_HOST_PORT='{configuredPortText}' is invalid. " +
+        $"Falling back to {DefaultAppHostPostgresHostPort}.");
+
+    return DefaultAppHostPostgresHostPort;
 }
 
-string ResolveDatabaseHost(string connectionString)
+int ResolveAvailableHostPort(int preferredPort, int fallbackPortFloor, int fallbackPortCeiling)
 {
-    var csBuilder = new DbConnectionStringBuilder
+    if (!IsTcpPortInUse(preferredPort))
     {
-        ConnectionString = connectionString,
-    };
-
-    if (csBuilder.TryGetValue("Host", out var hostValue) && hostValue is not null)
-    {
-        return Convert.ToString(hostValue) ?? string.Empty;
+        return preferredPort;
     }
 
-    if (csBuilder.TryGetValue("Server", out var serverValue) && serverValue is not null)
+    for (var candidatePort = fallbackPortFloor; candidatePort <= fallbackPortCeiling; candidatePort++)
     {
-        return Convert.ToString(serverValue) ?? string.Empty;
+        if (candidatePort != preferredPort && !IsTcpPortInUse(candidatePort))
+        {
+            return candidatePort;
+        }
     }
 
-    return string.Empty;
+    throw new InvalidOperationException(
+        $"Could not find an available PostgreSQL host port for AppHost between {fallbackPortFloor} and {fallbackPortCeiling}.");
 }
 
-string ResolveDatabasePort(string connectionString)
+bool IsTcpPortInUse(int port)
 {
-    var csBuilder = new DbConnectionStringBuilder
-    {
-        ConnectionString = connectionString,
-    };
-
-    if (csBuilder.TryGetValue("Port", out var portValue) && portValue is not null)
-    {
-        return Convert.ToString(portValue) ?? string.Empty;
-    }
-
-    return string.Empty;
-}
-
-bool LooksLikeSupabaseTransactionPooler(string connectionString)
-{
-    var host = ResolveDatabaseHost(connectionString);
-    var port = ResolveDatabasePort(connectionString);
-
-    return host.IndexOf(".pooler.supabase.com", StringComparison.OrdinalIgnoreCase) >= 0 &&
-        string.Equals(port, "6543", StringComparison.OrdinalIgnoreCase);
+    return IPGlobalProperties.GetIPGlobalProperties()
+        .GetActiveTcpListeners()
+        .Any(endpoint => endpoint.Port == port);
 }

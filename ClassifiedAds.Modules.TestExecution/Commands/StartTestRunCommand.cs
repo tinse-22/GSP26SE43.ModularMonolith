@@ -82,7 +82,12 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         }
 
         // 4. Validate status
-        if (suiteContext.Status != "Ready")
+        var isManualSuite = string.Equals(
+            suiteContext.GenerationType,
+            "Manual",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (!isManualSuite && suiteContext.Status != "Ready")
         {
             throw new ValidationException("Test suite chưa sẵn sàng để chạy test.");
         }
