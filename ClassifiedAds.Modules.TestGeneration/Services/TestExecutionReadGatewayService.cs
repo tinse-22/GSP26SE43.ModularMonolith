@@ -57,6 +57,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             TestSuiteId = suite.Id,
             ProjectId = suite.ProjectId,
             ApiSpecId = suite.ApiSpecId,
+            GenerationType = suite.GenerationType.ToString(),
             CreatedById = suite.CreatedById,
             Status = suite.Status.ToString(),
             Name = suite.Name,
@@ -68,13 +69,22 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default)
     {
-        // 1. Enforce FE-05A gate and get approved endpoint order
-        var approvedOrder = await _orderGateService.RequireApprovedOrderAsync(testSuiteId, ct);
-
-        // 2. Load suite access context
+        // 1. Load suite access context
         var suiteContext = await GetSuiteAccessContextAsync(testSuiteId, ct);
 
-        // 3. Batch load all enabled test cases for suite
+        // Manual suites behave like Postman-style execution: no approved order required.
+        var useApprovedOrder = !string.Equals(
+            suiteContext.GenerationType,
+            GenerationType.Manual.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+
+        IReadOnlyList<ApiOrderItemModel> approvedOrder = Array.Empty<ApiOrderItemModel>();
+        if (useApprovedOrder)
+        {
+            approvedOrder = await _orderGateService.RequireApprovedOrderAsync(testSuiteId, ct);
+        }
+
+        // 2. Batch load all enabled test cases for suite
         var enabledTestCases = await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == testSuiteId && x.IsEnabled));
@@ -82,7 +92,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         var enabledTestCaseMap = enabledTestCases.ToDictionary(x => x.Id);
         var enabledTestCaseIds = enabledTestCases.Select(x => x.Id).ToHashSet();
 
-        // 4. Determine final test case set
+        // 3. Determine final test case set
         IReadOnlyCollection<Guid> finalTestCaseIds;
         if (selectedTestCaseIds != null && selectedTestCaseIds.Count > 0)
         {
@@ -96,7 +106,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
 
         var finalTestCaseIdSet = finalTestCaseIds.ToHashSet();
 
-        // 5. Batch load all related data by testCaseIds
+        // 4. Batch load all related data by testCaseIds
         var requests = await _requestRepository.ToListAsync(
             _requestRepository.GetQueryableSet()
                 .Where(x => finalTestCaseIdSet.Contains(x.TestCaseId)));
@@ -113,27 +123,27 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             _dependencyRepository.GetQueryableSet()
                 .Where(x => finalTestCaseIdSet.Contains(x.TestCaseId)));
 
-        // 6. Validate dependency closure for selected cases
+        // 5. Validate dependency closure for selected cases
         if (selectedTestCaseIds != null && selectedTestCaseIds.Count > 0)
         {
             ValidateDependencyClosure(dependencies, finalTestCaseIdSet, enabledTestCaseMap);
         }
 
-        // 7. Build in-memory dictionaries for mapping
+        // 6. Build in-memory dictionaries for mapping
         var requestMap = requests.ToDictionary(x => x.TestCaseId);
         var expectationMap = expectations.ToDictionary(x => x.TestCaseId);
         var variableMap = variables.GroupBy(x => x.TestCaseId).ToDictionary(g => g.Key, g => g.ToList());
         var dependencyMap = dependencies.GroupBy(x => x.TestCaseId).ToDictionary(g => g.Key, g => g.Select(d => d.DependsOnTestCaseId).ToList());
 
-        // 8. Build endpoint order lookup from approved order
-        var endpointOrderMap = approvedOrder
-            .ToDictionary(x => x.EndpointId, x => x.OrderIndex);
-        var orderedEndpointIds = approvedOrder
-            .OrderBy(x => x.OrderIndex)
-            .Select(x => x.EndpointId)
-            .ToList();
+        // 7. Build endpoint order lookup only when approved order is available
+        var endpointOrderMap = useApprovedOrder
+            ? approvedOrder.ToDictionary(x => x.EndpointId, x => x.OrderIndex)
+            : new Dictionary<Guid, int>();
+        var orderedEndpointIds = useApprovedOrder
+            ? approvedOrder.OrderBy(x => x.OrderIndex).Select(x => x.EndpointId).ToList()
+            : new List<Guid>();
 
-        // 9. Map to DTOs with deterministic ordering
+        // 8. Map to DTOs with deterministic ordering
         var orderedTestCases = finalTestCaseIds
             .Select(id => enabledTestCaseMap[id])
             .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)

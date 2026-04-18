@@ -27,7 +27,7 @@ public class AddUpdateTestSuiteScopeCommand : ICommand
 
     public string Description { get; set; }
 
-    public Guid ApiSpecId { get; set; }
+    public Guid? ApiSpecId { get; set; }
 
     public GenerationType GenerationType { get; set; }
 
@@ -89,24 +89,38 @@ public class AddUpdateTestSuiteScopeCommandHandler : ICommandHandler<AddUpdateTe
             throw new ValidationException("Tên test suite là bắt buộc.");
         }
 
+        var isManualSuite = command.GenerationType == GenerationType.Manual;
         var normalizedEndpointIds = _scopeService.NormalizeEndpointIds(command.SelectedEndpointIds);
 
-        if (normalizedEndpointIds.Count == 0)
+        if (!isManualSuite && (!command.ApiSpecId.HasValue || command.ApiSpecId.Value == Guid.Empty))
+        {
+            throw new ValidationException("ApiSpecId là bắt buộc.");
+        }
+
+        if (!isManualSuite && normalizedEndpointIds.Count == 0)
         {
             throw new ValidationException("Phải chọn ít nhất một endpoint.");
         }
 
-        // Validate that all endpoints belong to the spec via cross-module contract
-        var validEndpoints = await _endpointMetadataService.GetEndpointMetadataAsync(
-            command.ApiSpecId, normalizedEndpointIds, cancellationToken);
-
-        var validEndpointIds = validEndpoints.Select(e => e.EndpointId).ToHashSet();
-        var invalidIds = normalizedEndpointIds.Where(id => !validEndpointIds.Contains(id)).ToList();
-
-        if (invalidIds.Count > 0)
+        if (normalizedEndpointIds.Count > 0)
         {
-            throw new ValidationException(
-                $"Các endpoint không thuộc specification đã chọn: {string.Join(", ", invalidIds)}.");
+            if (!command.ApiSpecId.HasValue || command.ApiSpecId.Value == Guid.Empty)
+            {
+                throw new ValidationException("ApiSpecId là bắt buộc khi chọn endpoint.");
+            }
+
+            // Validate that all endpoints belong to the spec via cross-module contract
+            var validEndpoints = await _endpointMetadataService.GetEndpointMetadataAsync(
+                command.ApiSpecId.Value, normalizedEndpointIds, cancellationToken);
+
+            var validEndpointIds = validEndpoints.Select(e => e.EndpointId).ToHashSet();
+            var invalidIds = normalizedEndpointIds.Where(id => !validEndpointIds.Contains(id)).ToList();
+
+            if (invalidIds.Count > 0)
+            {
+                throw new ValidationException(
+                    $"Các endpoint không thuộc specification đã chọn: {string.Join(", ", invalidIds)}.");
+            }
         }
 
         bool isUpdate = command.SuiteId.HasValue && command.SuiteId.Value != Guid.Empty;

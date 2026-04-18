@@ -38,14 +38,6 @@ public static class AspireResourceEnvironmentBridge
             return;
         }
 
-        var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL");
-        if (!string.IsNullOrWhiteSpace(redisUrl))
-        {
-            // Standalone hosts load REDIS_URL from .env; map it to the cache option consumed by AddDistributedRedisCache.
-            Environment.SetEnvironmentVariable("Caching__Distributed__Redis__Configuration", redisUrl);
-            return;
-        }
-
         var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
         var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT");
         var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
