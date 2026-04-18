@@ -161,4 +161,49 @@ public class EndpointPromptContextMapperTests
         result.Should().HaveCount(1);
         result[0].BusinessContext.Should().BeNull();
     }
+
+    [Fact]
+    public void Map_Should_PreserveParameterNameLocationAndRequiredFlags()
+    {
+        var endpointId = Guid.NewGuid();
+        var endpoints = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = endpointId,
+                HttpMethod = "PUT",
+                Path = "/api/products/{id}",
+                Parameters = new List<ApiEndpointParameterDescriptorDto>
+                {
+                    new()
+                    {
+                        Name = "id",
+                        Location = "Path",
+                        IsRequired = true,
+                        DataType = "integer",
+                    },
+                    new()
+                    {
+                        Name = "includeInactive",
+                        Location = "Query",
+                        IsRequired = false,
+                        DataType = "boolean",
+                    },
+                },
+            },
+        };
+
+        var suite = new TestSuite { EndpointBusinessContexts = new Dictionary<Guid, string>() };
+
+        var result = EndpointPromptContextMapper.Map(endpoints, suite);
+
+        result.Should().HaveCount(1);
+        result[0].Parameters.Should().HaveCount(2);
+        result[0].Parameters[0].Name.Should().Be("id");
+        result[0].Parameters[0].In.Should().Be("path");
+        result[0].Parameters[0].Required.Should().BeTrue();
+        result[0].Parameters[1].Name.Should().Be("includeInactive");
+        result[0].Parameters[1].In.Should().Be("query");
+        result[0].Parameters[1].Required.Should().BeFalse();
+    }
 }

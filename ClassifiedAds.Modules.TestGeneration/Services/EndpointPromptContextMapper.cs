@@ -44,10 +44,56 @@ public static class EndpointPromptContextMapper
 
     private static List<ParameterPromptContext> MapParameters(ApiEndpointMetadataDto ep)
     {
-        // Extract type info from schema payloads if available
         var result = new List<ParameterPromptContext>();
 
-        if (ep.ParameterSchemaPayloads != null)
+        if (ep?.Parameters != null && ep.Parameters.Count > 0)
+        {
+            foreach (var parameter in ep.Parameters)
+            {
+                if (string.IsNullOrWhiteSpace(parameter?.Name))
+                {
+                    continue;
+                }
+
+                var schema = !string.IsNullOrWhiteSpace(parameter.Schema)
+                    ? parameter.Schema
+                    : BuildSimpleSchema(parameter.DataType, parameter.Format, parameter.DefaultValue, parameter.Examples);
+
+                var details = new List<string>();
+                if (!string.IsNullOrWhiteSpace(parameter.DataType))
+                {
+                    details.Add($"type={parameter.DataType}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(parameter.Format))
+                {
+                    details.Add($"format={parameter.Format}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(parameter.DefaultValue))
+                {
+                    details.Add($"default={parameter.DefaultValue}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(parameter.Examples))
+                {
+                    details.Add($"examples={parameter.Examples}");
+                }
+
+                result.Add(new ParameterPromptContext
+                {
+                    Name = parameter.Name,
+                    In = (parameter.Location ?? string.Empty).Trim().ToLowerInvariant(),
+                    Required = parameter.IsRequired,
+                    Schema = schema,
+                    Description = details.Count == 0 ? null : string.Join("; ", details),
+                });
+            }
+
+            return result;
+        }
+
+        if (ep?.ParameterSchemaPayloads != null)
         {
             int index = 0;
             foreach (var schema in ep.ParameterSchemaPayloads)
@@ -64,6 +110,38 @@ public static class EndpointPromptContextMapper
         }
 
         return result;
+    }
+
+    private static string BuildSimpleSchema(string dataType, string format, string defaultValue, string examples)
+    {
+        var fragments = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(dataType))
+        {
+            fragments.Add($"\"type\":\"{dataType}\"");
+        }
+
+        if (!string.IsNullOrWhiteSpace(format))
+        {
+            fragments.Add($"\"format\":\"{format}\"");
+        }
+
+        if (!string.IsNullOrWhiteSpace(defaultValue))
+        {
+            fragments.Add($"\"default\":\"{defaultValue}\"");
+        }
+
+        if (!string.IsNullOrWhiteSpace(examples))
+        {
+            fragments.Add($"\"examples\":{examples}");
+        }
+
+        if (fragments.Count == 0)
+        {
+            return null;
+        }
+
+        return "{" + string.Join(",", fragments) + "}";
     }
 
     private static List<ResponsePromptContext> MapResponses(ApiEndpointMetadataDto ep)

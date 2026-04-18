@@ -221,6 +221,44 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
                 ResponseSchemaPayloads = endpointResponsesById.TryGetValue(endpoint.Id, out var respEntities)
                     ? respEntities.Where(r => r.StatusCode >= 200 && r.StatusCode <= 299 && !string.IsNullOrWhiteSpace(r.Schema)).Select(r => r.Schema).ToList()
                     : Array.Empty<string>(),
+                ParameterNames = endpointParametersById.TryGetValue(endpoint.Id, out var nameEntities)
+                    ? nameEntities
+                        .Select(p => p.Name)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                    : Array.Empty<string>(),
+                RequiredPathParameterNames = endpointParametersById.TryGetValue(endpoint.Id, out var requiredPathEntities)
+                    ? requiredPathEntities
+                        .Where(p => p.IsRequired && p.Location == Entities.ParameterLocation.Path)
+                        .Select(p => p.Name)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                    : Array.Empty<string>(),
+                RequiredQueryParameterNames = endpointParametersById.TryGetValue(endpoint.Id, out var requiredQueryEntities)
+                    ? requiredQueryEntities
+                        .Where(p => p.IsRequired && p.Location == Entities.ParameterLocation.Query)
+                        .Select(p => p.Name)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                    : Array.Empty<string>(),
+                HasRequiredRequestBody = endpointParametersById.TryGetValue(endpoint.Id, out var requiredBodyEntities)
+                    && requiredBodyEntities.Any(p => p.IsRequired && p.Location == Entities.ParameterLocation.Body),
+                Parameters = endpointParametersById.TryGetValue(endpoint.Id, out var parameterEntities)
+                    ? parameterEntities.Select(p => new ApiEndpointParameterDescriptorDto
+                    {
+                        Name = p.Name,
+                        Location = p.Location.ToString(),
+                        IsRequired = p.IsRequired,
+                        DataType = p.DataType,
+                        Format = p.Format,
+                        Schema = p.Schema,
+                        DefaultValue = p.DefaultValue,
+                        Examples = p.Examples,
+                    }).ToList()
+                    : Array.Empty<ApiEndpointParameterDescriptorDto>(),
             })
             .ToList();
     }

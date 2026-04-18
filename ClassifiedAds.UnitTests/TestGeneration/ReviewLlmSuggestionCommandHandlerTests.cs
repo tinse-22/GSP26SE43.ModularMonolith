@@ -31,6 +31,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
     private readonly Mock<IRepository<TestCaseRequest, Guid>> _requestRepoMock;
     private readonly Mock<IRepository<TestCaseExpectation, Guid>> _expectationRepoMock;
     private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
+    private readonly Mock<IRepository<TestCaseDependency, Guid>> _dependencyRepoMock;
     private readonly Mock<IRepository<TestCaseChangeLog, Guid>> _changeLogRepoMock;
     private readonly Mock<IRepository<TestSuiteVersion, Guid>> _versionRepoMock;
     private readonly Mock<ILlmSuggestionMaterializer> _materializerMock;
@@ -47,6 +48,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
         _requestRepoMock = new Mock<IRepository<TestCaseRequest, Guid>>();
         _expectationRepoMock = new Mock<IRepository<TestCaseExpectation, Guid>>();
         _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
+        _dependencyRepoMock = new Mock<IRepository<TestCaseDependency, Guid>>();
         _changeLogRepoMock = new Mock<IRepository<TestCaseChangeLog, Guid>>();
         _versionRepoMock = new Mock<IRepository<TestSuiteVersion, Guid>>();
         _materializerMock = new Mock<ILlmSuggestionMaterializer>();
@@ -108,6 +110,7 @@ public class ReviewLlmSuggestionCommandHandlerTests
             _requestRepoMock.Object,
             _expectationRepoMock.Object,
             _variableRepoMock.Object,
+            _dependencyRepoMock.Object,
             _changeLogRepoMock.Object,
             _versionRepoMock.Object,
             _materializerMock.Object,

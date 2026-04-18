@@ -18,7 +18,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 
 public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -30,6 +30,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
     private readonly IRepository<TestCaseRequest, Guid> _requestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _expectationRepository;
     private readonly IRepository<TestCaseVariable, Guid> _variableRepository;
+    private readonly IRepository<TestCaseDependency, Guid> _dependencyRepository;
     private readonly IRepository<TestCaseChangeLog, Guid> _changeLogRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
     private readonly ILlmSuggestionMaterializer _materializer;
@@ -44,6 +45,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         IRepository<TestCaseRequest, Guid> requestRepository,
         IRepository<TestCaseExpectation, Guid> expectationRepository,
         IRepository<TestCaseVariable, Guid> variableRepository,
+        IRepository<TestCaseDependency, Guid> dependencyRepository,
         IRepository<TestCaseChangeLog, Guid> changeLogRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
         ILlmSuggestionMaterializer materializer,
@@ -57,6 +59,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         _requestRepository = requestRepository;
         _expectationRepository = expectationRepository;
         _variableRepository = variableRepository;
+        _dependencyRepository = dependencyRepository;
         _changeLogRepository = changeLogRepository;
         _versionRepository = versionRepository;
         _materializer = materializer;
@@ -201,11 +204,18 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             _testCaseRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == suite.Id));
 
+        var existingTestCaseIds = existingTestCases.Select(x => x.Id).ToList();
+        var existingProducerVariables = existingTestCaseIds.Count == 0
+            ? new List<TestCaseVariable>()
+            : await _variableRepository.ToListAsync(
+                _variableRepository.GetQueryableSet().Where(x => existingTestCaseIds.Contains(x.TestCaseId)));
+
         var now = DateTimeOffset.UtcNow;
         var nextOrderIndex = existingTestCases.Count == 0
             ? 0
             : existingTestCases.Max(x => x.OrderIndex) + 1;
         var materializedTestCases = new List<TestCase>(approvalItems.Count);
+        var materializedItems = new List<MaterializedSuggestionItem>(approvalItems.Count);
 
         try
         {
@@ -243,10 +253,6 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                         ? MaterializeFromModifiedContent(suggestion, approvalItem.ModifiedContent, orderItem, nextOrderIndex++)
                         : _materializer.MaterializeFromSuggestion(suggestion, orderItem, nextOrderIndex++);
 
-                    testCase.CreatedDateTime = now;
-                    materializedTestCases.Add(testCase);
-                    fingerprintToAppliedTestCaseId[approvalFingerprint] = testCase.Id;
-
                     suggestion.ReviewStatus = isModify
                         ? ReviewStatus.ModifiedAndApproved
                         : ReviewStatus.Approved;
@@ -257,37 +263,66 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                     suggestion.UpdatedDateTime = now;
                     suggestion.RowVersion = Guid.NewGuid().ToByteArray();
 
-                    await _testCaseRepository.AddAsync(testCase, ct);
-                    await _requestRepository.AddAsync(testCase.Request, ct);
-                    await _expectationRepository.AddAsync(testCase.Expectation, ct);
+                    testCase.CreatedDateTime = now;
+                    materializedTestCases.Add(testCase);
+                    materializedItems.Add(new MaterializedSuggestionItem(suggestion, testCase, isModify));
+                    fingerprintToAppliedTestCaseId[approvalFingerprint] = testCase.Id;
+                }
 
-                    foreach (var variable in testCase.Variables)
+                if (materializedTestCases.Count > 0)
+                {
+                    var enrichment = GeneratedTestCaseDependencyEnricher.Enrich(
+                        materializedTestCases,
+                        approvedOrder,
+                        existingTestCases,
+                        existingProducerVariables);
+
+                    foreach (var existingProducerVariable in enrichment.ExistingProducerVariablesToPersist)
                     {
-                        await _variableRepository.AddAsync(variable, ct);
+                        await _variableRepository.AddAsync(existingProducerVariable, ct);
                     }
 
-                    await _changeLogRepository.AddAsync(new TestCaseChangeLog
+                    foreach (var item in materializedItems)
                     {
-                        Id = Guid.NewGuid(),
-                        TestCaseId = testCase.Id,
-                        ChangedById = currentUserId,
-                        ChangeType = TestCaseChangeType.Created,
-                        OldValue = null,
-                        NewValue = JsonSerializer.Serialize(new
-                        {
-                            testCase.Name,
-                            testCase.TestType,
-                            testCase.EndpointId,
-                            testCase.OrderIndex,
-                            VariableCount = testCase.Variables.Count,
-                            SuggestionId = suggestion.Id,
-                        }, JsonOpts),
-                        ChangeReason = BuildChangeReason(suggestion.Id, isModify, approvalItems.Count > 1),
-                        VersionAfterChange = 1,
-                        CreatedDateTime = now,
-                    }, ct);
+                        var testCase = item.TestCase;
+                        await _testCaseRepository.AddAsync(testCase, ct);
+                        await _requestRepository.AddAsync(testCase.Request, ct);
+                        await _expectationRepository.AddAsync(testCase.Expectation, ct);
 
-                    await _suggestionRepository.UpdateAsync(suggestion, ct);
+                        foreach (var variable in testCase.Variables)
+                        {
+                            await _variableRepository.AddAsync(variable, ct);
+                        }
+
+                        foreach (var dependency in testCase.Dependencies)
+                        {
+                            await _dependencyRepository.AddAsync(dependency, ct);
+                        }
+
+                        await _changeLogRepository.AddAsync(new TestCaseChangeLog
+                        {
+                            Id = Guid.NewGuid(),
+                            TestCaseId = testCase.Id,
+                            ChangedById = currentUserId,
+                            ChangeType = TestCaseChangeType.Created,
+                            OldValue = null,
+                            NewValue = JsonSerializer.Serialize(new
+                            {
+                                testCase.Name,
+                                testCase.TestType,
+                                testCase.EndpointId,
+                                testCase.OrderIndex,
+                                VariableCount = testCase.Variables.Count,
+                                DependencyCount = testCase.Dependencies.Count,
+                                SuggestionId = item.Suggestion.Id,
+                            }, JsonOpts),
+                            ChangeReason = BuildChangeReason(item.Suggestion.Id, item.IsModify, approvalItems.Count > 1),
+                            VersionAfterChange = 1,
+                            CreatedDateTime = now,
+                        }, ct);
+
+                        await _suggestionRepository.UpdateAsync(item.Suggestion, ct);
+                    }
                 }
 
                 await _versionRepository.AddAsync(new TestSuiteVersion
@@ -355,6 +390,22 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             Suggestions = approvalItems.Select(x => x.Suggestion).ToList(),
             TestCases = materializedTestCases,
         };
+    }
+
+    private sealed class MaterializedSuggestionItem
+    {
+        public MaterializedSuggestionItem(LlmSuggestion suggestion, TestCase testCase, bool isModify)
+        {
+            Suggestion = suggestion;
+            TestCase = testCase;
+            IsModify = isModify;
+        }
+
+        public LlmSuggestion Suggestion { get; }
+
+        public TestCase TestCase { get; }
+
+        public bool IsModify { get; }
     }
 
     private TestCase MaterializeFromModifiedContent(

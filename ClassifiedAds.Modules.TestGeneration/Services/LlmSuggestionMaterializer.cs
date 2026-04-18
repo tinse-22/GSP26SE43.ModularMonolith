@@ -14,7 +14,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -59,6 +59,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         {
             HttpMethod = orderItem?.HttpMethod,
             Url = orderItem?.Path,
+            BodyType = scenario.SuggestedBodyType,
             Body = scenario.SuggestedBody,
             PathParams = scenario.SuggestedPathParams,
             QueryParams = scenario.SuggestedQueryParams,
@@ -301,6 +302,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         return extractFrom.Trim().ToLowerInvariant() switch
         {
             "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
+            "requestbody" or "request_body" => ExtractFrom.RequestBody,
             "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
             "status" => ExtractFrom.Status,
             _ => ExtractFrom.ResponseBody,

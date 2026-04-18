@@ -49,7 +49,8 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
 
         ValidatePathParams(testCase, variableBag, environment, result);
-        ValidateBody(testCase, result);
+        ValidateRequiredQueryParams(testCase, endpointMetadata, result);
+        ValidateBody(testCase, endpointMetadata, result);
         ValidateUnresolvedPlaceholders(testCase, variableBag, environment, result);
         ValidateVariableChaining(testCase, variableBag, result);
 
@@ -105,9 +106,15 @@ public class PreExecutionValidator : IPreExecutionValidator
             mergedVars[kvp.Key] = kvp.Value;
         }
 
+        var requiredPathParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match token in routeTokens)
         {
-            var paramName = token.Groups[1].Value;
+            requiredPathParams.Add(token.Groups[1].Value);
+        }
+
+        foreach (var routeParam in requiredPathParams)
+        {
+            var paramName = routeParam;
 
             // Check if path param value is provided
             if (!pathParams.TryGetValue(paramName, out var paramValue) || string.IsNullOrWhiteSpace(paramValue))
@@ -147,19 +154,67 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
     }
 
+    private static void ValidateRequiredQueryParams(
+        ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
+        PreExecutionValidationResult result)
+    {
+        if (endpointMetadata?.RequiredQueryParameterNames == null || endpointMetadata.RequiredQueryParameterNames.Count == 0)
+        {
+            return;
+        }
+
+        var queryParams = DeserializeDictionary(testCase.Request?.QueryParams);
+        foreach (var requiredQueryParam in endpointMetadata.RequiredQueryParameterNames)
+        {
+            if (string.IsNullOrWhiteSpace(requiredQueryParam))
+            {
+                continue;
+            }
+
+            if (!queryParams.TryGetValue(requiredQueryParam, out var value) || string.IsNullOrWhiteSpace(value))
+            {
+                result.Errors.Add(new ValidationFailureModel
+                {
+                    Code = "MISSING_REQUIRED_QUERY_PARAM",
+                    Message = $"Thiếu required query parameter '{requiredQueryParam}' theo endpoint contract.",
+                    Target = $"QueryParams.{requiredQueryParam}",
+                    Expected = "Giá trị không rỗng",
+                    Actual = "(không có)",
+                });
+            }
+        }
+    }
+
     private static void ValidateBody(
         ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
         PreExecutionValidationResult result)
     {
         var httpMethod = testCase.Request.HttpMethod?.Trim().ToUpperInvariant() ?? "GET";
 
-        if (!BodyRequiredMethods.Contains(httpMethod))
+        var requiresBodyByMethod = BodyRequiredMethods.Contains(httpMethod);
+        var requiresBodyByContract = endpointMetadata?.HasRequiredRequestBody == true;
+        if (!requiresBodyByMethod && !requiresBodyByContract)
         {
             return;
         }
 
         var hasBody = !string.IsNullOrWhiteSpace(testCase.Request.Body);
         var bodyType = testCase.Request.BodyType?.Trim().ToUpperInvariant();
+
+        if (!hasBody && requiresBodyByContract)
+        {
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = "MISSING_REQUIRED_BODY",
+                Message = "Endpoint contract yêu cầu request body nhưng request hiện tại không có body.",
+                Target = "Request.Body",
+                Expected = "Body JSON hợp lệ",
+                Actual = "(trống)",
+            });
+            return;
+        }
 
         if (!hasBody && bodyType != "NONE" && !string.IsNullOrEmpty(bodyType))
         {
@@ -174,7 +229,7 @@ public class PreExecutionValidator : IPreExecutionValidator
                 Actual = "(trống)",
             });
         }
-        else if (!hasBody)
+        else if (!hasBody && requiresBodyByMethod)
         {
             // Warning instead of error — some POST endpoints may not require a body (e.g., trigger actions)
             result.Warnings.Add(new ValidationWarningModel
