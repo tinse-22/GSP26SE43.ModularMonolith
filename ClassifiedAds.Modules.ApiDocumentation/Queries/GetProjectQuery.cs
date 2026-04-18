@@ -16,6 +16,10 @@ public class GetProjectQuery : IQuery<ProjectDetailModel>
     public Guid ProjectId { get; set; }
 
     public Guid OwnerId { get; set; }
+
+    public bool IncludeArchived { get; set; }
+
+    public bool IncludeSpecifications { get; set; }
 }
 
 public class GetProjectQueryHandler : IQueryHandler<GetProjectQuery, ProjectDetailModel>
@@ -49,9 +53,39 @@ public class GetProjectQueryHandler : IQueryHandler<GetProjectQuery, ProjectDeta
             throw new NotFoundException($"Không tìm thấy project với mã '{query.ProjectId}'.");
         }
 
+        if (!query.IncludeArchived && project.Status == ProjectStatus.Archived)
+        {
+            throw new NotFoundException($"Không tìm thấy project với mã '{query.ProjectId}'.");
+        }
+
         var specCount = await _specRepository.GetQueryableSet()
             .Where(s => s.ProjectId == project.Id)
             .CountAsync(cancellationToken);
+
+        var specifications = new System.Collections.Generic.List<SpecificationModel>();
+        if (query.IncludeSpecifications)
+        {
+            specifications = await _specRepository.GetQueryableSet()
+                .Where(s => s.ProjectId == project.Id && !s.IsDeleted)
+                .OrderByDescending(s => s.CreatedDateTime)
+                .Select(s => new SpecificationModel
+                {
+                    Id = s.Id,
+                    ProjectId = s.ProjectId,
+                    Name = s.Name,
+                    SourceType = s.SourceType.ToString(),
+                    Version = s.Version,
+                    IsActive = s.IsActive,
+                    ParseStatus = s.ParseStatus.ToString(),
+                    ParsedAt = s.ParsedAt,
+                    OriginalFileId = s.OriginalFileId,
+                    CreatedDateTime = s.CreatedDateTime,
+                    UpdatedDateTime = s.UpdatedDateTime,
+                    IsDeleted = s.IsDeleted,
+                    DeletedAt = s.DeletedAt,
+                })
+                .ToListAsync(cancellationToken);
+        }
 
         SpecSummaryModel activeSpecSummary = null;
         if (project.ActiveSpecId.HasValue)
@@ -90,6 +124,7 @@ public class GetProjectQueryHandler : IQueryHandler<GetProjectQuery, ProjectDeta
             UpdatedDateTime = project.UpdatedDateTime,
             TotalSpecifications = specCount,
             ActiveSpecSummary = activeSpecSummary,
+            Specifications = specifications,
         };
     }
 }

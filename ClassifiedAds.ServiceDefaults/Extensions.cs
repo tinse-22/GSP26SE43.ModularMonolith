@@ -35,16 +35,15 @@ public static class Extensions
         // Service discovery (automatic DNS/URL resolution for inter-service communication)
         builder.Services.AddServiceDiscovery();
 
-        // Configure all HTTP clients with service discovery and resilience
+        // Configure all HTTP clients with service discovery
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
             // Enable service discovery for all HTTP clients by default
             http.AddServiceDiscovery();
 
-            // Enable resilience with standard retry and circuit breaker policies
-            // Note: Typed clients with custom resilience (e.g., N8nIntegrationService) add their own
-            // handlers which take precedence over this default (last-in wins for Polly pipelines)
-            http.AddStandardResilienceHandler();
+            // NOTE: Do NOT add AddStandardResilienceHandler() here.
+            // Global resilience stacks with per-client resilience (TestExecution, TestGeneration),
+            // creating double retry pipelines. Each module must configure its own resilience policy.
         });
 
         return builder;
