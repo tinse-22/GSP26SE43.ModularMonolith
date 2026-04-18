@@ -1,6 +1,8 @@
 using ClassifiedAds.Contracts.Subscription.DTOs;
 using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Contracts.Subscription.Services;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Commands;
@@ -28,6 +30,8 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<LlmSuggestion, Guid>> _suggestionRepoMock;
     private readonly Mock<IApiTestOrderGateService> _gateServiceMock;
+    private readonly Mock<IApiEndpointMetadataService> _endpointMetadataServiceMock;
+    private readonly Mock<IApiEndpointParameterDetailService> _endpointParameterDetailServiceMock;
     private readonly Mock<ILlmScenarioSuggester> _llmSuggesterMock;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
@@ -38,6 +42,8 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _suggestionRepoMock = new Mock<IRepository<LlmSuggestion, Guid>>();
         _gateServiceMock = new Mock<IApiTestOrderGateService>();
+        _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
+        _endpointParameterDetailServiceMock = new Mock<IApiEndpointParameterDetailService>();
         _llmSuggesterMock = new Mock<ILlmScenarioSuggester>();
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -48,6 +54,8 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
             _gateServiceMock.Object,
+            _endpointMetadataServiceMock.Object,
+            _endpointParameterDetailServiceMock.Object,
             _llmSuggesterMock.Object,
             _subscriptionMock.Object,
             new Mock<ILogger<GenerateLlmSuggestionPreviewCommandHandler>>().Object);
@@ -139,6 +147,43 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _gateServiceMock.Verify(
             x => x.RequireApprovedOrderAsync(command.TestSuiteId, It.IsAny<CancellationToken>()),
             Times.Once);
+
+        _endpointMetadataServiceMock.Verify(
+            x => x.GetEndpointMetadataAsync(command.SpecificationId, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _endpointParameterDetailServiceMock.Verify(
+            x => x.GetParameterDetailsAsync(command.SpecificationId, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PassMetadataAndParameterDetails_IntoLlmContext()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved();
+        SetupSubscriptionAllowed();
+        SetupNoPendingSuggestions();
+
+        LlmScenarioSuggestionContext capturedContext = null;
+        _llmSuggesterMock
+            .Setup(x => x.SuggestScenariosAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
+            .Callback<LlmScenarioSuggestionContext, CancellationToken>((ctx, _) => capturedContext = ctx)
+            .ReturnsAsync(new LlmScenarioSuggestionResult
+            {
+                Scenarios = Array.Empty<LlmSuggestedScenario>(),
+                LlmModel = "gpt-4",
+                TokensUsed = 0,
+            });
+
+        var command = CreateValidCommand();
+        await _handler.HandleAsync(command);
+
+        capturedContext.Should().NotBeNull();
+        capturedContext.EndpointMetadata.Should().NotBeNull();
+        capturedContext.EndpointMetadata.Should().HaveCountGreaterThan(0);
+        capturedContext.EndpointParameterDetails.Should().NotBeNull();
     }
 
     [Fact]
@@ -432,10 +477,34 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
 
     private void SetupGateApproved()
     {
+        var endpointId = Guid.NewGuid();
         _gateServiceMock.Setup(x => x.RequireApprovedOrderAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ApiOrderItemModel>
             {
-                new() { EndpointId = Guid.NewGuid(), HttpMethod = "POST", Path = "/api/test", OrderIndex = 0 },
+                new() { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/test", OrderIndex = 0 },
+            });
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/test",
+                },
+            });
+
+        _endpointParameterDetailServiceMock
+            .Setup(x => x.GetParameterDetailsAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<EndpointParameterDetailDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    Parameters = new List<ParameterDetailDto>(),
+                },
             });
     }
 

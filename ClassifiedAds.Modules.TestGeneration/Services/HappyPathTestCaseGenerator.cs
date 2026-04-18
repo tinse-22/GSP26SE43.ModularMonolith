@@ -25,7 +25,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -334,6 +334,7 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
         return extractFrom.Trim().ToLowerInvariant() switch
         {
             "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
+            "requestbody" or "request_body" => ExtractFrom.RequestBody,
             "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
             "status" => ExtractFrom.Status,
             _ => ExtractFrom.ResponseBody,

@@ -51,5 +51,6 @@ public enum ExtractFrom
 {
     ResponseBody = 0,
     ResponseHeader = 1,
-    Status = 2
+    Status = 2,
+    RequestBody = 3
 }
