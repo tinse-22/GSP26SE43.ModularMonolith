@@ -76,6 +76,66 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_RewriteSyntheticEmailInHappyPathBody_UsingTestEmail()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            body: "{\"email\":\"test@example.com\",\"password\":\"Test123!\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.Variables["testEmail"] = "testrun_20260415_ab12cd34@example.com";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("testrun_20260415_ab12cd34@example.com");
+        result.Body.Should().NotContain("test@example.com");
+    }
+
+    [Fact]
+    public void Resolve_Should_RewriteNestedSyntheticEmailInHappyPathBody()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            body: "{\"user\":{\"email\":\"demo@example.org\"}}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.Variables["testEmail"] = "testrun_20260415_nested@example.com";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("testrun_20260415_nested@example.com");
+        result.Body.Should().NotContain("demo@example.org");
+    }
+
+    [Fact]
+    public void Resolve_Should_NotRewriteSyntheticEmail_ForNegativeTest()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            body: "{\"email\":\"test@example.com\"}",
+            httpMethod: "POST",
+            testType: "Negative");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.Variables["testEmail"] = "testrun_20260415_ab12cd34@example.com";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("test@example.com");
+        result.Body.Should().NotContain("testrun_20260415_ab12cd34@example.com");
+    }
+
+    [Fact]
     public void Resolve_Should_ReplacePlaceholdersInPathParams()
     {
         // Arrange
@@ -279,17 +339,20 @@ public class VariableResolverTests
         string pathParams = null,
         string queryParams = null,
         string body = null,
-        int timeout = 30000)
+        int timeout = 30000,
+        string httpMethod = "GET",
+        string testType = null)
     {
         return new ExecutionTestCaseDto
         {
             TestCaseId = Guid.NewGuid(),
             Name = "Test Case",
+            TestType = testType,
             OrderIndex = 0,
             DependencyIds = Array.Empty<Guid>(),
             Request = new ExecutionTestCaseRequestDto
             {
-                HttpMethod = "GET",
+                HttpMethod = httpMethod,
                 Url = url,
                 Headers = headers,
                 PathParams = pathParams,

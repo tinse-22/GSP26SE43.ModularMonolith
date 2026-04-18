@@ -12,7 +12,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "dotnet-integration"
     },
     {
@@ -23,17 +26,23 @@
       "name": "Parse Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const { endpoints, globalBusinessRules, endpointBusinessContexts } = $input.first().json;\n\n// ── Xây dựng mô tả từng endpoint ──\nconst epLines = endpoints.map((ep, i) => {\n  const ctx = endpointBusinessContexts?.[ep.endpointId]\n    ? `\\n   Business context: ${endpointBusinessContexts[ep.endpointId]}`\n    : '';\n  const deps = ep.dependsOnEndpointIds?.length > 0\n    ? `\\n   DependsOn: [${ep.dependsOnEndpointIds.join(', ')}]` : '';\n  const auth = ep.isAuthRelated ? ' [AUTH-RELATED]' : '';\n  return `${i + 1}. [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}${auth}${deps}${ctx}`;\n}).join('\\n');\n\nconst rulesSection = globalBusinessRules\n  ? `\\n\\n=== GLOBAL BUSINESS RULES ===\\n${globalBusinessRules}` : '';\n\n// ── System prompt ──\nconst systemPrompt = `You are a senior QA engineer specialising in REST API automated testing.\nYour task: generate comprehensive, executable test cases for a set of REST API endpoints.\nFocus on correctness, coverage, and realistic test data.`;\n\n// ── User prompt ──\nconst userPrompt = `Generate test cases for the following ordered REST API endpoints.${rulesSection}\n\n=== ENDPOINTS ===\n${epLines}\n\n=== TEST CASE GENERATION RULES ===\n1. Generate at least one HappyPath test per endpoint.\n2. Generate at least one Negative test per endpoint (invalid input, missing required fields, wrong auth, etc.).\n3. [AUTH-RELATED] endpoints: generate a test for missing/invalid token returning 401.\n4. Use realistic but clearly synthetic test data (e.g. username: \"testuser_gen\", email: \"qa_test@example.com\").\n5. For endpoints that CREATE resources, set expectedStatus to \"[201]\" or \"[200]\" as appropriate.\n6. For endpoints that READ resources, set expectedStatus to \"[200]\".\n7. For endpoints that DELETE resources, set expectedStatus to \"[200]\" or \"[204]\".\n8. Negative tests should expect \"[400]\" or \"[401]\" or \"[403]\" or \"[404]\" as appropriate.\n9. Body must be a JSON string (serialized JSON), or null if the endpoint has no body.\n10. The url field should be the endpoint path, e.g. \"/api/users\" or \"/api/users/{id}\" with a realistic placeholder value.\n\n=== RESPONSE FORMAT ===\nRespond with ONLY a raw JSON object. No markdown, no code fences, no explanation outside JSON.\n\n{\n  \"testCases\": [\n    {\n      \"endpointId\": \"<exact UUID from input>\",\n      \"name\": \"<short descriptive name, e.g. 'POST /api/users - HappyPath: Create valid user'>\",\n      \"description\": \"<one sentence describing what this test validates>\",\n      \"testType\": \"<HappyPath | Boundary | Negative | Performance | Security>\",\n      \"priority\": \"<Critical | High | Medium | Low>\",\n      \"orderIndex\": <0-based integer matching execution order>,\n      \"tags\": null,\n      \"request\": {\n        \"httpMethod\": \"<GET|POST|PUT|DELETE|PATCH>\",\n        \"url\": \"<endpoint path with realistic path param values if needed>\",\n        \"headers\": null,\n        \"pathParams\": null,\n        \"queryParams\": null,\n        \"bodyType\": \"<None|JSON|FormData|UrlEncoded|Raw>\",\n        \"body\": \"<serialized JSON string or null>\",\n        \"timeout\": 30000\n      },\n      \"expectation\": {\n        \"expectedStatus\": \"<JSON array string e.g. \\\"[200]\\\" or \\\"[201]\\\" or \\\"[400]\\\">\",\n        \"responseSchema\": null,\n        \"headerChecks\": null,\n        \"bodyContains\": null,\n        \"bodyNotContains\": null,\n        \"jsonPathChecks\": null,\n        \"maxResponseTime\": null\n      }\n    }\n  ]\n}\n\nIMPORTANT: orderIndex must be unique 0-based integers. Assign them so that HappyPath tests for a resource run before Negative tests for the same resource.`;\n\nconst openAiBody = {\n  model: 'gpt-4o',\n  temperature: 0.2,\n  max_tokens: 8192,\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{\n  json: {\n    openAiBody,\n    userPrompt,\n    systemPrompt,\n    originalInput: $input.first().json\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst { endpoints, globalBusinessRules, endpointBusinessContexts, promptConfig } = input;\n\n// ── Ưu tiên đọc prompt từ backend (promptConfig) nếu có ──\nconst hasBackendPrompt = promptConfig\n  && (promptConfig.systemPrompt || promptConfig.rules || promptConfig.responseFormat);\n\n// ── Xây dựng mô tả endpoint (dùng chung cho cả 2 mode) ──\nconst epLines = endpoints.map((ep, i) => {\n  const ctx = endpointBusinessContexts?.[ep.endpointId]\n    ? `\\n   Business context: ${endpointBusinessContexts[ep.endpointId]}`\n    : '';\n  const epPrompt = ep.prompt?.combinedPrompt\n    ? `\\n   Prompt: ${ep.prompt.combinedPrompt.substring(0, 500)}`\n    : '';\n  const deps = ep.dependsOnEndpointIds?.length > 0\n    ? `\\n   DependsOn: [${ep.dependsOnEndpointIds.join(', ')}]` : '';\n  const auth = ep.isAuthRelated ? ' [AUTH-RELATED]' : '';\n  const schemas = (ep.parameterSchemaPayloads?.length > 0 || ep.responseSchemaPayloads?.length > 0)\n    ? `\\n   HasSchemas: params=${ep.parameterSchemaPayloads?.length ?? 0}, responses=${ep.responseSchemaPayloads?.length ?? 0}`\n    : '';\n  return `${i + 1}. [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}${auth}${deps}${ctx}${epPrompt}${schemas}`;\n}).join('\\n');\n\nlet systemPrompt;\nlet userPrompt;\n\nif (hasBackendPrompt) {\n  // ── Mode 1: Dùng prompt từ backend (single source of truth) ──\n  systemPrompt = promptConfig.systemPrompt\n    || 'You are a senior QA engineer specializing in REST API test generation. Generate robust, executable, deterministic test cases and return ONLY raw JSON.';\n\n  const taskInstruction = promptConfig.taskInstruction || '';\n  const rules = promptConfig.rules || '';\n  const responseFormat = promptConfig.responseFormat || '';\n\n  userPrompt = [taskInstruction, '=== ENDPOINTS ===\\n' + epLines, rules, responseFormat]\n    .filter(Boolean).join('\\n\\n');\n\n} else {\n  // ── Mode 2: Fallback - tự build prompt (backwards compatible) ──\n  const rulesSection = globalBusinessRules\n    ? `\\n\\n=== GLOBAL BUSINESS RULES ===\\n${globalBusinessRules}` : '';\n\n  systemPrompt = 'You are a senior QA engineer specialising in REST API automated testing.\\n'\n    + 'Your task: generate comprehensive, executable test cases for a set of REST API endpoints.\\n'\n    + 'Focus on correctness, coverage, and realistic test data.';\n\n  userPrompt = `Generate test cases for the following ordered REST API endpoints.${rulesSection}\n\n=== ENDPOINTS ===\n${epLines}\n\n=== TEST CASE GENERATION RULES ===\n1. Generate at least one HappyPath test per endpoint.\n2. Generate at least one Negative test per endpoint.\n3. [AUTH-RELATED] endpoints: generate a test for missing/invalid token returning 401.\n4. Use UNIQUE synthetic test data for every generation: emails MUST include a random suffix (e.g. testuser_a3x7@example.com). NEVER reuse static emails like test@example.com.\n5. For endpoints that CREATE resources, set expectedStatus to \"[201]\" or \"[200]\" as appropriate.\n6. For endpoints that READ resources, set expectedStatus to \"[200]\".\n7. For endpoints that DELETE resources, set expectedStatus to \"[200]\" or \"[204]\".\n8. Negative tests should expect \"[400]\" or \"[401]\" or \"[403]\" or \"[404]\" as appropriate.\n9. Body must be a JSON string (serialized JSON), or null if the endpoint has no body.\n10. The url field should be the endpoint path, e.g. \"/api/users\" or \"/api/users/{id}\" with a realistic placeholder value.\n\n=== RESPONSE FORMAT ===\nRespond with ONLY a raw JSON object. No markdown, no code fences, no explanation outside JSON.\nIMPORTANT: orderIndex must be unique 0-based integers.`;\n}\n\nconst openAiBody = {\n  model: 'gpt-4o',\n  temperature: 0.2,\n  max_tokens: 8192,\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{\n  json: {\n    openAiBody,\n    userPrompt,\n    systemPrompt,\n    originalInput: input\n  }\n}];"
       },
       "id": "a1b2c3d4-0003-0003-0003-000000000003",
       "name": "Prepare Test Generation Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, 300]
+      "position": [
+        720,
+        300
+      ]
     },
     {
       "parameters": {
@@ -57,7 +66,10 @@
       "name": "Call OpenAI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 300],
+      "position": [
+        960,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
@@ -67,13 +79,16 @@
     },
     {
       "parameters": {
-        "jsCode": "// ── Đọc response (hỗ trợ cả AI Agent lẫn HTTP Request tới OpenAI) ──\nconst response = $input.first().json;\n\nif (response.error) {\n  throw new Error(`OpenAI API error: ${response.error.message ?? JSON.stringify(response.error)}`);\n}\n\n// AI Agent node trả về { output: '...' }\n// HTTP Request node trả về { choices: [{message:{content:'...'}}] }\nconst rawContent = response.output\n  ?? response.choices?.[0]?.message?.content\n  ?? null;\n\nif (!rawContent) {\n  throw new Error('LLM trả về response rỗng hoặc không đúng format. Keys: ' + Object.keys(response).join(', '));\n}\n\n// ── Loại bỏ markdown code block nếu có ──\nlet cleaned = rawContent.trim();\nif (cleaned.startsWith('```')) {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*\\n?/, '').replace(/\\n?```\\s*$/, '').trim();\n}\n\n// ── Parse JSON ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error(`Không parse được JSON từ LLM. Error: ${e.message}\\nRaw (500 chars): ${cleaned.substring(0, 500)}`);\n}\n\nconst testCases = parsed.testCases;\nif (!Array.isArray(testCases) || testCases.length === 0) {\n  throw new Error('LLM response thiếu mảng testCases hoặc rỗng.');\n}\n\n// ── Chuẩn hóa orderIndex ──\ntestCases.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));\ntestCases.forEach((tc, i) => { tc.orderIndex = i; });\n\n// ── Đảm bảo các field bắt buộc ──\ntestCases.forEach(tc => {\n  if (!tc.endpointId) throw new Error('TestCase thiếu endpointId trong LLM response.');\n  tc.testType = tc.testType ?? 'HappyPath';\n  tc.priority = tc.priority ?? 'Medium';\n  if (!tc.request) tc.request = { httpMethod: 'GET', url: '/', bodyType: 'None', timeout: 30000 };\n  if (!tc.expectation) tc.expectation = { expectedStatus: '[200]' };\n});\n\n// ── Đọc callbackUrl & callbackApiKey từ node Parse Input ──\nconst inputNode = $('Parse Input').first().json;\nconst callbackUrl = inputNode.callbackUrl ?? '';\nconst callbackApiKey = inputNode.callbackApiKey ?? '';\n\nif (!callbackUrl || !callbackUrl.startsWith('http')) {\n  throw new Error('callbackUrl rỗng hoặc không hợp lệ: \"' + callbackUrl + '\". Hãy kiểm tra BeBaseUrl trong appsettings.json của BE.');\n}\n\nreturn [{\n  json: {\n    testCases,\n    callbackUrl,\n    callbackApiKey\n  }\n}];"
+        "jsCode": "// ── Đọc response (hỗ trợ cả AI Agent lẫn HTTP Request tới OpenAI) ──\nconst response = $input.first().json;\n\nif (response.error) {\n  throw new Error(`OpenAI API error: ${response.error.message ?? JSON.stringify(response.error)}`);\n}\n\n// AI Agent node trả về { output: '...' }\n// HTTP Request node trả về { choices: [{message:{content:'...'}}] }\nconst rawContent = response.output\n  ?? response.choices?.[0]?.message?.content\n  ?? null;\n\nif (!rawContent) {\n  throw new Error('LLM trả về response rỗng hoặc không đúng format. Keys: ' + Object.keys(response).join(', '));\n}\n\n// ── Loại bỏ markdown code block nếu có ──\nlet cleaned = rawContent.trim();\nif (cleaned.startsWith('```')) {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*\\n?/, '').replace(/\\n?```\\s*$/, '').trim();\n}\n\n// ── Parse JSON ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error(`Không parse được JSON từ LLM. Error: ${e.message}\\nRaw (500 chars): ${cleaned.substring(0, 500)}`);\n}\n\nconst testCases = parsed.testCases;\nif (!Array.isArray(testCases) || testCases.length === 0) {\n  throw new Error('LLM response thiếu mảng testCases hoặc rỗng.');\n}\n\n// ── Chuẩn hóa orderIndex ──\ntestCases.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));\ntestCases.forEach((tc, i) => { tc.orderIndex = i; });\n\n// ── Đảm bảo email unique bằng timestamp + random suffix ──\nconst ts = Date.now().toString(36);\nconst rnd = () => Math.random().toString(36).substring(2, 6);\ntestCases.forEach(tc => {\n  if (tc.request && tc.request.body && typeof tc.request.body === 'string') {\n    tc.request.body = tc.request.body.replace(\n      /([\\\"\\'\\\"]?email[\\\"\\'\\\"]?\\s*:\\s*[\\\"\\'\\\"])([^\\\"\\'@]+)@/gi,\n      (match, prefix, local) => `${prefix}${local}_${ts}${rnd()}@`\n    );\n  }\n});\n\n// ── Đảm bảo các field bắt buộc ──\ntestCases.forEach(tc => {\n  if (!tc.endpointId) throw new Error('TestCase thiếu endpointId trong LLM response.');\n  tc.testType = tc.testType ?? 'HappyPath';\n  tc.priority = tc.priority ?? 'Medium';\n  if (!tc.request) tc.request = { httpMethod: 'GET', url: '/', bodyType: 'None', timeout: 30000 };\n  if (!tc.expectation) tc.expectation = { expectedStatus: '[200]' };\n});\n\n// ── Đọc callbackUrl & callbackApiKey từ node Parse Input ──\nconst inputNode = $('Parse Input').first().json;\nconst callbackUrl = inputNode.callbackUrl ?? '';\nconst callbackApiKey = inputNode.callbackApiKey ?? '';\n\nif (!callbackUrl || !callbackUrl.startsWith('http')) {\n  throw new Error('callbackUrl rỗng hoặc không hợp lệ: \"' + callbackUrl + '\". Hãy kiểm tra BeBaseUrl trong appsettings.json của BE.');\n}\n\nreturn [{\n  json: {\n    testCases,\n    callbackUrl,\n    callbackApiKey\n  }\n}];"
       },
       "id": "a1b2c3d4-0005-0005-0005-000000000005",
       "name": "Parse Test Cases Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 300]
+      "position": [
+        1200,
+        300
+      ]
     },
     {
       "parameters": {
@@ -112,7 +127,10 @@
       "name": "POST to BE Callback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 300]
+      "position": [
+        1440,
+        300
+      ]
     }
   ],
   "connections": {

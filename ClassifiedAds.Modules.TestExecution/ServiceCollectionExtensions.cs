@@ -10,6 +10,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Polly;
 using System;
 using System.Reflection;
 
@@ -63,7 +64,27 @@ public static class TestExecutionServiceCollectionExtensions
         services.AddScoped<IVariableExtractor, VariableExtractor>();
         services.AddScoped<IRuleBasedValidator, RuleBasedValidator>();
         services.AddScoped<ITestResultCollector, TestResultCollector>();
-        services.AddHttpClient("TestExecution");
+        services.AddHttpClient("TestExecution")
+            .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler
+            {
+                // Allow self-signed certs for test environments
+                ServerCertificateCustomValidationCallback =
+                    System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+            })
+            .AddStandardResilienceHandler(options =>
+            {
+                // Test execution timeout is controlled per-request via HttpClient.Timeout (request.TimeoutMs).
+                // Default Polly AttemptTimeout is 10s — far too short for API tests (30s+ typical).
+                options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(120);
+                options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(180);
+                options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(240);
+
+                // Allow a single retry for transient connection errors (e.g. Render cold-start ResponseEnded).
+                // ShouldHandle uses the default transient-error predicate (HttpRequestException, 5xx, 408).
+                options.Retry.MaxRetryAttempts = 1;
+                options.Retry.Delay = System.TimeSpan.FromSeconds(2);
+                options.Retry.BackoffType = DelayBackoffType.Constant;
+            });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
         services.AddAuthorizationPolicies(Assembly.GetExecutingAssembly());

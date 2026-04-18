@@ -39,7 +39,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
-        "4. Use realistic but clearly synthetic test data.\n" +
+        "4. Use UNIQUE synthetic test data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "   AUTH FLOW RULES:\n" +
+        "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
+        "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
+        "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
         "5. endpointId must be the EXACT UUID from input.\n" +
         "6. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
         "7. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
@@ -80,7 +84,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"tokensUsed\": 0\n" +
         "}";
 
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,

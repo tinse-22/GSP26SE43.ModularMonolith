@@ -2,7 +2,9 @@ using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Modules.TestExecution.Models;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace ClassifiedAds.Modules.TestExecution.Services;
@@ -94,6 +96,7 @@ public class VariableResolver : IVariableResolver
         var resolvedBody = !string.IsNullOrEmpty(request.Body)
             ? ResolvePlaceholders(request.Body, mergedVars)
             : null;
+        resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
 
         // Build final URL
         var finalUrl = BuildFinalUrl(resolvedUrl, environment.BaseUrl);
@@ -152,6 +155,167 @@ public class VariableResolver : IVariableResolver
             var key = match.Groups[1].Value;
             return variables.TryGetValue(key, out var value) ? value : match.Value;
         });
+    }
+
+    private static string NormalizeHappyPathSyntheticBody(
+        ExecutionTestCaseDto testCase,
+        string resolvedBody,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (string.IsNullOrWhiteSpace(resolvedBody)
+            || testCase?.Request == null
+            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
+            || !TryGetPreferredTestEmail(variables, out var preferredEmail))
+        {
+            return resolvedBody;
+        }
+
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(resolvedBody);
+        }
+        catch
+        {
+            return resolvedBody;
+        }
+
+        if (root == null)
+        {
+            return resolvedBody;
+        }
+
+        return ReplaceSyntheticEmails(root, preferredEmail)
+            ? root.ToJsonString(JsonOptions)
+            : resolvedBody;
+    }
+
+    private static bool LooksLikeJsonBody(string bodyType, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        if (string.Equals(bodyType, "JSON", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var trimmed = body.TrimStart();
+        return trimmed.StartsWith('{') || trimmed.StartsWith('[');
+    }
+
+    private static bool TryGetPreferredTestEmail(
+        IReadOnlyDictionary<string, string> variables,
+        out string preferredEmail)
+    {
+        preferredEmail = null;
+
+        if (variables == null)
+        {
+            return false;
+        }
+
+        if (variables.TryGetValue("testEmail", out var testEmail)
+            && !string.IsNullOrWhiteSpace(testEmail))
+        {
+            preferredEmail = testEmail;
+            return true;
+        }
+
+        if (variables.TryGetValue("runUniqueEmail", out var runUniqueEmail)
+            && !string.IsNullOrWhiteSpace(runUniqueEmail))
+        {
+            preferredEmail = runUniqueEmail;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ReplaceSyntheticEmails(JsonNode node, string preferredEmail)
+    {
+        if (node is JsonObject obj)
+        {
+            var changed = false;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue value
+                    && value.TryGetValue<string>(out var stringValue)
+                    && IsEmailField(property.Key)
+                    && ShouldRewriteSyntheticEmail(stringValue))
+                {
+                    obj[property.Key] = preferredEmail;
+                    changed = true;
+                    continue;
+                }
+
+                if (property.Value != null && ReplaceSyntheticEmails(property.Value, preferredEmail))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        if (node is JsonArray array)
+        {
+            var changed = false;
+            foreach (var item in array)
+            {
+                if (item != null && ReplaceSyntheticEmails(item, preferredEmail))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        return false;
+    }
+
+    private static bool IsEmailField(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return false;
+        }
+
+        return propertyName.Equals("email", StringComparison.OrdinalIgnoreCase)
+            || propertyName.EndsWith("Email", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldRewriteSyntheticEmail(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Contains("{{", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var atIndex = value.LastIndexOf('@');
+        if (atIndex <= 0 || atIndex == value.Length - 1)
+        {
+            return false;
+        }
+
+        var localPart = value[..atIndex].Trim().ToLowerInvariant();
+        var domain = value[(atIndex + 1)..].Trim().ToLowerInvariant();
+
+        if (domain.StartsWith("example.", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return localPart.StartsWith("test", StringComparison.OrdinalIgnoreCase)
+            || localPart.StartsWith("demo", StringComparison.OrdinalIgnoreCase)
+            || localPart.StartsWith("sample", StringComparison.OrdinalIgnoreCase)
+            || localPart.StartsWith("user", StringComparison.OrdinalIgnoreCase)
+            || localPart.StartsWith("qa", StringComparison.OrdinalIgnoreCase)
+            || localPart.StartsWith("auto", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void CheckUnresolvedPlaceholders(string value, string surface)

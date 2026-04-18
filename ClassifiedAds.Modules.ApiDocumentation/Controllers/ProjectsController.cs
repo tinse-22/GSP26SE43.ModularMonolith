@@ -82,12 +82,17 @@ public class ProjectsController : ControllerBase
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<ProjectDetailModel>> Get(Guid id)
+    public async Task<ActionResult<ProjectDetailModel>> Get(
+        Guid id,
+        [FromQuery] bool includeArchived = false,
+        [FromQuery] bool includeSpecifications = false)
     {
         var project = await _dispatcher.DispatchAsync(new GetProjectQuery
         {
             ProjectId = id,
             OwnerId = _currentUser.UserId,
+            IncludeArchived = includeArchived,
+            IncludeSpecifications = includeSpecifications,
         });
 
         return Ok(project);
@@ -158,6 +163,7 @@ public class ProjectsController : ControllerBase
         {
             ProjectId = id,
             OwnerId = _currentUser.UserId,
+            IncludeArchived = true,
         });
 
         return Ok(result);

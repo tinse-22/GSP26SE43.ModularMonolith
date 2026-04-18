@@ -220,7 +220,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
 
         // Extract variables
-        var extracted = _variableExtractor.Extract(response, testCase.Variables);
+        var extracted = _variableExtractor.Extract(response, testCase.Variables, resolvedRequest.Body);
         foreach (var kvp in extracted)
         {
             variableBag[kvp.Key] = kvp.Value;
