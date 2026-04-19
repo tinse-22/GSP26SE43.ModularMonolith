@@ -217,6 +217,7 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
         var pendingSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 1);
         var approvedSuggestion = CreatePendingSuggestion(endpointId: Guid.NewGuid(), testType: TestType.Negative, displayOrder: 0);
         approvedSuggestion.ReviewStatus = ReviewStatus.Approved;
+        approvedSuggestion.AppliedTestCaseId = Guid.NewGuid();
 
         SetupSuiteFound(suite);
         SetupSuggestions(new List<LlmSuggestion> { approvedSuggestion, pendingSuggestion });

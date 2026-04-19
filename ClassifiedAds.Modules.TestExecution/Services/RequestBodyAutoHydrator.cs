@@ -31,6 +31,16 @@ internal static class RequestBodyAutoHydrator
             return false;
         }
 
+        if (TryPromoteLegacyBodyQueryParam(testCase))
+        {
+            return true;
+        }
+
+        if (TryHydrateLegacyMultipartUpload(testCase, endpointMetadata))
+        {
+            return true;
+        }
+
         if (!WriteMethods.Contains(testCase.Request.HttpMethod ?? string.Empty) ||
             !endpointMetadata.HasRequiredRequestBody ||
             IsNegativeLikeCase(testCase) ||
@@ -61,6 +71,158 @@ internal static class RequestBodyAutoHydrator
         return true;
     }
 
+    private static bool TryHydrateLegacyMultipartUpload(
+        ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata)
+    {
+        if (testCase?.Request == null || endpointMetadata == null)
+        {
+            return false;
+        }
+
+        var request = testCase.Request;
+        if (!WriteMethods.Contains(request.HttpMethod ?? string.Empty) ||
+            !IsMissingOrEmptyObjectBody(request.Body) ||
+            !HasFileLikeParameter(endpointMetadata))
+        {
+            return false;
+        }
+
+        var queryParams = DeserializeDictionary(request.QueryParams);
+        var payload = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var parameter in endpointMetadata.Parameters ?? Enumerable.Empty<ApiEndpointParameterDescriptorDto>())
+        {
+            if (parameter == null || string.IsNullOrWhiteSpace(parameter.Name))
+            {
+                continue;
+            }
+
+            if (string.Equals(parameter.Location, "Path", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(parameter.Location, "Header", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(parameter.Location, "Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (queryParams.TryGetValue(parameter.Name, out var existingValue) &&
+                !string.IsNullOrWhiteSpace(existingValue))
+            {
+                payload[parameter.Name] = existingValue;
+                continue;
+            }
+
+            if (IsFileLikeParameter(parameter.Name, parameter.Format))
+            {
+                payload[parameter.Name] = "upload.txt";
+                continue;
+            }
+
+            if (parameter.IsRequired)
+            {
+                payload[parameter.Name] = "sample-value";
+            }
+        }
+
+        if (payload.Count == 0)
+        {
+            payload["file"] = "upload.txt";
+        }
+
+        request.Body = JsonSerializer.Serialize(payload, JsonOptions);
+        request.BodyType = "FormData";
+
+        foreach (var key in payload.Keys)
+        {
+            queryParams.Remove(key);
+        }
+
+        request.QueryParams = queryParams.Count == 0
+            ? null
+            : JsonSerializer.Serialize(queryParams, JsonOptions);
+
+        return true;
+    }
+
+    private static bool HasFileLikeParameter(ApiEndpointMetadataDto endpointMetadata)
+    {
+        return endpointMetadata.Parameters?.Any(parameter =>
+            parameter != null &&
+            IsFileLikeParameter(parameter.Name, parameter.Format)) == true;
+    }
+
+    private static bool IsFileLikeParameter(string parameterName, string parameterFormat)
+    {
+        if (!string.IsNullOrWhiteSpace(parameterFormat) &&
+            (string.Equals(parameterFormat, "binary", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(parameterFormat, "byte", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(parameterName))
+        {
+            return false;
+        }
+
+        return parameterName.IndexOf("file", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               parameterName.IndexOf("image", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               parameterName.IndexOf("attachment", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               parameterName.IndexOf("avatar", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static bool TryPromoteLegacyBodyQueryParam(ExecutionTestCaseDto testCase)
+    {
+        if (testCase?.Request == null)
+        {
+            return false;
+        }
+
+        var request = testCase.Request;
+        if (!WriteMethods.Contains(request.HttpMethod ?? string.Empty) ||
+            !IsMissingOrEmptyObjectBody(request.Body))
+        {
+            return false;
+        }
+
+        var queryParams = DeserializeDictionary(request.QueryParams);
+        if (queryParams.Count == 0)
+        {
+            return false;
+        }
+
+        var bodyKey = queryParams.Keys
+            .FirstOrDefault(key => string.Equals(key, "body", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(bodyKey) ||
+            !queryParams.TryGetValue(bodyKey, out var bodyValue) ||
+            string.IsNullOrWhiteSpace(bodyValue))
+        {
+            return false;
+        }
+
+        var promotedBody = NormalizePromotedBody(bodyValue);
+        if (string.IsNullOrWhiteSpace(promotedBody))
+        {
+            return false;
+        }
+
+        request.Body = promotedBody;
+        if (string.IsNullOrWhiteSpace(request.BodyType) ||
+            string.Equals(request.BodyType, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            request.BodyType = LooksLikeJsonPayload(promotedBody)
+                ? "JSON"
+                : "Text";
+        }
+
+        queryParams.Remove(bodyKey);
+        request.QueryParams = queryParams.Count == 0
+            ? null
+            : JsonSerializer.Serialize(queryParams);
+
+        return true;
+    }
+
     private static bool IsMissingOrEmptyObjectBody(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
@@ -75,6 +237,137 @@ internal static class RequestBodyAutoHydrator
         }
         catch
         {
+            return false;
+        }
+    }
+
+    private static Dictionary<string, string> DeserializeDictionary(string json)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return result;
+        }
+
+        try
+        {
+            var direct = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            if (direct != null)
+            {
+                foreach (var pair in direct)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Key))
+                    {
+                        result[pair.Key] = pair.Value;
+                    }
+                }
+
+                return result;
+            }
+        }
+        catch
+        {
+            // Continue with permissive parsing.
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return result;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                var value = property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString()
+                    : property.Value.GetRawText();
+                result[property.Name] = value;
+            }
+        }
+        catch
+        {
+            // Ignore invalid JSON and return empty dictionary.
+        }
+
+        return result;
+    }
+
+    private static string NormalizePromotedBody(string bodyValue)
+    {
+        if (string.IsNullOrWhiteSpace(bodyValue))
+        {
+            return null;
+        }
+
+        var trimmed = bodyValue.Trim();
+        if (TryNormalizeJsonPayload(trimmed, out var normalized))
+        {
+            return normalized;
+        }
+
+        var decoded = Uri.UnescapeDataString(trimmed);
+        if (!string.Equals(decoded, trimmed, StringComparison.Ordinal) &&
+            TryNormalizeJsonPayload(decoded, out normalized))
+        {
+            return normalized;
+        }
+
+        return trimmed;
+    }
+
+    private static bool LooksLikeJsonPayload(string payload)
+    {
+        if (!TryParseJson(payload, out var parsed))
+        {
+            return false;
+        }
+
+        return parsed.ValueKind == JsonValueKind.Object || parsed.ValueKind == JsonValueKind.Array;
+    }
+
+    private static bool TryNormalizeJsonPayload(string payload, out string normalized)
+    {
+        normalized = null;
+        if (!TryParseJson(payload, out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed.ValueKind == JsonValueKind.String)
+        {
+            var nested = parsed.GetString();
+            if (string.IsNullOrWhiteSpace(nested))
+            {
+                return false;
+            }
+
+            if (TryParseJson(nested, out var nestedParsed))
+            {
+                normalized = nestedParsed.GetRawText();
+                return true;
+            }
+
+            normalized = nested;
+            return true;
+        }
+
+        normalized = parsed.GetRawText();
+        return true;
+    }
+
+    private static bool TryParseJson(string text, out JsonElement parsed)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            parsed = document.RootElement.Clone();
+            return true;
+        }
+        catch
+        {
+            parsed = default;
             return false;
         }
     }

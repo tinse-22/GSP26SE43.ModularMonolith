@@ -673,4 +673,59 @@ public class OpenApiSpecificationParserTests
         bodyParam.Schema.Should().Contain("username");
         bodyParam.Schema.Should().Contain("password");
     }
+
+    [Fact]
+    public async Task ParseAsync_Swagger2FormData_Should_MapParametersAsBody()
+    {
+        var json = @"{
+            ""swagger"": ""2.0"",
+            ""info"": { ""title"": ""Pet API"", ""version"": ""1.0.0"" },
+            ""paths"": {
+                ""/pet/{petId}"": {
+                    ""post"": {
+                        ""operationId"": ""updatePetWithForm"",
+                        ""parameters"": [
+                            {
+                                ""name"": ""petId"",
+                                ""in"": ""path"",
+                                ""required"": true,
+                                ""type"": ""integer"",
+                                ""format"": ""int64""
+                            },
+                            {
+                                ""name"": ""name"",
+                                ""in"": ""formData"",
+                                ""type"": ""string""
+                            },
+                            {
+                                ""name"": ""file"",
+                                ""in"": ""formData"",
+                                ""type"": ""file""
+                            }
+                        ],
+                        ""responses"": {
+                            ""200"": { ""description"": ""OK"" }
+                        }
+                    }
+                }
+            }
+        }";
+
+        var result = await _parser.ParseAsync(Encoding.UTF8.GetBytes(json), "petstore-swagger2.json");
+
+        result.Success.Should().BeTrue();
+        var endpoint = result.Endpoints.Single();
+        endpoint.Parameters.Should().Contain(parameter =>
+            parameter.Name == "petId" &&
+            parameter.Location == "Path" &&
+            parameter.IsRequired);
+        endpoint.Parameters.Should().Contain(parameter =>
+            parameter.Name == "name" &&
+            parameter.Location == "Body" &&
+            parameter.DataType == "string");
+        endpoint.Parameters.Should().Contain(parameter =>
+            parameter.Name == "file" &&
+            parameter.Location == "Body" &&
+            parameter.DataType == "file");
+    }
 }

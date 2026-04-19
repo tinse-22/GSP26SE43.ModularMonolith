@@ -50,7 +50,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "8. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n" +
         "9. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
         "10. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
-        "11. If endpoint requires request body, request.bodyType must be JSON and request.body must be a non-empty serialized JSON string.\n" +
+        "11. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
         "12. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
 
     private const string SuggestionResponseFormatBlock =
@@ -71,8 +71,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "        \"headers\": null,\n" +
         "        \"pathParams\": {},\n" +
         "        \"queryParams\": {},\n" +
-        "        \"bodyType\": \"None|JSON\",\n" +
-        "        \"body\": \"<serialized JSON string or null>\",\n" +
+        "        \"bodyType\": \"None|JSON|FormData|UrlEncoded|Raw\",\n" +
+        "        \"body\": \"<serialized request payload or null>\",\n" +
         "        \"timeout\": 30000\n" +
         "      },\n" +
         "      \"expectation\": {\n" +
@@ -192,8 +192,33 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             cacheKey);
 
         var stopwatch = Stopwatch.StartNew();
-        var n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-            N8nWebhookNames.GenerateLlmSuggestions, payload, cancellationToken);
+        var usedLocalFallback = false;
+        N8nBoundaryNegativeResponse n8nResponse;
+
+        try
+        {
+            n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions, payload, cancellationToken);
+        }
+        catch (N8nTransientException ex)
+        {
+            usedLocalFallback = true;
+            _logger.LogWarning(
+                ex,
+                "Transient n8n failure while generating LLM suggestions. Falling back to local contract-based synthesis. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, StatusCode={StatusCode}, Webhook={Webhook}",
+                context.TestSuiteId,
+                orderedSequence.Count,
+                ex.StatusCode,
+                N8nWebhookNames.GenerateLlmSuggestions);
+
+            n8nResponse = new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "local-fallback",
+                TokensUsed = 0,
+            };
+        }
+
         stopwatch.Stop();
 
         var latencyMs = (int)stopwatch.ElapsedMilliseconds;
@@ -228,6 +253,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TokensUsed = n8nResponse?.TokensUsed,
             LatencyMs = latencyMs,
             FromCache = false,
+            UsedLocalFallback = usedLocalFallback,
         };
     }
 
@@ -922,18 +948,24 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             {
                 foreach (var parameter in parameterDetails.Parameters)
                 {
-                    if (!parameter.IsRequired || string.IsNullOrWhiteSpace(parameter.Name))
+                    if (string.IsNullOrWhiteSpace(parameter.Name))
                     {
                         continue;
                     }
 
                     if (string.Equals(parameter.Location, "Path", StringComparison.OrdinalIgnoreCase))
                     {
-                        requiredPathParams.Add(parameter.Name);
+                        if (parameter.IsRequired)
+                        {
+                            requiredPathParams.Add(parameter.Name);
+                        }
                     }
                     else if (string.Equals(parameter.Location, "Query", StringComparison.OrdinalIgnoreCase))
                     {
-                        requiredQueryParams.Add(parameter.Name);
+                        if (parameter.IsRequired)
+                        {
+                            requiredQueryParams.Add(parameter.Name);
+                        }
                     }
                     else if (string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase))
                     {
@@ -1096,7 +1128,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var endpointPath = endpoint?.Path ?? metadata?.Path;
         var currentResourcePlaceholder = BuildPreferredVariableName("id", endpointPath);
-        if (!string.IsNullOrWhiteSpace(currentResourcePlaceholder))
+        if (!string.IsNullOrWhiteSpace(currentResourcePlaceholder) &&
+            HasRouteToken(endpointPath, "id"))
         {
             placeholders["id"] = currentResourcePlaceholder;
         }
@@ -1197,6 +1230,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return string.IsNullOrWhiteSpace(resource) ? null : resource;
     }
 
+    private static bool HasRouteToken(string path, string token)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(segment => string.Equals(segment, $"{{{token}}}", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string BuildPreferredVariableName(string token, string path)
     {
         if (!string.IsNullOrWhiteSpace(token) &&
@@ -1243,7 +1287,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         var strippedToken = StripIdSuffix(token);
-        if (!string.IsNullOrWhiteSpace(strippedToken))
+        if (!string.IsNullOrWhiteSpace(strippedToken) &&
+            !string.Equals(strippedToken, "id", StringComparison.OrdinalIgnoreCase))
         {
             return Singularize(strippedToken);
         }

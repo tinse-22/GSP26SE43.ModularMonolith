@@ -46,6 +46,46 @@ public class PreExecutionValidatorContractTests
     }
 
     [Fact]
+    public void Validate_Should_NotFail_WhenLegacyBodyQueryRequirementExists_ButBodyProvided()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.QueryParams = "{}";
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"id\":1,\"name\":\"doggie\"}";
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            RequiredQueryParameterNames = new List<string> { "body" },
+            HasRequiredRequestBody = false,
+        };
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), metadata);
+
+        result.Errors.Should().NotContain(x => x.Code == "MISSING_REQUIRED_QUERY_PARAM" && x.Target == "QueryParams.body");
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_WhenLegacyBodyQueryRequirementExists_AndBodyMissing()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.QueryParams = "{}";
+        testCase.Request.BodyType = "None";
+        testCase.Request.Body = null;
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            RequiredQueryParameterNames = new List<string> { "body" },
+            HasRequiredRequestBody = false,
+        };
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), metadata);
+
+        result.Errors.Should().Contain(x => x.Code == "MISSING_REQUIRED_QUERY_PARAM" && x.Target == "QueryParams.body");
+    }
+
+    [Fact]
     public void Validate_Should_PassContractChecks_WhenRequiredQueryAndBodyProvided()
     {
         var testCase = CreateBaseTestCase();
@@ -178,6 +218,19 @@ public class PreExecutionValidatorContractTests
         var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), endpointMetadata: null);
 
         result.Errors.Should().Contain(x => x.Code == "UNRESOLVED_VARIABLE" && x.Target == "Body");
+    }
+
+    [Fact]
+    public void Validate_Should_WarnAndNotFail_WhenDuplicatedIdentifierPlaceholderPatternDetected()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"id\":\"{{idId}}\"}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), endpointMetadata: null);
+
+        result.Errors.Should().NotContain(x => x.Code == "UNRESOLVED_VARIABLE" && x.Target == "Body");
+        result.Warnings.Should().Contain(x => x.Code == "IDENTIFIER_PLACEHOLDER_DUPLICATE_ID_FALLBACK");
     }
 
     private static ExecutionTestCaseDto CreateBaseTestCase()

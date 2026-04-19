@@ -18,11 +18,13 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 
 public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions();
+
+    static LlmSuggestionReviewService()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-    };
+        JsonOpts.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        JsonOpts.WriteIndented = false;
+    }
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
@@ -149,17 +151,43 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             "Tất cả suggestions phải thuộc về test suite được review.");
         EnsureSuggestionsAreApprovableForMaterialization(approvalItems.Select(x => x.Suggestion));
 
-        var previouslyApprovedSuggestions = await _suggestionRepository.ToListAsync(
+        var previouslyApprovedSuggestions = (await _suggestionRepository.ToListAsync(
             _suggestionRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == suite.Id
+                    && !x.IsDeleted
                     && x.AppliedTestCaseId.HasValue
                     && (x.ReviewStatus == ReviewStatus.Approved
-                        || x.ReviewStatus == ReviewStatus.ModifiedAndApproved)));
+                        || x.ReviewStatus == ReviewStatus.ModifiedAndApproved))))
+            ?? new List<LlmSuggestion>();
+
+        var candidateAppliedTestCaseIds = previouslyApprovedSuggestions
+            .Where(x => x != null && x.AppliedTestCaseId.HasValue)
+            .Select(x => x.AppliedTestCaseId.Value)
+            .Distinct()
+            .ToList();
+
+        var reusableAppliedTestCaseIdSet = new HashSet<Guid>();
+        if (candidateAppliedTestCaseIds.Count > 0)
+        {
+            var reusableAppliedTestCases = await _testCaseRepository.ToListAsync(
+                _testCaseRepository.GetQueryableSet()
+                    .Where(x => candidateAppliedTestCaseIds.Contains(x.Id) && !x.IsDeleted));
+
+            foreach (var testCase in reusableAppliedTestCases ?? Enumerable.Empty<TestCase>())
+            {
+                reusableAppliedTestCaseIdSet.Add(testCase.Id);
+            }
+        }
 
         var fingerprintToAppliedTestCaseId = new Dictionary<string, Guid>(StringComparer.Ordinal);
         foreach (var approvedSuggestion in previouslyApprovedSuggestions)
         {
             if (!approvedSuggestion.AppliedTestCaseId.HasValue)
+            {
+                continue;
+            }
+
+            if (!reusableAppliedTestCaseIdSet.Contains(approvedSuggestion.AppliedTestCaseId.Value))
             {
                 continue;
             }
@@ -200,15 +228,17 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(suite.Id, cancellationToken);
         var orderItemMap = approvedOrder.ToDictionary(x => x.EndpointId);
 
-        var existingTestCases = await _testCaseRepository.ToListAsync(
+        var existingTestCases = (await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
-                .Where(x => x.TestSuiteId == suite.Id));
+                .Where(x => x.TestSuiteId == suite.Id && !x.IsDeleted)))
+            ?? new List<TestCase>();
 
         var existingTestCaseIds = existingTestCases.Select(x => x.Id).ToList();
         var existingProducerVariables = existingTestCaseIds.Count == 0
             ? new List<TestCaseVariable>()
-            : await _variableRepository.ToListAsync(
-                _variableRepository.GetQueryableSet().Where(x => existingTestCaseIds.Contains(x.TestCaseId)));
+            : (await _variableRepository.ToListAsync(
+                _variableRepository.GetQueryableSet().Where(x => existingTestCaseIds.Contains(x.TestCaseId))))
+                ?? new List<TestCaseVariable>();
 
         var now = DateTimeOffset.UtcNow;
         var nextOrderIndex = existingTestCases.Count == 0

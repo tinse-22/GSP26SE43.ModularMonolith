@@ -23,6 +23,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         ["header"] = "Header",
         ["cookie"] = "Cookie",
         ["body"] = "Body",
+        ["formData"] = "Body",
     };
 
     public bool CanParse(SourceType sourceType)

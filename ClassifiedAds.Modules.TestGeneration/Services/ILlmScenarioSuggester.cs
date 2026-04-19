@@ -49,6 +49,8 @@ public class LlmScenarioSuggestionResult
     public int? LatencyMs { get; set; }
 
     public bool FromCache { get; set; }
+
+    public bool UsedLocalFallback { get; set; }
 }
 
 public class LlmSuggestedScenario

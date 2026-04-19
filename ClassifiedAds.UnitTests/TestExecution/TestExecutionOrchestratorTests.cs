@@ -645,6 +645,90 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ImplicitlyExtractAuthToken_FromSessionMessage_WhenVariableRulesMissing()
+    {
+        // Arrange
+        var loginCaseId = Guid.NewGuid();
+        var protectedCaseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var loginCase = CreateTestCase(loginCaseId, endpointId, 0);
+        loginCase.Name = "Valid login credentials";
+        loginCase.TestType = "HappyPath";
+        loginCase.Request.HttpMethod = "GET";
+        loginCase.Request.Url = "/user/login";
+
+        var protectedCase = CreateTestCase(protectedCaseId, endpointId, 1, new[] { loginCaseId });
+        protectedCase.Name = "Create pet with minimal required fields";
+        protectedCase.TestType = "HappyPath";
+        protectedCase.Request.HttpMethod = "POST";
+        protectedCase.Request.Url = "/pet";
+
+        SetupDefaultMocks(new[] { loginCase, protectedCase }, new[] { endpointId });
+
+        Dictionary<string, string>? protectedCaseVariables = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == protectedCaseId)
+                {
+                    protectedCaseVariables = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = tc.Request.Url,
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ResolvedTestCaseRequest, CancellationToken>((request, _) =>
+            {
+                var response = request.TestCaseId == loginCaseId
+                    ? new HttpTestResponse
+                    {
+                        StatusCode = 200,
+                        Body = "{\"code\":200,\"type\":\"unknown\",\"message\":\"logged in user session:1776593858285\"}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    }
+                    : new HttpTestResponse
+                    {
+                        StatusCode = 201,
+                        Body = "{}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    };
+
+                return Task.FromResult(response);
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        protectedCaseVariables.Should().NotBeNull();
+        protectedCaseVariables.Should().ContainKey("authToken").WhoseValue.Should().Be("1776593858285");
+        protectedCaseVariables.Should().ContainKey("accessToken").WhoseValue.Should().Be("1776593858285");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_ChainAuthTokenThroughMultipleCrudRequests()
     {
         // Arrange — 3 sequential test cases:
@@ -858,6 +942,249 @@ public class TestExecutionOrchestratorTests
         resolvedBody.Should().NotBeNullOrWhiteSpace();
         resolvedBody.Should().NotBe("{}");
         resolvedBody.Should().Contain("password");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_PromoteLegacyBodyQueryParam_ToRequestBody()
+    {
+        // Arrange
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        testCase.Name = "Happy Path: POST /pet";
+        testCase.TestType = "Happy";
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.BodyType = "None";
+        testCase.Request.Body = null;
+        testCase.Request.QueryParams = "{\"body\":\"{\\\"id\\\":1,\\\"name\\\":\\\"doggie\\\",\\\"photoUrls\\\":[\\\"sample\\\"]}\"}";
+        testCase.Expectation.ExpectedStatus = "[200]";
+
+        SetupDefaultMocks(new[] { testCase }, new[] { endpointId });
+
+        _endpointMetadataMock
+            .Setup(x => x.GetEndpointMetadataAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HasRequiredRequestBody = false,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Query",
+                            IsRequired = true,
+                        },
+                    },
+                },
+            });
+
+        string validatedBody = null;
+        string validatedQueryParams = null;
+        _preValidatorMock
+            .Setup(x => x.Validate(
+                It.IsAny<ExecutionTestCaseDto>(),
+                It.IsAny<ResolvedExecutionEnvironment>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(),
+                It.IsAny<ApiEndpointMetadataDto>()))
+            .Callback<ExecutionTestCaseDto, ResolvedExecutionEnvironment, IReadOnlyDictionary<string, string>, ApiEndpointMetadataDto>((tc, _, _, _) =>
+            {
+                validatedBody = tc.Request.Body;
+                validatedQueryParams = tc.Request.QueryParams;
+            })
+            .Returns(new PreExecutionValidationResult());
+
+        string resolvedBody = null;
+        string resolvedBodyType = null;
+        string resolvedQueryParams = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) =>
+            {
+                resolvedBody = tc.Request.Body;
+                resolvedBodyType = tc.Request.BodyType;
+                resolvedQueryParams = tc.Request.QueryParams;
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = "https://api.example.com/pet",
+                    BodyType = tc.Request.BodyType,
+                    Body = tc.Request.Body,
+                    TimeoutMs = tc.Request.Timeout,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        validatedBody.Should().NotBeNullOrWhiteSpace();
+        validatedBody.Should().Contain("doggie");
+        resolvedBody.Should().NotBeNullOrWhiteSpace();
+        resolvedBody.Should().Contain("photoUrls");
+        resolvedBodyType.Should().Be("JSON");
+
+        if (!string.IsNullOrWhiteSpace(validatedQueryParams))
+        {
+            validatedQueryParams.Should().NotContain("\"body\"");
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolvedQueryParams))
+        {
+            resolvedQueryParams.Should().NotContain("\"body\"");
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_AutoHydrateLegacyMultipartUploadRequest()
+    {
+        // Arrange
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        testCase.Name = "Happy Path: POST /pet/{petId}/uploadImage";
+        testCase.TestType = "Happy";
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.BodyType = "None";
+        testCase.Request.Body = null;
+        testCase.Request.QueryParams = null;
+        testCase.Request.PathParams = "{\"petId\":\"1\"}";
+        testCase.Expectation.ExpectedStatus = "[200]";
+
+        SetupDefaultMocks(new[] { testCase }, new[] { endpointId });
+
+        _endpointMetadataMock
+            .Setup(x => x.GetEndpointMetadataAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HasRequiredRequestBody = false,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "petId",
+                            Location = "Path",
+                            IsRequired = true,
+                        },
+                        new()
+                        {
+                            Name = "file",
+                            Location = "Query",
+                            IsRequired = false,
+                        },
+                        new()
+                        {
+                            Name = "additionalMetadata",
+                            Location = "Query",
+                            IsRequired = false,
+                        },
+                    },
+                },
+            });
+
+        string validatedBody = null;
+        string validatedBodyType = null;
+        _preValidatorMock
+            .Setup(x => x.Validate(
+                It.IsAny<ExecutionTestCaseDto>(),
+                It.IsAny<ResolvedExecutionEnvironment>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(),
+                It.IsAny<ApiEndpointMetadataDto>()))
+            .Callback<ExecutionTestCaseDto, ResolvedExecutionEnvironment, IReadOnlyDictionary<string, string>, ApiEndpointMetadataDto>((tc, _, _, _) =>
+            {
+                validatedBody = tc.Request.Body;
+                validatedBodyType = tc.Request.BodyType;
+            })
+            .Returns(new PreExecutionValidationResult());
+
+        string resolvedBody = null;
+        string resolvedBodyType = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) =>
+            {
+                resolvedBody = tc.Request.Body;
+                resolvedBodyType = tc.Request.BodyType;
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = "https://api.example.com/pet/1/uploadImage",
+                    BodyType = tc.Request.BodyType,
+                    Body = tc.Request.Body,
+                    TimeoutMs = tc.Request.Timeout,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        validatedBodyType.Should().Be("FormData");
+        validatedBody.Should().NotBeNullOrWhiteSpace();
+        validatedBody.Should().Contain("file");
+
+        resolvedBodyType.Should().Be("FormData");
+        resolvedBody.Should().NotBeNullOrWhiteSpace();
+        resolvedBody.Should().Contain("upload.txt");
     }
 
     [Fact]

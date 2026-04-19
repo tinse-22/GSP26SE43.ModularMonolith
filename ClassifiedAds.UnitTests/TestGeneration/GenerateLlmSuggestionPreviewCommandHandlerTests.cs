@@ -386,6 +386,26 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_NotIncrementLlmUsage_WhenUsingLocalFallback()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved();
+        SetupSubscriptionAllowed();
+        SetupNoPendingSuggestions();
+
+        var scenarios = CreateScenarios(2);
+        SetupLlmSuggesterReturns(scenarios, fromCache: false, usedLocalFallback: true);
+
+        var command = CreateValidCommand();
+        await _handler.HandleAsync(command);
+
+        _subscriptionMock.Verify(
+            x => x.IncrementUsageAsync(It.IsAny<IncrementUsageRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ReturnCorrectResultModel()
     {
         var suite = CreateSuite();
@@ -548,7 +568,10 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             .ReturnsAsync(existingList);
     }
 
-    private void SetupLlmSuggesterReturns(IReadOnlyList<LlmSuggestedScenario> scenarios, bool fromCache = false)
+    private void SetupLlmSuggesterReturns(
+        IReadOnlyList<LlmSuggestedScenario> scenarios,
+        bool fromCache = false,
+        bool usedLocalFallback = false)
     {
         _llmSuggesterMock.Setup(x => x.SuggestScenariosAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LlmScenarioSuggestionResult
@@ -557,6 +580,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
                 LlmModel = "gpt-4",
                 TokensUsed = 1500,
                 FromCache = fromCache,
+                UsedLocalFallback = usedLocalFallback,
             });
     }
 
@@ -569,6 +593,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
                 LlmModel = "gpt-4",
                 TokensUsed = 0,
                 FromCache = false,
+                UsedLocalFallback = false,
             });
     }
 

@@ -88,7 +88,7 @@ internal static class ContractAwareRequestSynthesizer
         if (bodyNode != null)
         {
             ApplyPlaceholderHints(bodyNode, context);
-            result.BodyType = "JSON";
+            result.BodyType = InferBodyType(context, bodyNode);
             result.Body = bodyNode.ToJsonString(JsonOptions);
         }
 
@@ -106,7 +106,7 @@ internal static class ContractAwareRequestSynthesizer
         scenario.SuggestedQueryParams = MergeDictionary(scenario.SuggestedQueryParams, repair.QueryParams);
         scenario.SuggestedHeaders = MergeHeaders(scenario.SuggestedHeaders, repair.Headers);
 
-        if (NeedsBodyRepair(scenario, context))
+        if (NeedsBodyRepair(scenario, context, repair))
         {
             scenario.SuggestedBodyType = repair.BodyType;
             scenario.SuggestedBody = repair.Body;
@@ -114,7 +114,9 @@ internal static class ContractAwareRequestSynthesizer
         else if (string.IsNullOrWhiteSpace(scenario.SuggestedBodyType) &&
                  !string.IsNullOrWhiteSpace(scenario.SuggestedBody))
         {
-            scenario.SuggestedBodyType = "JSON";
+            scenario.SuggestedBodyType = string.Equals(repair.BodyType, "None", StringComparison.OrdinalIgnoreCase)
+                ? "JSON"
+                : repair.BodyType;
         }
 
         scenario.Variables = MergeVariables(scenario.Variables, repair.Variables);
@@ -267,7 +269,10 @@ internal static class ContractAwareRequestSynthesizer
             .ToList();
     }
 
-    private static bool NeedsBodyRepair(LlmSuggestedScenario scenario, ContractAwareRequestContext context)
+    private static bool NeedsBodyRepair(
+        LlmSuggestedScenario scenario,
+        ContractAwareRequestContext context,
+        ContractAwareRequestData repair)
     {
         if (!context.RequiresBody)
         {
@@ -285,7 +290,19 @@ internal static class ContractAwareRequestSynthesizer
             return true;
         }
 
-        return IsMeaninglessStructuredBody(scenario.SuggestedBody, context.RequestBodySchema);
+        var expectedBodyType = NormalizeBodyType(repair?.BodyType);
+        var currentBodyType = NormalizeBodyType(scenario.SuggestedBodyType);
+
+        if (!string.IsNullOrWhiteSpace(expectedBodyType) &&
+            !string.Equals(expectedBodyType, "NONE", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(expectedBodyType, currentBodyType, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return string.Equals(expectedBodyType, "JSON", StringComparison.OrdinalIgnoreCase)
+            ? IsMeaninglessStructuredBody(scenario.SuggestedBody, context.RequestBodySchema)
+            : IsMeaninglessFieldBody(scenario.SuggestedBody, context.Parameters);
     }
 
     private static bool IsMeaninglessStructuredBody(string body, string requestBodySchema)
@@ -338,6 +355,30 @@ internal static class ContractAwareRequestSynthesizer
         }
 
         return false;
+    }
+
+    private static bool IsMeaninglessFieldBody(string body, IReadOnlyList<ParameterDetailDto> parameters)
+    {
+        var bodyParameters = (parameters ?? Array.Empty<ParameterDetailDto>())
+            .Where(parameter => parameter != null &&
+                                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(parameter.Name, "body", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (bodyParameters.Count == 0 || string.IsNullOrWhiteSpace(body))
+        {
+            return bodyParameters.Count > 0 && string.IsNullOrWhiteSpace(body);
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(body);
+            return node is JsonObject obj && obj.Count == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static Dictionary<string, string> MergeDictionary(
@@ -489,6 +530,59 @@ internal static class ContractAwareRequestSynthesizer
         }
 
         return "{{" + variableName + "}}";
+    }
+
+    private static string InferBodyType(ContractAwareRequestContext context, JsonNode bodyNode)
+    {
+        var bodyParameters = (context?.Parameters ?? Array.Empty<ParameterDetailDto>())
+            .Where(parameter => parameter != null &&
+                                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (bodyParameters.Any(parameter =>
+                string.Equals(parameter.Name, "body", StringComparison.OrdinalIgnoreCase) &&
+                (!string.IsNullOrWhiteSpace(parameter.Schema) ||
+                 string.Equals(parameter.DataType, "object", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(parameter.DataType, "array", StringComparison.OrdinalIgnoreCase))))
+        {
+            return "JSON";
+        }
+
+        if (bodyParameters.Any(parameter =>
+                !string.Equals(parameter.Name, "body", StringComparison.OrdinalIgnoreCase) &&
+                IsFileLikeParameter(parameter)))
+        {
+            return "FormData";
+        }
+
+        if (bodyParameters.Any(parameter =>
+                !string.Equals(parameter.Name, "body", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "UrlEncoded";
+        }
+
+        return bodyNode is JsonValue ? "Raw" : "JSON";
+    }
+
+    private static bool IsFileLikeParameter(ParameterDetailDto parameter)
+    {
+        return string.Equals(parameter?.DataType, "file", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(parameter?.Format, "binary", StringComparison.OrdinalIgnoreCase)
+            || parameter?.Name?.IndexOf("file", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static string NormalizeBodyType(string bodyType)
+    {
+        if (string.IsNullOrWhiteSpace(bodyType))
+        {
+            return string.Empty;
+        }
+
+        return bodyType
+            .Trim()
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .ToUpperInvariant();
     }
 
     private static JsonNode TryBuildFromBodyParameters(IReadOnlyList<ParameterDetailDto> parameters)
@@ -914,6 +1008,7 @@ internal static class ContractAwareRequestSynthesizer
             "integer" or "int" or "long" => 1,
             "number" or "float" or "double" or "decimal" => 1.5m,
             "boolean" or "bool" => true,
+            "file" or "binary" => BuildHeuristicStringValue(propertyName, dataType, format, minLength, maxLength),
             "array" => new[] { "sample-item" },
             "object" => new Dictionary<string, object>(),
             _ => BuildHeuristicStringValue(propertyName, dataType, format, minLength, maxLength),
@@ -942,6 +1037,8 @@ internal static class ContractAwareRequestSynthesizer
 
         value ??= name.ToLowerInvariant() switch
         {
+            var candidate when candidate.Contains("file") => "sample-file.txt",
+            var candidate when candidate.Contains("image") => "sample-image.txt",
             var candidate when candidate.Contains("password") => "Test123!",
             var candidate when candidate.Contains("email") => "testuser@example.com",
             var candidate when candidate.Contains("username") => "testuser",
