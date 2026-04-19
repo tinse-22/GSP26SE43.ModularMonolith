@@ -115,14 +115,18 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var variableBag = new Dictionary<string, string>(resolvedEnv.Variables, StringComparer.OrdinalIgnoreCase);
         var caseResults = new List<TestCaseExecutionResult>();
         var caseStatusMap = new Dictionary<Guid, string>();
+        var caseResultMap = new Dictionary<Guid, TestCaseExecutionResult>();
 
         foreach (var testCase in executionContext.OrderedTestCases)
         {
             var result = await ExecuteTestCase(
-                testCase, resolvedEnv, variableBag, caseStatusMap, endpointMetadataMap, ct, strictValidation);
+                testCase, resolvedEnv, variableBag, caseStatusMap, caseResultMap, endpointMetadataMap, ct, strictValidation);
 
             caseResults.Add(result);
             caseStatusMap[testCase.TestCaseId] = result.Status;
+            caseResultMap[testCase.TestCaseId] = result;
+
+            LogCaseOutcome(run.Id, result);
         }
 
         // Collect results
@@ -134,17 +138,39 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         ResolvedExecutionEnvironment resolvedEnv,
         Dictionary<string, string> variableBag,
         Dictionary<Guid, string> caseStatusMap,
+        Dictionary<Guid, TestCaseExecutionResult> caseResultMap,
         Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap,
         CancellationToken ct,
         bool strictValidation)
     {
         // Check dependencies
         var failedDeps = testCase.DependencyIds
-            .Where(depId => caseStatusMap.TryGetValue(depId, out var status) && status != "Passed")
+            .Where(depId =>
+            {
+                if (caseResultMap.TryGetValue(depId, out var dependencyResult))
+                {
+                    return !IsDependencySatisfied(dependencyResult);
+                }
+
+                if (caseStatusMap.TryGetValue(depId, out var status))
+                {
+                    return !string.Equals(status, "Passed", StringComparison.OrdinalIgnoreCase);
+                }
+
+                return false;
+            })
             .ToList();
 
         if (failedDeps.Count > 0)
         {
+            _logger.LogWarning(
+                "Dependency skip. TestCase={TestCaseName} ({TestCaseId}), Dependencies={DependencyIds}, FailedDependencies={FailedDependencyIds}, FailedDependencyDetails={FailedDependencyDetails}",
+                testCase.Name,
+                testCase.TestCaseId,
+                SummarizeGuidList(testCase.DependencyIds),
+                SummarizeGuidList(failedDeps),
+                SummarizeFailedDependencyDetails(failedDeps, caseResultMap));
+
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -172,8 +198,17 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         if (preValidation.HasErrors)
         {
             _logger.LogWarning(
-                "Pre-execution validation failed for TestCase={TestCaseName} ({TestCaseId}). Errors={ErrorCount}",
-                testCase.Name, testCase.TestCaseId, preValidation.Errors.Count);
+                "Pre-execution validation failed. TestCase={TestCaseName} ({TestCaseId}), Errors={ErrorCount}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}, HttpMethod={HttpMethod}, Url={Url}, BodyLength={BodyLength}, PathParams={PathParams}, QueryParams={QueryParams}",
+                testCase.Name,
+                testCase.TestCaseId,
+                preValidation.Errors.Count,
+                SummarizeFailureCodes(preValidation.Errors),
+                SummarizeFailureDetails(preValidation.Errors),
+                testCase.Request?.HttpMethod ?? "(null)",
+                testCase.Request?.Url ?? "(null)",
+                testCase.Request?.Body?.Length ?? 0,
+                Truncate(testCase.Request?.PathParams, 256),
+                Truncate(testCase.Request?.QueryParams, 256));
 
             return new TestCaseExecutionResult
             {
@@ -197,6 +232,14 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
         catch (UnresolvedVariableException ex)
         {
+            _logger.LogWarning(
+                "Variable resolution failed. TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={Url}, Reason={Reason}",
+                testCase.Name,
+                testCase.TestCaseId,
+                testCase.Request?.HttpMethod ?? "(null)",
+                testCase.Request?.Url ?? "(null)",
+                ex.Message);
+
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -228,6 +271,21 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Validate response
         var validation = _validator.Validate(response, testCase, endpointMetadata, strictValidation);
+
+        if (!validation.IsPassed)
+        {
+            _logger.LogWarning(
+                "Response validation failed. TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={ResolvedUrl}, HttpStatus={HttpStatus}, ExpectedStatus={ExpectedStatus}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}, ResponseContentType={ResponseContentType}",
+                testCase.Name,
+                testCase.TestCaseId,
+                resolvedRequest.HttpMethod,
+                resolvedRequest.ResolvedUrl,
+                response.StatusCode,
+                testCase.Expectation?.ExpectedStatus,
+                SummarizeFailureCodes(validation.Failures),
+                SummarizeFailureDetails(validation.Failures),
+                response.ContentType);
+        }
 
         var caseStatus = validation.IsPassed ? "Passed" : "Failed";
 
@@ -265,6 +323,215 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             JsonPathChecksPassed = validation.JsonPathChecksPassed,
             ResponseTimePassed = validation.ResponseTimePassed,
         };
+    }
+
+    private void LogCaseOutcome(Guid runId, TestCaseExecutionResult result)
+    {
+        if (string.Equals(result.Status, "Passed", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "Test case completed with non-pass status. RunId={RunId}, Status={Status}, TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={ResolvedUrl}, HttpStatus={HttpStatus}, RequestBodyLength={RequestBodyLength}, DependencyIds={DependencyIds}, SkippedBecauseDependencyIds={SkippedDependencyIds}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}",
+            runId,
+            result.Status,
+            result.Name,
+            result.TestCaseId,
+            result.HttpMethod ?? "(n/a)",
+            result.ResolvedUrl ?? "(n/a)",
+            result.HttpStatusCode,
+            result.RequestBody?.Length ?? 0,
+            SummarizeGuidList(result.DependencyIds),
+            SummarizeGuidList(result.SkippedBecauseDependencyIds),
+            SummarizeFailureCodes(result.FailureReasons),
+            SummarizeFailureDetails(result.FailureReasons));
+    }
+
+    private static string SummarizeFailedDependencyDetails(
+        IReadOnlyList<Guid> failedDependencyIds,
+        IReadOnlyDictionary<Guid, TestCaseExecutionResult> caseResultMap)
+    {
+        if (failedDependencyIds == null || failedDependencyIds.Count == 0)
+        {
+            return "(none)";
+        }
+
+        var details = new List<string>();
+
+        foreach (var dependencyId in failedDependencyIds.Take(5))
+        {
+            if (caseResultMap != null && caseResultMap.TryGetValue(dependencyId, out var dependencyResult))
+            {
+                details.Add(
+                    $"{dependencyResult.Name} ({dependencyId}) => {dependencyResult.Status}, Codes={SummarizeFailureCodes(dependencyResult.FailureReasons)}");
+            }
+            else
+            {
+                details.Add(dependencyId.ToString());
+            }
+        }
+
+        if (failedDependencyIds.Count > 5)
+        {
+            details.Add($"+{failedDependencyIds.Count - 5} more");
+        }
+
+        return string.Join(" | ", details);
+    }
+
+    private static string SummarizeGuidList(IEnumerable<Guid> values)
+    {
+        if (values == null)
+        {
+            return "[]";
+        }
+
+        var list = values
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (list.Count == 0)
+        {
+            return "[]";
+        }
+
+        var preview = list.Take(5).Select(x => x.ToString());
+        var suffix = list.Count > 5 ? $", +{list.Count - 5} more" : string.Empty;
+        return $"[{string.Join(", ", preview)}{suffix}]";
+    }
+
+    private static string SummarizeFailureCodes(IEnumerable<ValidationFailureModel> failures)
+    {
+        if (failures == null)
+        {
+            return "(none)";
+        }
+
+        var codes = failures
+            .Select(x => x?.Code)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (codes.Count == 0)
+        {
+            return "(none)";
+        }
+
+        var preview = codes.Take(5);
+        var suffix = codes.Count > 5 ? $", +{codes.Count - 5} more" : string.Empty;
+        return string.Join(", ", preview) + suffix;
+    }
+
+    private static string SummarizeFailureDetails(IEnumerable<ValidationFailureModel> failures)
+    {
+        if (failures == null)
+        {
+            return "(none)";
+        }
+
+        var details = failures
+            .Select(FormatFailure)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        if (details.Count == 0)
+        {
+            return "(none)";
+        }
+
+        var preview = details.Take(3);
+        var suffix = details.Count > 3 ? $" | +{details.Count - 3} more" : string.Empty;
+        return string.Join(" | ", preview) + suffix;
+    }
+
+    private static string FormatFailure(ValidationFailureModel failure)
+    {
+        if (failure == null)
+        {
+            return null;
+        }
+
+        var code = string.IsNullOrWhiteSpace(failure.Code) ? "UNKNOWN" : failure.Code.Trim();
+        var message = Truncate(failure.Message, 200);
+        var target = string.IsNullOrWhiteSpace(failure.Target) ? null : failure.Target.Trim();
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return string.IsNullOrWhiteSpace(message) ? code : $"{code}: {message}";
+        }
+
+        return string.IsNullOrWhiteSpace(message)
+            ? $"{code}@{target}"
+            : $"{code}@{target}: {message}";
+    }
+
+    private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
+    {
+        if (dependencyResult == null)
+        {
+            return false;
+        }
+
+        if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!dependencyResult.HttpStatusCode.HasValue)
+        {
+            return false;
+        }
+
+        var actualStatus = dependencyResult.HttpStatusCode.Value;
+        if (actualStatus < 200 || actualStatus >= 300)
+        {
+            return false;
+        }
+
+        return IsDependencyFailureOnlyExpectationMismatch(dependencyResult.FailureReasons);
+    }
+
+    private static bool IsDependencyFailureOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
+    {
+        if (failures == null || failures.Count == 0)
+        {
+            return true;
+        }
+
+        var allowedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "STATUS_CODE_MISMATCH",
+            "RESPONSE_SCHEMA_MISMATCH",
+        };
+
+        var normalizedCodes = failures
+            .Select(failure => failure?.Code)
+            .Where(code => !string.IsNullOrWhiteSpace(code))
+            .Select(code => code.Trim())
+            .ToList();
+
+        if (normalizedCodes.Count == 0)
+        {
+            return true;
+        }
+
+        return normalizedCodes.All(allowedCodes.Contains);
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value) || maxLength <= 0)
+        {
+            return value;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength] + "...";
     }
 
     private static List<ValidationWarningModel> MergeWarnings(

@@ -217,6 +217,7 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
 
             // Build expectation
             testCase.Expectation = _expectationBuilder.Build(testCaseId, generated.Expectation);
+            NormalizeHappyPathExpectedStatuses(testCase);
 
             // Build variables
             if (generated.Variables != null)
@@ -360,5 +361,73 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
         }
 
         return JsonSerializer.Serialize(tags, JsonOpts);
+    }
+
+    private static void NormalizeHappyPathExpectedStatuses(TestCase testCase)
+    {
+        if (testCase?.Expectation == null)
+        {
+            return;
+        }
+
+        var defaultStatuses = GetHappyPathDefaultStatuses(testCase.Request?.HttpMethod.ToString());
+        var sourceStatuses = ParseStatusCodes(testCase.Expectation.ExpectedStatus)
+            .Where(code => code >= 200 && code < 300)
+            .ToList();
+
+        var merged = sourceStatuses
+            .Concat(defaultStatuses)
+            .Distinct()
+            .ToList();
+
+        if (merged.Count == 0)
+        {
+            merged.Add(200);
+        }
+
+        testCase.Expectation.ExpectedStatus = JsonSerializer.Serialize(merged, JsonOpts);
+    }
+
+    private static List<int> ParseStatusCodes(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return new List<int>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(expectedStatus, JsonOpts)
+                ?.Where(code => code >= 100 && code <= 599)
+                .Distinct()
+                .ToList() ?? new List<int>();
+        }
+        catch (JsonException)
+        {
+            if (int.TryParse(expectedStatus.Trim('[', ']', ' '), out var singleStatus)
+                && singleStatus >= 100
+                && singleStatus <= 599)
+            {
+                return new List<int> { singleStatus };
+            }
+
+            return new List<int>();
+        }
+    }
+
+    private static List<int> GetHappyPathDefaultStatuses(string httpMethod)
+    {
+        var method = string.IsNullOrWhiteSpace(httpMethod)
+            ? "GET"
+            : httpMethod.Trim().ToUpperInvariant();
+
+        return method switch
+        {
+            "POST" => new List<int> { 201, 200 },
+            "PUT" => new List<int> { 200, 204 },
+            "PATCH" => new List<int> { 200, 204 },
+            "DELETE" => new List<int> { 204, 200, 202 },
+            _ => new List<int> { 200 },
+        };
     }
 }

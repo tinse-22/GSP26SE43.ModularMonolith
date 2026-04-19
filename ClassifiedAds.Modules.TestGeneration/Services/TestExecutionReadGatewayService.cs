@@ -143,8 +143,8 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             ? approvedOrder.OrderBy(x => x.OrderIndex).Select(x => x.EndpointId).ToList()
             : new List<Guid>();
 
-        // 8. Map to DTOs with deterministic ordering
-        var orderedTestCases = finalTestCaseIds
+        // 8. Build baseline order from endpoint/custom order, then enforce dependency topology.
+        var baselineOrderedCases = finalTestCaseIds
             .Select(id => enabledTestCaseMap[id])
             .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
                 ? endpointOrderMap[tc.EndpointId.Value]
@@ -152,6 +152,12 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
             .ThenBy(tc => tc.Name)
             .ThenBy(tc => tc.Id)
+            .ToList();
+
+        var topologicallyOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
+
+        // 9. Map to DTOs with deterministic ordering
+        var orderedTestCases = topologicallyOrderedCases
             .Select((tc, index) => MapToExecutionTestCaseDto(tc, index, requestMap, expectationMap, variableMap, dependencyMap))
             .ToList();
 
@@ -213,6 +219,88 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             throw new ValidationException(
                 $"Danh sách test case được chọn thiếu các dependency cần thiết: {string.Join("; ", missingDeps)}.");
         }
+    }
+
+    private static List<TestCase> OrderCasesByDependencyTopology(
+        IReadOnlyList<TestCase> baselineOrderedCases,
+        IReadOnlyCollection<TestCaseDependency> dependencies)
+    {
+        if (baselineOrderedCases == null || baselineOrderedCases.Count == 0)
+        {
+            return new List<TestCase>();
+        }
+
+        var caseById = baselineOrderedCases.ToDictionary(x => x.Id);
+        var baselineIndexById = baselineOrderedCases
+            .Select((testCase, index) => new { testCase.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+
+        var inDegree = baselineOrderedCases.ToDictionary(x => x.Id, _ => 0);
+        var adjacency = baselineOrderedCases.ToDictionary(x => x.Id, _ => new List<Guid>());
+        var seenEdges = new HashSet<(Guid DependentId, Guid DependencyId)>();
+
+        foreach (var dependency in dependencies ?? Array.Empty<TestCaseDependency>())
+        {
+            if (!caseById.ContainsKey(dependency.TestCaseId)
+                || !caseById.ContainsKey(dependency.DependsOnTestCaseId)
+                || dependency.TestCaseId == dependency.DependsOnTestCaseId)
+            {
+                continue;
+            }
+
+            var edge = (DependentId: dependency.TestCaseId, DependencyId: dependency.DependsOnTestCaseId);
+            if (!seenEdges.Add(edge))
+            {
+                continue;
+            }
+
+            adjacency[dependency.DependsOnTestCaseId].Add(dependency.TestCaseId);
+            inDegree[dependency.TestCaseId] += 1;
+        }
+
+        var ready = new SortedSet<(int BaselineIndex, Guid TestCaseId)>(
+            inDegree
+                .Where(x => x.Value == 0)
+                .Select(x => (baselineIndexById[x.Key], x.Key)));
+
+        var orderedIds = new List<Guid>(baselineOrderedCases.Count);
+
+        while (ready.Count > 0)
+        {
+            var next = ready.Min;
+            ready.Remove(next);
+
+            orderedIds.Add(next.TestCaseId);
+
+            foreach (var dependentId in adjacency[next.TestCaseId])
+            {
+                inDegree[dependentId] -= 1;
+
+                if (inDegree[dependentId] == 0)
+                {
+                    ready.Add((baselineIndexById[dependentId], dependentId));
+                }
+            }
+        }
+
+        if (orderedIds.Count != baselineOrderedCases.Count)
+        {
+            var cycleSample = inDegree
+                .Where(x => x.Value > 0)
+                .Select(x => caseById[x.Key].Name)
+                .OrderBy(x => x)
+                .Take(5)
+                .ToList();
+
+            var cycleSuffix = cycleSample.Count > 0
+                ? $" Ví dụ test case trong vòng phụ thuộc: {string.Join(", ", cycleSample)}."
+                : string.Empty;
+
+            throw new ValidationException(
+                "Không thể xác định thứ tự chạy test theo dependency do phát hiện vòng phụ thuộc giữa test cases." + cycleSuffix);
+        }
+
+        return orderedIds.Select(id => caseById[id]).ToList();
     }
 
     private static ExecutionTestCaseDto MapToExecutionTestCaseDto(

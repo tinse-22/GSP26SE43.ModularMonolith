@@ -18,6 +18,7 @@ public class VariableResolver : IVariableResolver
 
     private static readonly Regex PlaceholderRegex = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
+    private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
 
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
@@ -165,8 +166,9 @@ public class VariableResolver : IVariableResolver
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || testCase?.Request == null
             || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(testCase.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
-            || !TryGetPreferredTestEmail(variables, out var preferredEmail))
+            )
         {
             return resolvedBody;
         }
@@ -186,7 +188,13 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        return ReplaceSyntheticEmails(root, preferredEmail)
+        var hasPreferredEmail = TryGetPreferredTestEmail(variables, out var preferredEmail);
+        var runSuffix = GetRunSuffix(variables);
+
+        var emailRewritten = hasPreferredEmail && ReplaceSyntheticEmails(root, preferredEmail);
+        var nameRewritten = ReplaceSyntheticResourceNames(root, runSuffix);
+
+        return emailRewritten || nameRewritten
             ? root.ToJsonString(JsonOptions)
             : resolvedBody;
     }
@@ -316,6 +324,166 @@ public class VariableResolver : IVariableResolver
             || localPart.StartsWith("user", StringComparison.OrdinalIgnoreCase)
             || localPart.StartsWith("qa", StringComparison.OrdinalIgnoreCase)
             || localPart.StartsWith("auto", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetRunSuffix(IReadOnlyDictionary<string, string> variables)
+    {
+        if (variables == null)
+        {
+            return null;
+        }
+
+        var candidateKeys = new[] { "runSuffix", "runIdSuffix", "runId" };
+        foreach (var key in candidateKeys)
+        {
+            if (!variables.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var normalized = new string(raw
+                .Trim()
+                .Where(char.IsLetterOrDigit)
+                .ToArray());
+
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            return normalized.Length <= 10
+                ? normalized.ToLowerInvariant()
+                : normalized[^10..].ToLowerInvariant();
+        }
+
+        return null;
+    }
+
+    private static bool ReplaceSyntheticResourceNames(JsonNode node, string runSuffix)
+    {
+        if (string.IsNullOrWhiteSpace(runSuffix))
+        {
+            return false;
+        }
+
+        if (node is JsonObject obj)
+        {
+            var changed = false;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue value
+                    && value.TryGetValue<string>(out var stringValue)
+                    && IsSyntheticNameField(property.Key)
+                    && ShouldRewriteSyntheticName(stringValue, runSuffix))
+                {
+                    obj[property.Key] = BuildSyntheticNameValue(stringValue, property.Key, runSuffix);
+                    changed = true;
+                    continue;
+                }
+
+                if (property.Value != null && ReplaceSyntheticResourceNames(property.Value, runSuffix))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        if (node is JsonArray array)
+        {
+            var changed = false;
+            foreach (var item in array)
+            {
+                if (item != null && ReplaceSyntheticResourceNames(item, runSuffix))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        return false;
+    }
+
+    private static bool IsSyntheticNameField(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName) || IsEmailField(propertyName))
+        {
+            return false;
+        }
+
+        if (propertyName.Equals("name", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("title", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("slug", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("code", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!propertyName.EndsWith("Name", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !propertyName.Equals("firstName", StringComparison.OrdinalIgnoreCase)
+            && !propertyName.Equals("lastName", StringComparison.OrdinalIgnoreCase)
+            && !propertyName.Equals("middleName", StringComparison.OrdinalIgnoreCase)
+            && !propertyName.Equals("fullName", StringComparison.OrdinalIgnoreCase)
+            && !propertyName.Equals("userName", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldRewriteSyntheticName(string value, string runSuffix)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Contains("{{", StringComparison.Ordinal)
+            || value.Contains('@')
+            || value.Contains(runSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (!SimpleSyntheticNameRegex.IsMatch(trimmed))
+        {
+            return false;
+        }
+
+        return !Guid.TryParse(trimmed, out _);
+    }
+
+    private static string BuildSyntheticNameValue(string originalValue, string propertyName, string runSuffix)
+    {
+        if (string.Equals(propertyName, "slug", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSlug(originalValue, runSuffix);
+        }
+
+        var baseValue = originalValue.Trim();
+        var maxBaseLength = Math.Max(8, 80 - runSuffix.Length - 1);
+        if (baseValue.Length > maxBaseLength)
+        {
+            baseValue = baseValue[..maxBaseLength].TrimEnd();
+        }
+
+        return $"{baseValue}-{runSuffix}";
+    }
+
+    private static string BuildSlug(string value, string runSuffix)
+    {
+        var combined = $"{value}-{runSuffix}".Trim().ToLowerInvariant();
+        var normalizedChars = combined
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+
+        var slug = new string(normalizedChars);
+        while (slug.Contains("--", StringComparison.Ordinal))
+        {
+            slug = slug.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return slug.Trim('-');
     }
 
     private static void CheckUnresolvedPlaceholders(string value, string surface)

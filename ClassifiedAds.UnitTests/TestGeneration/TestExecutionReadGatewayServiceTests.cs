@@ -139,6 +139,65 @@ public class TestExecutionReadGatewayServiceTests
     }
 
     [Fact]
+    public async Task GetExecutionContextAsync_Should_OrderCasesTopologicallyByDependency()
+    {
+        // Arrange: baseline order C -> B -> A, dependencies require A -> B -> C
+        var endpointId = Guid.NewGuid();
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+        var caseCId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 2);
+        var caseB = CreateTestCase(caseBId, endpointId, 1);
+        var caseC = CreateTestCase(caseCId, endpointId, 0);
+
+        var deps = new[]
+        {
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseBId, DependsOnTestCaseId = caseAId },
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseCId, DependsOnTestCaseId = caseBId },
+        };
+
+        SetupGatewayMocks(new[] { caseA, caseB, caseC }, deps, endpointId);
+
+        // Act
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        // Assert
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().ContainInOrder(caseAId, caseBId, caseCId);
+
+        result.OrderedTestCases.Select(x => x.OrderIndex)
+            .Should().ContainInOrder(0, 1, 2);
+    }
+
+    [Fact]
+    public async Task GetExecutionContextAsync_WhenDependencyCycleExists_ShouldThrowValidation()
+    {
+        // Arrange: A depends on B, B depends on A (cycle)
+        var endpointId = Guid.NewGuid();
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 0);
+        var caseB = CreateTestCase(caseBId, endpointId, 1);
+
+        var deps = new[]
+        {
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseAId, DependsOnTestCaseId = caseBId },
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseBId, DependsOnTestCaseId = caseAId },
+        };
+
+        SetupGatewayMocks(new[] { caseA, caseB }, deps, endpointId);
+
+        // Act
+        var act = () => _service.GetExecutionContextAsync(_suiteId, null);
+
+        // Assert
+        await act.Should().ThrowAsync<ValidationException>()
+            .Where(ex => ex.Message.Contains("vòng phụ thuộc"));
+    }
+
+    [Fact]
     public async Task GetExecutionContextAsync_SelectDisabledTestCase_ShouldThrowValidation()
     {
         // Arrange

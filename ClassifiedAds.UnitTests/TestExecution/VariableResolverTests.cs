@@ -116,6 +116,47 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_RewriteSyntheticResourceNamesInHappyPathPostBody_UsingRunSuffix()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            body: "{\"name\":\"Electronics\",\"slug\":\"electronics\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.Variables["runSuffix"] = "ab12cd34";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("Electronics-ab12cd34");
+        result.Body.Should().Contain("electronics-ab12cd34");
+    }
+
+    [Fact]
+    public void Resolve_Should_NotRewriteSyntheticResourceNames_ForNonPostMethod()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            body: "{\"name\":\"Electronics\",\"slug\":\"electronics\"}",
+            httpMethod: "PUT",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.Variables["runSuffix"] = "ab12cd34";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"name\":\"Electronics\"");
+        result.Body.Should().Contain("\"slug\":\"electronics\"");
+        result.Body.Should().NotContain("ab12cd34");
+    }
+
+    [Fact]
     public void Resolve_Should_NotRewriteSyntheticEmail_ForNegativeTest()
     {
         // Arrange
@@ -335,13 +376,13 @@ public class VariableResolverTests
 
     private static ExecutionTestCaseDto CreateTestCase(
         string url = "/api/test",
-        string headers = null,
-        string pathParams = null,
-        string queryParams = null,
-        string body = null,
+        string? headers = null,
+        string? pathParams = null,
+        string? queryParams = null,
+        string? body = null,
         int timeout = 30000,
         string httpMethod = "GET",
-        string testType = null)
+        string? testType = null)
     {
         return new ExecutionTestCaseDto
         {

@@ -484,7 +484,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         foreach (var s in response.Scenarios)
         {
             var parsedType = ParseTestType(s.TestType);
-            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus);
+            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus, s.Request?.HttpMethod);
 
             var parsedScenario = new LlmSuggestedScenario
             {
@@ -567,7 +567,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return missingParts.Count == 0;
     }
 
-    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source)
+    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source, string httpMethod)
     {
         var normalized = source?
             .Where(code => code >= 100 && code <= 599)
@@ -577,23 +577,72 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         if (testType == TestType.HappyPath)
         {
             var happyStatuses = normalized.Where(code => code >= 200 && code <= 299).ToList();
-            if (happyStatuses.Count > 0)
-            {
-                return happyStatuses;
-            }
-
-            return new List<int> { 200 };
+            return MergeStatuses(happyStatuses, GetHappyPathDefaultStatuses(httpMethod));
         }
 
         // Boundary/Negative should not accept success statuses.
         var nonSuccessStatuses = normalized.Where(code => code < 200 || code >= 300).ToList();
-        if (nonSuccessStatuses.Count > 0)
+        return MergeStatuses(nonSuccessStatuses, GetBoundaryNegativeDefaultStatuses(httpMethod));
+    }
+
+    private static List<int> GetHappyPathDefaultStatuses(string httpMethod)
+    {
+        var method = NormalizeHttpMethod(httpMethod);
+        return method switch
         {
-            return nonSuccessStatuses;
+            "POST" => new List<int> { 201, 200 },
+            "PUT" => new List<int> { 200, 204 },
+            "PATCH" => new List<int> { 200, 204 },
+            "DELETE" => new List<int> { 204, 200, 202 },
+            _ => new List<int> { 200 },
+        };
+    }
+
+    private static List<int> GetBoundaryNegativeDefaultStatuses(string httpMethod)
+    {
+        _ = NormalizeHttpMethod(httpMethod);
+        return new List<int> { 400, 401, 403, 404, 409, 415, 422 };
+    }
+
+    private static List<int> MergeStatuses(List<int> source, List<int> fallback)
+    {
+        var merged = new List<int>();
+
+        if (source != null)
+        {
+            foreach (var code in source)
+            {
+                if (!merged.Contains(code))
+                {
+                    merged.Add(code);
+                }
+            }
         }
 
-        // For Boundary/Negative, accept common client-error variants by default.
-        return new List<int> { 400, 401, 403, 404, 409, 422 };
+        if (fallback != null)
+        {
+            foreach (var code in fallback)
+            {
+                if (!merged.Contains(code))
+                {
+                    merged.Add(code);
+                }
+            }
+        }
+
+        if (merged.Count == 0)
+        {
+            merged.Add(200);
+        }
+
+        return merged;
+    }
+
+    private static string NormalizeHttpMethod(string httpMethod)
+    {
+        return string.IsNullOrWhiteSpace(httpMethod)
+            ? "GET"
+            : httpMethod.Trim().ToUpperInvariant();
     }
 
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(
@@ -774,6 +823,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TestType.Boundary => 400,
             _ => ((endpoint?.IsAuthRelated ?? false) || (metadata?.IsAuthRelated ?? false)) ? 401 : 400,
         };
+        var expectedStatuses = BuildExpectedStatuses(type, new List<int> { expectedStatus }, method);
 
         var namePrefix = type switch
         {
@@ -823,7 +873,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             SuggestedPathParams = pathParams,
             SuggestedQueryParams = queryParams,
             SuggestedHeaders = new Dictionary<string, string>(),
-            ExpectedStatusCode = expectedStatus,
+            ExpectedStatusCode = expectedStatuses.First(),
+            ExpectedStatusCodes = expectedStatuses,
             ExpectedBehavior = null,
             Priority = type == TestType.HappyPath ? "Medium" : "High",
             Tags = tags,
