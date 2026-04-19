@@ -143,7 +143,7 @@ public class PreExecutionValidator : IPreExecutionValidator
                     result.Errors.Add(new ValidationFailureModel
                     {
                         Code = "UNRESOLVABLE_PATH_PARAM",
-                        Message = $"Path parameter '{paramName}' dùng variable '{{{{{{varName}}}}}}' nhưng variable này chưa có giá trị. " +
+                        Message = $"Path parameter '{paramName}' dùng variable '{{{{{varName}}}}}' nhưng variable này chưa có giá trị. " +
                                   "Cách khắc phục: Đảm bảo test trước có variable extraction rule cho '" + varName + "', " +
                                   "hoặc thêm biến vào ExecutionEnvironment.Variables.",
                         Target = $"PathParams.{paramName}",
@@ -433,10 +433,32 @@ public class PreExecutionValidator : IPreExecutionValidator
             var varName = match.Groups[1].Value;
             if (!mergedVars.ContainsKey(varName))
             {
+                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                    && IsNumericSemanticVariableName(varName))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "NUMERIC_PLACEHOLDER_DEFAULT_FALLBACK",
+                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị số mặc định an toàn để tiếp tục chạy test.",
+                    });
+                    continue;
+                }
+
+                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                    && !IsIdentifierSemanticVariableName(varName))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "TEXT_PLACEHOLDER_DEFAULT_FALLBACK",
+                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị text mặc định an toàn để tiếp tục chạy test.",
+                    });
+                    continue;
+                }
+
                 result.Errors.Add(new ValidationFailureModel
                 {
                     Code = "UNRESOLVED_VARIABLE",
-                    Message = $"Variable '{{{{{{varName}}}}}}' trong {surface} chưa có giá trị. " +
+                    Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. " +
                               "Cách khắc phục: (1) Thêm vào ExecutionEnvironment.Variables, " +
                               "(2) Đảm bảo test trước có extraction rule, " +
                               "(3) Re-generate test cases.",
@@ -446,6 +468,57 @@ public class PreExecutionValidator : IPreExecutionValidator
                 });
             }
         }
+    }
+
+    private static bool IsIdentifierSemanticVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNumericSemanticVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var normalized = variableName.Trim().ToLowerInvariant();
+        var numericKeywords = new[]
+        {
+            "price",
+            "amount",
+            "cost",
+            "stock",
+            "quantity",
+            "qty",
+            "count",
+            "total",
+            "number",
+            "num",
+            "rate",
+            "percent",
+            "percentage",
+            "size",
+            "limit",
+            "offset",
+        };
+
+        foreach (var keyword in numericKeywords)
+        {
+            if (normalized.Contains(keyword, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ValidateVariableChaining(

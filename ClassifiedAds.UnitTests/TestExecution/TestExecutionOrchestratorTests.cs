@@ -464,6 +464,103 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_NotOverwriteForeignResourceIdentifier_WhenVariableAlreadyExists()
+    {
+        // Arrange
+        var createCategoryId = Guid.NewGuid();
+        var createProductId = Guid.NewGuid();
+        var updateCategoryId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var createCategory = CreateTestCase(createCategoryId, endpointId, 0);
+        createCategory.Name = "Happy Path: POST /api/categories";
+        createCategory.TestType = "HappyPath";
+        createCategory.Request.HttpMethod = "POST";
+        createCategory.Request.Url = "/api/categories";
+
+        var createProduct = CreateTestCase(createProductId, endpointId, 1, new[] { createCategoryId });
+        createProduct.Name = "Happy Path: POST /api/products";
+        createProduct.TestType = "HappyPath";
+        createProduct.Request.HttpMethod = "POST";
+        createProduct.Request.Url = "/api/products";
+
+        var updateCategory = CreateTestCase(updateCategoryId, endpointId, 2, new[] { createCategoryId });
+        updateCategory.Name = "Happy Path: PUT /api/categories/{id}";
+        updateCategory.TestType = "HappyPath";
+        updateCategory.Request.HttpMethod = "PUT";
+        updateCategory.Request.Url = "/api/categories/{id}";
+
+        SetupDefaultMocks(new[] { createCategory, createProduct, updateCategory }, new[] { endpointId });
+
+        Dictionary<string, string>? updateVariables = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == updateCategoryId)
+                {
+                    updateVariables = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = tc.Request.Url,
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 201,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        var extractCallCount = 0;
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
+            {
+                extractCallCount++;
+                return extractCallCount switch
+                {
+                    1 => new Dictionary<string, string>
+                    {
+                        ["categoryId"] = "cat-777",
+                    },
+                    2 => new Dictionary<string, string>
+                    {
+                        ["categoryId"] = "prd-999",
+                        ["productId"] = "prd-999",
+                    },
+                    _ => new Dictionary<string, string>(),
+                };
+            });
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        updateVariables.Should().NotBeNull();
+        updateVariables.Should().ContainKey("categoryId");
+        updateVariables["categoryId"].Should().Be("cat-777");
+        updateVariables.Should().ContainKey("productId");
+        updateVariables["productId"].Should().Be("prd-999");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_ImplicitlyExtractAuthToken_WhenVariableRulesMissing()
     {
         // Arrange

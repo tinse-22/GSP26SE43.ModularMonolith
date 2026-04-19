@@ -75,6 +75,70 @@ public class VariableExtractorTests
     }
 
     [Fact]
+    public void Extract_ResponseBody_Should_SkipIdentifierJsonPath_ForNonIdentifierVariableName()
+    {
+        // Arrange
+        var response = new HttpTestResponse
+        {
+            StatusCode = 200,
+            Body = "{\"data\": {\"id\": \"abc-123\"}}",
+            Headers = new Dictionary<string, string>(),
+        };
+
+        var variables = new List<ExecutionVariableRuleDto>
+        {
+            new()
+            {
+                VariableName = "price",
+                ExtractFrom = "ResponseBody",
+                JsonPath = "$.data.id",
+            },
+            new()
+            {
+                VariableName = "categoryId",
+                ExtractFrom = "ResponseBody",
+                JsonPath = "$.data.id",
+            },
+        };
+
+        // Act
+        var result = _extractor.Extract(response, variables);
+
+        // Assert
+        result.Should().NotContainKey("price");
+        result.Should().ContainKey("categoryId");
+        result["categoryId"].Should().Be("abc-123");
+    }
+
+    [Fact]
+    public void Extract_ResponseBody_Should_SkipIdentifierSource_ForNonIdentifierVariableName()
+    {
+        // Arrange
+        var response = new HttpTestResponse
+        {
+            StatusCode = 200,
+            Body = "{\"data\": {\"id\": \"abc-123\"}}",
+            Headers = new Dictionary<string, string>(),
+        };
+
+        var variables = new List<ExecutionVariableRuleDto>
+        {
+            new()
+            {
+                VariableName = "name",
+                ExtractFrom = "ResponseBody",
+                JsonPath = "$.data.id",
+            },
+        };
+
+        // Act
+        var result = _extractor.Extract(response, variables);
+
+        // Assert
+        result.Should().NotContainKey("name");
+    }
+
+    [Fact]
     public void Extract_ResponseHeader_Should_ExtractByHeaderName()
     {
         // Arrange
@@ -169,6 +233,47 @@ public class VariableExtractorTests
         var result = _extractor.Extract(response, variables);
 
         // Assert
+        result.Should().ContainKey("categoryId");
+        result["categoryId"].Should().Be("42");
+    }
+
+    [Fact]
+    public void Extract_ResponseHeader_Should_SkipLocationId_ForNonIdentifierVariableName()
+    {
+        // Arrange
+        var response = new HttpTestResponse
+        {
+            StatusCode = 201,
+            Body = "{}",
+            Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Location"] = "https://api.example.com/api/categories/42",
+            },
+        };
+
+        var variables = new List<ExecutionVariableRuleDto>
+        {
+            new()
+            {
+                VariableName = "price",
+                ExtractFrom = "ResponseHeader",
+                HeaderName = "Location",
+                Regex = "([^/?#]+)$",
+            },
+            new()
+            {
+                VariableName = "categoryId",
+                ExtractFrom = "ResponseHeader",
+                HeaderName = "Location",
+                Regex = "([^/?#]+)$",
+            },
+        };
+
+        // Act
+        var result = _extractor.Extract(response, variables);
+
+        // Assert
+        result.Should().NotContainKey("price");
         result.Should().ContainKey("categoryId");
         result["categoryId"].Should().Be("42");
     }

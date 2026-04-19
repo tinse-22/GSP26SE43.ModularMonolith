@@ -142,6 +142,44 @@ public class PreExecutionValidatorContractTests
         result.Warnings.Should().Contain(x => x.Code == "MEANINGLESS_REQUIRED_BODY_FOR_ERROR_CASE");
     }
 
+    [Fact]
+    public void Validate_Should_WarnAndNotFail_WhenNumericBodyPlaceholderMissing()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"price\":\"{{price}}\",\"stock\":\"{{stock}}\"}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), endpointMetadata: null);
+
+        result.Errors.Should().NotContain(x => x.Code == "UNRESOLVED_VARIABLE" && x.Target == "Body");
+        result.Warnings.Should().Contain(x => x.Code == "NUMERIC_PLACEHOLDER_DEFAULT_FALLBACK");
+    }
+
+    [Fact]
+    public void Validate_Should_WarnAndNotFail_WhenNonIdentifierBodyPlaceholderMissing()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"name\":\"{{name}}\"}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), endpointMetadata: null);
+
+        result.Errors.Should().NotContain(x => x.Code == "UNRESOLVED_VARIABLE" && x.Target == "Body");
+        result.Warnings.Should().Contain(x => x.Code == "TEXT_PLACEHOLDER_DEFAULT_FALLBACK");
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_WhenIdentifierBodyPlaceholderMissing()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"categoryId\":\"{{categoryId}}\"}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), endpointMetadata: null);
+
+        result.Errors.Should().Contain(x => x.Code == "UNRESOLVED_VARIABLE" && x.Target == "Body");
+    }
+
     private static ExecutionTestCaseDto CreateBaseTestCase()
     {
         return new ExecutionTestCaseDto

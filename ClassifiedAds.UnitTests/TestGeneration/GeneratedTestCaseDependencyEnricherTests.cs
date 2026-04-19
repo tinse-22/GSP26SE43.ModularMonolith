@@ -52,6 +52,41 @@ public class GeneratedTestCaseDependencyEnricherTests
     }
 
     [Fact]
+    public void Enrich_Should_NotBindNonIdentifierBodyFields_ToProducerIds()
+    {
+        var categoryEndpointId = Guid.NewGuid();
+        var productEndpointId = Guid.NewGuid();
+        var createCategory = CreateTestCase(
+            endpointId: categoryEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/categories",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"name\":\"Electronics\"}");
+        var createProduct = CreateTestCase(
+            endpointId: productEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/products",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"name\":\"Phone\",\"price\":12345,\"stock\":1,\"categoryId\":\"00000000-0000-0000-0000-000000000000\"}");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = categoryEndpointId, HttpMethod = "POST", Path = "/api/categories", OrderIndex = 0 },
+            new() { EndpointId = productEndpointId, HttpMethod = "POST", Path = "/api/products", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { categoryEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { createCategory, createProduct }, approvedOrder);
+
+        createProduct.Request.Body.Should().Contain("\"categoryId\":\"{{categoryId}}\"");
+        createProduct.Request.Body.Should().Contain("\"price\":12345");
+        createProduct.Request.Body.Should().Contain("\"stock\":1");
+        createProduct.Request.Body.Should().NotContain("{{price}}");
+        createProduct.Request.Body.Should().NotContain("{{stock}}");
+    }
+
+    [Fact]
     public void Enrich_Should_ChainRegisterLoginAndAuthorizedRequests_Generically()
     {
         var registerEndpointId = Guid.NewGuid();
@@ -154,6 +189,44 @@ public class GeneratedTestCaseDependencyEnricherTests
     }
 
     [Fact]
+    public void Enrich_Should_NormalizeLiteralRouteUrl_AndBindHappyPathDependency()
+    {
+        var categoryEndpointId = Guid.NewGuid();
+        var updateCategoryEndpointId = Guid.NewGuid();
+
+        var createCategory = CreateTestCase(
+            endpointId: categoryEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/categories",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"name\":\"Electronics\"}");
+
+        var updateCategory = CreateTestCase(
+            endpointId: updateCategoryEndpointId,
+            httpMethod: TestGenHttpMethod.PUT,
+            path: "/api/categories/{id}",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"name\":\"Updated\"}");
+
+        updateCategory.Request.Url = "/api/categories/12345";
+        updateCategory.Request.PathParams = null;
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = categoryEndpointId, HttpMethod = "POST", Path = "/api/categories", OrderIndex = 0 },
+            new() { EndpointId = updateCategoryEndpointId, HttpMethod = "PUT", Path = "/api/categories/{id}", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { categoryEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { createCategory, updateCategory }, approvedOrder);
+
+        updateCategory.Request.Url.Should().Be("/api/categories/{id}");
+        updateCategory.Request.PathParams.Should().Contain("\"id\":\"{{categoryId}}\"");
+        updateCategory.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == createCategory.Id);
+    }
+
+    [Fact]
     public void Enrich_Should_KeepNonHappyPathRouteParamLiteral_Unchanged()
     {
         var categoryEndpointId = Guid.NewGuid();
@@ -185,6 +258,44 @@ public class GeneratedTestCaseDependencyEnricherTests
         GeneratedTestCaseDependencyEnricher.Enrich(new[] { createCategory, boundaryUpdate }, approvedOrder);
 
         boundaryUpdate.Request.PathParams.Should().Contain("\"id\":\"12345\"");
+    }
+
+    [Fact]
+    public void Enrich_Should_NormalizeLiteralRouteUrl_ButKeepBoundaryLiteralValue()
+    {
+        var categoryEndpointId = Guid.NewGuid();
+        var updateCategoryEndpointId = Guid.NewGuid();
+
+        var createCategory = CreateTestCase(
+            endpointId: categoryEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/categories",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"name\":\"Electronics\"}");
+
+        var boundaryUpdate = CreateTestCase(
+            endpointId: updateCategoryEndpointId,
+            httpMethod: TestGenHttpMethod.PUT,
+            path: "/api/categories/{id}",
+            testType: TestType.Boundary,
+            orderIndex: 1,
+            body: "{\"name\":\"Updated\"}");
+
+        boundaryUpdate.Request.Url = "/api/categories/12345";
+        boundaryUpdate.Request.PathParams = null;
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = categoryEndpointId, HttpMethod = "POST", Path = "/api/categories", OrderIndex = 0 },
+            new() { EndpointId = updateCategoryEndpointId, HttpMethod = "PUT", Path = "/api/categories/{id}", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { categoryEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { createCategory, boundaryUpdate }, approvedOrder);
+
+        boundaryUpdate.Request.Url.Should().Be("/api/categories/{id}");
+        boundaryUpdate.Request.PathParams.Should().Contain("\"id\":\"12345\"");
+        boundaryUpdate.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == createCategory.Id);
     }
 
     private static TestCase CreateTestCase(

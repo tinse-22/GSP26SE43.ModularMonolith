@@ -46,6 +46,21 @@ public class VariableExtractor : IVariableExtractor
                 };
 
                 extracted = ApplyRegex(extracted, variable.Regex);
+
+                // Guardrail: some historical/generated suites may attach ID extraction rules
+                // (e.g. $.data.id or Location header tail) to non-ID variable names such as
+                // price/stock/name. That pollutes downstream request bodies with identifiers.
+                if (!string.IsNullOrEmpty(extracted) &&
+                    ShouldSkipIdentifierExtractionForVariable(variable, effectiveJsonPath))
+                {
+                    _logger.LogDebug(
+                        "Skipping identifier extraction for non-identifier variable. Variable={VariableName}, ExtractFrom={ExtractFrom}, JsonPath={JsonPath}, HeaderName={HeaderName}",
+                        variable.VariableName,
+                        variable.ExtractFrom,
+                        effectiveJsonPath,
+                        variable.HeaderName);
+                    extracted = null;
+                }
             }
             catch (Exception ex)
             {
@@ -64,6 +79,65 @@ public class VariableExtractor : IVariableExtractor
         }
 
         return result;
+    }
+
+    private static bool ShouldSkipIdentifierExtractionForVariable(ExecutionVariableRuleDto variable, string effectiveJsonPath)
+    {
+        if (variable == null || IsIdentifierVariableName(variable.VariableName))
+        {
+            return false;
+        }
+
+        return IsIdentifierSource(variable, effectiveJsonPath);
+    }
+
+    private static bool IsIdentifierVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsIdentifierSource(ExecutionVariableRuleDto variable, string effectiveJsonPath)
+    {
+        if (variable == null)
+        {
+            return false;
+        }
+
+        if (string.Equals(variable.ExtractFrom, "ResponseBody", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsIdentifierJsonPath(effectiveJsonPath);
+        }
+
+        if (string.Equals(variable.ExtractFrom, "ResponseHeader", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(variable.HeaderName, "Location", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(variable.Regex, "([^/?#]+)$", StringComparison.Ordinal);
+        }
+
+        return false;
+    }
+
+    private static bool IsIdentifierJsonPath(string jsonPath)
+    {
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return false;
+        }
+
+        var normalized = jsonPath.Trim().ToLowerInvariant();
+        return normalized == "$.id"
+            || normalized == "$._id"
+            || normalized.EndsWith(".id", StringComparison.Ordinal)
+            || normalized.EndsWith("._id", StringComparison.Ordinal)
+            || normalized.Contains("].id", StringComparison.Ordinal)
+            || normalized.Contains("]._id", StringComparison.Ordinal);
     }
 
     private static string ResolveJsonPath(ExecutionVariableRuleDto variable)

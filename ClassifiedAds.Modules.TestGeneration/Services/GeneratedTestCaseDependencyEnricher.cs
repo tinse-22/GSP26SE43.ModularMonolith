@@ -213,14 +213,15 @@ public static class GeneratedTestCaseDependencyEnricher
             return;
         }
 
-        var routeTokens = ExtractRouteTokens(orderItem.Path ?? testCase.Request.Url);
+        var routePathTemplate = orderItem.Path ?? testCase.Request.Url;
+        var routeTokens = ExtractRouteTokens(routePathTemplate);
         if (routeTokens.Count == 0)
         {
             return;
         }
 
         var currentPathParams = DeserializeDictionary(testCase.Request.PathParams);
-        var changed = false;
+        var changed = NormalizeUrlTemplateAndPathParams(testCase.Request, routePathTemplate, currentPathParams);
 
         var dependencyCandidates = (orderItem.DependsOnEndpointIds ?? new List<Guid>())
             .Select(x => producersByEndpoint.TryGetValue(x, out var producer) ? producer : null)
@@ -235,13 +236,13 @@ public static class GeneratedTestCaseDependencyEnricher
                 {
                     var existingProducer = SelectProducerForToken(
                         token,
-                        orderItem.Path ?? testCase.Request.Url,
+                        routePathTemplate,
                         dependencyCandidates,
                         producerCandidates,
                         testCase.Id)
                         ?? SelectProducerForToken(
                             placeholderVariable,
-                            orderItem.Path ?? testCase.Request.Url,
+                            routePathTemplate,
                             dependencyCandidates,
                             producerCandidates,
                             testCase.Id);
@@ -250,7 +251,7 @@ public static class GeneratedTestCaseDependencyEnricher
                     {
                         var resolvedVariableName = EnsureProducerVariable(
                             token,
-                            orderItem.Path ?? testCase.Request.Url,
+                            routePathTemplate,
                             existingProducer,
                             pendingExistingVariables,
                             preferredVariableName: placeholderVariable);
@@ -277,7 +278,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
                 var producerForLiteral = SelectProducerForToken(
                     token,
-                    orderItem.Path ?? testCase.Request.Url,
+                    routePathTemplate,
                     dependencyCandidates,
                     producerCandidates,
                     testCase.Id);
@@ -289,7 +290,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
                 var routeVariableName = EnsureProducerVariable(
                     token,
-                    orderItem.Path ?? testCase.Request.Url,
+                    routePathTemplate,
                     producerForLiteral,
                     pendingExistingVariables);
 
@@ -306,7 +307,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
             var producer = SelectProducerForToken(
                 token,
-                orderItem.Path ?? testCase.Request.Url,
+                routePathTemplate,
                 dependencyCandidates,
                 producerCandidates,
                 testCase.Id);
@@ -316,7 +317,7 @@ public static class GeneratedTestCaseDependencyEnricher
                 continue;
             }
 
-            var variableName = EnsureProducerVariable(token, orderItem.Path ?? testCase.Request.Url, producer, pendingExistingVariables);
+            var variableName = EnsureProducerVariable(token, routePathTemplate, producer, pendingExistingVariables);
             if (string.IsNullOrWhiteSpace(variableName))
             {
                 continue;
@@ -333,6 +334,148 @@ public static class GeneratedTestCaseDependencyEnricher
                 ? null
                 : JsonSerializer.Serialize(currentPathParams, JsonOpts);
         }
+    }
+
+    private static bool NormalizeUrlTemplateAndPathParams(
+        TestCaseRequest request,
+        string routePathTemplate,
+        IDictionary<string, string> currentPathParams)
+    {
+        if (request == null ||
+            string.IsNullOrWhiteSpace(routePathTemplate) ||
+            ExtractRouteTokens(routePathTemplate).Count == 0 ||
+            string.IsNullOrWhiteSpace(request.Url))
+        {
+            return false;
+        }
+
+        var currentPath = ExtractPathOnly(request.Url);
+        if (string.IsNullOrWhiteSpace(currentPath) ||
+            string.Equals(currentPath, routePathTemplate, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!TryExtractRouteTokenValues(routePathTemplate, currentPath, out var inferredPathParams) ||
+            inferredPathParams.Count == 0)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var kvp in inferredPathParams)
+        {
+            if (currentPathParams.TryGetValue(kvp.Key, out var existingValue) && !string.IsNullOrWhiteSpace(existingValue))
+            {
+                continue;
+            }
+
+            currentPathParams[kvp.Key] = kvp.Value;
+            changed = true;
+        }
+
+        var normalizedUrl = ReplacePathKeepingSuffix(request.Url, routePathTemplate);
+        if (!string.Equals(request.Url, normalizedUrl, StringComparison.Ordinal))
+        {
+            request.Url = normalizedUrl;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool TryExtractRouteTokenValues(
+        string routePathTemplate,
+        string currentPath,
+        out Dictionary<string, string> inferredPathParams)
+    {
+        inferredPathParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var templateSegments = routePathTemplate
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .ToArray();
+        var currentSegments = currentPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .ToArray();
+
+        if (templateSegments.Length != currentSegments.Length)
+        {
+            return false;
+        }
+
+        var matchedTokenCount = 0;
+
+        for (var i = 0; i < templateSegments.Length; i++)
+        {
+            var templateSegment = templateSegments[i];
+            var currentSegment = Uri.UnescapeDataString(currentSegments[i]);
+
+            if (templateSegment.StartsWith("{", StringComparison.Ordinal)
+                && templateSegment.EndsWith("}", StringComparison.Ordinal)
+                && templateSegment.Length > 2)
+            {
+                var token = templateSegment[1..^1];
+                if (!string.IsNullOrWhiteSpace(token) && !string.IsNullOrWhiteSpace(currentSegment))
+                {
+                    inferredPathParams[token] = currentSegment;
+                    matchedTokenCount++;
+                }
+
+                continue;
+            }
+
+            if (!string.Equals(templateSegment, currentSegments[i], StringComparison.OrdinalIgnoreCase))
+            {
+                inferredPathParams.Clear();
+                return false;
+            }
+        }
+
+        return matchedTokenCount > 0;
+    }
+
+    private static string ExtractPathOnly(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return string.Empty;
+        }
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            return absolute.AbsolutePath;
+        }
+
+        var splitIndex = url.IndexOfAny(new[] { '?', '#' });
+        return splitIndex >= 0 ? url[..splitIndex] : url;
+    }
+
+    private static string ReplacePathKeepingSuffix(string url, string routePathTemplate)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return routePathTemplate;
+        }
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            var builder = new UriBuilder(absolute)
+            {
+                Path = routePathTemplate,
+            };
+
+            return builder.Uri.AbsoluteUri;
+        }
+
+        var splitIndex = url.IndexOfAny(new[] { '?', '#' });
+        if (splitIndex < 0)
+        {
+            return routePathTemplate;
+        }
+
+        return routePathTemplate + url[splitIndex..];
     }
 
     private static void FillMissingBodyBindings(
@@ -526,8 +669,11 @@ public static class GeneratedTestCaseDependencyEnricher
                             pendingExistingVariables,
                             preferredVariableName);
 
+                        var shouldReplace = preferredVariableName != null
+                            || (IsIdentifierToken(property.Key) && ShouldReplaceIdentifierValue(currentValue));
+
                         if (!string.IsNullOrWhiteSpace(variableName) &&
-                            (preferredVariableName != null || ShouldReplaceIdentifierValue(currentValue)))
+                            shouldReplace)
                         {
                             obj[property.Key] = $"{{{{{variableName}}}}}";
                             EnsureDependency(testCase, producer.TestCaseId);

@@ -209,6 +209,23 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_ReplaceObjectIdLikePathParam_FromResourceVariable()
+    {
+        // Arrange
+        var pathParams = JsonSerializer.Serialize(new Dictionary<string, string> { ["id"] = "69e4635045cda12db08d5a6e" });
+        var testCase = CreateTestCase(url: "/api/categories/{id}", pathParams: pathParams, httpMethod: "PUT", testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/cat-777");
+        result.ResolvedUrl.Should().NotContain("69e4635045cda12db08d5a6e");
+    }
+
+    [Fact]
     public void Resolve_Should_PreferResourceSpecificId_OverGenericId_ForRouteToken()
     {
         // Arrange
@@ -247,6 +264,236 @@ public class VariableResolverTests
         // Assert
         result.Body.Should().Contain("\"categoryId\":\"cat-777\"");
         result.Body.Should().NotContain("\"categoryId\":\"1\"");
+    }
+
+    [Fact]
+    public void Resolve_Should_ReplaceLiteral12345IdentifierInHappyPathBody_FromVariableBag()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"Phone\",\"categoryId\":\"12345\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"categoryId\":\"cat-777\"");
+        result.Body.Should().NotContain("\"categoryId\":\"12345\"");
+    }
+
+    [Fact]
+    public void Resolve_Should_ReplaceObjectIdLikeIdentifierInHappyPathBody_FromVariableBag()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"Phone\",\"categoryId\":\"69e4635045cda12db08d5a6e\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"categoryId\":\"cat-777\"");
+        result.Body.Should().NotContain("69e4635045cda12db08d5a6e");
+    }
+
+    [Fact]
+    public void Resolve_Should_DefaultMissingNumericBodyPlaceholders()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"Phone\",\"price\":\"{{price}}\",\"stock\":\"{{stock}}\",\"categoryId\":\"{{categoryId}}\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"price\":9.99");
+        result.Body.Should().Contain("\"stock\":1");
+        result.Body.Should().Contain("\"categoryId\":\"cat-777\"");
+        result.Body.Should().NotContain("{{price}}");
+        result.Body.Should().NotContain("{{stock}}");
+    }
+
+    [Fact]
+    public void Resolve_Should_DefaultMissingNumericBodyPlaceholders_WhenUnquoted()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"Phone\",\"price\":{{price}},\"stock\":{{stock}}}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"price\":9.99");
+        result.Body.Should().Contain("\"stock\":1");
+        result.Body.Should().NotContain("{{price}}");
+        result.Body.Should().NotContain("{{stock}}");
+    }
+
+    [Fact]
+    public void Resolve_Should_DefaultMissingTextAndNumericPlaceholders_ToInvalidValues_ForBoundary()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"{{name}}\",\"price\":\"{{price}}\",\"stock\":\"{{stock}}\"}",
+            httpMethod: "POST",
+            testType: "Boundary");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        using var bodyDoc = JsonDocument.Parse(result.Body);
+        bodyDoc.RootElement.GetProperty("name").GetString().Should().BeEmpty();
+        bodyDoc.RootElement.GetProperty("price").GetDecimal().Should().BeLessThan(0);
+        bodyDoc.RootElement.GetProperty("stock").GetInt32().Should().BeLessThan(0);
+    }
+
+    [Fact]
+    public void Resolve_Should_KeepLiteral12345IdentifierInNonHappyPathBody()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"name\":\"Phone\",\"categoryId\":\"12345\"}",
+            httpMethod: "POST",
+            testType: "Boundary");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("\"categoryId\":\"12345\"");
+        result.Body.Should().NotContain("\"categoryId\":\"cat-777\"");
+    }
+
+    [Fact]
+    public void Resolve_Should_ApplyResolvedPathParamToLiteralHappyPathUrl_WhenTemplateTokenMissing()
+    {
+        // Arrange
+        var pathParams = JsonSerializer.Serialize(new Dictionary<string, string> { ["id"] = "{{categoryId}}" });
+        var testCase = CreateTestCase(
+            url: "/api/categories/12345",
+            pathParams: pathParams,
+            httpMethod: "PUT",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/cat-777");
+        result.ResolvedUrl.Should().NotContain("/api/categories/12345");
+    }
+
+    [Fact]
+    public void Resolve_Should_ApplyResolvedPathParamToObjectIdLikeHappyPathUrl_WhenTemplateTokenMissing()
+    {
+        // Arrange
+        var pathParams = JsonSerializer.Serialize(new Dictionary<string, string> { ["id"] = "{{categoryId}}" });
+        var testCase = CreateTestCase(
+            url: "/api/categories/69e4635045cda12db08d5a6e",
+            pathParams: pathParams,
+            httpMethod: "PUT",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/cat-777");
+        result.ResolvedUrl.Should().NotContain("69e4635045cda12db08d5a6e");
+    }
+
+    [Fact]
+    public void Resolve_Should_ApplyHappyPathLiteralRouteReplacement_FromVariableBag_WhenPathParamsMissing()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/categories/69e4635045cda12db08d5a6e",
+            pathParams: null,
+            httpMethod: "PUT",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/cat-777");
+        result.ResolvedUrl.Should().NotContain("69e4635045cda12db08d5a6e");
+    }
+
+    [Fact]
+    public void Resolve_Should_KeepLiteralUrlIdentifier_ForNonHappyPath()
+    {
+        // Arrange
+        var pathParams = JsonSerializer.Serialize(new Dictionary<string, string> { ["id"] = "{{categoryId}}" });
+        var testCase = CreateTestCase(
+            url: "/api/categories/12345",
+            pathParams: pathParams,
+            httpMethod: "PUT",
+            testType: "Boundary");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/12345");
+        result.ResolvedUrl.Should().NotContain("/api/categories/cat-777");
+    }
+
+    [Fact]
+    public void Resolve_Should_KeepLiteralUrlIdentifier_WhenPathParamsMissing_ForNonHappyPath()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/categories/69e4635045cda12db08d5a6e",
+            pathParams: null,
+            httpMethod: "PUT",
+            testType: "Boundary");
+        var variables = new Dictionary<string, string> { ["categoryId"] = "cat-777" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.ResolvedUrl.Should().Contain("/api/categories/69e4635045cda12db08d5a6e");
+        result.ResolvedUrl.Should().NotContain("/api/categories/cat-777");
     }
 
     [Fact]
@@ -320,6 +567,47 @@ public class VariableResolverTests
 
         // Assert
         act.Should().Throw<UnresolvedVariableException>();
+    }
+
+    [Fact]
+    public void Resolve_Should_DefaultMissingNonIdentifierBodyPlaceholder()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/categories",
+            body: "{\"name\":\"{{name}}\",\"description\":\"Created by {{creatorName}}\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().NotContain("{{name}}");
+        result.Body.Should().NotContain("{{creatorName}}");
+        result.Body.Should().Contain("Auto");
+    }
+
+    [Fact]
+    public void Resolve_Should_ThrowUnresolvedException_WhenIdentifierBodyPlaceholderMissing()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/api/products",
+            body: "{\"categoryId\":\"{{categoryId}}\"}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var act = () => _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        act.Should().Throw<UnresolvedVariableException>()
+            .WithMessage("*{{categoryId}}*");
     }
 
     [Fact]
