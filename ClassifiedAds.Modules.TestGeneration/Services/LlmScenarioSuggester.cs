@@ -505,16 +505,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
             };
 
-            if (endpointContracts != null
-                && endpointContracts.TryGetValue(parsedScenario.EndpointId, out var contract)
-                && !IsScenarioContractComplete(parsedScenario, contract, out var missingParts))
+            if (endpointContracts != null &&
+                endpointContracts.TryGetValue(parsedScenario.EndpointId, out var contract))
             {
-                _logger.LogWarning(
-                    "Discarding incomplete LLM scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, Missing={Missing}",
-                    parsedScenario.EndpointId,
-                    parsedScenario.ScenarioName,
-                    string.Join(", ", missingParts));
-                continue;
+                parsedScenario = ContractAwareRequestSynthesizer.RepairScenario(parsedScenario, contract.RequestContext);
+
+                if (!IsScenarioContractComplete(parsedScenario, contract, out var missingParts))
+                {
+                    _logger.LogWarning(
+                        "Discarding incomplete LLM scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, Missing={Missing}",
+                        parsedScenario.EndpointId,
+                        parsedScenario.ScenarioName,
+                        string.Join(", ", missingParts));
+                    continue;
+                }
             }
 
             scenarios.Add(parsedScenario);
@@ -846,21 +850,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             _ => new List<string> { "negative", "coverage-gap-fill" },
         };
 
-        var pathParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        if (contract != null)
-        {
-            foreach (var pathParam in contract.RequiredPathParams)
-            {
-                pathParams[pathParam] = "1";
-            }
-
-            foreach (var queryParam in contract.RequiredQueryParams)
-            {
-                queryParams[queryParam] = "1";
-            }
-        }
+        var requestData = contract?.RequestContext != null
+            ? ContractAwareRequestSynthesizer.BuildRequestData(contract.RequestContext, type)
+            : new ContractAwareRequestData();
 
         return new LlmSuggestedScenario
         {
@@ -868,17 +860,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ScenarioName = $"{namePrefix}: {method} {path} ({index})",
             Description = desc,
             SuggestedTestType = type,
-            SuggestedBodyType = contract?.RequiresBody == true ? "JSON" : "None",
-            SuggestedBody = contract?.RequiresBody == true ? "{}" : null,
-            SuggestedPathParams = pathParams,
-            SuggestedQueryParams = queryParams,
-            SuggestedHeaders = new Dictionary<string, string>(),
+            SuggestedBodyType = requestData.BodyType,
+            SuggestedBody = requestData.Body,
+            SuggestedPathParams = requestData.PathParams,
+            SuggestedQueryParams = requestData.QueryParams,
+            SuggestedHeaders = requestData.Headers,
             ExpectedStatusCode = expectedStatuses.First(),
             ExpectedStatusCodes = expectedStatuses,
             ExpectedBehavior = null,
             Priority = type == TestType.HappyPath ? "Medium" : "High",
             Tags = tags,
-            Variables = new List<N8nTestCaseVariable>(),
+            Variables = requestData.Variables,
         };
     }
 
@@ -888,6 +880,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
     {
         var result = new Dictionary<Guid, EndpointRequestContract>();
+        var orderItemMap = orderedEndpoints.ToDictionary(x => x.EndpointId);
 
         foreach (var endpoint in orderedEndpoints)
         {
@@ -949,10 +942,413 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
             }
 
-            result[endpoint.EndpointId] = new EndpointRequestContract(requiredPathParams, requiredQueryParams, requiresBody);
+            var requestContext = new ContractAwareRequestContext
+            {
+                HttpMethod = endpoint.HttpMethod ?? metadata?.HttpMethod,
+                Path = endpoint.Path ?? metadata?.Path,
+                OperationId = metadata?.OperationId,
+                RequiresBody = requiresBody,
+                RequiresAuth = RequiresAuth(endpoint, metadata, orderItemMap, metadataMap),
+                IsRegisterLikeEndpoint = IsRegisterLikeEndpoint(endpoint, metadata),
+                IsLoginLikeEndpoint = IsLoginLikeEndpoint(endpoint, metadata),
+                RequiredPathParams = requiredPathParams.ToList(),
+                RequiredQueryParams = requiredQueryParams.ToList(),
+                Parameters = parameterDetails?.Parameters?.ToList() ?? new List<ParameterDetailDto>(),
+                RequestBodySchema = ResolveRequestBodySchema(metadata, parameterDetails),
+                RequestBodyExamples = ResolveRequestBodyExamples(metadata, parameterDetails),
+                SuccessResponseSchema = ResolvePrimarySuccessResponseSchema(metadata),
+                PlaceholderByFieldName = BuildPlaceholderMap(endpoint, metadata, orderItemMap, metadataMap),
+            };
+
+            result[endpoint.EndpointId] = new EndpointRequestContract(
+                requiredPathParams,
+                requiredQueryParams,
+                requiresBody,
+                requestContext);
         }
 
         return result;
+    }
+
+    private static string ResolveRequestBodySchema(
+        ApiEndpointMetadataDto metadata,
+        EndpointParameterDetailDto parameterDetails)
+    {
+        var bodyParameter = metadata?.Parameters?.FirstOrDefault(parameter =>
+            string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(parameter.Schema));
+
+        if (!string.IsNullOrWhiteSpace(bodyParameter?.Schema))
+        {
+            return bodyParameter.Schema;
+        }
+
+        var bodySchemaPayload = metadata?.ParameterSchemaPayloads?
+            .FirstOrDefault(LooksLikeWholeRequestBodySchema);
+        if (!string.IsNullOrWhiteSpace(bodySchemaPayload))
+        {
+            return bodySchemaPayload;
+        }
+
+        return parameterDetails?.Parameters?
+            .Where(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Schema))
+            .Select(parameter => parameter.Schema)
+            .FirstOrDefault(LooksLikeWholeRequestBodySchema);
+    }
+
+    private static string ResolveRequestBodyExamples(
+        ApiEndpointMetadataDto metadata,
+        EndpointParameterDetailDto parameterDetails)
+    {
+        var metadataExamples = metadata?.Parameters?
+            .FirstOrDefault(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Examples))
+            ?.Examples;
+        if (!string.IsNullOrWhiteSpace(metadataExamples))
+        {
+            return metadataExamples;
+        }
+
+        return parameterDetails?.Parameters?
+            .Where(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Examples))
+            .Select(parameter => parameter.Examples)
+            .FirstOrDefault(LooksLikeStructuredRequestBodyExample);
+    }
+
+    private static bool LooksLikeWholeRequestBodySchema(string schema)
+    {
+        if (string.IsNullOrWhiteSpace(schema))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(schema);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("type", out var typeElement) &&
+                typeElement.ValueKind == JsonValueKind.String)
+            {
+                var type = typeElement.GetString();
+                if (string.Equals(type, "object", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(type, "array", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return root.TryGetProperty("properties", out _)
+                || root.TryGetProperty("items", out _)
+                || root.TryGetProperty("allOf", out _)
+                || root.TryGetProperty("oneOf", out _)
+                || root.TryGetProperty("anyOf", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool LooksLikeStructuredRequestBodyExample(string example)
+    {
+        if (string.IsNullOrWhiteSpace(example))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(example);
+            return document.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ResolvePrimarySuccessResponseSchema(ApiEndpointMetadataDto metadata)
+    {
+        return metadata?.Responses?
+            .Where(response => response is { StatusCode: >= 200 and < 300 } && !string.IsNullOrWhiteSpace(response.Schema))
+            .OrderBy(response => response.StatusCode)
+            .Select(response => response.Schema)
+            .FirstOrDefault()
+            ?? metadata?.ResponseSchemaPayloads?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    private static Dictionary<string, string> BuildPlaceholderMap(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var endpointPath = endpoint?.Path ?? metadata?.Path;
+        var currentResourcePlaceholder = BuildPreferredVariableName("id", endpointPath);
+        if (!string.IsNullOrWhiteSpace(currentResourcePlaceholder))
+        {
+            placeholders["id"] = currentResourcePlaceholder;
+        }
+
+        var dependencyIds = endpoint?.DependsOnEndpointIds?.AsEnumerable() ?? Array.Empty<Guid>();
+        foreach (var dependencyId in dependencyIds)
+        {
+            orderItemMap.TryGetValue(dependencyId, out var dependencyOrderItem);
+            metadataMap.TryGetValue(dependencyId, out var dependencyMetadata);
+
+            var dependencyPath = dependencyOrderItem?.Path ?? dependencyMetadata?.Path;
+            var dependencyPlaceholder = BuildPreferredVariableName("id", dependencyPath);
+            if (!string.IsNullOrWhiteSpace(dependencyPlaceholder))
+            {
+                placeholders[dependencyPlaceholder] = dependencyPlaceholder;
+
+                if (string.Equals(BuildResourceToken(endpointPath), BuildResourceToken(dependencyPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    placeholders["id"] = dependencyPlaceholder;
+                }
+            }
+
+            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata) &&
+                IsLoginLikeEndpoint(endpoint, metadata))
+            {
+                placeholders["email"] = "registeredEmail";
+                placeholders["password"] = "registeredPassword";
+            }
+        }
+
+        return placeholders;
+    }
+
+    private static bool RequiresAuth(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (IsAuthLikeEndpoint(endpoint, metadata))
+        {
+            return false;
+        }
+
+        var dependencyIds = endpoint?.DependsOnEndpointIds?.AsEnumerable() ?? Array.Empty<Guid>();
+        foreach (var dependencyId in dependencyIds)
+        {
+            orderItemMap.TryGetValue(dependencyId, out var dependencyOrderItem);
+            metadataMap.TryGetValue(dependencyId, out var dependencyMetadata);
+            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRegisterLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        var signature = BuildEndpointSignature(endpoint, metadata);
+        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLoginLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        var signature = BuildEndpointSignature(endpoint, metadata);
+        return signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAuthLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        return metadata?.IsAuthRelated == true
+            || endpoint?.IsAuthRelated == true
+            || IsRegisterLikeEndpoint(endpoint, metadata)
+            || IsLoginLikeEndpoint(endpoint, metadata);
+    }
+
+    private static string BuildEndpointSignature(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        return string.Join(" ",
+            endpoint?.HttpMethod,
+            endpoint?.Path,
+            metadata?.HttpMethod,
+            metadata?.Path,
+            metadata?.OperationId).Trim();
+    }
+
+    private static string BuildResourceToken(string path)
+    {
+        var resource = ResolveTargetResourceSegment(path, "id");
+        return string.IsNullOrWhiteSpace(resource) ? null : resource;
+    }
+
+    private static string BuildPreferredVariableName(string token, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(token) &&
+            !string.Equals(token, "id", StringComparison.OrdinalIgnoreCase))
+        {
+            return token;
+        }
+
+        var resource = ResolveTargetResourceSegment(path, token);
+        if (string.IsNullOrWhiteSpace(resource))
+        {
+            return token;
+        }
+
+        var identifier = ToCamelIdentifier(resource);
+        return string.IsNullOrWhiteSpace(identifier) ? token : $"{identifier}Id";
+    }
+
+    private static string ResolveTargetResourceSegment(string path, string token)
+    {
+        var segments = (path ?? string.Empty)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            if (!string.Equals(segments[i], $"{{{token}}}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            for (int j = i - 1; j >= 0; j--)
+            {
+                var cleaned = CleanSegment(segments[j]);
+                if (string.IsNullOrWhiteSpace(cleaned) ||
+                    cleaned.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                    IsVersionPrefix(cleaned))
+                {
+                    continue;
+                }
+
+                return Singularize(cleaned);
+            }
+        }
+
+        var strippedToken = StripIdSuffix(token);
+        if (!string.IsNullOrWhiteSpace(strippedToken))
+        {
+            return Singularize(strippedToken);
+        }
+
+        for (int i = segments.Count - 1; i >= 0; i--)
+        {
+            var cleaned = CleanSegment(segments[i]);
+            if (string.IsNullOrWhiteSpace(cleaned) ||
+                cleaned.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                IsVersionPrefix(cleaned) ||
+                (cleaned.StartsWith("{", StringComparison.Ordinal) && cleaned.EndsWith("}", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            return Singularize(cleaned);
+        }
+
+        return null;
+    }
+
+    private static string StripIdSuffix(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("Ids", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3];
+        }
+
+        if (value.EndsWith("Id", StringComparison.OrdinalIgnoreCase) && value.Length > 2)
+        {
+            return value[..^2];
+        }
+
+        return value;
+    }
+
+    private static string Singularize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3] + "y";
+        }
+
+        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase) &&
+            !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase) &&
+            value.Length > 1)
+        {
+            return value[..^1];
+        }
+
+        return value;
+    }
+
+    private static bool IsVersionPrefix(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+            value.Length <= 3 &&
+            value.StartsWith("v", StringComparison.OrdinalIgnoreCase) &&
+            value.Skip(1).All(char.IsDigit);
+    }
+
+    private static string CleanSegment(string segment)
+    {
+        return string.IsNullOrWhiteSpace(segment)
+            ? segment
+            : segment.Trim().Trim('/').Trim();
+    }
+
+    private static string ToCamelIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var parts = value
+            .Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (parts.Count == 0)
+        {
+            return value;
+        }
+
+        var first = parts[0].Length == 0
+            ? string.Empty
+            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
+
+        var rest = parts
+            .Skip(1)
+            .Select(part => part.Length == 0
+                ? string.Empty
+                : char.ToUpperInvariant(part[0]) + part[1..]);
+
+        return first + string.Concat(rest);
     }
 
     private static TestType ParseTestType(string testType)
@@ -1163,11 +1559,13 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         public EndpointRequestContract(
             HashSet<string> requiredPathParams,
             HashSet<string> requiredQueryParams,
-            bool requiresBody)
+            bool requiresBody,
+            ContractAwareRequestContext requestContext)
         {
             RequiredPathParams = requiredPathParams ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             RequiredQueryParams = requiredQueryParams ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             RequiresBody = requiresBody;
+            RequestContext = requestContext ?? new ContractAwareRequestContext();
         }
 
         public HashSet<string> RequiredPathParams { get; }
@@ -1175,5 +1573,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         public HashSet<string> RequiredQueryParams { get; }
 
         public bool RequiresBody { get; }
+
+        public ContractAwareRequestContext RequestContext { get; }
     }
 }

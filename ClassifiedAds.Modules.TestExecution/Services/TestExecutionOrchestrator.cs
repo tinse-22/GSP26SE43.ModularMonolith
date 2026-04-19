@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -193,6 +194,17 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Pre-execution validation: catch ALL issues before HTTP call
         endpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
+
+        if (RequestBodyAutoHydrator.TryHydrate(testCase, endpointMetadata))
+        {
+            _logger.LogInformation(
+                "Auto-hydrated request body from endpoint schema. TestCase={TestCaseName} ({TestCaseId}), EndpointId={EndpointId}, BodyLength={BodyLength}",
+                testCase.Name,
+                testCase.TestCaseId,
+                testCase.EndpointId,
+                testCase.Request?.Body?.Length ?? 0);
+        }
+
         var preValidation = _preValidator.Validate(testCase, resolvedEnv, variableBag, endpointMetadata);
 
         if (preValidation.HasErrors)
@@ -263,7 +275,19 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
 
         // Extract variables
-        var extracted = _variableExtractor.Extract(response, testCase.Variables, resolvedRequest.Body);
+        var extracted = _variableExtractor
+            .Extract(response, testCase.Variables, resolvedRequest.Body)
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+        var implicitExtracted = ExtractImplicitVariables(testCase, response);
+        foreach (var kvp in implicitExtracted)
+        {
+            if (!extracted.ContainsKey(kvp.Key))
+            {
+                extracted[kvp.Key] = kvp.Value;
+            }
+        }
+
         foreach (var kvp in extracted)
         {
             variableBag[kvp.Key] = kvp.Value;
@@ -323,6 +347,274 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             JsonPathChecksPassed = validation.JsonPathChecksPassed,
             ResponseTimePassed = validation.ResponseTimePassed,
         };
+    }
+
+    private static Dictionary<string, string> ExtractImplicitVariables(
+        ExecutionTestCaseDto testCase,
+        HttpTestResponse response)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (response == null)
+        {
+            return result;
+        }
+
+        using var bodyDocument = TryParseJson(response.Body);
+
+        if (response.StatusCode is >= 200 and < 300)
+        {
+            if (TryExtractIdentifier(response, bodyDocument, out var identifierValue))
+            {
+                var resourceVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
+                if (!string.IsNullOrWhiteSpace(resourceVariableName))
+                {
+                    result[resourceVariableName] = identifierValue;
+                }
+
+                result["id"] = identifierValue;
+            }
+
+            if (IsAuthLikeRequest(testCase) && TryExtractToken(response, bodyDocument, out var tokenValue))
+            {
+                result["authToken"] = tokenValue;
+                result["accessToken"] = tokenValue;
+            }
+        }
+
+        return result;
+    }
+
+    private static JsonDocument TryParseJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonDocument.Parse(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryExtractIdentifier(
+        HttpTestResponse response,
+        JsonDocument bodyDocument,
+        out string identifier)
+    {
+        if (TryExtractIdFromLocationHeader(response?.Headers, out identifier))
+        {
+            return true;
+        }
+
+        if (bodyDocument != null)
+        {
+            var root = bodyDocument.RootElement;
+            foreach (var path in new[] { "$.data._id", "$.data.id", "$._id", "$.id", "$.data.data._id", "$.data.data.id" })
+            {
+                var element = VariableExtractor.NavigateJsonPath(root, path);
+                var value = element?.ToString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    identifier = value;
+                    return true;
+                }
+            }
+        }
+
+        identifier = null;
+        return false;
+    }
+
+    private static bool TryExtractIdFromLocationHeader(
+        IReadOnlyDictionary<string, string> headers,
+        out string identifier)
+    {
+        if (headers != null)
+        {
+            foreach (var header in headers)
+            {
+                if (!header.Key.Equals("Location", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(header.Value))
+                {
+                    continue;
+                }
+
+                var rawValue = header.Value.Trim();
+                var parsed = Uri.TryCreate(rawValue, UriKind.Absolute, out var absolute)
+                    ? absolute.AbsolutePath
+                    : rawValue;
+
+                var segment = parsed
+                    .TrimEnd('/')
+                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                    .LastOrDefault();
+
+                if (!string.IsNullOrWhiteSpace(segment))
+                {
+                    identifier = segment;
+                    return true;
+                }
+            }
+        }
+
+        identifier = null;
+        return false;
+    }
+
+    private static bool TryExtractToken(
+        HttpTestResponse response,
+        JsonDocument bodyDocument,
+        out string token)
+    {
+        token = null;
+
+        if (response?.Headers != null)
+        {
+            foreach (var header in response.Headers)
+            {
+                if (!header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(header.Value))
+                {
+                    continue;
+                }
+
+                var rawValue = header.Value.Trim();
+                token = rawValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                    ? rawValue[7..].Trim()
+                    : rawValue;
+
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (bodyDocument != null)
+        {
+            var root = bodyDocument.RootElement;
+            foreach (var path in new[] { "$.data.token", "$.token", "$.data.accessToken", "$.accessToken", "$.data.jwt", "$.jwt" })
+            {
+                var element = VariableExtractor.NavigateJsonPath(root, path);
+                var value = element?.ToString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    token = value;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAuthLikeRequest(ExecutionTestCaseDto testCase)
+    {
+        var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
+        return signature.Contains("/auth", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildResourceIdVariableName(string urlOrPath)
+    {
+        var path = ExtractPath(urlOrPath);
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = segments.Length - 1; i >= 0; i--)
+        {
+            var segment = segments[i].Trim();
+            if (string.IsNullOrWhiteSpace(segment)
+                || string.Equals(segment, "api", StringComparison.OrdinalIgnoreCase)
+                || IsVersionSegment(segment)
+                || (segment.StartsWith("{", StringComparison.Ordinal) && segment.EndsWith("}", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var resourceName = ToCamelIdentifier(Singularize(segment));
+            return string.IsNullOrWhiteSpace(resourceName) ? null : resourceName + "Id";
+        }
+
+        return null;
+    }
+
+    private static string ExtractPath(string urlOrPath)
+    {
+        if (Uri.TryCreate(urlOrPath, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            return absolute.AbsolutePath;
+        }
+
+        return urlOrPath ?? string.Empty;
+    }
+
+    private static bool IsVersionSegment(string segment)
+    {
+        return !string.IsNullOrWhiteSpace(segment)
+            && segment.Length <= 3
+            && segment.StartsWith('v')
+            && segment.Skip(1).All(char.IsDigit);
+    }
+
+    private static string Singularize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3] + "y";
+        }
+
+        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+            && !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
+            && value.Length > 1)
+        {
+            return value[..^1];
+        }
+
+        return value;
+    }
+
+    private static string ToCamelIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var parts = value
+            .Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (parts.Count == 0)
+        {
+            return value;
+        }
+
+        var first = parts[0].Length == 0
+            ? string.Empty
+            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
+
+        var rest = parts
+            .Skip(1)
+            .Select(part => part.Length == 0
+                ? string.Empty
+                : char.ToUpperInvariant(part[0]) + part[1..]);
+
+        return first + string.Concat(rest);
     }
 
     private void LogCaseOutcome(Guid runId, TestCaseExecutionResult result)

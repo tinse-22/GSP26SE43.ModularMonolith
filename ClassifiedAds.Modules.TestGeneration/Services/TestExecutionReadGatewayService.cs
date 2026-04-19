@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
+using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -265,8 +265,22 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
 
         var orderedIds = new List<Guid>(baselineOrderedCases.Count);
 
-        while (ready.Count > 0)
+        while (orderedIds.Count < baselineOrderedCases.Count)
         {
+            if (ready.Count == 0)
+            {
+                // Cycle detected — break it by picking the unprocessed node
+                // with the lowest baseline index (preserves original ordering
+                // for cycle participants instead of blocking the entire run).
+                var cycleBreaker = inDegree
+                    .Where(x => x.Value > 0)
+                    .OrderBy(x => baselineIndexById[x.Key])
+                    .First();
+
+                inDegree[cycleBreaker.Key] = 0;
+                ready.Add((baselineIndexById[cycleBreaker.Key], cycleBreaker.Key));
+            }
+
             var next = ready.Min;
             ready.Remove(next);
 
@@ -281,23 +295,6 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                     ready.Add((baselineIndexById[dependentId], dependentId));
                 }
             }
-        }
-
-        if (orderedIds.Count != baselineOrderedCases.Count)
-        {
-            var cycleSample = inDegree
-                .Where(x => x.Value > 0)
-                .Select(x => caseById[x.Key].Name)
-                .OrderBy(x => x)
-                .Take(5)
-                .ToList();
-
-            var cycleSuffix = cycleSample.Count > 0
-                ? $" Ví dụ test case trong vòng phụ thuộc: {string.Join(", ", cycleSample)}."
-                : string.Empty;
-
-            throw new ValidationException(
-                "Không thể xác định thứ tự chạy test theo dependency do phát hiện vòng phụ thuộc giữa test cases." + cycleSuffix);
         }
 
         return orderedIds.Select(id => caseById[id]).ToList();
@@ -356,6 +353,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                 ExtractFrom = v.ExtractFrom.ToString(),
                 JsonPath = v.JsonPath,
                 HeaderName = v.HeaderName,
+                Regex = v.Regex,
                 DefaultValue = v.DefaultValue,
             }).ToList().AsReadOnly() ?? (IReadOnlyList<ExecutionVariableRuleDto>)Array.Empty<ExecutionVariableRuleDto>(),
         };

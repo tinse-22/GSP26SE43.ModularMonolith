@@ -3,6 +3,7 @@ using ClassifiedAds.Contracts.LlmAssistant.DTOs;
 using ClassifiedAds.Contracts.LlmAssistant.Services;
 using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
@@ -121,7 +122,7 @@ public class LlmScenarioSuggesterTests
         result.FromCache.Should().BeFalse();
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-                "generate-boundary-negative-scenarios",
+                N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -207,9 +208,53 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.Scenarios.Should().BeEmpty();
+        result.Scenarios.Should().HaveCountGreaterThanOrEqualTo(4);
+        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1 && x.SuggestedTestType == TestType.HappyPath);
+        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1 && x.SuggestedTestType == TestType.Boundary);
+        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId2 && x.SuggestedTestType == TestType.Negative);
         result.FromCache.Should().BeFalse();
         result.LlmModel.Should().Be("gpt-4o");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_SynthesizeNonEmptyHappyPathBody_WhenContractRequiresBody()
+    {
+        // Arrange
+        var context = CreateRequiredBodyLoginContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 42,
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        var happyPath = result.Scenarios.Single(x =>
+            x.EndpointId == EndpointId1 &&
+            x.SuggestedTestType == TestType.HappyPath);
+
+        happyPath.SuggestedBodyType.Should().Be("JSON");
+        happyPath.SuggestedBody.Should().NotBeNullOrWhiteSpace();
+        happyPath.SuggestedBody.Should().NotBe("{}");
+        happyPath.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == "ResponseBody" &&
+            x.JsonPath == "$.token");
+
+        using var document = JsonDocument.Parse(happyPath.SuggestedBody);
+        document.RootElement.TryGetProperty("email", out var email).Should().BeTrue();
+        document.RootElement.TryGetProperty("password", out var password).Should().BeTrue();
+        email.GetString().Should().Contain("@");
+        password.GetString().Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -401,7 +446,7 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context2);
 
         capturedKeys.Should().HaveCount(2);
-        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+        capturedKeys[0].Should().Be(capturedKeys[1]);
     }
 
     [Fact]
@@ -599,8 +644,9 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert — variables should be preserved in the parsed scenarios
-        result.Scenarios.Should().HaveCount(1);
-        var scenario = result.Scenarios[0];
+        var scenario = result.Scenarios.Single(x =>
+            x.EndpointId == EndpointId1 &&
+            x.ScenarioName == "Login with extraction");
         scenario.Variables.Should().HaveCount(2);
 
         scenario.Variables[0].VariableName.Should().Be("authToken");
@@ -694,6 +740,130 @@ public class LlmScenarioSuggesterTests
         };
     }
 
+    private static LlmScenarioSuggestionContext CreateRequiredBodyLoginContext()
+    {
+        return new LlmScenarioSuggestionContext
+        {
+            TestSuiteId = TestSuiteId,
+            UserId = UserId,
+            SpecificationId = SpecificationId,
+            Suite = new TestSuite
+            {
+                Id = TestSuiteId,
+                Name = "Login Contract Suite",
+                EndpointBusinessContexts = new Dictionary<Guid, string>(),
+            },
+            EndpointMetadata = new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = EndpointId1,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/login",
+                    OperationId = "login",
+                    HasRequiredRequestBody = true,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            IsRequired = true,
+                            Schema = """
+                            {
+                              "type": "object",
+                              "required": ["email", "password"],
+                              "properties": {
+                                "email": { "type": "string", "format": "email" },
+                                "password": { "type": "string", "minLength": 8 }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new()
+                        {
+                            StatusCode = 200,
+                            Schema = """
+                            {
+                              "type": "object",
+                              "properties": {
+                                "token": { "type": "string" }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                    ParameterSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "required": ["email", "password"],
+                          "properties": {
+                            "email": { "type": "string", "format": "email" },
+                            "password": { "type": "string", "minLength": 8 }
+                          }
+                        }
+                        """,
+                    },
+                    ResponseSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "token": { "type": "string" }
+                          }
+                        }
+                        """,
+                    },
+                },
+            },
+            EndpointParameterDetails = new Dictionary<Guid, EndpointParameterDetailDto>
+            {
+                [EndpointId1] = new()
+                {
+                    EndpointId = EndpointId1,
+                    EndpointPath = "/api/auth/login",
+                    EndpointHttpMethod = "POST",
+                    Parameters = new List<ParameterDetailDto>
+                    {
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "email",
+                            Location = "Body",
+                            DataType = "string",
+                            Format = "email",
+                            IsRequired = true,
+                        },
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "password",
+                            Location = "Body",
+                            DataType = "string",
+                            IsRequired = true,
+                            Schema = """
+                            {
+                              "type": "string",
+                              "minLength": 8
+                            }
+                            """,
+                        },
+                    },
+                },
+            },
+            OrderedEndpoints = new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = EndpointId1, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 0 },
+            },
+        };
+    }
+
     private void SetupCacheHit(Guid endpointId, List<LlmSuggestedScenario> scenarios)
     {
         var json = JsonSerializer.Serialize(scenarios, JsonOpts);
@@ -767,7 +937,7 @@ public class LlmScenarioSuggesterTests
 
         _n8nServiceMock
             .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-                "generate-boundary-negative-scenarios",
+                N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
