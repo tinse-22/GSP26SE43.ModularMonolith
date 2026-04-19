@@ -120,6 +120,11 @@ public static class TestGenerationServiceCollectionExtensions
             ? settings.N8nIntegration.TimeoutSeconds
             : 120; // Default 2 minutes for LLM webhook calls
 
+        // n8n cloud webhooks behind proxies typically fail fast around ~100-120s.
+        // Cap attempt timeout to avoid multi-minute request stalls when upstream cannot respond in time.
+        var effectiveAttemptTimeoutSeconds = Math.Min(n8nTimeoutSeconds, 120);
+        var effectiveTotalTimeoutSeconds = effectiveAttemptTimeoutSeconds + 20;
+
         // Named client to exclude from default resilience handler in ServiceDefaults
         const string n8nHttpClientName = "N8nIntegrationHttpClient";
 
@@ -132,19 +137,19 @@ public static class TestGenerationServiceCollectionExtensions
             }
 
             // This timeout is a backstop; Polly resilience handler controls actual timeout
-            client.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 30);
+            client.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds + 30);
         })
         .AddStandardResilienceHandler(options =>
         {
             // Override standard resilience timeouts for LLM/n8n webhook calls (120s default)
             // Standard handler has 10s attempt timeout which is too short for LLM operations
-            options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
-            options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 60);
-            options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(n8nTimeoutSeconds * 2);
+            options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveAttemptTimeoutSeconds);
+            options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds);
+            options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(effectiveAttemptTimeoutSeconds * 2);
 
-            // Reduce retries since LLM calls are expensive
-            options.Retry.MaxRetryAttempts = 2;
-            options.Retry.Delay = System.TimeSpan.FromSeconds(3);
+            // Avoid multiplying long webhook latency; transient handling + fallback is done at service level.
+            options.Retry.MaxRetryAttempts = 1;
+            options.Retry.ShouldHandle = _ => new System.Threading.Tasks.ValueTask<bool>(false);
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());

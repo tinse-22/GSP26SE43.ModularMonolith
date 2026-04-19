@@ -240,7 +240,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         await _suggestionRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
         // 9) Increment LLM usage (only if live call, not cache hit)
-        if (!llmResult.FromCache)
+        if (!llmResult.FromCache && !llmResult.UsedLocalFallback)
         {
             await _subscriptionLimitService.IncrementUsageAsync(
                 new Contracts.Subscription.DTOs.IncrementUsageRequest

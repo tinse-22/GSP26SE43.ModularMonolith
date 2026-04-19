@@ -352,6 +352,28 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_DefaultDuplicatedIdentifierPlaceholdersInBody()
+    {
+        // Arrange
+        var testCase = CreateTestCase(
+            url: "/pet",
+            body: "{\"id\":\"{{idId}}\",\"category\":{\"id\":\"{{idId}}\"}}",
+            httpMethod: "POST",
+            testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().NotContain("{{idId}}");
+        using var bodyDoc = JsonDocument.Parse(result.Body);
+        bodyDoc.RootElement.GetProperty("id").GetInt32().Should().Be(1);
+        bodyDoc.RootElement.GetProperty("category").GetProperty("id").GetInt32().Should().Be(1);
+    }
+
+    [Fact]
     public void Resolve_Should_DefaultMissingTextAndNumericPlaceholders_ToInvalidValues_ForBoundary()
     {
         // Arrange

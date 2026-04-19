@@ -27,9 +27,42 @@ public class WebhookTriggerResult
     public bool IsNetworkError { get; set; }
 }
 
+/// <summary>
+/// Represents a transient n8n call failure that can be retried or handled with fallback logic.
+/// </summary>
+public sealed class N8nTransientException : ValidationException
+{
+    public N8nTransientException(
+        string message,
+        string webhookName,
+        string resolvedUrl,
+        int? statusCode = null,
+        bool isTimeout = false,
+        bool isNetworkError = false,
+        Exception innerException = null)
+        : base(message, innerException)
+    {
+        WebhookName = webhookName;
+        ResolvedUrl = resolvedUrl;
+        StatusCode = statusCode;
+        IsTimeout = isTimeout;
+        IsNetworkError = isNetworkError;
+    }
+
+    public string WebhookName { get; }
+
+    public string ResolvedUrl { get; }
+
+    public int? StatusCode { get; }
+
+    public bool IsTimeout { get; }
+
+    public bool IsNetworkError { get; }
+}
+
 public class N8nIntegrationService : IN8nIntegrationService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new ()
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -64,71 +97,158 @@ public class N8nIntegrationService : IN8nIntegrationService
         };
         ApplyHeaders(request);
 
-        var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
-        var contentType = response.Content?.Headers.ContentType?.MediaType ?? "(missing)";
-        var contentLength = response.Content?.Headers.ContentLength;
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError(
-                "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}",
-                webhookName, response.StatusCode, body);
-            throw new ValidationException(
-                $"n8n webhook '{webhookName}' tra ve loi. Status: {response.StatusCode}");
-        }
-
-        if (response.StatusCode == HttpStatusCode.NoContent)
-        {
-            _logger.LogError(
-                "n8n webhook {WebhookName} returned no content. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                webhookName, response.StatusCode, contentType, contentLength);
-            throw new ValidationException(
-                $"n8n webhook '{webhookName}' tra ve HTTP 204 va khong co JSON response.");
-        }
-
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            _logger.LogError(
-                "n8n webhook {WebhookName} returned an empty response body. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                webhookName, response.StatusCode, contentType, contentLength);
-            throw new ValidationException(
-                $"n8n webhook '{webhookName}' tra ve body rong. He thong dang cho JSON response.");
-        }
-
-        if (!IsJsonContentType(contentType))
-        {
-            _logger.LogWarning(
-                "n8n webhook {WebhookName} returned unexpected content type {ContentType}. Attempting JSON deserialization.",
-                webhookName, contentType);
-        }
-
         try
         {
-            var result = JsonSerializer.Deserialize<TResponse>(body, JsonOptions);
-            if (result is null)
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            var contentType = response.Content?.Headers.ContentType?.MediaType ?? "(missing)";
+            var contentLength = response.Content?.Headers.ContentLength;
+
+            if (!response.IsSuccessStatusCode)
             {
+                if (IsTransientStatusCode(response.StatusCode))
+                {
+                    var statusCode = (int)response.StatusCode;
+                    var isTimeoutLike = IsTimeoutLikeStatusCode(response.StatusCode);
+
+                    _logger.LogWarning(
+                        "n8n webhook {WebhookName} returned transient status {StatusCode}. Url={Url}, Body={Body}",
+                        webhookName, statusCode, url, BuildBodySnippet(body));
+
+                    throw new N8nTransientException(
+                        isTimeoutLike
+                            ? $"n8n webhook '{webhookName}' tam thoi khong phan hoi (HTTP {statusCode}). Vui long kiem tra n8n workflow hoac chia nho payload."
+                            : $"n8n webhook '{webhookName}' tam thoi loi (HTTP {statusCode}). Vui long thu lai sau.",
+                        webhookName,
+                        url,
+                        statusCode,
+                        isTimeoutLike,
+                        false);
+                }
+
                 _logger.LogError(
-                    "n8n webhook {WebhookName} returned a null JSON payload. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                    webhookName, response.StatusCode, contentType, contentLength);
+                    "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}",
+                    webhookName, response.StatusCode, body);
                 throw new ValidationException(
-                    $"n8n webhook '{webhookName}' tra ve JSON null. He thong dang cho object hop le.");
+                    $"n8n webhook '{webhookName}' tra ve loi. Status: {response.StatusCode}");
             }
 
-            _logger.LogInformation(
-                "n8n webhook {WebhookName} succeeded. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                webhookName, response.StatusCode, contentType, contentLength);
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                _logger.LogError(
+                    "n8n webhook {WebhookName} returned no content. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
+                    webhookName, response.StatusCode, contentType, contentLength);
+                throw new ValidationException(
+                    $"n8n webhook '{webhookName}' tra ve HTTP 204 va khong co JSON response.");
+            }
 
-            return result;
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                _logger.LogError(
+                    "n8n webhook {WebhookName} returned an empty response body. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
+                    webhookName, response.StatusCode, contentType, contentLength);
+                throw new ValidationException(
+                    $"n8n webhook '{webhookName}' tra ve body rong. He thong dang cho JSON response.");
+            }
+
+            if (!IsJsonContentType(contentType))
+            {
+                _logger.LogWarning(
+                    "n8n webhook {WebhookName} returned unexpected content type {ContentType}. Attempting JSON deserialization.",
+                    webhookName, contentType);
+            }
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<TResponse>(body, JsonOptions);
+                if (result is null)
+                {
+                    _logger.LogError(
+                        "n8n webhook {WebhookName} returned a null JSON payload. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
+                        webhookName, response.StatusCode, contentType, contentLength);
+                    throw new ValidationException(
+                        $"n8n webhook '{webhookName}' tra ve JSON null. He thong dang cho object hop le.");
+                }
+
+                _logger.LogInformation(
+                    "n8n webhook {WebhookName} succeeded. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
+                    webhookName, response.StatusCode, contentType, contentLength);
+
+                return result;
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "n8n webhook {WebhookName} returned invalid JSON. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, BodySnippet={BodySnippet}",
+                    webhookName, response.StatusCode, contentType, contentLength, BuildBodySnippet(body));
+                throw new ValidationException(
+                    $"n8n webhook '{webhookName}' tra ve JSON khong hop le hoac khong dung contract mong doi.",
+                    ex);
+            }
         }
-        catch (JsonException ex)
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
         {
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} returned invalid JSON. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, BodySnippet={BodySnippet}",
-                webhookName, response.StatusCode, contentType, contentLength, BuildBodySnippet(body));
-            throw new ValidationException(
-                $"n8n webhook '{webhookName}' tra ve JSON khong hop le hoac khong dung contract mong doi.",
+                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            throw new N8nTransientException(
+                $"n8n webhook '{webhookName}' timeout sau {_options.TimeoutSeconds}s. Vui long kiem tra n8n workflow hoac thu lai.",
+                webhookName,
+                url,
+                null,
+                true,
+                false,
+                ex);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            throw new N8nTransientException(
+                $"n8n webhook '{webhookName}' bi huy (timeout). TimeoutSeconds={_options.TimeoutSeconds}.",
+                webhookName,
+                url,
+                null,
+                true,
+                false,
+                ex);
+        }
+        catch (TimeoutRejectedException ex)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
+                webhookName, url, _options.TimeoutSeconds);
+
+            throw new N8nTransientException(
+                $"n8n webhook '{webhookName}' bi Polly timeout sau {_options.TimeoutSeconds}s.",
+                webhookName,
+                url,
+                null,
+                true,
+                false,
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                ex,
+                "n8n webhook {WebhookName} network error. Url={Url}",
+                webhookName, url);
+
+            throw new N8nTransientException(
+                $"n8n webhook '{webhookName}' loi ket noi: {ex.Message}",
+                webhookName,
+                url,
+                ex.StatusCode.HasValue ? (int)ex.StatusCode.Value : null,
+                false,
+                true,
                 ex);
         }
     }
@@ -325,6 +445,18 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
 
         return contentType.Contains("json", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTransientStatusCode(HttpStatusCode statusCode)
+    {
+        var code = (int)statusCode;
+        return code is 408 or 429 or 500 or 502 or 503 or 504 or 520 or 522 or 524;
+    }
+
+    private static bool IsTimeoutLikeStatusCode(HttpStatusCode statusCode)
+    {
+        var code = (int)statusCode;
+        return code is 408 or 504 or 522 or 524;
     }
 
     private static string BuildBodySnippet(string body)

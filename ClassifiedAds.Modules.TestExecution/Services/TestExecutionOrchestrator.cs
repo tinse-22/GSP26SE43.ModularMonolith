@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -516,6 +517,65 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                     token = value;
                     return true;
                 }
+            }
+
+            // Some APIs return auth/session identifiers in a message field
+            // instead of dedicated token properties.
+            foreach (var messagePath in new[] { "$.message", "$.data.message", "$.result.message" })
+            {
+                var element = VariableExtractor.NavigateJsonPath(root, messagePath);
+                var value = element?.ToString();
+                if (TryExtractTokenFromText(value, out token))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (TryExtractTokenFromText(response?.Body, out token))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTokenFromText(string value, out string token)
+    {
+        token = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var input = value.Trim().Trim('"');
+        if (input.Length == 0)
+        {
+            return false;
+        }
+
+        var patterns = new[]
+        {
+            @"(?i)\b(?:access[_\s-]?token|auth[_\s-]?token|token|session(?:Id)?)\b\s*[:=]\s*(?<value>[A-Za-z0-9\-._~+/=]+)",
+            @"(?i)\bBearer\s+(?<value>[A-Za-z0-9\-._~+/=]+)",
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(input, pattern, RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var candidate = match.Groups["value"].Success
+                ? match.Groups["value"].Value
+                : match.Value;
+            candidate = candidate?.Trim();
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                token = candidate;
+                return true;
             }
         }
 

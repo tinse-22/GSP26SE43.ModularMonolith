@@ -258,6 +258,43 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestScenariosAsync_Should_NotInjectDuplicatedIdPlaceholder_ForCreateBodyWithoutRouteId()
+    {
+        // Arrange
+        var context = CreateRequiredBodyCreatePetContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 32,
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        var happyPath = result.Scenarios.Single(x =>
+            x.EndpointId == EndpointId1 &&
+            x.SuggestedTestType == TestType.HappyPath);
+
+        happyPath.SuggestedBody.Should().NotContain("{{idId}}");
+        happyPath.SuggestedBody.Should().NotContain("{{petId}}");
+
+        using var document = JsonDocument.Parse(happyPath.SuggestedBody);
+        document.RootElement.TryGetProperty("id", out var id).Should().BeTrue();
+        if (id.ValueKind == JsonValueKind.String)
+        {
+            id.GetString().Should().NotContain("{{");
+        }
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_PropagateN8nError()
     {
         // Arrange
@@ -276,6 +313,36 @@ public class LlmScenarioSuggesterTests
         // Assert
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("n8n webhook failed");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_FallbackLocally_WhenN8nFailureIsTransient()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new N8nTransientException(
+                "timeout",
+                N8nWebhookNames.GenerateLlmSuggestions,
+                "https://example.test/webhook/generate-llm-suggestions",
+                524,
+                true,
+                false));
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        result.UsedLocalFallback.Should().BeTrue();
+        result.LlmModel.Should().Be("local-fallback");
+        result.Scenarios.Should().HaveCountGreaterThanOrEqualTo(4);
+        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1);
+        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId2);
     }
 
     [Fact]
@@ -860,6 +927,106 @@ public class LlmScenarioSuggesterTests
             OrderedEndpoints = new List<ApiOrderItemModel>
             {
                 new() { EndpointId = EndpointId1, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 0 },
+            },
+        };
+    }
+
+    private static LlmScenarioSuggestionContext CreateRequiredBodyCreatePetContext()
+    {
+        return new LlmScenarioSuggestionContext
+        {
+            TestSuiteId = TestSuiteId,
+            UserId = UserId,
+            SpecificationId = SpecificationId,
+            Suite = new TestSuite
+            {
+                Id = TestSuiteId,
+                Name = "Pet Create Contract Suite",
+                EndpointBusinessContexts = new Dictionary<Guid, string>(),
+            },
+            EndpointMetadata = new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = EndpointId1,
+                    HttpMethod = "POST",
+                    Path = "/pet",
+                    OperationId = "addPet",
+                    HasRequiredRequestBody = true,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            IsRequired = true,
+                            Schema = """
+                            {
+                              "type": "object",
+                              "required": ["id", "name", "photoUrls"],
+                              "properties": {
+                                "id": { "type": "integer", "format": "int64" },
+                                "name": { "type": "string" },
+                                "photoUrls": {
+                                  "type": "array",
+                                  "items": { "type": "string" }
+                                }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                    ParameterSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "required": ["id", "name", "photoUrls"],
+                          "properties": {
+                            "id": { "type": "integer", "format": "int64" },
+                            "name": { "type": "string" },
+                            "photoUrls": {
+                              "type": "array",
+                              "items": { "type": "string" }
+                            }
+                          }
+                        }
+                        """,
+                    },
+                },
+            },
+            EndpointParameterDetails = new Dictionary<Guid, EndpointParameterDetailDto>
+            {
+                [EndpointId1] = new()
+                {
+                    EndpointId = EndpointId1,
+                    EndpointPath = "/pet",
+                    EndpointHttpMethod = "POST",
+                    Parameters = new List<ParameterDetailDto>
+                    {
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "id",
+                            Location = "Body",
+                            DataType = "integer",
+                            Format = "int64",
+                            IsRequired = true,
+                        },
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "name",
+                            Location = "Body",
+                            DataType = "string",
+                            IsRequired = true,
+                        },
+                    },
+                },
+            },
+            OrderedEndpoints = new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = EndpointId1, HttpMethod = "POST", Path = "/pet", OrderIndex = 0 },
             },
         };
     }

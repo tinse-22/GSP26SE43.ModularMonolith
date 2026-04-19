@@ -24,6 +24,7 @@ public class VariableResolver : IVariableResolver
     private static readonly Regex ObjectIdRegex = new(@"^[a-fA-F0-9]{24}$", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
+    private static readonly Regex DuplicatedIdentifierPlaceholderRegex = new(@"IdId(s)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
@@ -183,8 +184,67 @@ public class VariableResolver : IVariableResolver
         return PlaceholderRegex.Replace(input, match =>
         {
             var key = match.Groups[1].Value;
-            return variables.TryGetValue(key, out var value) ? value : match.Value;
+            if (variables.TryGetValue(key, out var value))
+            {
+                return value;
+            }
+
+            return TryResolveDuplicateIdentifierAliasValue(key, variables, out var aliasValue)
+                ? aliasValue
+                : match.Value;
         });
+    }
+
+    private static bool TryResolveDuplicateIdentifierAliasValue(
+        string placeholderName,
+        IReadOnlyDictionary<string, string> variables,
+        out string resolved)
+    {
+        if (!IsKnownDuplicatedIdentifierPlaceholderName(placeholderName))
+        {
+            resolved = null;
+            return false;
+        }
+
+        var candidates = new List<string>();
+        var strippedOnce = StripIdSuffix(placeholderName);
+        if (!string.IsNullOrWhiteSpace(strippedOnce))
+        {
+            candidates.Add(strippedOnce);
+        }
+
+        var strippedTwice = StripIdSuffix(strippedOnce);
+        if (!string.IsNullOrWhiteSpace(strippedTwice))
+        {
+            candidates.Add(strippedTwice);
+            candidates.Add(strippedTwice + "Id");
+        }
+
+        candidates.Add("resourceId");
+        candidates.Add("id");
+
+        if (TryResolveVariableValue(candidates.Distinct(StringComparer.OrdinalIgnoreCase), variables, out resolved))
+        {
+            return true;
+        }
+
+        var availableIdentifierValues = variables
+            .Where(kvp => IsIdentifierSemanticVariableName(kvp.Key)
+                && !string.IsNullOrWhiteSpace(kvp.Value)
+                && !kvp.Value.Contains("{{", StringComparison.Ordinal)
+                && !ShouldReplaceIdentifierLiteral(kvp.Value))
+            .Select(kvp => kvp.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (availableIdentifierValues.Count == 1)
+        {
+            resolved = availableIdentifierValues[0];
+            return true;
+        }
+
+        resolved = null;
+        return false;
     }
 
     private static Dictionary<string, string> NormalizePathParams(
@@ -1270,6 +1330,12 @@ public class VariableResolver : IVariableResolver
     {
         var probe = ($"{propertyName} {placeholderName}").ToLowerInvariant();
 
+        if (IsKnownDuplicatedIdentifierPlaceholderName(placeholderName))
+        {
+            defaultLiteral = preferInvalidFallback ? "-1" : "1";
+            return true;
+        }
+
         if (probe.Contains("price", StringComparison.Ordinal)
             || probe.Contains("amount", StringComparison.Ordinal)
             || probe.Contains("cost", StringComparison.Ordinal)
@@ -1309,6 +1375,12 @@ public class VariableResolver : IVariableResolver
         return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
             || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
             || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnownDuplicatedIdentifierPlaceholderName(string variableName)
+    {
+        return !string.IsNullOrWhiteSpace(variableName)
+            && DuplicatedIdentifierPlaceholderRegex.IsMatch(variableName);
     }
 
     private static bool IsLikelyErrorCase(ExecutionTestCaseDto testCase)
