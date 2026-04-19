@@ -3,6 +3,7 @@ using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Modules.TestExecution.Models;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -216,6 +217,29 @@ public class PreExecutionValidator : IPreExecutionValidator
             return;
         }
 
+        if (hasBody && requiresBodyByContract && IsMeaninglessRequiredBody(testCase.Request.Body, endpointMetadata))
+        {
+            if (IsLikelyErrorCase(testCase))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "MEANINGLESS_REQUIRED_BODY_FOR_ERROR_CASE",
+                    Message = "Request body đang là object rỗng cho test case lỗi (negative/boundary). Hệ thống vẫn cho phép chạy để xác nhận response 4xx thực tế.",
+                });
+                return;
+            }
+
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = "MEANINGLESS_REQUIRED_BODY",
+                Message = "Request body hiện chỉ chứa object rỗng hoặc payload không có trường meaningful dù endpoint contract yêu cầu body có schema cụ thể.",
+                Target = "Request.Body",
+                Expected = "JSON body với các trường required/example/default hợp lệ",
+                Actual = testCase.Request.Body,
+            });
+            return;
+        }
+
         if (!hasBody && bodyType != "NONE" && !string.IsNullOrEmpty(bodyType))
         {
             result.Errors.Add(new ValidationFailureModel
@@ -238,6 +262,122 @@ public class PreExecutionValidator : IPreExecutionValidator
                 Message = $"HTTP {httpMethod} request không có body. Nếu endpoint yêu cầu body, test sẽ bị reject bởi server (400/422).",
             });
         }
+    }
+
+    private static bool IsMeaninglessRequiredBody(string body, ApiEndpointMetadataDto endpointMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return true;
+        }
+
+        var schema = endpointMetadata?.Parameters?
+            .FirstOrDefault(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Schema))
+            ?.Schema
+            ?? endpointMetadata?.ParameterSchemaPayloads?.FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(schema))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var bodyDocument = JsonDocument.Parse(body);
+            if (bodyDocument.RootElement.ValueKind != JsonValueKind.Object ||
+                bodyDocument.RootElement.EnumerateObject().Any())
+            {
+                return false;
+            }
+
+            using var schemaDocument = JsonDocument.Parse(schema);
+            var schemaRoot = schemaDocument.RootElement;
+
+            if (schemaRoot.TryGetProperty("required", out var required) &&
+                required.ValueKind == JsonValueKind.Array &&
+                required.GetArrayLength() > 0)
+            {
+                return true;
+            }
+
+            return schemaRoot.TryGetProperty("properties", out var properties) &&
+                   properties.ValueKind == JsonValueKind.Object &&
+                   properties.EnumerateObject().Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLikelyErrorCase(ExecutionTestCaseDto testCase)
+    {
+        if (testCase == null)
+        {
+            return false;
+        }
+
+        if (ContainsAny(testCase.TestType, "negative", "boundary", "invalid") ||
+            ContainsAny(testCase.Name, "negative", "boundary", "invalid"))
+        {
+            return true;
+        }
+
+        var statuses = ParseExpectedStatuses(testCase.Expectation?.ExpectedStatus);
+        return statuses.Count > 0 && statuses.All(status => status >= 400 && status < 600);
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        if (string.IsNullOrWhiteSpace(value) || tokens == null || tokens.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var token in tokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token) &&
+                value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static List<int> ParseExpectedStatuses(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return new List<int>();
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<int>>(expectedStatus);
+            if (parsed != null && parsed.Count > 0)
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+            // ignore malformed expectation format; caller falls back to single-value parsing.
+        }
+
+        var trimmed = expectedStatus.Trim();
+        if (trimmed.StartsWith("[", StringComparison.Ordinal) &&
+            trimmed.EndsWith("]", StringComparison.Ordinal))
+        {
+            trimmed = trimmed.Trim('[', ']', ' ');
+        }
+
+        return int.TryParse(trimmed, out var single)
+            ? new List<int> { single }
+            : new List<int>();
     }
 
     private static void ValidateUnresolvedPlaceholders(

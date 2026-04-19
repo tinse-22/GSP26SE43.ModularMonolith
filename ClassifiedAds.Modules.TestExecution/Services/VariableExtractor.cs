@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ClassifiedAds.Modules.TestExecution.Services;
 
@@ -31,17 +32,20 @@ public class VariableExtractor : IVariableExtractor
         foreach (var variable in variables)
         {
             string extracted = null;
+            var effectiveJsonPath = ResolveJsonPath(variable);
 
             try
             {
                 extracted = variable.ExtractFrom switch
                 {
-                    "ResponseBody" => ExtractFromResponseBody(response.Body, variable.JsonPath),
+                    "ResponseBody" => ExtractFromResponseBody(response.Body, effectiveJsonPath),
                     "ResponseHeader" => ExtractFromHeader(response.Headers, variable.HeaderName),
-                    "RequestBody" => ExtractFromResponseBody(requestBody, variable.JsonPath),
+                    "RequestBody" => ExtractFromResponseBody(requestBody, effectiveJsonPath),
                     "Status" => response.StatusCode?.ToString(),
                     _ => null,
                 };
+
+                extracted = ApplyRegex(extracted, variable.Regex);
             }
             catch (Exception ex)
             {
@@ -60,6 +64,62 @@ public class VariableExtractor : IVariableExtractor
         }
 
         return result;
+    }
+
+    private static string ResolveJsonPath(ExecutionVariableRuleDto variable)
+    {
+        if (variable == null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(variable.JsonPath))
+        {
+            return variable.JsonPath;
+        }
+
+        if (!string.Equals(variable.ExtractFrom, "RequestBody", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return InferRequestBodyJsonPath(variable.VariableName);
+    }
+
+    private static string InferRequestBodyJsonPath(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return null;
+        }
+
+        var normalized = variableName.Trim();
+        foreach (var prefix in new[] { "registered", "created", "generated", "new", "saved" })
+        {
+            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && normalized.Length > prefix.Length)
+            {
+                normalized = normalized[prefix.Length..];
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        if (normalized.IndexOf("email", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "$.email";
+        }
+
+        if (normalized.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "$.password";
+        }
+
+        var fieldName = char.ToLowerInvariant(normalized[0]) + normalized[1..];
+        return "$." + fieldName;
     }
 
     private static string ExtractFromResponseBody(string body, string jsonPath)
@@ -99,6 +159,27 @@ public class VariableExtractor : IVariableExtractor
         return null;
     }
 
+    private static string ApplyRegex(string input, string regex)
+    {
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(regex))
+        {
+            return input;
+        }
+
+        var match = Regex.Match(input, regex, RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        if (match.Groups["value"] is { Success: true, Value.Length: > 0 } namedGroup)
+        {
+            return namedGroup.Value;
+        }
+
+        return match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
+    }
+
     internal static JsonElement? NavigateJsonPath(JsonElement root, string path)
     {
         if (string.IsNullOrEmpty(path) || path == "$")
@@ -124,7 +205,7 @@ public class VariableExtractor : IVariableExtractor
                 // Property + array access like "items[0]"
                 if (!string.IsNullOrEmpty(segment.PropertyName))
                 {
-                    if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment.PropertyName, out var propElement))
+                    if (!TryGetPropertyCaseInsensitive(current, segment.PropertyName, out var propElement))
                     {
                         return null;
                     }
@@ -141,7 +222,7 @@ public class VariableExtractor : IVariableExtractor
             }
             else
             {
-                if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment.PropertyName, out var propElement))
+                if (!TryGetPropertyCaseInsensitive(current, segment.PropertyName, out var propElement))
                 {
                     return null;
                 }
@@ -151,6 +232,32 @@ public class VariableExtractor : IVariableExtractor
         }
 
         return current;
+    }
+
+    private static bool TryGetPropertyCaseInsensitive(JsonElement element, string propertyName, out JsonElement propertyValue)
+    {
+        if (element.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(propertyName))
+        {
+            propertyValue = default;
+            return false;
+        }
+
+        if (element.TryGetProperty(propertyName, out propertyValue))
+        {
+            return true;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                propertyValue = property.Value;
+                return true;
+            }
+        }
+
+        propertyValue = default;
+        return false;
     }
 
     private static List<PathSegment> ParsePathSegments(string path)

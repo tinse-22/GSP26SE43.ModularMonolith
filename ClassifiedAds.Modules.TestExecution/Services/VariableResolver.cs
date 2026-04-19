@@ -56,7 +56,8 @@ public class VariableResolver : IVariableResolver
 
         // Resolve path params and apply to URL
         var pathParams = DeserializeDictionary(request.PathParams);
-        foreach (var kvp in pathParams)
+        var normalizedPathParams = NormalizePathParams(pathParams, resolvedUrl, mergedVars);
+        foreach (var kvp in normalizedPathParams)
         {
             var resolvedValue = ResolvePlaceholders(kvp.Value, mergedVars);
             resolvedUrl = resolvedUrl.Replace($"{{{kvp.Key}}}", Uri.EscapeDataString(resolvedValue));
@@ -93,10 +94,14 @@ public class VariableResolver : IVariableResolver
             resolvedHeaders[kvp.Key] = ResolvePlaceholders(kvp.Value, mergedVars);
         }
 
+        ApplyAuthFallbackHeader(resolvedHeaders, mergedVars);
+
         // Resolve body
         var resolvedBody = !string.IsNullOrEmpty(request.Body)
             ? ResolvePlaceholders(request.Body, mergedVars)
             : null;
+        resolvedBody = NormalizeHappyPathCredentials(testCase, resolvedBody, mergedVars);
+        resolvedBody = NormalizeIdentifierLiteralsInJsonBody(resolvedBody, mergedVars);
         resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
 
         // Build final URL
@@ -156,6 +161,491 @@ public class VariableResolver : IVariableResolver
             var key = match.Groups[1].Value;
             return variables.TryGetValue(key, out var value) ? value : match.Value;
         });
+    }
+
+    private static Dictionary<string, string> NormalizePathParams(
+        IReadOnlyDictionary<string, string> pathParams,
+        string resolvedUrl,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        var normalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (pathParams == null || pathParams.Count == 0)
+        {
+            return normalized;
+        }
+
+        foreach (var kvp in pathParams)
+        {
+            var resolvedValue = kvp.Value;
+            if (ShouldReplaceIdentifierLiteral(resolvedValue) &&
+                TryResolveVariableValue(BuildPathParamVariableCandidates(kvp.Key, resolvedUrl), variables, out var replacement))
+            {
+                resolvedValue = replacement;
+            }
+
+            normalized[kvp.Key] = resolvedValue;
+        }
+
+        return normalized;
+    }
+
+    private static IEnumerable<string> BuildPathParamVariableCandidates(string paramName, string resolvedUrl)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(paramName))
+        {
+            if (string.Equals(paramName, "id", StringComparison.OrdinalIgnoreCase))
+            {
+                var resourceIdVariable = BuildResourceIdVariableNameFromPath(resolvedUrl, paramName);
+                if (!string.IsNullOrWhiteSpace(resourceIdVariable))
+                {
+                    candidates.Add(resourceIdVariable);
+                }
+
+                candidates.Add("resourceId");
+                candidates.Add("id");
+            }
+            else
+            {
+                candidates.Add(paramName);
+                candidates.Add(StripIdSuffix(paramName) + "Id");
+                candidates.Add("resourceId");
+                candidates.Add("id");
+            }
+        }
+
+        return candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void ApplyAuthFallbackHeader(
+        IDictionary<string, string> headers,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (headers == null || variables == null)
+        {
+            return;
+        }
+
+        if (headers.TryGetValue("Authorization", out var existingAuthorization) &&
+            !string.IsNullOrWhiteSpace(existingAuthorization))
+        {
+            return;
+        }
+
+        foreach (var key in new[] { "authToken", "accessToken", "token", "jwt" })
+        {
+            if (!variables.TryGetValue(key, out var value) ||
+                string.IsNullOrWhiteSpace(value) ||
+                value.Contains("{{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            headers["Authorization"] = $"Bearer {value}";
+            return;
+        }
+    }
+
+    private static string NormalizeHappyPathCredentials(
+        ExecutionTestCaseDto testCase,
+        string resolvedBody,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (string.IsNullOrWhiteSpace(resolvedBody)
+            || testCase?.Request == null
+            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
+            || !IsLoginLikeRequest(testCase))
+        {
+            return resolvedBody;
+        }
+
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(resolvedBody);
+        }
+        catch
+        {
+            return resolvedBody;
+        }
+
+        if (root == null)
+        {
+            return resolvedBody;
+        }
+
+        string preferredEmail = null;
+        if (variables != null)
+        {
+            if (variables.TryGetValue("registeredEmail", out var registeredEmail) && !string.IsNullOrWhiteSpace(registeredEmail))
+            {
+                preferredEmail = registeredEmail;
+            }
+            else if (variables.TryGetValue("testEmail", out var testEmail) && !string.IsNullOrWhiteSpace(testEmail))
+            {
+                preferredEmail = testEmail;
+            }
+        }
+
+        var preferredPassword = variables != null
+            && variables.TryGetValue("registeredPassword", out var registeredPassword)
+            && !string.IsNullOrWhiteSpace(registeredPassword)
+                ? registeredPassword
+                : null;
+
+        if (string.IsNullOrWhiteSpace(preferredEmail) && string.IsNullOrWhiteSpace(preferredPassword))
+        {
+            return resolvedBody;
+        }
+
+        var changed = RewriteCredentialFields(root, preferredEmail, preferredPassword);
+        return changed ? root.ToJsonString(JsonOptions) : resolvedBody;
+    }
+
+    private static bool RewriteCredentialFields(JsonNode node, string preferredEmail, string preferredPassword)
+    {
+        if (node is JsonObject obj)
+        {
+            var changed = false;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue value && value.TryGetValue<string>(out var current))
+                {
+                    if (property.Key.Equals("email", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(preferredEmail) &&
+                        !current.Contains("{{", StringComparison.Ordinal) &&
+                        !string.Equals(current, preferredEmail, StringComparison.Ordinal))
+                    {
+                        obj[property.Key] = preferredEmail;
+                        changed = true;
+                        continue;
+                    }
+
+                    if (property.Key.Equals("password", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(preferredPassword) &&
+                        !current.Contains("{{", StringComparison.Ordinal) &&
+                        !string.Equals(current, preferredPassword, StringComparison.Ordinal))
+                    {
+                        obj[property.Key] = preferredPassword;
+                        changed = true;
+                        continue;
+                    }
+                }
+
+                if (property.Value != null && RewriteCredentialFields(property.Value, preferredEmail, preferredPassword))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        if (node is JsonArray array)
+        {
+            var changed = false;
+            foreach (var item in array)
+            {
+                if (item != null && RewriteCredentialFields(item, preferredEmail, preferredPassword))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeIdentifierLiteralsInJsonBody(
+        string resolvedBody,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (string.IsNullOrWhiteSpace(resolvedBody) || variables == null)
+        {
+            return resolvedBody;
+        }
+
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(resolvedBody);
+        }
+        catch
+        {
+            return resolvedBody;
+        }
+
+        if (root == null)
+        {
+            return resolvedBody;
+        }
+
+        var changed = ReplaceIdentifierLiterals(root, variables);
+        return changed ? root.ToJsonString(JsonOptions) : resolvedBody;
+    }
+
+    private static bool ReplaceIdentifierLiterals(JsonNode node, IReadOnlyDictionary<string, string> variables)
+    {
+        if (node is JsonObject obj)
+        {
+            var changed = false;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue)
+                {
+                    var currentValue = property.Value?.ToJsonString(JsonOptions)?.Trim('"');
+                    if (IsIdentifierField(property.Key) &&
+                        ShouldReplaceIdentifierLiteral(currentValue) &&
+                        TryResolveVariableValue(BuildBodyIdentifierCandidates(property.Key), variables, out var replacement))
+                    {
+                        obj[property.Key] = replacement;
+                        changed = true;
+                        continue;
+                    }
+                }
+
+                if (property.Value != null && ReplaceIdentifierLiterals(property.Value, variables))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        if (node is JsonArray array)
+        {
+            var changed = false;
+            foreach (var item in array)
+            {
+                if (item != null && ReplaceIdentifierLiterals(item, variables))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> BuildBodyIdentifierCandidates(string propertyName)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(propertyName))
+        {
+            candidates.Add(propertyName);
+
+            var stripped = StripIdSuffix(propertyName);
+            if (!string.IsNullOrWhiteSpace(stripped))
+            {
+                candidates.Add(stripped + "Id");
+                candidates.Add(stripped);
+            }
+        }
+
+        candidates.Add("resourceId");
+        candidates.Add("id");
+
+        return candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool TryResolveVariableValue(
+        IEnumerable<string> candidates,
+        IReadOnlyDictionary<string, string> variables,
+        out string resolved)
+    {
+        if (candidates != null)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate)
+                    || !variables.TryGetValue(candidate, out var value)
+                    || string.IsNullOrWhiteSpace(value)
+                    || value.Contains("{{", StringComparison.Ordinal)
+                    || ShouldReplaceIdentifierLiteral(value))
+                {
+                    continue;
+                }
+
+                resolved = value;
+                return true;
+            }
+        }
+
+        resolved = null;
+        return false;
+    }
+
+    private static bool ShouldReplaceIdentifierLiteral(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Contains("{{", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (normalized == "0" || normalized == "1")
+        {
+            return true;
+        }
+
+        if (Guid.TryParse(normalized, out var parsedGuid))
+        {
+            return parsedGuid == Guid.Empty || normalized.StartsWith("00000000", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static bool IsIdentifierField(string propertyName)
+    {
+        return !string.IsNullOrWhiteSpace(propertyName)
+            && (string.Equals(propertyName, "id", StringComparison.OrdinalIgnoreCase)
+                || propertyName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+                || propertyName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string BuildResourceIdVariableNameFromPath(string urlOrPath, string token)
+    {
+        var resourceSegment = ResolveResourceSegmentForPathToken(urlOrPath, token);
+        if (string.IsNullOrWhiteSpace(resourceSegment))
+        {
+            return null;
+        }
+
+        var identifier = ToCamelIdentifier(Singularize(resourceSegment));
+        return string.IsNullOrWhiteSpace(identifier) ? null : identifier + "Id";
+    }
+
+    private static string ResolveResourceSegmentForPathToken(string urlOrPath, string token)
+    {
+        var path = ExtractPathOnly(urlOrPath ?? string.Empty);
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < segments.Length; i++)
+        {
+            if (!string.Equals(segments[i], $"{{{token}}}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            for (var j = i - 1; j >= 0; j--)
+            {
+                var segment = segments[j].Trim();
+                if (string.IsNullOrWhiteSpace(segment)
+                    || string.Equals(segment, "api", StringComparison.OrdinalIgnoreCase)
+                    || IsVersionSegment(segment)
+                    || (segment.StartsWith("{", StringComparison.Ordinal) && segment.EndsWith("}", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                return segment;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsVersionSegment(string segment)
+    {
+        return !string.IsNullOrWhiteSpace(segment)
+            && segment.Length <= 3
+            && segment.StartsWith('v')
+            && segment.Skip(1).All(char.IsDigit);
+    }
+
+    private static string StripIdSuffix(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("Ids", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3];
+        }
+
+        if (value.EndsWith("Id", StringComparison.OrdinalIgnoreCase) && value.Length > 2)
+        {
+            return value[..^2];
+        }
+
+        return value;
+    }
+
+    private static string Singularize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3] + "y";
+        }
+
+        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+            && !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
+            && value.Length > 1)
+        {
+            return value[..^1];
+        }
+
+        return value;
+    }
+
+    private static string ToCamelIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var parts = value
+            .Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (parts.Count == 0)
+        {
+            return value;
+        }
+
+        var first = parts[0].Length == 0
+            ? string.Empty
+            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
+
+        var rest = parts
+            .Skip(1)
+            .Select(part => part.Length == 0
+                ? string.Empty
+                : char.ToUpperInvariant(part[0]) + part[1..]);
+
+        return first + string.Concat(rest);
+    }
+
+    private static bool IsLoginLikeRequest(ExecutionTestCaseDto testCase)
+    {
+        var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
+        return signature.Contains("/auth/login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeHappyPathSyntheticBody(

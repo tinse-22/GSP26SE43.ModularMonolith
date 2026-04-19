@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.TestGeneration.DTOs;
+﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -171,7 +171,7 @@ public class TestExecutionReadGatewayServiceTests
     }
 
     [Fact]
-    public async Task GetExecutionContextAsync_WhenDependencyCycleExists_ShouldThrowValidation()
+    public async Task GetExecutionContextAsync_WhenDependencyCycleExists_ShouldBreakCycleAndOrderAll()
     {
         // Arrange: A depends on B, B depends on A (cycle)
         var endpointId = Guid.NewGuid();
@@ -189,12 +189,14 @@ public class TestExecutionReadGatewayServiceTests
 
         SetupGatewayMocks(new[] { caseA, caseB }, deps, endpointId);
 
-        // Act
-        var act = () => _service.GetExecutionContextAsync(_suiteId, null);
+        // Act — should not throw; cycles are broken gracefully
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
 
-        // Assert
-        await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("vòng phụ thuộc"));
+        // Assert — all test cases are returned; cycle is broken by baseline order
+        result.OrderedTestCases.Should().HaveCount(2);
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().Contain(caseAId)
+            .And.Contain(caseBId);
     }
 
     [Fact]
@@ -288,6 +290,33 @@ public class TestExecutionReadGatewayServiceTests
         _expectationRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseExpectation>>()), Times.Once);
         _variableRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()), Times.Once);
         _dependencyRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseDependency>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetExecutionContextAsync_Should_MapVariableRegex_ForExecution()
+    {
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        var variable = new TestCaseVariable
+        {
+            Id = Guid.NewGuid(),
+            TestCaseId = caseId,
+            VariableName = "authToken",
+            ExtractFrom = ExtractFrom.ResponseHeader,
+            HeaderName = "Authorization",
+            Regex = "(?:Bearer\\s+)?(?<value>[^\\s]+)$",
+        };
+
+        SetupGatewayMocks(new[] { testCase }, Array.Empty<TestCaseDependency>(), endpointId);
+        _variableRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()))
+            .ReturnsAsync(new List<TestCaseVariable> { variable });
+
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        result.OrderedTestCases.Should().ContainSingle();
+        result.OrderedTestCases[0].Variables.Should().ContainSingle();
+        result.OrderedTestCases[0].Variables[0].Regex.Should().Be("(?:Bearer\\s+)?(?<value>[^\\s]+)$");
     }
 
     #region Helpers

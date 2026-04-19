@@ -65,6 +65,83 @@ public class PreExecutionValidatorContractTests
         result.Errors.Should().NotContain(x => x.Code == "MISSING_REQUIRED_BODY");
     }
 
+    [Fact]
+    public void Validate_Should_Fail_WhenRequiredBodyIsMeaninglessEmptyObject()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{}";
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            HasRequiredRequestBody = true,
+            Parameters = new List<ApiEndpointParameterDescriptorDto>
+            {
+                new()
+                {
+                    Name = "body",
+                    Location = "Body",
+                    IsRequired = true,
+                    Schema = """
+                    {
+                      "type": "object",
+                      "required": ["name"],
+                      "properties": {
+                        "name": { "type": "string" }
+                      }
+                    }
+                    """,
+                },
+            },
+        };
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), metadata);
+
+        result.Errors.Should().Contain(x => x.Code == "MEANINGLESS_REQUIRED_BODY");
+    }
+
+    [Fact]
+    public void Validate_Should_WarnInsteadOfFail_WhenMeaninglessBodyForNegativeCase()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Name = "Negative Validation: POST /api/items";
+        testCase.TestType = "Negative";
+        testCase.Expectation = new ExecutionTestCaseExpectationDto
+        {
+            ExpectedStatus = "[400]",
+        };
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{}";
+
+        var metadata = new ApiEndpointMetadataDto
+        {
+            HasRequiredRequestBody = true,
+            Parameters = new List<ApiEndpointParameterDescriptorDto>
+            {
+                new()
+                {
+                    Name = "body",
+                    Location = "Body",
+                    IsRequired = true,
+                    Schema = """
+                    {
+                      "type": "object",
+                      "required": ["name"],
+                      "properties": {
+                        "name": { "type": "string" }
+                      }
+                    }
+                    """,
+                },
+            },
+        };
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), metadata);
+
+        result.Errors.Should().NotContain(x => x.Code == "MEANINGLESS_REQUIRED_BODY");
+        result.Warnings.Should().Contain(x => x.Code == "MEANINGLESS_REQUIRED_BODY_FOR_ERROR_CASE");
+    }
+
     private static ExecutionTestCaseDto CreateBaseTestCase()
     {
         return new ExecutionTestCaseDto

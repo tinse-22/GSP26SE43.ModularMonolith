@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace ClassifiedAds.Modules.TestGeneration.Services;
@@ -14,13 +15,14 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public static class GeneratedTestCaseDependencyEnricher
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
 
-    private static readonly Regex RouteTokenRegex = new (@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
+    private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRegex = new(@"^\{\{(?<name>[A-Za-z0-9_]+)\}\}$", RegexOptions.Compiled);
 
     private static readonly string[] IdentifierJsonPaths =
     {
@@ -34,6 +36,16 @@ public static class GeneratedTestCaseDependencyEnricher
         "$.data[0]._id",
         "$[0].id",
         "$[0]._id",
+    };
+
+    private static readonly string[] AuthTokenJsonPaths =
+    {
+        "$.data.token",
+        "$.token",
+        "$.data.accessToken",
+        "$.accessToken",
+        "$.data.jwt",
+        "$.jwt",
     };
 
     public static GeneratedTestCaseEnrichmentResult Enrich(
@@ -87,6 +99,26 @@ public static class GeneratedTestCaseDependencyEnricher
 
             AddDeclaredDependencies(testCase, orderItem, producersByEndpoint);
             FillMissingRouteParams(
+                testCase,
+                orderItem,
+                producerCandidates,
+                producersByEndpoint,
+                pendingExistingVariables);
+
+            // Skip body enrichment for HTTP methods that don't accept request bodies.
+            // This prevents false dependency links from being created for DELETE/GET/HEAD/OPTIONS endpoints.
+            var httpMethod = (orderItem.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
+            if (httpMethod is not ("DELETE" or "GET" or "HEAD" or "OPTIONS"))
+            {
+                FillMissingBodyBindings(
+                    testCase,
+                    orderItem,
+                    producerCandidates,
+                    producersByEndpoint,
+                    pendingExistingVariables);
+            }
+
+            FillMissingAuthBindings(
                 testCase,
                 orderItem,
                 producerCandidates,
@@ -197,8 +229,78 @@ public static class GeneratedTestCaseDependencyEnricher
 
         foreach (var token in routeTokens)
         {
-            if (currentPathParams.TryGetValue(token, out var existingValue) && existingValue != null)
+            if (currentPathParams.TryGetValue(token, out var existingValue) && !string.IsNullOrWhiteSpace(existingValue))
             {
+                if (TryExtractPlaceholderVariable(existingValue, out var placeholderVariable))
+                {
+                    var existingProducer = SelectProducerForToken(
+                        token,
+                        orderItem.Path ?? testCase.Request.Url,
+                        dependencyCandidates,
+                        producerCandidates,
+                        testCase.Id)
+                        ?? SelectProducerForToken(
+                            placeholderVariable,
+                            orderItem.Path ?? testCase.Request.Url,
+                            dependencyCandidates,
+                            producerCandidates,
+                            testCase.Id);
+
+                    if (existingProducer != null)
+                    {
+                        var resolvedVariableName = EnsureProducerVariable(
+                            token,
+                            orderItem.Path ?? testCase.Request.Url,
+                            existingProducer,
+                            pendingExistingVariables,
+                            preferredVariableName: placeholderVariable);
+
+                        if (!string.IsNullOrWhiteSpace(resolvedVariableName) &&
+                            !string.Equals(resolvedVariableName, placeholderVariable, StringComparison.OrdinalIgnoreCase))
+                        {
+                            currentPathParams[token] = $"{{{{{resolvedVariableName}}}}}";
+                            changed = true;
+                        }
+
+                        EnsureDependency(testCase, existingProducer.TestCaseId);
+                    }
+
+                    continue;
+                }
+
+                // For HappyPath identifier tokens, replace hardcoded route values (e.g. 12345)
+                // with dependency placeholders so update/delete cases target resources created earlier in the run.
+                if (!ShouldReplaceRouteParamValue(testCase, token, existingValue))
+                {
+                    continue;
+                }
+
+                var producerForLiteral = SelectProducerForToken(
+                    token,
+                    orderItem.Path ?? testCase.Request.Url,
+                    dependencyCandidates,
+                    producerCandidates,
+                    testCase.Id);
+
+                if (producerForLiteral == null)
+                {
+                    continue;
+                }
+
+                var routeVariableName = EnsureProducerVariable(
+                    token,
+                    orderItem.Path ?? testCase.Request.Url,
+                    producerForLiteral,
+                    pendingExistingVariables);
+
+                if (string.IsNullOrWhiteSpace(routeVariableName))
+                {
+                    continue;
+                }
+
+                currentPathParams[token] = $"{{{{{routeVariableName}}}}}";
+                EnsureDependency(testCase, producerForLiteral.TestCaseId);
+                changed = true;
                 continue;
             }
 
@@ -231,6 +333,244 @@ public static class GeneratedTestCaseDependencyEnricher
                 ? null
                 : JsonSerializer.Serialize(currentPathParams, JsonOpts);
         }
+    }
+
+    private static void FillMissingBodyBindings(
+        TestCase testCase,
+        ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> producerCandidates,
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        if (testCase.Request == null || string.IsNullOrWhiteSpace(testCase.Request.Body))
+        {
+            return;
+        }
+
+        JsonNode bodyNode;
+        try
+        {
+            bodyNode = JsonNode.Parse(testCase.Request.Body);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (bodyNode == null)
+        {
+            return;
+        }
+
+        var dependencyCandidates = (orderItem.DependsOnEndpointIds ?? new List<Guid>())
+            .Select(x => producersByEndpoint.TryGetValue(x, out var producer) ? producer : null)
+            .Where(x => x != null && x.TestCaseId != testCase.Id)
+            .ToList();
+
+        var changed = BindBodyNode(
+            bodyNode,
+            orderItem.Path ?? testCase.Request.Url,
+            dependencyCandidates,
+            producerCandidates,
+            testCase,
+            pendingExistingVariables,
+            allowAuthBootstrapBindings: !IsRegisterLikeEndpoint(orderItem));
+
+        if (changed)
+        {
+            testCase.Request.Body = bodyNode.ToJsonString(JsonOpts);
+        }
+    }
+
+    private static void FillMissingAuthBindings(
+        TestCase testCase,
+        ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> producerCandidates,
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        if (testCase.Request == null)
+        {
+            return;
+        }
+
+        // Auth endpoints (register/login/token...) should stay bootstrap nodes.
+        // Auto-injecting Authorization here can create register<->login cycles.
+        if (IsAuthLikeEndpoint(orderItem))
+        {
+            return;
+        }
+
+        var dependencyCandidates = (orderItem.DependsOnEndpointIds ?? new List<Guid>())
+            .Select(x => producersByEndpoint.TryGetValue(x, out var producer) ? producer : null)
+            .Where(x => x != null && x.TestCaseId != testCase.Id)
+            .ToList();
+
+        var authProducer = SelectAuthProducer(dependencyCandidates, producerCandidates, testCase.Id, preferRegister: false);
+        if (authProducer == null)
+        {
+            return;
+        }
+
+        var headers = DeserializeDictionary(testCase.Request.Headers);
+        var changed = false;
+
+        if (headers.TryGetValue("Authorization", out var existingAuthValue) &&
+            !string.IsNullOrWhiteSpace(existingAuthValue) &&
+            !TryExtractPlaceholderVariable(existingAuthValue, out _))
+        {
+            return;
+        }
+
+        var variableName = EnsureAuthTokenVariable(authProducer, pendingExistingVariables);
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return;
+        }
+
+        var desiredHeader = $"Bearer {{{{{variableName}}}}}";
+        if (!headers.TryGetValue("Authorization", out var currentHeader) ||
+            !string.Equals(currentHeader, desiredHeader, StringComparison.Ordinal))
+        {
+            headers["Authorization"] = desiredHeader;
+            changed = true;
+        }
+
+        EnsureDependency(testCase, authProducer.TestCaseId);
+
+        if (changed)
+        {
+            testCase.Request.Headers = headers.Count == 0
+                ? null
+                : JsonSerializer.Serialize(headers, JsonOpts);
+        }
+    }
+
+    private static bool BindBodyNode(
+        JsonNode node,
+        string consumerPath,
+        IReadOnlyList<ProducerCandidate> dependencyCandidates,
+        IReadOnlyList<ProducerCandidate> allCandidates,
+        TestCase testCase,
+        ICollection<TestCaseVariable> pendingExistingVariables,
+        bool allowAuthBootstrapBindings)
+    {
+        var changed = false;
+
+        if (node is JsonObject obj)
+        {
+            var authProducer = allowAuthBootstrapBindings
+                ? SelectAuthProducer(dependencyCandidates, allCandidates, testCase.Id, preferRegister: true)
+                : null;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue && authProducer != null)
+                {
+                    if (string.Equals(property.Key, "email", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var variableName = EnsureRequestBodyVariable(
+                            authProducer,
+                            "registeredEmail",
+                            "$.email",
+                            pendingExistingVariables);
+                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        {
+                            obj[property.Key] = $"{{{{{variableName}}}}}";
+                            EnsureDependency(testCase, authProducer.TestCaseId);
+                            changed = true;
+                            continue;
+                        }
+                    }
+
+                    if (string.Equals(property.Key, "password", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var variableName = EnsureRequestBodyVariable(
+                            authProducer,
+                            "registeredPassword",
+                            "$.password",
+                            pendingExistingVariables);
+                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        {
+                            obj[property.Key] = $"{{{{{variableName}}}}}";
+                            EnsureDependency(testCase, authProducer.TestCaseId);
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+
+                if (!allowAuthBootstrapBindings && IsCredentialField(property.Key))
+                {
+                    continue;
+                }
+
+                if (property.Value is JsonValue || property.Value == null)
+                {
+                    var producer = SelectProducerForToken(
+                        property.Key,
+                        consumerPath,
+                        dependencyCandidates,
+                        allCandidates,
+                        testCase.Id);
+
+                    if (producer != null)
+                    {
+                        var currentValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                        var preferredVariableName = TryExtractPlaceholderVariable(currentValue, out var placeholderVariable)
+                            ? placeholderVariable
+                            : null;
+                        var variableName = EnsureProducerVariable(
+                            property.Key,
+                            consumerPath,
+                            producer,
+                            pendingExistingVariables,
+                            preferredVariableName);
+
+                        if (!string.IsNullOrWhiteSpace(variableName) &&
+                            (preferredVariableName != null || ShouldReplaceIdentifierValue(currentValue)))
+                        {
+                            obj[property.Key] = $"{{{{{variableName}}}}}";
+                            EnsureDependency(testCase, producer.TestCaseId);
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+
+                if (property.Value != null &&
+                    BindBodyNode(
+                        property.Value,
+                        consumerPath,
+                        dependencyCandidates,
+                        allCandidates,
+                        testCase,
+                        pendingExistingVariables,
+                        allowAuthBootstrapBindings))
+                {
+                    changed = true;
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item != null &&
+                    BindBodyNode(
+                        item,
+                        consumerPath,
+                        dependencyCandidates,
+                        allCandidates,
+                        testCase,
+                        pendingExistingVariables,
+                        allowAuthBootstrapBindings))
+                {
+                    changed = true;
+                }
+            }
+        }
+
+        return changed;
     }
 
     private static ProducerCandidate SelectProducerForToken(
@@ -295,15 +635,20 @@ public static class GeneratedTestCaseDependencyEnricher
         string token,
         string consumerPath,
         ProducerCandidate producer,
-        ICollection<TestCaseVariable> pendingExistingVariables)
+        ICollection<TestCaseVariable> pendingExistingVariables,
+        string preferredVariableName = null)
     {
-        var existingVariableName = FindReusableVariableName(producer, token, consumerPath);
+        var existingVariableName = !string.IsNullOrWhiteSpace(preferredVariableName)
+            ? FindReusableVariableName(producer, preferredVariableName, consumerPath)
+            : FindReusableVariableName(producer, token, consumerPath);
         if (!string.IsNullOrWhiteSpace(existingVariableName))
         {
             return existingVariableName;
         }
 
-        var variableName = BuildPreferredVariableName(token, consumerPath);
+        var variableName = !string.IsNullOrWhiteSpace(preferredVariableName)
+            ? preferredVariableName
+            : BuildPreferredVariableName(token, consumerPath);
         if (string.IsNullOrWhiteSpace(variableName))
         {
             return null;
@@ -311,31 +656,114 @@ public static class GeneratedTestCaseDependencyEnricher
 
         foreach (var jsonPath in IdentifierJsonPaths)
         {
-            if (producer.Variables.Any(v =>
-                    string.Equals(v.VariableName, variableName, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(v.JsonPath, jsonPath, StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-
-            var variable = new TestCaseVariable
-            {
-                Id = Guid.NewGuid(),
-                TestCaseId = producer.TestCaseId,
-                VariableName = variableName,
-                ExtractFrom = ExtractFrom.ResponseBody,
-                JsonPath = jsonPath,
-            };
-
-            producer.Variables.Add(variable);
-
-            if (producer.IsExisting)
-            {
-                pendingExistingVariables.Add(variable);
-            }
+            EnsureVariableRule(
+                producer,
+                pendingExistingVariables,
+                variableName,
+                ExtractFrom.ResponseBody,
+                jsonPath: jsonPath);
         }
 
+        EnsureVariableRule(
+            producer,
+            pendingExistingVariables,
+            variableName,
+            ExtractFrom.ResponseHeader,
+            headerName: "Location",
+            regex: "([^/?#]+)$");
+
         return variableName;
+    }
+
+    private static string EnsureRequestBodyVariable(
+        ProducerCandidate producer,
+        string variableName,
+        string jsonPath,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        if (string.IsNullOrWhiteSpace(variableName) || string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return null;
+        }
+
+        EnsureVariableRule(
+            producer,
+            pendingExistingVariables,
+            variableName,
+            ExtractFrom.RequestBody,
+            jsonPath: jsonPath);
+
+        return variableName;
+    }
+
+    private static string EnsureAuthTokenVariable(
+        ProducerCandidate producer,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        var existing = producer.Variables
+            .Select(v => v.VariableName)
+            .FirstOrDefault(name =>
+                string.Equals(name, "authToken", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "accessToken", StringComparison.OrdinalIgnoreCase));
+
+        var variableName = string.IsNullOrWhiteSpace(existing) ? "authToken" : existing;
+        foreach (var jsonPath in AuthTokenJsonPaths)
+        {
+            EnsureVariableRule(
+                producer,
+                pendingExistingVariables,
+                variableName,
+                ExtractFrom.ResponseBody,
+                jsonPath: jsonPath);
+        }
+
+        EnsureVariableRule(
+            producer,
+            pendingExistingVariables,
+            variableName,
+            ExtractFrom.ResponseHeader,
+            headerName: "Authorization",
+            regex: "(?:Bearer\\s+)?(?<value>[^\\s]+)$");
+
+        return variableName;
+    }
+
+    private static void EnsureVariableRule(
+        ProducerCandidate producer,
+        ICollection<TestCaseVariable> pendingExistingVariables,
+        string variableName,
+        ExtractFrom extractFrom,
+        string jsonPath = null,
+        string headerName = null,
+        string regex = null)
+    {
+        if (producer.Variables.Any(v =>
+                string.Equals(v.VariableName, variableName, StringComparison.OrdinalIgnoreCase) &&
+                v.ExtractFrom == extractFrom &&
+                string.Equals(v.JsonPath, jsonPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(v.HeaderName, headerName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(v.Regex, regex, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        var variable = new TestCaseVariable
+        {
+            Id = Guid.NewGuid(),
+            TestCaseId = producer.TestCaseId,
+            VariableName = variableName,
+            ExtractFrom = extractFrom,
+            JsonPath = jsonPath,
+            HeaderName = headerName,
+            Regex = regex,
+        };
+
+        producer.Variables.Add(variable);
+
+        if (producer.IsExisting)
+        {
+            pendingExistingVariables.Add(variable);
+        }
     }
 
     private static string FindReusableVariableName(ProducerCandidate producer, string token, string consumerPath)
@@ -460,6 +888,169 @@ public static class GeneratedTestCaseDependencyEnricher
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    private static bool TryExtractPlaceholderVariable(string value, out string variableName)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var match = PlaceholderRegex.Match(value.Trim());
+            if (match.Success)
+            {
+                variableName = match.Groups["name"].Value;
+                return true;
+            }
+        }
+
+        variableName = null;
+        return false;
+    }
+
+    private static ProducerCandidate SelectAuthProducer(
+        IReadOnlyList<ProducerCandidate> dependencyCandidates,
+        IReadOnlyList<ProducerCandidate> allCandidates,
+        Guid currentTestCaseId,
+        bool preferRegister)
+    {
+        var preferred = dependencyCandidates.Count > 0
+            ? dependencyCandidates
+            : allCandidates.Where(x => x.TestCaseId != currentTestCaseId).ToList();
+
+        return preferred
+            .Where(IsAuthLikeProducer)
+            .OrderByDescending(x => ScoreAuthProducer(x, preferRegister))
+            .ThenBy(x => x.OrderIndex)
+            .FirstOrDefault();
+    }
+
+    private static bool IsAuthLikeProducer(ProducerCandidate producer)
+    {
+        return IsAuthLikeEndpoint(producer?.OrderItem);
+    }
+
+    private static bool IsAuthLikeEndpoint(ApiOrderItemModel endpoint)
+    {
+        var signature = $"{endpoint?.HttpMethod} {endpoint?.Path}";
+        return signature.Contains("/auth", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRegisterLikeEndpoint(ApiOrderItemModel endpoint)
+    {
+        var signature = $"{endpoint?.HttpMethod} {endpoint?.Path}";
+        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ScoreAuthProducer(ProducerCandidate producer, bool preferRegister)
+    {
+        var signature = $"{producer.OrderItem?.HttpMethod} {producer.OrderItem?.Path}".ToLowerInvariant();
+        var score = 0;
+
+        if (preferRegister)
+        {
+            if (signature.Contains("register", StringComparison.OrdinalIgnoreCase) ||
+                signature.Contains("signup", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 100;
+            }
+        }
+        else
+        {
+            if (signature.Contains("login", StringComparison.OrdinalIgnoreCase) ||
+                signature.Contains("signin", StringComparison.OrdinalIgnoreCase) ||
+                signature.Contains("/token", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 100;
+            }
+        }
+
+        if (producer.TestType == TestType.HappyPath)
+        {
+            score += 20;
+        }
+
+        score += GetMethodPriority(producer.OrderItem?.HttpMethod);
+        return score;
+    }
+
+    private static bool IsCredentialField(string propertyName)
+    {
+        return string.Equals(propertyName, "email", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(propertyName, "password", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldSetPlaceholderValue(JsonNode currentValue, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var raw = currentValue?.ToJsonString(JsonOpts)?.Trim('"');
+        if (TryExtractPlaceholderVariable(raw, out var placeholder))
+        {
+            return !string.Equals(placeholder, variableName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.IsNullOrWhiteSpace(raw) || raw.Contains("example.com", StringComparison.OrdinalIgnoreCase) || raw == "Test123!";
+    }
+
+    private static bool ShouldReplaceIdentifierValue(string currentValue)
+    {
+        if (TryExtractPlaceholderVariable(currentValue, out _))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentValue))
+        {
+            return true;
+        }
+
+        if (currentValue == "0" || currentValue == "1")
+        {
+            return true;
+        }
+
+        if (Guid.TryParse(currentValue, out var guidValue))
+        {
+            return guidValue == Guid.Empty || currentValue.StartsWith("00000000", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
+    private static bool ShouldReplaceRouteParamValue(TestCase testCase, string token, string currentValue)
+    {
+        if (testCase == null || !IsHappyPathTestCase(testCase))
+        {
+            return false;
+        }
+
+        if (!IsIdentifierToken(token))
+        {
+            return false;
+        }
+
+        return ShouldReplaceIdentifierValue(currentValue);
+    }
+
+    private static bool IsHappyPathTestCase(TestCase testCase)
+    {
+        return testCase.TestType == TestType.HappyPath;
+    }
+
+    private static bool IsIdentifierToken(string token)
+    {
+        return !string.IsNullOrWhiteSpace(token)
+            && (string.Equals(token, "id", StringComparison.OrdinalIgnoreCase)
+                || token.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+                || token.EndsWith("Ids", StringComparison.OrdinalIgnoreCase));
     }
 
     private static int GetMethodPriority(string method)
@@ -687,7 +1278,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
 public sealed class GeneratedTestCaseEnrichmentResult
 {
-    public static readonly GeneratedTestCaseEnrichmentResult Empty = new (Array.Empty<TestCaseVariable>());
+    public static readonly GeneratedTestCaseEnrichmentResult Empty = new(Array.Empty<TestCaseVariable>());
 
     public GeneratedTestCaseEnrichmentResult(IReadOnlyList<TestCaseVariable> existingProducerVariablesToPersist)
     {
