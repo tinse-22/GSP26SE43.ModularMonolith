@@ -26,7 +26,9 @@ const int AppHostPostgresFallbackPortFloor = 55434;
 const int AppHostPostgresFallbackPortCeiling = 55483;
 
 var builder = DistributedApplication.CreateBuilder(args);
-var externalConnectionString = builder.Configuration.GetConnectionString("Default");
+// External DB mode is enabled only when ConnectionStrings__Default is explicitly provided
+// in the current process environment. This avoids accidental appsettings defaults.
+var externalConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
 var configuredAppHostPostgresHostPort = ResolveConfiguredAppHostPostgresHostPort();
 var appHostPostgresHostPort = useExternalDatabase

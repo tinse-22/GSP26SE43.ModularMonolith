@@ -98,13 +98,33 @@ public class TestExecutionOrchestratorTests
 
         SetupDefaultMocks(new[] { caseA, caseB }, new[] { endpointId });
 
-        // Case A: fails validation
+        // Case A: fails with non-usable result (5xx + non-status-mismatch failure)
         SetupTestCaseExecution(caseA, isPassed: false);
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseA.TestCaseId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 500,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 40,
+            });
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseA.TestCaseId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = false,
+                StatusCodeMatched = false,
+                Failures = new List<ValidationFailureModel>
+                {
+                    new() { Code = "BODY_CONTAINS_MISSING", Message = "Hard failure" },
+                },
+            });
 
         // Case B: would normally pass, but should be skipped
         SetupTestCaseExecution(caseB, isPassed: true);
 
-        TestRunResultModel capturedResult = null;
+        TestRunResultModel? capturedResult = null;
         _resultCollectorMock
             .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
@@ -114,7 +134,7 @@ public class TestExecutionOrchestratorTests
                     Cases = results.Select(r => new TestCaseRunResultModel { TestCaseId = r.TestCaseId, Status = r.Status }).ToList(),
                 };
             })
-            .ReturnsAsync(() => capturedResult);
+            .ReturnsAsync(() => capturedResult!);
 
         // Act
         var result = await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
@@ -123,6 +143,94 @@ public class TestExecutionOrchestratorTests
         result.Cases.Should().HaveCount(2);
         result.Cases[0].Status.Should().Be("Failed");
         result.Cases[1].Status.Should().Be("Skipped");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_NotSkipDependency_WhenOnlyStatusMismatchBut2xx()
+    {
+        // Arrange
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 0);
+        var caseB = CreateTestCase(caseBId, endpointId, 1, dependencyIds: new[] { caseAId });
+
+        SetupDefaultMocks(new[] { caseA, caseB }, new[] { endpointId });
+
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) => new ResolvedTestCaseRequest
+            {
+                TestCaseId = tc.TestCaseId,
+                Name = tc.Name,
+                HttpMethod = "POST",
+                ResolvedUrl = "https://api.example.com/test",
+                TimeoutMs = 30000,
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseAId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 201,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 30,
+            });
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseBId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 30,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseAId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = false,
+                StatusCodeMatched = false,
+                Failures = new List<ValidationFailureModel>
+                {
+                    new() { Code = "STATUS_CODE_MISMATCH", Message = "Expected 200 but got 201" },
+                },
+            });
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseBId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        TestRunResultModel? capturedResult = null;
+        _resultCollectorMock
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            {
+                capturedResult = new TestRunResultModel
+                {
+                    Cases = results.Select(r => new TestCaseRunResultModel { TestCaseId = r.TestCaseId, Status = r.Status }).ToList(),
+                };
+            })
+            .ReturnsAsync(() => capturedResult!);
+
+        // Act
+        var result = await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        result.Cases.Should().HaveCount(2);
+        result.Cases[0].Status.Should().Be("Failed");
+        result.Cases[1].Status.Should().Be("Passed");
     }
 
     [Fact]
@@ -178,7 +286,7 @@ public class TestExecutionOrchestratorTests
         SetupTestCaseExecution(case1, isPassed: true);
         SetupResultCollector();
 
-        TestRun updatedRun = null;
+        TestRun? updatedRun = null;
         _runRepoMock
             .Setup(x => x.UpdateAsync(It.IsAny<TestRun>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, CancellationToken>((run, _) =>
@@ -213,7 +321,7 @@ public class TestExecutionOrchestratorTests
         SetupDefaultMocks(new[] { case1, case2 }, new[] { endpointId });
 
         // Track variables received by each Resolve call
-        Dictionary<string, string> case2Variables = null;
+        Dictionary<string, string>? case2Variables = null;
 
         _variableResolverMock
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
@@ -290,8 +398,8 @@ public class TestExecutionOrchestratorTests
         SetupDefaultMocks(new[] { loginCase, createCase, getCase }, new[] { endpointId });
 
         // Track variable bags received by each Resolve call
-        Dictionary<string, string> createVars = null;
-        Dictionary<string, string> getVars = null;
+        Dictionary<string, string>? createVars = null;
+        Dictionary<string, string>? getVars = null;
 
         _variableResolverMock
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
@@ -387,7 +495,7 @@ public class TestExecutionOrchestratorTests
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
             .Throws(new UnresolvedVariableException("Bien '{{missing}}' chua duoc giai quyet trong URL."));
 
-        TestCaseExecutionResult capturedFailedCase = null;
+        TestCaseExecutionResult? capturedFailedCase = null;
         _resultCollectorMock
             .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
@@ -528,7 +636,7 @@ public class TestExecutionOrchestratorTests
         Guid id,
         Guid endpointId,
         int orderIndex,
-        Guid[] dependencyIds = null)
+        Guid[]? dependencyIds = null)
     {
         return new ExecutionTestCaseDto
         {

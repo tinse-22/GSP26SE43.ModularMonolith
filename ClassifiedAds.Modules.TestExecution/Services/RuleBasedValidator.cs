@@ -86,7 +86,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         var checksSkipped = 0;
 
         // 1. Status code check
-        TrackCheck(ValidateStatusCode(response, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateStatusCode(response, testCase, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 2. Response schema validation
         TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result), ref checksPerformed, ref checksSkipped);
@@ -128,6 +128,7 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValidateStatusCode(
         HttpTestResponse response,
+        ExecutionTestCaseDto testCase,
         ExecutionTestCaseExpectationDto expectation,
         TestCaseValidationResult result)
     {
@@ -152,15 +153,9 @@ public class RuleBasedValidator : IRuleBasedValidator
 
             if (!response.StatusCode.HasValue || !expectedStatuses.Contains(response.StatusCode.Value))
             {
-                if (ShouldTreatAsAdaptiveErrorMatch(response, expectedStatuses))
+                if (TryApplyAdaptiveStatusMatch(response, expectedStatuses, testCase, result))
                 {
                     result.StatusCodeMatched = true;
-                    result.Warnings.Add(new ValidationWarningModel
-                    {
-                        Code = "ADAPTIVE_ERROR_PAYLOAD_MATCH",
-                        Message = $"Status thực tế 200 không nằm trong kỳ vọng [{string.Join(", ", expectedStatuses)}], nhưng response body thể hiện lỗi hợp lệ nên được chấp nhận theo chế độ adaptive.",
-                        Target = "ExpectedStatus",
-                    });
                 }
                 else
                 {
@@ -185,15 +180,9 @@ public class RuleBasedValidator : IRuleBasedValidator
                 if (response.StatusCode != singleStatus)
                 {
                     var singleExpectedList = new List<int> { singleStatus };
-                    if (ShouldTreatAsAdaptiveErrorMatch(response, singleExpectedList))
+                    if (TryApplyAdaptiveStatusMatch(response, singleExpectedList, testCase, result))
                     {
                         result.StatusCodeMatched = true;
-                        result.Warnings.Add(new ValidationWarningModel
-                        {
-                            Code = "ADAPTIVE_ERROR_PAYLOAD_MATCH",
-                            Message = $"Status thực tế 200 không nằm trong kỳ vọng [{singleStatus}], nhưng response body thể hiện lỗi hợp lệ nên được chấp nhận theo chế độ adaptive.",
-                            Target = "ExpectedStatus",
-                        });
                     }
                     else
                     {
@@ -933,6 +922,136 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         return LooksLikeErrorPayload(response.Body);
+    }
+
+    private static bool TryApplyAdaptiveStatusMatch(
+        HttpTestResponse response,
+        IReadOnlyCollection<int> expectedStatuses,
+        ExecutionTestCaseDto testCase,
+        TestCaseValidationResult result)
+    {
+        if (!response.StatusCode.HasValue || expectedStatuses == null || expectedStatuses.Count == 0)
+        {
+            return false;
+        }
+
+        var actualStatus = response.StatusCode.Value;
+
+        if (ShouldTreatAsAdaptiveErrorMatch(response, expectedStatuses))
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "ADAPTIVE_ERROR_PAYLOAD_MATCH",
+                Message = $"Status thực tế {actualStatus} không nằm trong kỳ vọng [{string.Join(", ", expectedStatuses)}], nhưng response body thể hiện lỗi hợp lệ nên được chấp nhận theo chế độ adaptive.",
+                Target = "ExpectedStatus",
+            });
+
+            return true;
+        }
+
+        if (IsAdaptiveSuccessStatusMatch(actualStatus, expectedStatuses, testCase))
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "ADAPTIVE_SUCCESS_STATUS_MATCH",
+                Message = $"Status thực tế {actualStatus} không nằm trong kỳ vọng [{string.Join(", ", expectedStatuses)}], nhưng được chấp nhận theo tương thích success-status của HTTP method {NormalizeHttpMethod(testCase?.Request?.HttpMethod)}.",
+                Target = "ExpectedStatus",
+            });
+
+            return true;
+        }
+
+        if (IsAdaptiveClientErrorMatch(actualStatus, expectedStatuses, testCase))
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "ADAPTIVE_CLIENT_ERROR_STATUS_MATCH",
+                Message = $"Status thực tế {actualStatus} không nằm trong kỳ vọng [{string.Join(", ", expectedStatuses)}], nhưng được chấp nhận vì test case {(testCase?.TestType ?? "(unknown)")} cho phép nhóm client-error 4xx.",
+                Target = "ExpectedStatus",
+            });
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsAdaptiveSuccessStatusMatch(
+        int actualStatus,
+        IReadOnlyCollection<int> expectedStatuses,
+        ExecutionTestCaseDto testCase)
+    {
+        if (actualStatus < 200 || actualStatus >= 300)
+        {
+            return false;
+        }
+
+        if (!expectedStatuses.Any(status => status >= 200 && status < 300))
+        {
+            return false;
+        }
+
+        var candidateStatuses = GetSuccessStatusCandidates(NormalizeHttpMethod(testCase?.Request?.HttpMethod));
+        if (!candidateStatuses.Contains(actualStatus))
+        {
+            return false;
+        }
+
+        return expectedStatuses.Any(candidateStatuses.Contains);
+    }
+
+    private static bool IsAdaptiveClientErrorMatch(
+        int actualStatus,
+        IReadOnlyCollection<int> expectedStatuses,
+        ExecutionTestCaseDto testCase)
+    {
+        if (actualStatus < 400 || actualStatus >= 500)
+        {
+            return false;
+        }
+
+        if (!expectedStatuses.Any(status => status >= 400 && status < 500))
+        {
+            return false;
+        }
+
+        if (IsBoundaryOrNegative(testCase?.TestType))
+        {
+            return true;
+        }
+
+        // Some suites encode error expectations narrowly (e.g. [401]) while APIs return adjacent 4xx (e.g. 400).
+        return expectedStatuses.All(status => status < 200 || status >= 300);
+    }
+
+    private static string NormalizeHttpMethod(string httpMethod)
+    {
+        return string.IsNullOrWhiteSpace(httpMethod)
+            ? "GET"
+            : httpMethod.Trim().ToUpperInvariant();
+    }
+
+    private static HashSet<int> GetSuccessStatusCandidates(string method)
+    {
+        return method switch
+        {
+            "POST" => new HashSet<int> { 200, 201, 202 },
+            "PUT" => new HashSet<int> { 200, 202, 204 },
+            "PATCH" => new HashSet<int> { 200, 202, 204 },
+            "DELETE" => new HashSet<int> { 200, 202, 204 },
+            _ => new HashSet<int> { 200 },
+        };
+    }
+
+    private static bool IsBoundaryOrNegative(string testType)
+    {
+        if (string.IsNullOrWhiteSpace(testType))
+        {
+            return false;
+        }
+
+        var normalized = testType.Trim().ToLowerInvariant();
+        return normalized is "boundary" or "negative";
     }
 
     private static bool LooksLikeErrorPayload(string body)

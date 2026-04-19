@@ -75,6 +75,12 @@ public class ApiEndpointMetadataDto
     /// Used by prompt/context mappers to preserve true parameter semantics.
     /// </summary>
     public IReadOnlyCollection<ApiEndpointParameterDescriptorDto> Parameters { get; set; } = Array.Empty<ApiEndpointParameterDescriptorDto>();
+
+    /// <summary>
+    /// Response descriptors from the API spec, including concrete HTTP status codes.
+    /// Used by prompt/context mappers to keep expected outcomes aligned with OpenAPI.
+    /// </summary>
+    public IReadOnlyCollection<ApiEndpointResponseDescriptorDto> Responses { get; set; } = Array.Empty<ApiEndpointResponseDescriptorDto>();
 }
 
 public class ApiEndpointParameterDescriptorDto
@@ -92,6 +98,17 @@ public class ApiEndpointParameterDescriptorDto
     public string Schema { get; set; }
 
     public string DefaultValue { get; set; }
+
+    public string Examples { get; set; }
+}
+
+public class ApiEndpointResponseDescriptorDto
+{
+    public int StatusCode { get; set; }
+
+    public string Description { get; set; }
+
+    public string Schema { get; set; }
 
     public string Examples { get; set; }
 }

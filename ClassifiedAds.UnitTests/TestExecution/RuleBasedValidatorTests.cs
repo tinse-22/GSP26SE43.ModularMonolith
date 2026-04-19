@@ -94,6 +94,74 @@ public class RuleBasedValidatorTests
         result.Failures.Should().BeEmpty();
     }
 
+    [Fact]
+    public void Validate_HappyPathPost_Expected200_Actual201_Should_PassWithAdaptiveWarning()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 201);
+        var testCase = CreateTestCase(expectedStatus: "[200]");
+        testCase.TestType = "HappyPath";
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            HttpMethod = "POST",
+            Url = "/api/products",
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.StatusCodeMatched.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "ADAPTIVE_SUCCESS_STATUS_MATCH");
+        result.Failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_Boundary_Expected401_Actual400_Should_PassWithAdaptiveWarning()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 400);
+        var testCase = CreateTestCase(expectedStatus: "[401]");
+        testCase.TestType = "Boundary";
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            HttpMethod = "POST",
+            Url = "/api/products",
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.StatusCodeMatched.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "ADAPTIVE_CLIENT_ERROR_STATUS_MATCH");
+        result.Failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_HappyPathGet_Expected200_Actual201_Should_StillFail()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 201);
+        var testCase = CreateTestCase(expectedStatus: "[200]");
+        testCase.TestType = "HappyPath";
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            HttpMethod = "GET",
+            Url = "/api/products",
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.StatusCodeMatched.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "STATUS_CODE_MISMATCH");
+    }
+
     #endregion
 
     #region Response Schema

@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using ApiHttpMethod = ClassifiedAds.Modules.ApiDocumentation.Entities.HttpMethod;
 
 namespace ClassifiedAds.UnitTests.ApiDocumentation;
 
@@ -137,7 +138,7 @@ public class GetProjectQueryHandlerTests
             ProjectId = projectId,
             Name = "Spec B",
             Version = "v2",
-            SourceType = SourceType.OpenApi,
+            SourceType = SourceType.OpenAPI,
             ParseStatus = ParseStatus.Success,
             IsActive = false,
             CreatedDateTime = DateTimeOffset.UtcNow.AddMinutes(-1),
@@ -155,8 +156,8 @@ public class GetProjectQueryHandlerTests
         };
         var endpoints = new[]
         {
-            new ApiEndpoint { Id = Guid.NewGuid(), ApiSpecId = activeSpecId, Path = "/api/a", HttpMethod = HttpMethod.GET },
-            new ApiEndpoint { Id = Guid.NewGuid(), ApiSpecId = activeSpecId, Path = "/api/b", HttpMethod = HttpMethod.POST },
+            new ApiEndpoint { Id = Guid.NewGuid(), ApiSpecId = activeSpecId, Path = "/api/a", HttpMethod = ApiHttpMethod.GET },
+            new ApiEndpoint { Id = Guid.NewGuid(), ApiSpecId = activeSpecId, Path = "/api/b", HttpMethod = ApiHttpMethod.POST },
         };
 
         SetupProjectRepository(new[] { archivedProject });

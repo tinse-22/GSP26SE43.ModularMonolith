@@ -259,6 +259,19 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
                         Examples = p.Examples,
                     }).ToList()
                     : Array.Empty<ApiEndpointParameterDescriptorDto>(),
+                Responses = endpointResponsesById.TryGetValue(endpoint.Id, out var responseEntities)
+                    ? responseEntities
+                        .Where(r => r.StatusCode > 0)
+                        .OrderBy(r => r.StatusCode)
+                        .Select(r => new ApiEndpointResponseDescriptorDto
+                        {
+                            StatusCode = r.StatusCode,
+                            Description = r.Description,
+                            Schema = r.Schema,
+                            Examples = r.Examples,
+                        })
+                        .ToList()
+                    : Array.Empty<ApiEndpointResponseDescriptorDto>(),
             })
             .ToList();
     }
