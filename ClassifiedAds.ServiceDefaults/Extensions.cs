@@ -43,8 +43,13 @@ public static class Extensions
 
             // Enable resilience with standard retry and circuit breaker policies
             // Note: Typed clients with custom resilience (e.g., N8nIntegrationService) add their own
-            // handlers which take precedence over this default (last-in wins for Polly pipelines)
-            http.AddStandardResilienceHandler();
+            // handlers. Keep defaults at 5 minutes to avoid 30s timeout clamping on long LLM calls.
+            http.AddStandardResilienceHandler(options =>
+            {
+                options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(5);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
+                options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(10);
+            });
         });
 
         return builder;

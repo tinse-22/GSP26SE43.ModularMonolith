@@ -109,7 +109,7 @@ public static class TestGenerationServiceCollectionExtensions
             var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
             options.BaseUrl = n8n.BaseUrl ?? string.Empty;
             options.ApiKey = n8n.ApiKey ?? string.Empty;
-            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 120 : n8n.TimeoutSeconds;
+            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 300 : n8n.TimeoutSeconds;
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
             options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
             options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
@@ -118,7 +118,7 @@ public static class TestGenerationServiceCollectionExtensions
 
         var n8nTimeoutSeconds = settings.N8nIntegration?.TimeoutSeconds > 0
             ? settings.N8nIntegration.TimeoutSeconds
-            : 120; // Default 2 minutes for LLM webhook calls
+            : 300; // Default 5 minutes for LLM webhook calls
 
         // Named client to exclude from default resilience handler in ServiceDefaults
         const string n8nHttpClientName = "N8nIntegrationHttpClient";
@@ -131,20 +131,20 @@ public static class TestGenerationServiceCollectionExtensions
                 client.BaseAddress = new System.Uri(n8n.BaseUrl);
             }
 
-            // This timeout is a backstop; Polly resilience handler controls actual timeout
-            client.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 30);
+            // Keep HttpClient timeout aligned with configured request timeout.
+            client.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
         })
         .AddStandardResilienceHandler(options =>
         {
-            // Override standard resilience timeouts for LLM/n8n webhook calls (120s default)
+            // Override standard resilience timeouts for LLM/n8n webhook calls (300s default)
             // Standard handler has 10s attempt timeout which is too short for LLM operations
             options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
-            options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds + 60);
+            options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
             options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(n8nTimeoutSeconds * 2);
 
-            // Reduce retries since LLM calls are expensive
-            options.Retry.MaxRetryAttempts = 2;
-            options.Retry.Delay = System.TimeSpan.FromSeconds(3);
+            // Keep retry configuration valid but never retry this non-idempotent webhook call.
+            options.Retry.MaxRetryAttempts = 1;
+            options.Retry.ShouldHandle = static _ => new System.Threading.Tasks.ValueTask<bool>(false);
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
