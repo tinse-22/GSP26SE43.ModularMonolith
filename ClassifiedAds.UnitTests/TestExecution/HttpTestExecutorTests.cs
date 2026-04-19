@@ -70,6 +70,43 @@ public class HttpTestExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_DeleteWithBody_ShouldSendBody()
+    {
+        // Arrange
+        string capturedBody = null;
+        string capturedContentType = null;
+
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"deleted\":true}"),
+        }, msg =>
+        {
+            if (msg.Content != null)
+            {
+                capturedBody = msg.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                capturedContentType = msg.Content.Headers.ContentType?.MediaType;
+            }
+        });
+
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest(
+            "DELETE",
+            "https://api.example.com/items/1",
+            body: "{\"reason\":\"cleanup\"}",
+            bodyType: "JSON");
+
+        // Act
+        var result = await _executor.ExecuteAsync(request);
+
+        // Assert
+        result.StatusCode.Should().Be(200);
+        capturedBody.Should().Be("{\"reason\":\"cleanup\"}");
+        capturedContentType.Should().Be("application/json");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithQueryParams_ShouldAppendToUrl()
     {
         // Arrange
