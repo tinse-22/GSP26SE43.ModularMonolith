@@ -288,8 +288,17 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             }
         }
 
-        foreach (var kvp in extracted)
+        var currentResourceIdVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
+        foreach (var kvp in extracted.ToList())
         {
+            if (ShouldKeepExistingIdentifierVariable(variableBag, kvp.Key, currentResourceIdVariableName))
+            {
+                // Avoid corrupting previously extracted foreign-resource IDs
+                // (e.g., categoryId from create-category being overwritten by create-product _id).
+                extracted.Remove(kvp.Key);
+                continue;
+            }
+
             variableBag[kvp.Key] = kvp.Value;
         }
 
@@ -545,6 +554,36 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         return null;
+    }
+
+    private static bool ShouldKeepExistingIdentifierVariable(
+        IReadOnlyDictionary<string, string> variableBag,
+        string variableName,
+        string currentResourceIdVariableName)
+    {
+        if (variableBag == null
+            || string.IsNullOrWhiteSpace(currentResourceIdVariableName)
+            || string.IsNullOrWhiteSpace(variableName)
+            || !variableBag.ContainsKey(variableName)
+            || !IsIdentifierVariableName(variableName)
+            || string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !string.Equals(variableName, currentResourceIdVariableName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsIdentifierVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ExtractPath(string urlOrPath)
