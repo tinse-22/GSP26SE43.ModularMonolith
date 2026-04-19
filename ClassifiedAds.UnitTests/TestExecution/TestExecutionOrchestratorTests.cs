@@ -189,7 +189,7 @@ public class TestExecutionOrchestratorTests
             });
 
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
             .Returns(new Dictionary<string, string>());
 
         _validatorMock
@@ -355,8 +355,8 @@ public class TestExecutionOrchestratorTests
         // Case 1 extracts "token", case 2 extracts nothing
         var extractCallCount = 0;
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
-            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>>((_, _) =>
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
             {
                 extractCallCount++;
                 return extractCallCount == 1
@@ -439,8 +439,8 @@ public class TestExecutionOrchestratorTests
         // Get extracts nothing
         var callIndex = 0;
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
-            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>>((_, _) =>
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
             {
                 callIndex++;
                 return callIndex switch
@@ -606,7 +606,7 @@ public class TestExecutionOrchestratorTests
             });
 
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), testCase.Variables))
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), testCase.Variables, It.IsAny<string>()))
             .Returns(new Dictionary<string, string>());
 
         _validatorMock

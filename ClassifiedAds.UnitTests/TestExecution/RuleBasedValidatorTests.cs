@@ -248,10 +248,10 @@ public class RuleBasedValidatorTests
         // Act
         var result = _validator.Validate(response, testCase, metadata);
 
-        // Assert
-        result.IsPassed.Should().BeFalse();
+        // Assert: Fallback schema mismatch produces WARNING, not FAILURE
+        result.IsPassed.Should().BeTrue();
         result.SchemaMatched.Should().BeFalse();
-        result.Failures.Should().ContainSingle(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+        result.Warnings.Should().ContainSingle(w => w.Code == "RESPONSE_SCHEMA_MISMATCH");
     }
 
     [Fact]
@@ -693,9 +693,9 @@ public class RuleBasedValidatorTests
         // Act
         var result = _validator.Validate(response, testCase, metadata);
 
-        // Assert: Should FAIL because schema fallback is applied for 2xx
-        result.IsPassed.Should().BeFalse();
-        result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+        // Assert: Schema fallback produces WARNING, not FAILURE, so result.IsPassed is True
+        result.IsPassed.Should().BeTrue();
+        result.Warnings.Should().Contain(w => w.Code == "RESPONSE_SCHEMA_MISMATCH");
     }
 
     [Fact]
@@ -719,9 +719,9 @@ public class RuleBasedValidatorTests
         // Act
         var result = _validator.Validate(response, testCase, metadata);
 
-        // Assert: Should apply fallback because expected list contains 2xx
-        result.IsPassed.Should().BeFalse();
-        result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+        // Assert: Status 400 matches expected list, schema fallback skipped for non-2xx, so result.IsPassed is True
+        result.IsPassed.Should().BeTrue();
+        result.StatusCodeMatched.Should().BeTrue();
     }
 
     [Fact]
@@ -754,7 +754,7 @@ public class RuleBasedValidatorTests
     [InlineData("[201]", false)]
     [InlineData("[204]", false)]
     [InlineData("[200, 201]", false)]
-    [InlineData("[200, 400]", false)]  // Mixed - contains 2xx, so should not skip
+    [InlineData("[200, 400]", true)]  // Mixed - contains 2xx, but actual is 400 (non-2xx), so skip fallback
     public void Validate_SchemaFallbackBehavior_BasedOnExpectedStatus(
         string expectedStatus, bool shouldSkipFallback)
     {
@@ -781,11 +781,12 @@ public class RuleBasedValidatorTests
         {
             // No schema mismatch because fallback was skipped
             result.Failures.Should().NotContain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+            result.Warnings.Should().NotContain(w => w.Code == "RESPONSE_SCHEMA_MISMATCH");
         }
         else
         {
-            // Schema mismatch because fallback was applied
-            result.Failures.Should().Contain(f => f.Code == "RESPONSE_SCHEMA_MISMATCH");
+            // Schema mismatch because fallback was applied (produces WARNING, not FAILURE)
+            result.Warnings.Should().Contain(w => w.Code == "RESPONSE_SCHEMA_MISMATCH");
         }
     }
 

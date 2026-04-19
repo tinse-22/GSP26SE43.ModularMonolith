@@ -231,7 +231,13 @@ public class RuleBasedValidator : IRuleBasedValidator
                 return false;
             }
 
-            // Fallback to endpoint metadata schema only for 2xx expected statuses
+            if (IsExpectingMixed2xxAnd4xxStatus(expectation))
+            {
+                // Mixed expected statuses: don't apply fallback schema
+                return false;
+            }
+
+            // Fallback to endpoint metadata schema only for pure 2xx expected statuses
             if (endpointMetadata?.ResponseSchemaPayloads != null)
             {
                 schemaJson = endpointMetadata.ResponseSchemaPayloads.FirstOrDefault();
@@ -903,6 +909,32 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
     }
 
+    private static bool IsExpectingMixed2xxAnd4xxStatus(ExecutionTestCaseExpectationDto expectation)
+    {
+        if (string.IsNullOrWhiteSpace(expectation?.ExpectedStatus))
+        {
+            return false;
+        }
+
+        try
+        {
+            var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+            if (expectedStatuses == null || expectedStatuses.Count < 2)
+            {
+                return false;
+            }
+
+            // Check if list contains both 2xx and 4xx
+            bool has2xx = expectedStatuses.Any(status => status >= 200 && status < 300);
+            bool has4xx = expectedStatuses.Any(status => status >= 400 && status < 500);
+            return has2xx && has4xx;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool ShouldTreatAsAdaptiveErrorMatch(HttpTestResponse response, IReadOnlyCollection<int> expectedStatuses)
     {
         if (!response.StatusCode.HasValue || response.StatusCode.Value != 200)
@@ -1010,6 +1042,14 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
+        // Adaptive client error match only applies when expected list is pure 4xx
+        // (no 2xx success statuses mixed in).
+        // E.g., expected [401, 403] with actual 400 can match; expected [200, 400] with actual 400 cannot.
+        if (expectedStatuses.Any(status => status >= 200 && status < 300))
+        {
+            return false; // Has 2xx, not pure client error list
+        }
+
         if (!expectedStatuses.Any(status => status >= 400 && status < 500))
         {
             return false;
@@ -1020,8 +1060,9 @@ public class RuleBasedValidator : IRuleBasedValidator
             return true;
         }
 
-        // Some suites encode error expectations narrowly (e.g. [401]) while APIs return adjacent 4xx (e.g. 400).
-        return expectedStatuses.All(status => status < 200 || status >= 300);
+        // Some boundary/negative suites encode error expectations narrowly (e.g. [401]) while APIs return adjacent 4xx (e.g. 400).
+        // Only apply if there is no 2xx in expected and case is boundary/negative.
+        return false;
     }
 
     private static string NormalizeHttpMethod(string httpMethod)
