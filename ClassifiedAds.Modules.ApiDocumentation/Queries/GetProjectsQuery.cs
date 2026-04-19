@@ -41,10 +41,8 @@ public class GetProjectsQueryHandler : IQueryHandler<GetProjectsQuery, Paginated
         var projectsQuery = _projectRepository.GetQueryableSet()
             .Where(p => p.OwnerId == query.OwnerId);
 
-        if (query.Status.HasValue)
-        {
-            projectsQuery = projectsQuery.Where(p => p.Status == query.Status.Value);
-        }
+        var requestedStatus = query.Status ?? ProjectStatus.Active;
+        projectsQuery = projectsQuery.Where(p => p.Status == requestedStatus);
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

@@ -107,10 +107,16 @@ public class HttpTestExecutor : IHttpTestExecutor
         {
             sw.Stop();
             _logger.LogWarning(ex, "HTTP request failed. TestCaseId={TestCaseId}, Url={Url}", request.TestCaseId, request.ResolvedUrl);
+
+            // Provide a clear message for premature connection drops (e.g. Render cold-start)
+            var detail = ex.InnerException is System.Net.Http.HttpIOException ioEx
+                ? $"Kết nối bị ngắt: {ioEx.HttpRequestError} — server có thể đang khởi động (cold start)."
+                : $"Lỗi HTTP: {ex.Message}";
+
             return new HttpTestResponse
             {
                 LatencyMs = sw.ElapsedMilliseconds,
-                TransportError = $"Lỗi HTTP: {ex.Message}",
+                TransportError = detail,
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

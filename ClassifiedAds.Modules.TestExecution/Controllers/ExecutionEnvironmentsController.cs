@@ -17,7 +17,7 @@ namespace ClassifiedAds.Modules.TestExecution.Controllers;
 
 [Authorize]
 [Produces("application/json")]
-[Route("api/projects/{projectId:guid}/execution-environments")]
+[Route("api/projects/{projectId}/execution-environments")]
 [ApiController]
 public class ExecutionEnvironmentsController : ControllerBase
 {

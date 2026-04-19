@@ -1,4 +1,4 @@
-using ClassifiedAds.Contracts.TestGeneration.DTOs;
+﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -139,6 +139,67 @@ public class TestExecutionReadGatewayServiceTests
     }
 
     [Fact]
+    public async Task GetExecutionContextAsync_Should_OrderCasesTopologicallyByDependency()
+    {
+        // Arrange: baseline order C -> B -> A, dependencies require A -> B -> C
+        var endpointId = Guid.NewGuid();
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+        var caseCId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 2);
+        var caseB = CreateTestCase(caseBId, endpointId, 1);
+        var caseC = CreateTestCase(caseCId, endpointId, 0);
+
+        var deps = new[]
+        {
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseBId, DependsOnTestCaseId = caseAId },
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseCId, DependsOnTestCaseId = caseBId },
+        };
+
+        SetupGatewayMocks(new[] { caseA, caseB, caseC }, deps, endpointId);
+
+        // Act
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        // Assert
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().ContainInOrder(caseAId, caseBId, caseCId);
+
+        result.OrderedTestCases.Select(x => x.OrderIndex)
+            .Should().ContainInOrder(0, 1, 2);
+    }
+
+    [Fact]
+    public async Task GetExecutionContextAsync_WhenDependencyCycleExists_ShouldBreakCycleAndOrderAll()
+    {
+        // Arrange: A depends on B, B depends on A (cycle)
+        var endpointId = Guid.NewGuid();
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 0);
+        var caseB = CreateTestCase(caseBId, endpointId, 1);
+
+        var deps = new[]
+        {
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseAId, DependsOnTestCaseId = caseBId },
+            new TestCaseDependency { Id = Guid.NewGuid(), TestCaseId = caseBId, DependsOnTestCaseId = caseAId },
+        };
+
+        SetupGatewayMocks(new[] { caseA, caseB }, deps, endpointId);
+
+        // Act — should not throw; cycles are broken gracefully
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        // Assert — all test cases are returned; cycle is broken by baseline order
+        result.OrderedTestCases.Should().HaveCount(2);
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().Contain(caseAId)
+            .And.Contain(caseBId);
+    }
+
+    [Fact]
     public async Task GetExecutionContextAsync_SelectDisabledTestCase_ShouldThrowValidation()
     {
         // Arrange
@@ -229,6 +290,33 @@ public class TestExecutionReadGatewayServiceTests
         _expectationRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseExpectation>>()), Times.Once);
         _variableRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()), Times.Once);
         _dependencyRepoMock.Verify(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseDependency>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetExecutionContextAsync_Should_MapVariableRegex_ForExecution()
+    {
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        var variable = new TestCaseVariable
+        {
+            Id = Guid.NewGuid(),
+            TestCaseId = caseId,
+            VariableName = "authToken",
+            ExtractFrom = ExtractFrom.ResponseHeader,
+            HeaderName = "Authorization",
+            Regex = "(?:Bearer\\s+)?(?<value>[^\\s]+)$",
+        };
+
+        SetupGatewayMocks(new[] { testCase }, Array.Empty<TestCaseDependency>(), endpointId);
+        _variableRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()))
+            .ReturnsAsync(new List<TestCaseVariable> { variable });
+
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        result.OrderedTestCases.Should().ContainSingle();
+        result.OrderedTestCases[0].Variables.Should().ContainSingle();
+        result.OrderedTestCases[0].Variables[0].Regex.Should().Be("(?:Bearer\\s+)?(?<value>[^\\s]+)$");
     }
 
     #region Helpers

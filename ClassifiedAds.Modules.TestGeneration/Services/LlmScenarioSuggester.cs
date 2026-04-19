@@ -39,12 +39,19 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
-        "4. Use realistic but clearly synthetic test data.\n" +
+        "4. Use UNIQUE synthetic test data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "   AUTH FLOW RULES:\n" +
+        "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
+        "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
+        "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
         "5. endpointId must be the EXACT UUID from input.\n" +
         "6. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
         "7. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
-        "8. request.body must be a JSON string (serialized) or null.\n" +
-        "9. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
+        "8. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n" +
+        "9. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
+        "10. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
+        "11. If endpoint requires request body, request.bodyType must be JSON and request.body must be a non-empty serialized JSON string.\n" +
+        "12. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -62,8 +69,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "        \"httpMethod\": \"<GET|POST|PUT|DELETE|PATCH>\",\n" +
         "        \"url\": \"<path>\",\n" +
         "        \"headers\": null,\n" +
-        "        \"pathParams\": null,\n" +
-        "        \"queryParams\": null,\n" +
+        "        \"pathParams\": {},\n" +
+        "        \"queryParams\": {},\n" +
         "        \"bodyType\": \"None|JSON\",\n" +
         "        \"body\": \"<serialized JSON string or null>\",\n" +
         "        \"timeout\": 30000\n" +
@@ -80,7 +87,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"tokensUsed\": 0\n" +
         "}";
 
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -172,8 +179,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             orderedSequence,
             metadataMap,
             prompts,
-            feedbackContext.EndpointFeedbackContexts,
-            algorithmProfile);
+            feedbackContext.EndpointFeedbackContexts);
+
+        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
 
         // Step 4: Call n8n webhook
         _logger.LogInformation(
@@ -194,8 +202,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
 
         // Step 6: Parse response into domain models
-        var scenarios = ParseScenarios(n8nResponse);
-        scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap);
+        var scenarios = ParseScenarios(n8nResponse, endpointContracts);
+        scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap, endpointContracts);
 
         // Step 7: Cache results
         if (algorithmProfile.UseFeedbackLoopContext)
@@ -271,8 +279,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         Dictionary<Guid, ApiEndpointMetadataDto> metadataMap,
         IReadOnlyList<ObservationConfirmationPrompt> prompts,
-        IReadOnlyDictionary<Guid, string> endpointFeedbackContexts,
-        GenerationAlgorithmProfile algorithmProfile)
+        IReadOnlyDictionary<Guid, string> endpointFeedbackContexts)
     {
         var endpointPayloads = new List<N8nBoundaryEndpointPayload>();
 
@@ -308,15 +315,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     ? feedbackContext
                     : string.Empty,
                 Prompt = promptPayload,
-                ParameterSchemaPayloads = algorithmProfile.UseSchemaRelationshipAnalysis
-                    ? metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>()
-                    : new List<string>(),
-                ResponseSchemaPayloads = algorithmProfile.UseSchemaRelationshipAnalysis
-                    ? metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>()
-                    : new List<string>(),
-                ParameterDetails = algorithmProfile.UseSemanticTokenMatching
-                    ? BuildParameterDetails(context, orderItem.EndpointId)
-                    : new List<N8nParameterDetail>(),
+                ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
+                ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
             });
         }
 
@@ -325,7 +326,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TestSuiteId = context.TestSuiteId,
             TestSuiteName = context.Suite.Name,
             GlobalBusinessRules = context.Suite.GlobalBusinessRules,
-            AlgorithmProfile = algorithmProfile,
+            AlgorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap),
             Endpoints = endpointPayloads,
         };
@@ -469,24 +470,29 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return sb.ToString();
     }
 
-    private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(N8nBoundaryNegativeResponse response)
+    private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(
+        N8nBoundaryNegativeResponse response,
+        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts)
     {
         if (response?.Scenarios == null || response.Scenarios.Count == 0)
         {
             return Array.Empty<LlmSuggestedScenario>();
         }
 
-        return response.Scenarios.Select(s =>
+        var scenarios = new List<LlmSuggestedScenario>(response.Scenarios.Count);
+
+        foreach (var s in response.Scenarios)
         {
             var parsedType = ParseTestType(s.TestType);
-            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus);
+            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus, s.Request?.HttpMethod);
 
-            return new LlmSuggestedScenario
+            var parsedScenario = new LlmSuggestedScenario
             {
                 EndpointId = s.EndpointId,
                 ScenarioName = s.ScenarioName,
                 Description = s.Description,
                 SuggestedTestType = parsedType,
+                SuggestedBodyType = s.Request?.BodyType,
                 SuggestedBody = s.Request?.Body,
                 SuggestedPathParams = s.Request?.PathParams,
                 SuggestedQueryParams = s.Request?.QueryParams,
@@ -498,10 +504,74 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
             };
-        }).ToList();
+
+            if (endpointContracts != null &&
+                endpointContracts.TryGetValue(parsedScenario.EndpointId, out var contract))
+            {
+                parsedScenario = ContractAwareRequestSynthesizer.RepairScenario(parsedScenario, contract.RequestContext);
+
+                if (!IsScenarioContractComplete(parsedScenario, contract, out var missingParts))
+                {
+                    _logger.LogWarning(
+                        "Discarding incomplete LLM scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, Missing={Missing}",
+                        parsedScenario.EndpointId,
+                        parsedScenario.ScenarioName,
+                        string.Join(", ", missingParts));
+                    continue;
+                }
+            }
+
+            scenarios.Add(parsedScenario);
+        }
+
+        return scenarios;
     }
 
-    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source)
+    private static bool IsScenarioContractComplete(
+        LlmSuggestedScenario scenario,
+        EndpointRequestContract contract,
+        out List<string> missingParts)
+    {
+        missingParts = new List<string>();
+
+        foreach (var requiredPathParam in contract.RequiredPathParams)
+        {
+            if (scenario.SuggestedPathParams == null
+                || !scenario.SuggestedPathParams.TryGetValue(requiredPathParam, out var value)
+                || string.IsNullOrWhiteSpace(value))
+            {
+                missingParts.Add($"pathParams.{requiredPathParam}");
+            }
+        }
+
+        foreach (var requiredQueryParam in contract.RequiredQueryParams)
+        {
+            if (scenario.SuggestedQueryParams == null
+                || !scenario.SuggestedQueryParams.TryGetValue(requiredQueryParam, out var value)
+                || string.IsNullOrWhiteSpace(value))
+            {
+                missingParts.Add($"queryParams.{requiredQueryParam}");
+            }
+        }
+
+        if (contract.RequiresBody)
+        {
+            if (string.IsNullOrWhiteSpace(scenario.SuggestedBodyType)
+                || scenario.SuggestedBodyType.Equals("None", StringComparison.OrdinalIgnoreCase))
+            {
+                missingParts.Add("request.bodyType");
+            }
+
+            if (string.IsNullOrWhiteSpace(scenario.SuggestedBody))
+            {
+                missingParts.Add("request.body");
+            }
+        }
+
+        return missingParts.Count == 0;
+    }
+
+    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source, string httpMethod)
     {
         var normalized = source?
             .Where(code => code >= 100 && code <= 599)
@@ -511,29 +581,79 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         if (testType == TestType.HappyPath)
         {
             var happyStatuses = normalized.Where(code => code >= 200 && code <= 299).ToList();
-            if (happyStatuses.Count > 0)
-            {
-                return happyStatuses;
-            }
-
-            return new List<int> { 200 };
+            return MergeStatuses(happyStatuses, GetHappyPathDefaultStatuses(httpMethod));
         }
 
         // Boundary/Negative should not accept success statuses.
         var nonSuccessStatuses = normalized.Where(code => code < 200 || code >= 300).ToList();
-        if (nonSuccessStatuses.Count > 0)
+        return MergeStatuses(nonSuccessStatuses, GetBoundaryNegativeDefaultStatuses(httpMethod));
+    }
+
+    private static List<int> GetHappyPathDefaultStatuses(string httpMethod)
+    {
+        var method = NormalizeHttpMethod(httpMethod);
+        return method switch
         {
-            return nonSuccessStatuses;
+            "POST" => new List<int> { 201, 200 },
+            "PUT" => new List<int> { 200, 204 },
+            "PATCH" => new List<int> { 200, 204 },
+            "DELETE" => new List<int> { 204, 200, 202 },
+            _ => new List<int> { 200 },
+        };
+    }
+
+    private static List<int> GetBoundaryNegativeDefaultStatuses(string httpMethod)
+    {
+        _ = NormalizeHttpMethod(httpMethod);
+        return new List<int> { 400, 401, 403, 404, 409, 415, 422 };
+    }
+
+    private static List<int> MergeStatuses(List<int> source, List<int> fallback)
+    {
+        var merged = new List<int>();
+
+        if (source != null)
+        {
+            foreach (var code in source)
+            {
+                if (!merged.Contains(code))
+                {
+                    merged.Add(code);
+                }
+            }
         }
 
-        // For Boundary/Negative, accept common client-error variants by default.
-        return new List<int> { 400, 401, 403, 404, 409, 422 };
+        if (fallback != null)
+        {
+            foreach (var code in fallback)
+            {
+                if (!merged.Contains(code))
+                {
+                    merged.Add(code);
+                }
+            }
+        }
+
+        if (merged.Count == 0)
+        {
+            merged.Add(200);
+        }
+
+        return merged;
+    }
+
+    private static string NormalizeHttpMethod(string httpMethod)
+    {
+        return string.IsNullOrWhiteSpace(httpMethod)
+            ? "GET"
+            : httpMethod.Trim().ToUpperInvariant();
     }
 
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(
         IReadOnlyList<LlmSuggestedScenario> rawScenarios,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
-        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts)
     {
         if (orderedEndpoints == null || orderedEndpoints.Count == 0)
         {
@@ -563,21 +683,24 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             if (!types.Contains(TestType.HappyPath))
             {
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, TestType.HappyPath, endpointScenarios.Count + 1));
+                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.HappyPath, endpointScenarios.Count + 1));
                 types.Add(TestType.HappyPath);
                 added++;
             }
 
             if (!types.Contains(TestType.Negative))
             {
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, TestType.Negative, endpointScenarios.Count + 1));
+                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Negative, endpointScenarios.Count + 1));
                 types.Add(TestType.Negative);
                 added++;
             }
 
             if (HasBoundarySurface(endpoint, metadata) && !types.Contains(TestType.Boundary))
             {
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, TestType.Boundary, endpointScenarios.Count + 1));
+                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Boundary, endpointScenarios.Count + 1));
                 types.Add(TestType.Boundary);
                 added++;
             }
@@ -593,7 +716,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     nextType = TestType.Negative;
                 }
 
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, nextType, endpointScenarios.Count + 1));
+                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, nextType, endpointScenarios.Count + 1));
                 added++;
             }
         }
@@ -690,6 +814,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private static LlmSuggestedScenario CreateFallbackScenario(
         ApiOrderItemModel endpoint,
         ApiEndpointMetadataDto metadata,
+        EndpointRequestContract contract,
         TestType type,
         int index)
     {
@@ -702,6 +827,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TestType.Boundary => 400,
             _ => ((endpoint?.IsAuthRelated ?? false) || (metadata?.IsAuthRelated ?? false)) ? 401 : 400,
         };
+        var expectedStatuses = BuildExpectedStatuses(type, new List<int> { expectedStatus }, method);
 
         var namePrefix = type switch
         {
@@ -724,22 +850,505 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             _ => new List<string> { "negative", "coverage-gap-fill" },
         };
 
+        var requestData = contract?.RequestContext != null
+            ? ContractAwareRequestSynthesizer.BuildRequestData(contract.RequestContext, type)
+            : new ContractAwareRequestData();
+
         return new LlmSuggestedScenario
         {
             EndpointId = endpoint.EndpointId,
             ScenarioName = $"{namePrefix}: {method} {path} ({index})",
             Description = desc,
             SuggestedTestType = type,
-            SuggestedBody = null,
-            SuggestedPathParams = new Dictionary<string, string>(),
-            SuggestedQueryParams = new Dictionary<string, string>(),
-            SuggestedHeaders = new Dictionary<string, string>(),
-            ExpectedStatusCode = expectedStatus,
+            SuggestedBodyType = requestData.BodyType,
+            SuggestedBody = requestData.Body,
+            SuggestedPathParams = requestData.PathParams,
+            SuggestedQueryParams = requestData.QueryParams,
+            SuggestedHeaders = requestData.Headers,
+            ExpectedStatusCode = expectedStatuses.First(),
+            ExpectedStatusCodes = expectedStatuses,
             ExpectedBehavior = null,
             Priority = type == TestType.HappyPath ? "Medium" : "High",
             Tags = tags,
-            Variables = new List<N8nTestCaseVariable>(),
+            Variables = requestData.Variables,
         };
+    }
+
+    private static IReadOnlyDictionary<Guid, EndpointRequestContract> BuildEndpointContracts(
+        LlmScenarioSuggestionContext context,
+        IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        var result = new Dictionary<Guid, EndpointRequestContract>();
+        var orderItemMap = orderedEndpoints.ToDictionary(x => x.EndpointId);
+
+        foreach (var endpoint in orderedEndpoints)
+        {
+            metadataMap.TryGetValue(endpoint.EndpointId, out var metadata);
+            context.EndpointParameterDetails.TryGetValue(endpoint.EndpointId, out var parameterDetails);
+
+            var requiredPathParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var requiredQueryParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var requiresBody = false;
+
+            if (metadata?.RequiredPathParameterNames != null)
+            {
+                foreach (var pathParam in metadata.RequiredPathParameterNames)
+                {
+                    if (!string.IsNullOrWhiteSpace(pathParam))
+                    {
+                        requiredPathParams.Add(pathParam);
+                    }
+                }
+            }
+
+            if (metadata?.RequiredQueryParameterNames != null)
+            {
+                foreach (var queryParam in metadata.RequiredQueryParameterNames)
+                {
+                    if (!string.IsNullOrWhiteSpace(queryParam))
+                    {
+                        requiredQueryParams.Add(queryParam);
+                    }
+                }
+            }
+
+            if (metadata?.HasRequiredRequestBody == true)
+            {
+                requiresBody = true;
+            }
+
+            if (parameterDetails?.Parameters != null)
+            {
+                foreach (var parameter in parameterDetails.Parameters)
+                {
+                    if (!parameter.IsRequired || string.IsNullOrWhiteSpace(parameter.Name))
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(parameter.Location, "Path", StringComparison.OrdinalIgnoreCase))
+                    {
+                        requiredPathParams.Add(parameter.Name);
+                    }
+                    else if (string.Equals(parameter.Location, "Query", StringComparison.OrdinalIgnoreCase))
+                    {
+                        requiredQueryParams.Add(parameter.Name);
+                    }
+                    else if (string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase))
+                    {
+                        requiresBody = true;
+                    }
+                }
+            }
+
+            var requestContext = new ContractAwareRequestContext
+            {
+                HttpMethod = endpoint.HttpMethod ?? metadata?.HttpMethod,
+                Path = endpoint.Path ?? metadata?.Path,
+                OperationId = metadata?.OperationId,
+                RequiresBody = requiresBody,
+                RequiresAuth = RequiresAuth(endpoint, metadata, orderItemMap, metadataMap),
+                IsRegisterLikeEndpoint = IsRegisterLikeEndpoint(endpoint, metadata),
+                IsLoginLikeEndpoint = IsLoginLikeEndpoint(endpoint, metadata),
+                RequiredPathParams = requiredPathParams.ToList(),
+                RequiredQueryParams = requiredQueryParams.ToList(),
+                Parameters = parameterDetails?.Parameters?.ToList() ?? new List<ParameterDetailDto>(),
+                RequestBodySchema = ResolveRequestBodySchema(metadata, parameterDetails),
+                RequestBodyExamples = ResolveRequestBodyExamples(metadata, parameterDetails),
+                SuccessResponseSchema = ResolvePrimarySuccessResponseSchema(metadata),
+                PlaceholderByFieldName = BuildPlaceholderMap(endpoint, metadata, orderItemMap, metadataMap),
+            };
+
+            result[endpoint.EndpointId] = new EndpointRequestContract(
+                requiredPathParams,
+                requiredQueryParams,
+                requiresBody,
+                requestContext);
+        }
+
+        return result;
+    }
+
+    private static string ResolveRequestBodySchema(
+        ApiEndpointMetadataDto metadata,
+        EndpointParameterDetailDto parameterDetails)
+    {
+        var bodyParameter = metadata?.Parameters?.FirstOrDefault(parameter =>
+            string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(parameter.Schema));
+
+        if (!string.IsNullOrWhiteSpace(bodyParameter?.Schema))
+        {
+            return bodyParameter.Schema;
+        }
+
+        var bodySchemaPayload = metadata?.ParameterSchemaPayloads?
+            .FirstOrDefault(LooksLikeWholeRequestBodySchema);
+        if (!string.IsNullOrWhiteSpace(bodySchemaPayload))
+        {
+            return bodySchemaPayload;
+        }
+
+        return parameterDetails?.Parameters?
+            .Where(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Schema))
+            .Select(parameter => parameter.Schema)
+            .FirstOrDefault(LooksLikeWholeRequestBodySchema);
+    }
+
+    private static string ResolveRequestBodyExamples(
+        ApiEndpointMetadataDto metadata,
+        EndpointParameterDetailDto parameterDetails)
+    {
+        var metadataExamples = metadata?.Parameters?
+            .FirstOrDefault(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Examples))
+            ?.Examples;
+        if (!string.IsNullOrWhiteSpace(metadataExamples))
+        {
+            return metadataExamples;
+        }
+
+        return parameterDetails?.Parameters?
+            .Where(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Examples))
+            .Select(parameter => parameter.Examples)
+            .FirstOrDefault(LooksLikeStructuredRequestBodyExample);
+    }
+
+    private static bool LooksLikeWholeRequestBodySchema(string schema)
+    {
+        if (string.IsNullOrWhiteSpace(schema))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(schema);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("type", out var typeElement) &&
+                typeElement.ValueKind == JsonValueKind.String)
+            {
+                var type = typeElement.GetString();
+                if (string.Equals(type, "object", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(type, "array", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return root.TryGetProperty("properties", out _)
+                || root.TryGetProperty("items", out _)
+                || root.TryGetProperty("allOf", out _)
+                || root.TryGetProperty("oneOf", out _)
+                || root.TryGetProperty("anyOf", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool LooksLikeStructuredRequestBodyExample(string example)
+    {
+        if (string.IsNullOrWhiteSpace(example))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(example);
+            return document.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ResolvePrimarySuccessResponseSchema(ApiEndpointMetadataDto metadata)
+    {
+        return metadata?.Responses?
+            .Where(response => response is { StatusCode: >= 200 and < 300 } && !string.IsNullOrWhiteSpace(response.Schema))
+            .OrderBy(response => response.StatusCode)
+            .Select(response => response.Schema)
+            .FirstOrDefault()
+            ?? metadata?.ResponseSchemaPayloads?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    private static Dictionary<string, string> BuildPlaceholderMap(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var endpointPath = endpoint?.Path ?? metadata?.Path;
+        var currentResourcePlaceholder = BuildPreferredVariableName("id", endpointPath);
+        if (!string.IsNullOrWhiteSpace(currentResourcePlaceholder))
+        {
+            placeholders["id"] = currentResourcePlaceholder;
+        }
+
+        var dependencyIds = endpoint?.DependsOnEndpointIds?.AsEnumerable() ?? Array.Empty<Guid>();
+        foreach (var dependencyId in dependencyIds)
+        {
+            orderItemMap.TryGetValue(dependencyId, out var dependencyOrderItem);
+            metadataMap.TryGetValue(dependencyId, out var dependencyMetadata);
+
+            var dependencyPath = dependencyOrderItem?.Path ?? dependencyMetadata?.Path;
+            var dependencyPlaceholder = BuildPreferredVariableName("id", dependencyPath);
+            if (!string.IsNullOrWhiteSpace(dependencyPlaceholder))
+            {
+                placeholders[dependencyPlaceholder] = dependencyPlaceholder;
+
+                if (string.Equals(BuildResourceToken(endpointPath), BuildResourceToken(dependencyPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    placeholders["id"] = dependencyPlaceholder;
+                }
+            }
+
+            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata) &&
+                IsLoginLikeEndpoint(endpoint, metadata))
+            {
+                placeholders["email"] = "registeredEmail";
+                placeholders["password"] = "registeredPassword";
+            }
+        }
+
+        return placeholders;
+    }
+
+    private static bool RequiresAuth(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (IsAuthLikeEndpoint(endpoint, metadata))
+        {
+            return false;
+        }
+
+        var dependencyIds = endpoint?.DependsOnEndpointIds?.AsEnumerable() ?? Array.Empty<Guid>();
+        foreach (var dependencyId in dependencyIds)
+        {
+            orderItemMap.TryGetValue(dependencyId, out var dependencyOrderItem);
+            metadataMap.TryGetValue(dependencyId, out var dependencyMetadata);
+            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRegisterLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        var signature = BuildEndpointSignature(endpoint, metadata);
+        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLoginLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        var signature = BuildEndpointSignature(endpoint, metadata);
+        return signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAuthLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        return metadata?.IsAuthRelated == true
+            || endpoint?.IsAuthRelated == true
+            || IsRegisterLikeEndpoint(endpoint, metadata)
+            || IsLoginLikeEndpoint(endpoint, metadata);
+    }
+
+    private static string BuildEndpointSignature(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        return string.Join(" ",
+            endpoint?.HttpMethod,
+            endpoint?.Path,
+            metadata?.HttpMethod,
+            metadata?.Path,
+            metadata?.OperationId).Trim();
+    }
+
+    private static string BuildResourceToken(string path)
+    {
+        var resource = ResolveTargetResourceSegment(path, "id");
+        return string.IsNullOrWhiteSpace(resource) ? null : resource;
+    }
+
+    private static string BuildPreferredVariableName(string token, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(token) &&
+            !string.Equals(token, "id", StringComparison.OrdinalIgnoreCase))
+        {
+            return token;
+        }
+
+        var resource = ResolveTargetResourceSegment(path, token);
+        if (string.IsNullOrWhiteSpace(resource))
+        {
+            return token;
+        }
+
+        var identifier = ToCamelIdentifier(resource);
+        return string.IsNullOrWhiteSpace(identifier) ? token : $"{identifier}Id";
+    }
+
+    private static string ResolveTargetResourceSegment(string path, string token)
+    {
+        var segments = (path ?? string.Empty)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            if (!string.Equals(segments[i], $"{{{token}}}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            for (int j = i - 1; j >= 0; j--)
+            {
+                var cleaned = CleanSegment(segments[j]);
+                if (string.IsNullOrWhiteSpace(cleaned) ||
+                    cleaned.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                    IsVersionPrefix(cleaned))
+                {
+                    continue;
+                }
+
+                return Singularize(cleaned);
+            }
+        }
+
+        var strippedToken = StripIdSuffix(token);
+        if (!string.IsNullOrWhiteSpace(strippedToken))
+        {
+            return Singularize(strippedToken);
+        }
+
+        for (int i = segments.Count - 1; i >= 0; i--)
+        {
+            var cleaned = CleanSegment(segments[i]);
+            if (string.IsNullOrWhiteSpace(cleaned) ||
+                cleaned.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                IsVersionPrefix(cleaned) ||
+                (cleaned.StartsWith("{", StringComparison.Ordinal) && cleaned.EndsWith("}", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            return Singularize(cleaned);
+        }
+
+        return null;
+    }
+
+    private static string StripIdSuffix(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("Ids", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3];
+        }
+
+        if (value.EndsWith("Id", StringComparison.OrdinalIgnoreCase) && value.Length > 2)
+        {
+            return value[..^2];
+        }
+
+        return value;
+    }
+
+    private static string Singularize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3] + "y";
+        }
+
+        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase) &&
+            !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase) &&
+            value.Length > 1)
+        {
+            return value[..^1];
+        }
+
+        return value;
+    }
+
+    private static bool IsVersionPrefix(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+            value.Length <= 3 &&
+            value.StartsWith("v", StringComparison.OrdinalIgnoreCase) &&
+            value.Skip(1).All(char.IsDigit);
+    }
+
+    private static string CleanSegment(string segment)
+    {
+        return string.IsNullOrWhiteSpace(segment)
+            ? segment
+            : segment.Trim().Trim('/').Trim();
+    }
+
+    private static string ToCamelIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var parts = value
+            .Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (parts.Count == 0)
+        {
+            return value;
+        }
+
+        var first = parts[0].Length == 0
+            ? string.Empty
+            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
+
+        var rest = parts
+            .Skip(1)
+            .Select(part => part.Length == 0
+                ? string.Empty
+                : char.ToUpperInvariant(part[0]) + part[1..]);
+
+        return first + string.Concat(rest);
     }
 
     private static TestType ParseTestType(string testType)
@@ -943,5 +1552,28 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         return orderedEndpoints.OrderBy(x => x.OrderIndex).ToList();
+    }
+
+    private sealed class EndpointRequestContract
+    {
+        public EndpointRequestContract(
+            HashSet<string> requiredPathParams,
+            HashSet<string> requiredQueryParams,
+            bool requiresBody,
+            ContractAwareRequestContext requestContext)
+        {
+            RequiredPathParams = requiredPathParams ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            RequiredQueryParams = requiredQueryParams ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            RequiresBody = requiresBody;
+            RequestContext = requestContext ?? new ContractAwareRequestContext();
+        }
+
+        public HashSet<string> RequiredPathParams { get; }
+
+        public HashSet<string> RequiredQueryParams { get; }
+
+        public bool RequiresBody { get; }
+
+        public ContractAwareRequestContext RequestContext { get; }
     }
 }

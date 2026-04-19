@@ -162,6 +162,17 @@ public class ConfirmEmailModel
 }
 
 /// <summary>
+/// Model for dev/test email confirmation without token.
+/// Only active when <see cref="ConfigurationOptions.IdentityModuleOptions.AllowDevEmailConfirmation"/> is true.
+/// </summary>
+public class DevConfirmEmailModel
+{
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email format")]
+    public string Email { get; set; }
+}
+
+/// <summary>
 /// Model for user profile information.
 /// </summary>
 public class UserProfileModel

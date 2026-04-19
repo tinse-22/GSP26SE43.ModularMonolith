@@ -1,0 +1,1417 @@
+{
+  "meta": {
+    "title": "FE/BE Auto Test + LLM Integration Guide",
+    "language": "vi-VN",
+    "generatedFromSource": true,
+    "purpose": "Machine-readable FE integration package for the current backend workflow and API contracts.",
+    "scope": [
+      "project lifecycle",
+      "specification lifecycle",
+      "endpoint curation",
+      "test suite scope",
+      "order proposal and gate",
+      "unified test generation",
+      "llm suggestion review",
+      "manual test-case CRUD",
+      "execution environment",
+      "test run execution",
+      "run results",
+      "failure explanation"
+    ]
+  },
+  "checkedInDefaults": {
+    "useDotnetIntegrationWorkflowForGeneration": true,
+    "generationMode": "callback",
+    "canonicalGenerationEntrypoint": "POST /api/test-suites/{suiteId}/generate-tests",
+    "equivalentGenerationEntrypointsWhenUnifiedMode": [
+      "POST /api/test-suites/{suiteId}/generate-tests",
+      "POST /api/test-suites/{suiteId}/test-cases/generate-happy-path",
+      "POST /api/test-suites/{suiteId}/test-cases/generate-boundary-negative"
+    ],
+    "unifiedModeRequestBodyBehavior": "When unified mode is on, generate-happy-path and generate-boundary-negative request bodies are accepted by MVC but are not used to drive the current runtime path; the controller only queues GenerateTestCasesCommand.",
+    "generationWebhookName": "generate-test-cases-unified",
+    "generationJobObservedLifecycle": [
+      "Queued",
+      "Triggering",
+      "WaitingForCallback",
+      "Completed",
+      "Failed"
+    ],
+    "testRunExecutionMode": "synchronous_request_response",
+    "publicResultsEndpointFallbackToDatabase": false,
+    "failureExplanation": {
+      "provider": "N8n",
+      "cacheTtlHours": 24,
+      "getIsCacheOnly": true,
+      "postCanGenerateLive": true
+    }
+  },
+  "entityChain": [
+    {
+      "name": "Project",
+      "criticalFields": [
+        "id",
+        "status",
+        "activeSpecId",
+        "baseUrl"
+      ],
+      "consumedBy": [
+        "specifications",
+        "execution environments",
+        "test suites"
+      ]
+    },
+    {
+      "name": "Specification",
+      "criticalFields": [
+        "id",
+        "projectId",
+        "sourceType",
+        "parseStatus",
+        "isActive"
+      ],
+      "consumedBy": [
+        "endpoint list",
+        "test suite scope"
+      ]
+    },
+    {
+      "name": "Endpoint",
+      "criticalFields": [
+        "id",
+        "apiSpecId",
+        "httpMethod",
+        "path",
+        "operationId"
+      ],
+      "consumedBy": [
+        "order proposal",
+        "generation payload",
+        "test execution metadata"
+      ]
+    },
+    {
+      "name": "TestSuite",
+      "criticalFields": [
+        "id",
+        "projectId",
+        "apiSpecId",
+        "selectedEndpointIds",
+        "endpointBusinessContexts",
+        "globalBusinessRules",
+        "status",
+        "approvalStatus",
+        "rowVersion"
+      ],
+      "consumedBy": [
+        "order gate",
+        "generation",
+        "llm suggestions",
+        "test runs"
+      ]
+    },
+    {
+      "name": "ApiTestOrderProposal",
+      "criticalFields": [
+        "proposalId",
+        "testSuiteId",
+        "status",
+        "source",
+        "appliedOrder",
+        "rowVersion"
+      ],
+      "consumedBy": [
+        "generation gate",
+        "generation payload builder"
+      ]
+    },
+    {
+      "name": "TestGenerationJob",
+      "criticalFields": [
+        "jobId",
+        "testSuiteId",
+        "status",
+        "queuedAt",
+        "triggeredAt",
+        "completedAt",
+        "webhookName",
+        "errorMessage"
+      ],
+      "consumedBy": [
+        "generation-status polling"
+      ]
+    },
+    {
+      "name": "TestCase",
+      "criticalFields": [
+        "id",
+        "testSuiteId",
+        "endpointId",
+        "testType",
+        "priority",
+        "isEnabled",
+        "orderIndex",
+        "dependsOnIds"
+      ],
+      "consumedBy": [
+        "execution orchestrator"
+      ]
+    },
+    {
+      "name": "LlmSuggestion",
+      "criticalFields": [
+        "id",
+        "testSuiteId",
+        "endpointId",
+        "reviewStatus",
+        "rowVersion",
+        "appliedTestCaseId"
+      ],
+      "consumedBy": [
+        "suggestion review",
+        "feedback",
+        "bulk review"
+      ]
+    },
+    {
+      "name": "ExecutionEnvironment",
+      "criticalFields": [
+        "id",
+        "projectId",
+        "baseUrl",
+        "variables",
+        "headers",
+        "authConfig",
+        "isDefault",
+        "rowVersion"
+      ],
+      "consumedBy": [
+        "runtime variable resolution",
+        "auth resolution",
+        "test runs"
+      ]
+    },
+    {
+      "name": "TestRun",
+      "criticalFields": [
+        "id",
+        "testSuiteId",
+        "environmentId",
+        "status",
+        "resultsExpireAt",
+        "hasDetailedResults"
+      ],
+      "consumedBy": [
+        "run history",
+        "cached results",
+        "failure explanation"
+      ]
+    }
+  ],
+  "workflowModes": {
+    "specificationParsing": {
+      "uploadOpenApiJson": "inline parse in request",
+      "uploadOpenApiYamlOrPostman": "create spec as Pending then parse asynchronously",
+      "manualSpecification": "synchronous success",
+      "curlImport": "synchronous success"
+    },
+    "testGeneration": {
+      "default": "callback_unified_workflow",
+      "legacyAlternative": "sync_happy_path_or_boundary_negative_when_unified_flag_off",
+      "requiresApprovedOrderGate": true
+    },
+    "testExecution": {
+      "mode": "synchronous_request_response",
+      "detailedResultsStorage": "Redis",
+      "summaryStorage": "PostgreSQL"
+    },
+    "failureExplanation": {
+      "get": "cache_only",
+      "post": "generate_if_needed_then_cache"
+    }
+  },
+  "workflowAtoZ": [
+    {
+      "phase": "projectAndSpecificationFoundation",
+      "steps": [
+        "Create project.",
+        "Upload, import, or create specification.",
+        "Poll parseStatus when upload mode does not parse inline.",
+        "Activate the specification used by the test workflow.",
+        "Load endpoint list from the target specification."
+      ],
+      "blockingRules": [
+        "Test suite auto flow requires a valid apiSpecId.",
+        "Order proposal and downstream generation depend on endpoints from the same specification."
+      ]
+    },
+    {
+      "phase": "endpointCuration",
+      "steps": [
+        "Optionally create, update, or delete endpoints under the specification.",
+        "Use resolved-url and path-param-mutations helpers when FE needs preview or boundary UX support.",
+        "Treat the current persisted endpoint state as the source for later order and generation steps."
+      ]
+    },
+    {
+      "phase": "testSuiteCreation",
+      "steps": [
+        "Create a suite with name, apiSpecId, generationType, and selectedEndpointIds.",
+        "Optionally provide endpointBusinessContexts and globalBusinessRules.",
+        "Use rowVersion for every suite update or delete action."
+      ],
+      "blockingRules": [
+        "Only the suite owner can generate, review suggestions, or run tests.",
+        "selectedEndpointIds must belong to the suite specification."
+      ]
+    },
+    {
+      "phase": "orderProposalAndGate",
+      "steps": [
+        "Create an order proposal.",
+        "Load the latest proposal.",
+        "Allow reorder, approve, or reject.",
+        "Check order-gate-status before generation or llm suggestion preview."
+      ],
+      "blockingRules": [
+        "The active proposal must be approved or modified-and-approved.",
+        "Applied order must be non-empty."
+      ]
+    },
+    {
+      "phase": "unifiedGenerationDefaultFlow",
+      "steps": [
+        "Call generate-tests or one of the legacy generation endpoints while unified mode is on.",
+        "Receive 202 Accepted with a generation job id.",
+        "Poll generation-status.",
+        "Background triggers n8n webhook generate-test-cases-unified.",
+        "n8n posts generated test cases back through the callback endpoint.",
+        "Backend replaces suite test cases and marks the suite Ready."
+      ],
+      "notes": [
+        "In current unified mode, the bodies of generate-happy-path and generate-boundary-negative do not drive runtime behavior."
+      ]
+    },
+    {
+      "phase": "llmSuggestionPreviewAndReview",
+      "steps": [
+        "Generate preview suggestions after the order gate passes.",
+        "List or load suggestion detail.",
+        "Approve, reject, or modify suggestions.",
+        "Materialize approved or modified suggestions into real test cases."
+      ],
+      "blockingRules": [
+        "forceRefresh=false is blocked when pending suggestions already exist.",
+        "Reject requires reviewNotes.",
+        "Modify requires modifiedContent.",
+        "Bulk review only supports Approve or Reject."
+      ],
+      "notes": [
+        "Approve can be idempotent when the suggestion was already materialized.",
+        "Review service can reuse an existing AppliedTestCaseId when approval fingerprints match."
+      ]
+    },
+    {
+      "phase": "manualTestCaseManagement",
+      "steps": [
+        "Add, update, delete, restore, toggle, reorder, bulk-delete, or bulk-restore test cases.",
+        "Use manual CRUD when FE wants explicit control instead of relying on LLM generation."
+      ],
+      "notes": [
+        "DELETE test case returns 200 OK with a TestCaseModel.",
+        "toggle and reorder return 200 OK with an empty body."
+      ]
+    },
+    {
+      "phase": "executionEnvironmentPreparation",
+      "steps": [
+        "Create or update an execution environment.",
+        "Set one environment as default if FE wants environmentId to be optional at run start.",
+        "Provide full secrets again on update when authConfig contains protected values."
+      ],
+      "blockingRules": [
+        "baseUrl must be an absolute http or https URL.",
+        "Do not send masked secret placeholders like ****** back to the API as if they were real secrets."
+      ]
+    },
+    {
+      "phase": "testRunExecution",
+      "steps": [
+        "Start a run with an optional environmentId, optional selectedTestCaseIds, and optional strictValidation.",
+        "Backend validates ownership, suite Ready state, case eligibility, environment availability, and quota limits.",
+        "Runtime resolves variables and auth, then executes cases sequentially.",
+        "Detailed results are cached and summary data is persisted."
+      ],
+      "notes": [
+        "strictValidation defaults to false when omitted.",
+        "Dependency-failed cases become Skipped."
+      ]
+    },
+    {
+      "phase": "resultsAndFailureExplanation",
+      "steps": [
+        "Load run summaries from the run list or run detail endpoint.",
+        "Use GET results for cached detailed data only.",
+        "Treat resultsSource=unavailable as a valid state.",
+        "Use GET explanation for cache-first UX, then POST explanation to generate live when needed."
+      ],
+      "notes": [
+        "hasDetailedResults is a hint derived from resultsExpireAt and is not a hard guarantee that Redis still contains the payload.",
+        "Public GET results does not reconstruct detailed cases from PostgreSQL."
+      ]
+    }
+  ],
+  "paginationContracts": {
+    "projectsList": {
+      "wrapper": "PaginatedResult<ProjectModel>",
+      "fields": [
+        "items",
+        "totalCount",
+        "page",
+        "pageSize",
+        "totalPages"
+      ]
+    },
+    "testRunsList": {
+      "wrapper": "Paged<TestRunModel>",
+      "fields": [
+        "totalItems",
+        "items",
+        "page",
+        "pageSize",
+        "totalPages",
+        "hasPreviousPage",
+        "hasNextPage"
+      ]
+    }
+  },
+  "errorContracts": {
+    "exceptionProblemDetails": {
+      "contentType": "application/problem+json",
+      "fields": [
+        "type",
+        "title",
+        "status",
+        "detail",
+        "message",
+        "traceId",
+        "reasonCode"
+      ],
+      "notes": [
+        "message is present for exception-driven errors handled by GlobalExceptionHandler.",
+        "reasonCode only appears on some conflict, concurrency, or transient branches.",
+        "Transient database failures can emit Retry-After: 2 with reasonCode TRANSIENT_NPGSQL_CONNECTION."
+      ]
+    },
+    "validationProblemDetails": {
+      "contentType": "application/problem+json",
+      "fields": [
+        "type",
+        "title",
+        "status",
+        "instance",
+        "traceId",
+        "errors"
+      ],
+      "notes": [
+        "Validation responses do not use the same top-level message field as exception-driven errors."
+      ]
+    }
+  },
+  "enumTransportMatrix": [
+    {
+      "surface": "TestSuiteScopeModel.GenerationType",
+      "direction": "response",
+      "transport": "number"
+    },
+    {
+      "surface": "TestSuiteScopeModel.Status",
+      "direction": "response",
+      "transport": "number"
+    },
+    {
+      "surface": "TestSuiteScopeModel.ApprovalStatus",
+      "direction": "response",
+      "transport": "number"
+    },
+    {
+      "surface": "ApiTestOrderGateStatusModel.ActiveProposalStatus",
+      "direction": "response",
+      "transport": "number_or_null"
+    },
+    {
+      "surface": "ExecutionAuthConfigModel.AuthType",
+      "direction": "request_and_response",
+      "transport": "string",
+      "values": [
+        "None",
+        "BearerToken",
+        "Basic",
+        "ApiKey",
+        "OAuth2ClientCredentials"
+      ]
+    },
+    {
+      "surface": "ExecutionAuthConfigModel.ApiKeyLocation",
+      "direction": "request_and_response",
+      "transport": "string",
+      "values": [
+        "Header",
+        "Query"
+      ]
+    },
+    {
+      "surface": "CreateTestSuiteScopeRequest.GenerationType",
+      "direction": "request",
+      "transport": "string",
+      "values": [
+        "Auto",
+        "Manual",
+        "LLMAssisted"
+      ]
+    },
+    {
+      "surface": "UpdateTestSuiteScopeRequest.GenerationType",
+      "direction": "request",
+      "transport": "string",
+      "values": [
+        "Auto",
+        "Manual",
+        "LLMAssisted"
+      ]
+    },
+    {
+      "surface": "ProposeApiTestOrderRequest.Source",
+      "direction": "request",
+      "transport": "string",
+      "values": [
+        "Ai",
+        "User",
+        "System",
+        "Imported"
+      ]
+    },
+    {
+      "surface": "CreateManualSpecificationModel.Endpoints[].Parameters[].DataType",
+      "direction": "request",
+      "transport": "string",
+      "values": [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "object",
+        "array",
+        "uuid"
+      ]
+    },
+    {
+      "surface": "AddTestCaseRequest.* enum fields",
+      "direction": "request",
+      "transport": "number",
+      "note": "Current checked-in behavior because these request enums do not declare string converters and the WebAPI host does not register a global JsonStringEnumConverter."
+    },
+    {
+      "surface": "UpdateTestCaseRequest.* enum fields",
+      "direction": "request",
+      "transport": "number",
+      "note": "Same behavior as AddTestCaseRequest."
+    }
+  ],
+  "stringifiedJsonFields": [
+    {
+      "field": "EndpointModel.Tags",
+      "note": "Stored and returned as a JSON string."
+    },
+    {
+      "field": "EndpointDetailModel.Parameters[].Schema",
+      "note": "JSON string, not nested object."
+    },
+    {
+      "field": "EndpointDetailModel.Parameters[].Examples",
+      "note": "JSON string, not nested object."
+    },
+    {
+      "field": "EndpointDetailModel.Responses[].Schema",
+      "note": "JSON string, not nested object."
+    },
+    {
+      "field": "EndpointDetailModel.Responses[].Examples",
+      "note": "JSON string, not nested object."
+    },
+    {
+      "field": "EndpointDetailModel.Responses[].Headers",
+      "note": "JSON string, not nested object."
+    },
+    {
+      "field": "TestCaseModel.Request.Headers",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Request.PathParams",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Request.QueryParams",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.ExpectedStatus",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.ResponseSchema",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.HeaderChecks",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.BodyContains",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.BodyNotContains",
+      "note": "JSON string."
+    },
+    {
+      "field": "TestCaseModel.Expectation.JsonPathChecks",
+      "note": "JSON string."
+    },
+    {
+      "field": "LlmSuggestionModel.SuggestedRequest",
+      "note": "Returned as a JSON string."
+    },
+    {
+      "field": "LlmSuggestionModel.SuggestedExpectation",
+      "note": "Returned as a JSON string."
+    },
+    {
+      "field": "LlmSuggestionModel.ModifiedContent",
+      "note": "Returned as a JSON string, while ReviewLlmSuggestionRequest.ModifiedContent is a structured request object."
+    }
+  ],
+  "apiContracts": {
+    "projects": [
+      {
+        "method": "GET",
+        "path": "/api/projects",
+        "query": [
+          "status",
+          "search",
+          "page",
+          "pageSize"
+        ],
+        "response": "PaginatedResult<ProjectModel>"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{id}",
+        "query": [
+          "includeArchived",
+          "includeSpecifications"
+        ],
+        "response": "ProjectDetailModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects",
+        "request": "CreateUpdateProjectModel",
+        "required": [
+          "name"
+        ],
+        "response": "ProjectDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{id}",
+        "request": "CreateUpdateProjectModel",
+        "response": "ProjectDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{id}/archive",
+        "response": "ProjectDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{id}/unarchive",
+        "response": "ProjectDetailModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/projects/{id}",
+        "responseStatus": 200,
+        "response": "empty body"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{id}/auditlogs",
+        "response": "dynamic audit entry array"
+      }
+    ],
+    "specifications": [
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications",
+        "query": [
+          "parseStatus",
+          "sourceType",
+          "includeDeleted"
+        ],
+        "response": "SpecificationModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/{specId}",
+        "response": "SpecificationDetailModel",
+        "importantFields": [
+          "parseStatus",
+          "endpointCount",
+          "parseErrors"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/upload-methods",
+        "response": "upload method array",
+        "notes": [
+          "Current checked-in response exposes StorageGatewayContract with uploadApi /api/projects/{projectId}/specifications/upload."
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/specifications/upload",
+        "contentType": "multipart/form-data",
+        "requestFields": [
+          "uploadMethod",
+          "file",
+          "name",
+          "sourceType",
+          "version",
+          "autoActivate"
+        ],
+        "response": "SpecificationDetailModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/specifications/manual",
+        "request": "CreateManualSpecificationModel",
+        "response": "SpecificationDetailModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/specifications/curl-import",
+        "request": "ImportCurlModel",
+        "response": "SpecificationDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{projectId}/specifications/{specId}/activate",
+        "response": "SpecificationDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{projectId}/specifications/{specId}/deactivate",
+        "response": "SpecificationDetailModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/projects/{projectId}/specifications/{specId}",
+        "responseStatus": 204
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/specifications/{specId}/restore",
+        "response": "SpecificationDetailModel"
+      }
+    ],
+    "endpoints": [
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+        "response": "EndpointModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+        "response": "EndpointDetailModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints",
+        "request": "CreateUpdateEndpointModel",
+        "response": "EndpointDetailModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+        "request": "CreateUpdateEndpointModel",
+        "response": "EndpointDetailModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}",
+        "responseStatus": 204
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/resolved-url",
+        "query": [
+          "dynamic path/query values"
+        ],
+        "response": "ResolvedUrlResult"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/specifications/{specId}/endpoints/{endpointId}/path-param-mutations",
+        "response": "PathParamMutationsResult"
+      }
+    ],
+    "testSuites": [
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/test-suites",
+        "response": "TestSuiteScopeModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+        "response": "TestSuiteScopeModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/test-suites",
+        "request": "CreateTestSuiteScopeRequest",
+        "required": [
+          "name",
+          "apiSpecId",
+          "selectedEndpointIds"
+        ],
+        "optional": [
+          "description",
+          "endpointBusinessContexts",
+          "globalBusinessRules"
+        ],
+        "response": "TestSuiteScopeModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+        "request": "UpdateTestSuiteScopeRequest",
+        "required": [
+          "rowVersion"
+        ],
+        "response": "TestSuiteScopeModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+        "query": [
+          "rowVersion"
+        ],
+        "responseStatus": 204,
+        "notes": [
+          "This archives the suite through the current soft-delete flow."
+        ]
+      }
+    ],
+    "testOrderAndGeneration": [
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/order-proposals",
+        "request": "ProposeApiTestOrderRequest",
+        "required": [
+          "specificationId"
+        ],
+        "optional": [
+          "selectedEndpointIds",
+          "source",
+          "llmModel",
+          "reasoningNote"
+        ],
+        "response": "ApiTestOrderProposalModel"
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/order-proposals/latest",
+        "response": "ApiTestOrderProposalModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+        "request": "ReorderApiTestOrderRequest",
+        "required": [
+          "rowVersion",
+          "orderedEndpointIds"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+        "request": "ApproveApiTestOrderRequest",
+        "required": [
+          "rowVersion"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reject",
+        "request": "RejectApiTestOrderRequest",
+        "required": [
+          "rowVersion",
+          "reviewNotes"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/order-gate-status",
+        "response": "ApiTestOrderGateStatusModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/generate-tests",
+        "responseStatus": 202,
+        "response": "GenerateTestsAcceptedResponse",
+        "importantFields": [
+          "jobId",
+          "testSuiteId",
+          "mode",
+          "message"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/generation-status",
+        "query": [
+          "jobId(optional)"
+        ],
+        "response": "GenerationJobStatusDto",
+        "importantFields": [
+          "jobId",
+          "testSuiteId",
+          "status",
+          "queuedAt",
+          "triggeredAt",
+          "completedAt",
+          "testCasesGenerated",
+          "errorMessage",
+          "webhookName"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/from-ai",
+        "auth": "x-callback-api-key",
+        "request": "N8nTestCasesCallbackRequest",
+        "required": [
+          "testCases[]"
+        ],
+        "notes": [
+          "AllowAnonymous callback endpoint intended for n8n, not FE."
+        ]
+      }
+    ],
+    "testCases": [
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/generate-happy-path",
+        "request": "GenerateHappyPathTestCasesRequest",
+        "defaultResponseStatus": 202,
+        "legacyResponseStatusWhenUnifiedModeOff": 201,
+        "legacyResponse": "GenerateHappyPathResultModel",
+        "notes": [
+          "When unified mode is on, the request body is not used to drive the current runtime path."
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/generate-boundary-negative",
+        "request": "GenerateBoundaryNegativeTestCasesRequest",
+        "defaultResponseStatus": 202,
+        "legacyResponseStatusWhenUnifiedModeOff": 201,
+        "legacyResponse": "GenerateBoundaryNegativeResultModel",
+        "notes": [
+          "When unified mode is on, the request body is not used to drive the current runtime path."
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-cases",
+        "query": [
+          "testType",
+          "includeDisabled",
+          "includeDeleted"
+        ],
+        "response": "TestCaseModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+        "response": "TestCaseModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases",
+        "request": "AddTestCaseRequest",
+        "response": "TestCaseModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+        "request": "UpdateTestCaseRequest",
+        "response": "TestCaseModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+        "responseStatus": 200,
+        "response": "TestCaseModel"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}/toggle",
+        "request": "ToggleTestCaseRequest",
+        "importantFields": [
+          "isEnabled"
+        ],
+        "responseStatus": 200,
+        "response": "empty body"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/test-suites/{suiteId}/test-cases/reorder",
+        "request": "ReorderTestCasesRequest",
+        "importantFields": [
+          "testCaseIds"
+        ],
+        "responseStatus": 200,
+        "response": "empty body"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}/restore",
+        "response": "TestCaseModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/bulk-delete",
+        "request": "BulkDeleteTestCasesRequest",
+        "importantFields": [
+          "testCaseIds[]"
+        ],
+        "response": "BulkOperationResultModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-cases/bulk-restore",
+        "request": "BulkRestoreTestCasesRequest",
+        "importantFields": [
+          "testCaseIds[]"
+        ],
+        "response": "BulkOperationResultModel"
+      }
+    ],
+    "llmSuggestions": [
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/generate",
+        "request": "GenerateLlmSuggestionPreviewRequest",
+        "importantFields": [
+          "specificationId",
+          "forceRefresh",
+          "algorithmProfile"
+        ],
+        "responseStatus": 201,
+        "response": "GenerateLlmSuggestionPreviewResultModel",
+        "responseFields": [
+          "testSuiteId",
+          "totalSuggestions",
+          "endpointsCovered",
+          "llmModel",
+          "llmTokensUsed",
+          "fromCache",
+          "generatedAt",
+          "suggestions[]"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions",
+        "query": [
+          "reviewStatus",
+          "testType",
+          "endpointId",
+          "includeDeleted"
+        ],
+        "response": "LlmSuggestionModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}",
+        "response": "LlmSuggestionModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review",
+        "request": "ReviewLlmSuggestionRequest",
+        "required": [
+          "action",
+          "rowVersion"
+        ],
+        "actionValues": [
+          "Approve",
+          "Reject",
+          "Modify"
+        ],
+        "conditionalRules": [
+          "Reject requires reviewNotes.",
+          "Modify requires modifiedContent."
+        ],
+        "response": "LlmSuggestionModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/feedback",
+        "request": "UpsertLlmSuggestionFeedbackRequest",
+        "signalValues": [
+          "Helpful",
+          "NotHelpful"
+        ],
+        "response": "LlmSuggestionFeedbackModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-review",
+        "request": "BulkReviewLlmSuggestionsRequest",
+        "actionValues": [
+          "Approve",
+          "Reject"
+        ],
+        "filters": [
+          "filterBySuggestionType",
+          "filterByTestType",
+          "filterByEndpointId"
+        ],
+        "conditionalRules": [
+          "Reject requires reviewNotes."
+        ],
+        "response": "BulkReviewLlmSuggestionsResultModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-delete",
+        "request": "BulkDeleteLlmSuggestionsRequest",
+        "importantFields": [
+          "suggestionIds[]"
+        ],
+        "response": "BulkOperationResultModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/llm-suggestions/bulk-restore",
+        "request": "BulkRestoreLlmSuggestionsRequest",
+        "importantFields": [
+          "suggestionIds[]"
+        ],
+        "response": "BulkOperationResultModel"
+      }
+    ],
+    "executionEnvironments": [
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/execution-environments",
+        "response": "ExecutionEnvironmentModel[]"
+      },
+      {
+        "method": "GET",
+        "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+        "response": "ExecutionEnvironmentModel"
+      },
+      {
+        "method": "POST",
+        "path": "/api/projects/{projectId}/execution-environments",
+        "request": "CreateExecutionEnvironmentRequest",
+        "required": [
+          "name",
+          "baseUrl"
+        ],
+        "constraints": [
+          "baseUrl must be an absolute http or https URL."
+        ],
+        "response": "ExecutionEnvironmentModel"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+        "request": "UpdateExecutionEnvironmentRequest",
+        "required": [
+          "rowVersion"
+        ],
+        "constraints": [
+          "baseUrl must be an absolute http or https URL."
+        ],
+        "response": "ExecutionEnvironmentModel"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/projects/{projectId}/execution-environments/{environmentId}",
+        "query": [
+          "rowVersion"
+        ],
+        "responseStatus": 204
+      }
+    ],
+    "testRuns": [
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-runs",
+        "request": "StartTestRunRequest",
+        "fields": [
+          "environmentId",
+          "selectedTestCaseIds",
+          "strictValidation"
+        ],
+        "defaultWhenFieldOmitted": {
+          "strictValidation": false
+        },
+        "responseStatus": 201,
+        "response": "TestRunResultModel",
+        "notes": [
+          "This endpoint executes synchronously and returns after the run completes."
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-runs",
+        "query": [
+          "pageNumber",
+          "pageSize",
+          "status"
+        ],
+        "response": "Paged<TestRunModel>"
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-runs/{runId}",
+        "response": "TestRunModel"
+      },
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+        "response": "TestRunResultModel",
+        "importantFields": [
+          "resultsSource",
+          "cases"
+        ],
+        "notes": [
+          "This endpoint is cache-only and does not reconstruct detailed cases from PostgreSQL."
+        ]
+      }
+    ],
+    "failureExplanation": [
+      {
+        "method": "GET",
+        "path": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+        "behavior": "cache_only",
+        "cacheMissStatus": 404
+      },
+      {
+        "method": "POST",
+        "path": "/api/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+        "behavior": "generate_if_needed_then_cache",
+        "response": "FailureExplanationModel"
+      }
+    ]
+  },
+  "runtimeNotes": {
+    "builtInRunVariables": [
+      "runId",
+      "runSuffix",
+      "runTimestamp",
+      "runUniqueEmail",
+      "testEmail",
+      "runUniquePassword",
+      "testPassword"
+    ],
+    "authResolution": {
+      "BearerToken": "Resolves to a default header and supports custom headerName.",
+      "Basic": "Builds Authorization: Basic from username/password.",
+      "ApiKey": "Injects into a default header or default query parameter depending on apiKeyLocation.",
+      "OAuth2ClientCredentials": "Requests a token from tokenUrl then injects Authorization: Bearer <access_token>."
+    },
+    "executionOrdering": "sequential",
+    "dependencyFailureBehavior": "Dependent test cases become Skipped when prerequisite cases fail.",
+    "strictValidationDefault": false,
+    "strictValidationChecks": [
+      "status",
+      "schema",
+      "headers",
+      "body contains",
+      "body not contains",
+      "json path",
+      "response time"
+    ],
+    "resultsStorage": {
+      "summary": "PostgreSQL",
+      "details": "Redis",
+      "publicResultsEndpointFallbackToDatabase": false
+    },
+    "happyPathSyntheticEmailNormalization": "For HappyPath JSON bodies, the runtime can rewrite literal synthetic email-like values in email or *Email fields to testEmail or runUniqueEmail when internal matching conditions are met.",
+    "responseBodyPreviewMaxChars": 65536,
+    "maskedExtractedVariableKeywords": [
+      "token",
+      "secret",
+      "password",
+      "apikey"
+    ],
+    "executionEnvironmentNotes": [
+      "GET execution environment responses return masked auth secrets.",
+      "PUT execution environment does not preserve masked placeholders automatically.",
+      "FE must not resend ****** as if it were the real secret."
+    ]
+  },
+  "dependencyMatrix": [
+    {
+      "phase": "suite creation",
+      "requires": [
+        "project",
+        "specification",
+        "selected endpoints"
+      ]
+    },
+    {
+      "phase": "generation",
+      "requires": [
+        "suite",
+        "approved order proposal",
+        "order gate passed"
+      ]
+    },
+    {
+      "phase": "llm suggestion review",
+      "requires": [
+        "suite",
+        "approved order proposal",
+        "pending suggestions"
+      ]
+    },
+    {
+      "phase": "test execution",
+      "requires": [
+        "suite status Ready",
+        "execution environment or default environment",
+        "enabled test cases"
+      ]
+    },
+    {
+      "phase": "failure explanation",
+      "requires": [
+        "failed test case",
+        "run result context"
+      ]
+    }
+  ],
+  "checklists": {
+    "beforeOrderProposal": [
+      "Have a valid projectId.",
+      "Have a valid specId.",
+      "Do not assume upload completion means parse completion.",
+      "Use a specification whose parseStatus is Success.",
+      "Load endpoint state from the target specification before creating the suite or proposal."
+    ],
+    "beforeGeneration": [
+      "selectedEndpointIds must belong to the suite specification.",
+      "A latest proposal must exist.",
+      "The proposal must be approved or modified-and-approved.",
+      "GET order-gate-status must report gate passed.",
+      "Poll generation-status after receiving a generation job id."
+    ],
+    "beforeExecution": [
+      "Suite must be Ready.",
+      "Provide environmentId or ensure a default environment exists.",
+      "Do not resend masked environment secrets.",
+      "Disable cases or pass selectedTestCaseIds when FE needs a subset run.",
+      "Understand that strictValidation defaults to false when omitted."
+    ],
+    "resultsAndExplanation": [
+      "Treat hasDetailedResults as a hint, not a guarantee.",
+      "Handle resultsSource=unavailable as a valid FE state.",
+      "Use GET explanation for cache-first UX.",
+      "Use POST explanation to generate live when needed."
+    ]
+  },
+  "commonPitfalls": [
+    "Assuming generate-happy-path and generate-boundary-negative still represent distinct runtime branches in the current default environment.",
+    "Assuming the bodies of generate-happy-path or generate-boundary-negative still drive runtime behavior when unified mode is on.",
+    "Sending string enum values for AddTestCaseRequest or UpdateTestCaseRequest enum fields even though the current host serializer expects numbers there.",
+    "Parsing ExecutionAuthConfigModel.AuthType as a number even though it is returned as a string.",
+    "Forgetting rowVersion on suite update, proposal reorder, proposal approve/reject, environment update/delete, or suggestion review.",
+    "Sending Modify without modifiedContent.",
+    "Sending Reject without reviewNotes.",
+    "Treating JSON-string fields as nested objects without parse/stringify handling.",
+    "Resending ****** as if it were a real auth secret on environment updates.",
+    "Skipping parse-status polling for OpenAPI YAML or Postman uploads.",
+    "Skipping generation-status polling while unified generation is enabled.",
+    "Expecting GET results to rebuild detailed data from PostgreSQL after cache loss.",
+    "Using GET explanation as if it were the live generation endpoint."
+  ],
+  "uncertainties": [
+    "Authorization failure payloads like 401 or 403 may still depend on ASP.NET Core auth pipeline behavior outside the module handlers reviewed here.",
+    "Multipart enum binding details for upload requests depend on ASP.NET Core model binding behavior in addition to the request model converters.",
+    "Runtime deployments can override appsettings through environment variables, so callback generation mode is the checked-in default rather than a universal guarantee across every environment.",
+    "SpecificationDetailModel.OriginalFileName exists on the model but is not populated by the currently verified query path.",
+    "The config tree still contains DotnetIntegration naming, while the verified unified generation path currently uses the logical webhook name generate-test-cases-unified.",
+    "Manual test-case request enum transport is a serializer-dependent behavior and would change if the host later adds a global JsonStringEnumConverter."
+  ],
+  "sourceFiles": [
+    "ClassifiedAds.WebAPI/Program.cs",
+    "ClassifiedAds.WebAPI/appsettings.json",
+    "ClassifiedAds.WebAPI/appsettings.Development.json",
+    "ClassifiedAds.Background/appsettings.json",
+    "ClassifiedAds.Background/appsettings.Development.json",
+    "ClassifiedAds.Infrastructure/Web/ExceptionHandlers/GlobalExceptionHandler.cs",
+    "ClassifiedAds.Infrastructure/Web/Validation/ValidationProblemDetailsFactory.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Controllers/ProjectsController.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Controllers/SpecificationsController.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Controllers/EndpointsController.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Commands/UploadApiSpecificationCommand.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Commands/ParseUploadedSpecificationCommand.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Commands/CreateManualSpecificationCommand.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Commands/ImportCurlCommand.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Models/CreateManualSpecificationModel.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Models/ImportCurlModel.cs",
+    "ClassifiedAds.Modules.ApiDocumentation/Models/UploadSpecificationModel.cs",
+    "ClassifiedAds.Modules.TestGeneration/Controllers/TestSuitesController.cs",
+    "ClassifiedAds.Modules.TestGeneration/Controllers/TestOrderController.cs",
+    "ClassifiedAds.Modules.TestGeneration/Controllers/TestCasesController.cs",
+    "ClassifiedAds.Modules.TestGeneration/Controllers/LlmSuggestionsController.cs",
+    "ClassifiedAds.Modules.TestGeneration/Commands/GenerateTestCasesCommand.cs",
+    "ClassifiedAds.Modules.TestGeneration/Commands/SaveAiGeneratedTestCasesCommand.cs",
+    "ClassifiedAds.Modules.TestGeneration/Commands/GenerateLlmSuggestionPreviewCommand.cs",
+    "ClassifiedAds.Modules.TestGeneration/Commands/ReviewLlmSuggestionCommand.cs",
+    "ClassifiedAds.Modules.TestGeneration/Commands/BulkReviewLlmSuggestionsCommand.cs",
+    "ClassifiedAds.Modules.TestGeneration/Queries/GetGenerationJobStatusQuery.cs",
+    "ClassifiedAds.Modules.TestGeneration/Services/TestGenerationPayloadBuilder.cs",
+    "ClassifiedAds.Modules.TestGeneration/Services/HappyPathTestCaseGenerator.cs",
+    "ClassifiedAds.Modules.TestGeneration/Services/BoundaryNegativeTestCaseGenerator.cs",
+    "ClassifiedAds.Modules.TestGeneration/Services/LlmSuggestionReviewService.cs",
+    "ClassifiedAds.Modules.TestExecution/Controllers/ExecutionEnvironmentsController.cs",
+    "ClassifiedAds.Modules.TestExecution/Controllers/TestRunsController.cs",
+    "ClassifiedAds.Modules.TestExecution/Commands/AddUpdateExecutionEnvironmentCommand.cs",
+    "ClassifiedAds.Modules.TestExecution/Commands/StartTestRunCommand.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/ExecutionEnvironmentRuntimeResolver.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/VariableResolver.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/RuleBasedValidator.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/TestExecutionOrchestrator.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/TestResultCollector.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/HttpTestExecutor.cs",
+    "ClassifiedAds.Modules.TestExecution/Queries/GetTestRunResultsQuery.cs",
+    "ClassifiedAds.Modules.TestExecution/Services/TestFailureReadGatewayService.cs",
+    "ClassifiedAds.Modules.LlmAssistant/Controllers/FailureExplanationsController.cs",
+    "ClassifiedAds.Modules.LlmAssistant/Queries/GetFailureExplanationQuery.cs",
+    "ClassifiedAds.Modules.LlmAssistant/Commands/ExplainTestFailureCommand.cs",
+    "ClassifiedAds.Modules.LlmAssistant/ConfigurationOptions/FailureExplanationOptions.cs"
+  ]
+}

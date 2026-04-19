@@ -17,7 +17,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Controllers;
 
 [Authorize]
 [Produces("application/json")]
-[Route("api/projects/{projectId:guid}/test-suites")]
+[Route("api/projects/{projectId}/test-suites")]
 [ApiController]
 public class TestSuitesController : ControllerBase
 {

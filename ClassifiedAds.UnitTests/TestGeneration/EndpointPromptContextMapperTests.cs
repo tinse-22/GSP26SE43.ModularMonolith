@@ -161,4 +161,125 @@ public class EndpointPromptContextMapperTests
         result.Should().HaveCount(1);
         result[0].BusinessContext.Should().BeNull();
     }
+
+    [Fact]
+    public void Map_Should_PreserveParameterNameLocationAndRequiredFlags()
+    {
+        var endpointId = Guid.NewGuid();
+        var endpoints = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = endpointId,
+                HttpMethod = "PUT",
+                Path = "/api/products/{id}",
+                Parameters = new List<ApiEndpointParameterDescriptorDto>
+                {
+                    new()
+                    {
+                        Name = "id",
+                        Location = "Path",
+                        IsRequired = true,
+                        DataType = "integer",
+                    },
+                    new()
+                    {
+                        Name = "includeInactive",
+                        Location = "Query",
+                        IsRequired = false,
+                        DataType = "boolean",
+                    },
+                },
+            },
+        };
+
+        var suite = new TestSuite { EndpointBusinessContexts = new Dictionary<Guid, string>() };
+
+        var result = EndpointPromptContextMapper.Map(endpoints, suite);
+
+        result.Should().HaveCount(1);
+        result[0].Parameters.Should().HaveCount(2);
+        result[0].Parameters[0].Name.Should().Be("id");
+        result[0].Parameters[0].In.Should().Be("path");
+        result[0].Parameters[0].Required.Should().BeTrue();
+        result[0].Parameters[1].Name.Should().Be("includeInactive");
+        result[0].Parameters[1].In.Should().Be("query");
+        result[0].Parameters[1].Required.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Map_Should_MapRealResponseStatusCodes_FromResponseDescriptors()
+    {
+        var endpoints = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = Guid.NewGuid(),
+                HttpMethod = "POST",
+                Path = "/api/products",
+                Responses = new List<ApiEndpointResponseDescriptorDto>
+                {
+                    new()
+                    {
+                        StatusCode = 201,
+                        Description = "Created",
+                        Schema = "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}",
+                    },
+                    new()
+                    {
+                        StatusCode = 400,
+                        Description = "Bad Request",
+                        Schema = "{\"type\":\"object\",\"properties\":{\"error\":{\"type\":\"string\"}}}",
+                    },
+                },
+            },
+        };
+
+        var result = EndpointPromptContextMapper.Map(endpoints, new TestSuite());
+
+        result.Should().HaveCount(1);
+        result[0].Responses.Should().HaveCount(2);
+        result[0].Responses.Select(x => x.StatusCode).Should().BeEquivalentTo(new[] { 201, 400 });
+        result[0].Responses.Should().Contain(x => x.StatusCode == 201 && x.Description == "Created");
+        result[0].Responses.Should().Contain(x => x.StatusCode == 400 && x.Description == "Bad Request");
+    }
+
+    [Fact]
+    public void Map_Should_UseSuccessResponseDescriptorAsPrimaryResponseSchema()
+    {
+        var endpoints = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = Guid.NewGuid(),
+                HttpMethod = "POST",
+                Path = "/api/products",
+                ResponseSchemaPayloads = new List<string>
+                {
+                    "{\"type\":\"object\",\"properties\":{\"legacy\":{\"type\":\"string\"}}}",
+                },
+                Responses = new List<ApiEndpointResponseDescriptorDto>
+                {
+                    new()
+                    {
+                        StatusCode = 201,
+                        Schema = "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}",
+                        Examples = "{\"id\":\"abc\"}",
+                    },
+                    new()
+                    {
+                        StatusCode = 400,
+                        Schema = "{\"type\":\"object\",\"properties\":{\"error\":{\"type\":\"string\"}}}",
+                    },
+                },
+            },
+        };
+
+        var result = EndpointPromptContextMapper.Map(endpoints, new TestSuite());
+
+        result.Should().HaveCount(1);
+        result[0].ResponseBodySchema.Should().Contain("\"id\"");
+        result[0].ResponseBodySchema.Should().NotContain("legacy");
+        result[0].ResponseExample.Should().Contain("abc");
+    }
 }

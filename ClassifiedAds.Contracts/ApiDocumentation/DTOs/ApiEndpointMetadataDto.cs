@@ -51,4 +51,64 @@ public class ApiEndpointMetadataDto
     /// Optional: only populated when advanced dependency analysis is needed.
     /// </summary>
     public IReadOnlyCollection<string> ParameterNames { get; set; }
+
+    /// <summary>
+    /// Required path-parameter names for this operation.
+    /// Used by generation/execution validation to guarantee route contract fidelity.
+    /// </summary>
+    public IReadOnlyCollection<string> RequiredPathParameterNames { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Required query-parameter names for this operation.
+    /// Used by generation/execution validation to guarantee query contract fidelity.
+    /// </summary>
+    public IReadOnlyCollection<string> RequiredQueryParameterNames { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Whether this operation requires a request body.
+    /// Used by generation/execution validation to guarantee body contract fidelity.
+    /// </summary>
+    public bool HasRequiredRequestBody { get; set; }
+
+    /// <summary>
+    /// Location-aware parameter descriptors from the API spec.
+    /// Used by prompt/context mappers to preserve true parameter semantics.
+    /// </summary>
+    public IReadOnlyCollection<ApiEndpointParameterDescriptorDto> Parameters { get; set; } = Array.Empty<ApiEndpointParameterDescriptorDto>();
+
+    /// <summary>
+    /// Response descriptors from the API spec, including concrete HTTP status codes.
+    /// Used by prompt/context mappers to keep expected outcomes aligned with OpenAPI.
+    /// </summary>
+    public IReadOnlyCollection<ApiEndpointResponseDescriptorDto> Responses { get; set; } = Array.Empty<ApiEndpointResponseDescriptorDto>();
+}
+
+public class ApiEndpointParameterDescriptorDto
+{
+    public string Name { get; set; }
+
+    public string Location { get; set; }
+
+    public bool IsRequired { get; set; }
+
+    public string DataType { get; set; }
+
+    public string Format { get; set; }
+
+    public string Schema { get; set; }
+
+    public string DefaultValue { get; set; }
+
+    public string Examples { get; set; }
+}
+
+public class ApiEndpointResponseDescriptorDto
+{
+    public int StatusCode { get; set; }
+
+    public string Description { get; set; }
+
+    public string Schema { get; set; }
+
+    public string Examples { get; set; }
 }

@@ -1,4 +1,4 @@
-﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
+using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -143,8 +143,8 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             ? approvedOrder.OrderBy(x => x.OrderIndex).Select(x => x.EndpointId).ToList()
             : new List<Guid>();
 
-        // 8. Map to DTOs with deterministic ordering
-        var orderedTestCases = finalTestCaseIds
+        // 8. Build baseline order from endpoint/custom order, then enforce dependency topology.
+        var baselineOrderedCases = finalTestCaseIds
             .Select(id => enabledTestCaseMap[id])
             .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
                 ? endpointOrderMap[tc.EndpointId.Value]
@@ -152,6 +152,12 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
             .ThenBy(tc => tc.Name)
             .ThenBy(tc => tc.Id)
+            .ToList();
+
+        var topologicallyOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
+
+        // 9. Map to DTOs with deterministic ordering
+        var orderedTestCases = topologicallyOrderedCases
             .Select((tc, index) => MapToExecutionTestCaseDto(tc, index, requestMap, expectationMap, variableMap, dependencyMap))
             .ToList();
 
@@ -215,6 +221,85 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         }
     }
 
+    private static List<TestCase> OrderCasesByDependencyTopology(
+        IReadOnlyList<TestCase> baselineOrderedCases,
+        IReadOnlyCollection<TestCaseDependency> dependencies)
+    {
+        if (baselineOrderedCases == null || baselineOrderedCases.Count == 0)
+        {
+            return new List<TestCase>();
+        }
+
+        var caseById = baselineOrderedCases.ToDictionary(x => x.Id);
+        var baselineIndexById = baselineOrderedCases
+            .Select((testCase, index) => new { testCase.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+
+        var inDegree = baselineOrderedCases.ToDictionary(x => x.Id, _ => 0);
+        var adjacency = baselineOrderedCases.ToDictionary(x => x.Id, _ => new List<Guid>());
+        var seenEdges = new HashSet<(Guid DependentId, Guid DependencyId)>();
+
+        foreach (var dependency in dependencies ?? Array.Empty<TestCaseDependency>())
+        {
+            if (!caseById.ContainsKey(dependency.TestCaseId)
+                || !caseById.ContainsKey(dependency.DependsOnTestCaseId)
+                || dependency.TestCaseId == dependency.DependsOnTestCaseId)
+            {
+                continue;
+            }
+
+            var edge = (DependentId: dependency.TestCaseId, DependencyId: dependency.DependsOnTestCaseId);
+            if (!seenEdges.Add(edge))
+            {
+                continue;
+            }
+
+            adjacency[dependency.DependsOnTestCaseId].Add(dependency.TestCaseId);
+            inDegree[dependency.TestCaseId] += 1;
+        }
+
+        var ready = new SortedSet<(int BaselineIndex, Guid TestCaseId)>(
+            inDegree
+                .Where(x => x.Value == 0)
+                .Select(x => (baselineIndexById[x.Key], x.Key)));
+
+        var orderedIds = new List<Guid>(baselineOrderedCases.Count);
+
+        while (orderedIds.Count < baselineOrderedCases.Count)
+        {
+            if (ready.Count == 0)
+            {
+                // Cycle detected — break it by picking the unprocessed node
+                // with the lowest baseline index (preserves original ordering
+                // for cycle participants instead of blocking the entire run).
+                var cycleBreaker = inDegree
+                    .Where(x => x.Value > 0)
+                    .OrderBy(x => baselineIndexById[x.Key])
+                    .First();
+
+                inDegree[cycleBreaker.Key] = 0;
+                ready.Add((baselineIndexById[cycleBreaker.Key], cycleBreaker.Key));
+            }
+
+            var next = ready.Min;
+            ready.Remove(next);
+
+            orderedIds.Add(next.TestCaseId);
+
+            foreach (var dependentId in adjacency[next.TestCaseId])
+            {
+                inDegree[dependentId] -= 1;
+
+                if (inDegree[dependentId] == 0)
+                {
+                    ready.Add((baselineIndexById[dependentId], dependentId));
+                }
+            }
+        }
+
+        return orderedIds.Select(id => caseById[id]).ToList();
+    }
+
     private static ExecutionTestCaseDto MapToExecutionTestCaseDto(
         TestCase tc,
         int orderIndex,
@@ -268,6 +353,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                 ExtractFrom = v.ExtractFrom.ToString(),
                 JsonPath = v.JsonPath,
                 HeaderName = v.HeaderName,
+                Regex = v.Regex,
                 DefaultValue = v.DefaultValue,
             }).ToList().AsReadOnly() ?? (IReadOnlyList<ExecutionVariableRuleDto>)Array.Empty<ExecutionVariableRuleDto>(),
         };

@@ -755,6 +755,51 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Confirm a user's email WITHOUT a token. Only available when
+    /// <c>AllowDevEmailConfirmation = true</c> in Identity module options.
+    /// Intended for automated test environments.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("dev-confirm-email")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> DevConfirmEmail([FromBody] DevConfirmEmailModel model)
+    {
+        if (!_moduleOptions.AllowDevEmailConfirmation)
+        {
+            return NotFound();
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var user = await _userManager.FindByEmailAsync(model.Email);
+        if (user == null)
+        {
+            return BadRequest(new { Error = "Không tìm thấy tài khoản với email này." });
+        }
+
+        if (user.EmailConfirmed)
+        {
+            return Ok(new { Message = "Email đã được xác nhận." });
+        }
+
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var result = await _userManager.ConfirmEmailAsync(user, token);
+        if (!result.Succeeded)
+        {
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+        }
+
+        _logger.LogInformation("Dev email confirmation used for {Email}", model.Email);
+
+        return Ok(new { Message = "Email đã được xác nhận (dev mode)." });
+    }
+
+    /// <summary>
     /// Resend email confirmation
     /// </summary>
     [AllowAnonymous]

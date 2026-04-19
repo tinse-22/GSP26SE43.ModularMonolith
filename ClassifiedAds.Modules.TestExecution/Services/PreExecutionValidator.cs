@@ -3,6 +3,7 @@ using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Modules.TestExecution.Models;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -49,7 +50,8 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
 
         ValidatePathParams(testCase, variableBag, environment, result);
-        ValidateBody(testCase, result);
+        ValidateRequiredQueryParams(testCase, endpointMetadata, result);
+        ValidateBody(testCase, endpointMetadata, result);
         ValidateUnresolvedPlaceholders(testCase, variableBag, environment, result);
         ValidateVariableChaining(testCase, variableBag, result);
 
@@ -105,9 +107,15 @@ public class PreExecutionValidator : IPreExecutionValidator
             mergedVars[kvp.Key] = kvp.Value;
         }
 
+        var requiredPathParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match token in routeTokens)
         {
-            var paramName = token.Groups[1].Value;
+            requiredPathParams.Add(token.Groups[1].Value);
+        }
+
+        foreach (var routeParam in requiredPathParams)
+        {
+            var paramName = routeParam;
 
             // Check if path param value is provided
             if (!pathParams.TryGetValue(paramName, out var paramValue) || string.IsNullOrWhiteSpace(paramValue))
@@ -135,7 +143,7 @@ public class PreExecutionValidator : IPreExecutionValidator
                     result.Errors.Add(new ValidationFailureModel
                     {
                         Code = "UNRESOLVABLE_PATH_PARAM",
-                        Message = $"Path parameter '{paramName}' dùng variable '{{{{{{varName}}}}}}' nhưng variable này chưa có giá trị. " +
+                        Message = $"Path parameter '{paramName}' dùng variable '{{{{{varName}}}}}' nhưng variable này chưa có giá trị. " +
                                   "Cách khắc phục: Đảm bảo test trước có variable extraction rule cho '" + varName + "', " +
                                   "hoặc thêm biến vào ExecutionEnvironment.Variables.",
                         Target = $"PathParams.{paramName}",
@@ -147,19 +155,90 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
     }
 
+    private static void ValidateRequiredQueryParams(
+        ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
+        PreExecutionValidationResult result)
+    {
+        if (endpointMetadata?.RequiredQueryParameterNames == null || endpointMetadata.RequiredQueryParameterNames.Count == 0)
+        {
+            return;
+        }
+
+        var queryParams = DeserializeDictionary(testCase.Request?.QueryParams);
+        foreach (var requiredQueryParam in endpointMetadata.RequiredQueryParameterNames)
+        {
+            if (string.IsNullOrWhiteSpace(requiredQueryParam))
+            {
+                continue;
+            }
+
+            if (!queryParams.TryGetValue(requiredQueryParam, out var value) || string.IsNullOrWhiteSpace(value))
+            {
+                result.Errors.Add(new ValidationFailureModel
+                {
+                    Code = "MISSING_REQUIRED_QUERY_PARAM",
+                    Message = $"Thiếu required query parameter '{requiredQueryParam}' theo endpoint contract.",
+                    Target = $"QueryParams.{requiredQueryParam}",
+                    Expected = "Giá trị không rỗng",
+                    Actual = "(không có)",
+                });
+            }
+        }
+    }
+
     private static void ValidateBody(
         ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
         PreExecutionValidationResult result)
     {
         var httpMethod = testCase.Request.HttpMethod?.Trim().ToUpperInvariant() ?? "GET";
 
-        if (!BodyRequiredMethods.Contains(httpMethod))
+        var requiresBodyByMethod = BodyRequiredMethods.Contains(httpMethod);
+        var requiresBodyByContract = endpointMetadata?.HasRequiredRequestBody == true;
+        if (!requiresBodyByMethod && !requiresBodyByContract)
         {
             return;
         }
 
         var hasBody = !string.IsNullOrWhiteSpace(testCase.Request.Body);
         var bodyType = testCase.Request.BodyType?.Trim().ToUpperInvariant();
+
+        if (!hasBody && requiresBodyByContract)
+        {
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = "MISSING_REQUIRED_BODY",
+                Message = "Endpoint contract yêu cầu request body nhưng request hiện tại không có body.",
+                Target = "Request.Body",
+                Expected = "Body JSON hợp lệ",
+                Actual = "(trống)",
+            });
+            return;
+        }
+
+        if (hasBody && requiresBodyByContract && IsMeaninglessRequiredBody(testCase.Request.Body, endpointMetadata))
+        {
+            if (IsLikelyErrorCase(testCase))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "MEANINGLESS_REQUIRED_BODY_FOR_ERROR_CASE",
+                    Message = "Request body đang là object rỗng cho test case lỗi (negative/boundary). Hệ thống vẫn cho phép chạy để xác nhận response 4xx thực tế.",
+                });
+                return;
+            }
+
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = "MEANINGLESS_REQUIRED_BODY",
+                Message = "Request body hiện chỉ chứa object rỗng hoặc payload không có trường meaningful dù endpoint contract yêu cầu body có schema cụ thể.",
+                Target = "Request.Body",
+                Expected = "JSON body với các trường required/example/default hợp lệ",
+                Actual = testCase.Request.Body,
+            });
+            return;
+        }
 
         if (!hasBody && bodyType != "NONE" && !string.IsNullOrEmpty(bodyType))
         {
@@ -174,7 +253,7 @@ public class PreExecutionValidator : IPreExecutionValidator
                 Actual = "(trống)",
             });
         }
-        else if (!hasBody)
+        else if (!hasBody && requiresBodyByMethod)
         {
             // Warning instead of error — some POST endpoints may not require a body (e.g., trigger actions)
             result.Warnings.Add(new ValidationWarningModel
@@ -183,6 +262,122 @@ public class PreExecutionValidator : IPreExecutionValidator
                 Message = $"HTTP {httpMethod} request không có body. Nếu endpoint yêu cầu body, test sẽ bị reject bởi server (400/422).",
             });
         }
+    }
+
+    private static bool IsMeaninglessRequiredBody(string body, ApiEndpointMetadataDto endpointMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return true;
+        }
+
+        var schema = endpointMetadata?.Parameters?
+            .FirstOrDefault(parameter =>
+                string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(parameter.Schema))
+            ?.Schema
+            ?? endpointMetadata?.ParameterSchemaPayloads?.FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(schema))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var bodyDocument = JsonDocument.Parse(body);
+            if (bodyDocument.RootElement.ValueKind != JsonValueKind.Object ||
+                bodyDocument.RootElement.EnumerateObject().Any())
+            {
+                return false;
+            }
+
+            using var schemaDocument = JsonDocument.Parse(schema);
+            var schemaRoot = schemaDocument.RootElement;
+
+            if (schemaRoot.TryGetProperty("required", out var required) &&
+                required.ValueKind == JsonValueKind.Array &&
+                required.GetArrayLength() > 0)
+            {
+                return true;
+            }
+
+            return schemaRoot.TryGetProperty("properties", out var properties) &&
+                   properties.ValueKind == JsonValueKind.Object &&
+                   properties.EnumerateObject().Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLikelyErrorCase(ExecutionTestCaseDto testCase)
+    {
+        if (testCase == null)
+        {
+            return false;
+        }
+
+        if (ContainsAny(testCase.TestType, "negative", "boundary", "invalid") ||
+            ContainsAny(testCase.Name, "negative", "boundary", "invalid"))
+        {
+            return true;
+        }
+
+        var statuses = ParseExpectedStatuses(testCase.Expectation?.ExpectedStatus);
+        return statuses.Count > 0 && statuses.All(status => status >= 400 && status < 600);
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        if (string.IsNullOrWhiteSpace(value) || tokens == null || tokens.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var token in tokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token) &&
+                value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static List<int> ParseExpectedStatuses(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return new List<int>();
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<int>>(expectedStatus);
+            if (parsed != null && parsed.Count > 0)
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+            // ignore malformed expectation format; caller falls back to single-value parsing.
+        }
+
+        var trimmed = expectedStatus.Trim();
+        if (trimmed.StartsWith("[", StringComparison.Ordinal) &&
+            trimmed.EndsWith("]", StringComparison.Ordinal))
+        {
+            trimmed = trimmed.Trim('[', ']', ' ');
+        }
+
+        return int.TryParse(trimmed, out var single)
+            ? new List<int> { single }
+            : new List<int>();
     }
 
     private static void ValidateUnresolvedPlaceholders(
@@ -238,10 +433,32 @@ public class PreExecutionValidator : IPreExecutionValidator
             var varName = match.Groups[1].Value;
             if (!mergedVars.ContainsKey(varName))
             {
+                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                    && IsNumericSemanticVariableName(varName))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "NUMERIC_PLACEHOLDER_DEFAULT_FALLBACK",
+                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị số mặc định an toàn để tiếp tục chạy test.",
+                    });
+                    continue;
+                }
+
+                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                    && !IsIdentifierSemanticVariableName(varName))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "TEXT_PLACEHOLDER_DEFAULT_FALLBACK",
+                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị text mặc định an toàn để tiếp tục chạy test.",
+                    });
+                    continue;
+                }
+
                 result.Errors.Add(new ValidationFailureModel
                 {
                     Code = "UNRESOLVED_VARIABLE",
-                    Message = $"Variable '{{{{{{varName}}}}}}' trong {surface} chưa có giá trị. " +
+                    Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. " +
                               "Cách khắc phục: (1) Thêm vào ExecutionEnvironment.Variables, " +
                               "(2) Đảm bảo test trước có extraction rule, " +
                               "(3) Re-generate test cases.",
@@ -251,6 +468,57 @@ public class PreExecutionValidator : IPreExecutionValidator
                 });
             }
         }
+    }
+
+    private static bool IsIdentifierSemanticVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNumericSemanticVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var normalized = variableName.Trim().ToLowerInvariant();
+        var numericKeywords = new[]
+        {
+            "price",
+            "amount",
+            "cost",
+            "stock",
+            "quantity",
+            "qty",
+            "count",
+            "total",
+            "number",
+            "num",
+            "rate",
+            "percent",
+            "percentage",
+            "size",
+            "limit",
+            "offset",
+        };
+
+        foreach (var keyword in numericKeywords)
+        {
+            if (normalized.Contains(keyword, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ValidateVariableChaining(

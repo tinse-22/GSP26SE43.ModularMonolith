@@ -72,5 +72,7 @@ public class ExecutionVariableRuleDto
 
     public string HeaderName { get; set; }
 
+    public string Regex { get; set; }
+
     public string DefaultValue { get; set; }
 }

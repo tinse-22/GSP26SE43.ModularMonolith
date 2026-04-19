@@ -194,12 +194,61 @@ public class ExecutionEnvironmentRuntimeResolverTests
         var resolved = await _resolver.ResolveAsync(environment);
 
         // Assert
-        resolved.Variables.Should().HaveCount(2);
+        resolved.Variables.Count.Should().BeGreaterThanOrEqualTo(2);
         resolved.Variables["baseUrl"].Should().Be("https://api.test.com");
         resolved.Variables["version"].Should().Be("v2");
         resolved.DefaultHeaders.Should().ContainKey("Accept");
         resolved.DefaultHeaders["Accept"].Should().Be("application/json");
         resolved.DefaultHeaders["X-Custom"].Should().Be("value");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_Should_AddBuiltInRunVariables_WhenNotConfigured()
+    {
+        // Arrange
+        _authConfigServiceMock.Setup(x => x.DeserializeAuthConfig(It.IsAny<string>()))
+            .Returns((ExecutionAuthConfigModel)null);
+
+        var environment = CreateEnvironment();
+
+        // Act
+        var resolved = await _resolver.ResolveAsync(environment);
+
+        // Assert
+        resolved.Variables.Should().ContainKey("runId");
+        resolved.Variables.Should().ContainKey("runSuffix");
+        resolved.Variables.Should().ContainKey("runTimestamp");
+        resolved.Variables.Should().ContainKey("runUniqueEmail");
+        resolved.Variables.Should().ContainKey("testEmail");
+        resolved.Variables.Should().ContainKey("runUniquePassword");
+        resolved.Variables.Should().ContainKey("testPassword");
+        resolved.Variables["testEmail"].Should().Be(resolved.Variables["runUniqueEmail"]);
+        resolved.Variables["testPassword"].Should().Be(resolved.Variables["runUniquePassword"]);
+        resolved.Variables["runUniqueEmail"].Should().MatchRegex(@"^testrun_\d{14}_[a-z0-9]{8}@example\.com$");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_Should_NotOverwriteConfiguredTestIdentityVariables()
+    {
+        // Arrange
+        _authConfigServiceMock.Setup(x => x.DeserializeAuthConfig(It.IsAny<string>()))
+            .Returns((ExecutionAuthConfigModel)null);
+
+        var environment = CreateEnvironment(
+            variables: JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["testEmail"] = "qa-team@company.local",
+                ["testPassword"] = "AlreadyConfigured!123",
+            }));
+
+        // Act
+        var resolved = await _resolver.ResolveAsync(environment);
+
+        // Assert
+        resolved.Variables["testEmail"].Should().Be("qa-team@company.local");
+        resolved.Variables["testPassword"].Should().Be("AlreadyConfigured!123");
+        resolved.Variables.Should().ContainKey("runUniqueEmail");
+        resolved.Variables.Should().ContainKey("runUniquePassword");
     }
 
     [Fact]

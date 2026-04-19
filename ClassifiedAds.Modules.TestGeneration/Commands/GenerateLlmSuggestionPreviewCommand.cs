@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
@@ -22,13 +23,13 @@ public class GenerateLlmSuggestionPreviewCommand : ICommand
     public Guid CurrentUserId { get; set; }
     public Guid SpecificationId { get; set; }
     public bool ForceRefresh { get; set; }
-    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new ();
+    public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
     public GenerateLlmSuggestionPreviewResultModel Result { get; set; }
 }
 
 public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<GenerateLlmSuggestionPreviewCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -37,6 +38,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
     private readonly IApiTestOrderGateService _gateService;
+    private readonly IApiEndpointMetadataService _endpointMetadataService;
+    private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
     private readonly ILlmScenarioSuggester _llmSuggester;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
     private readonly ILogger<GenerateLlmSuggestionPreviewCommandHandler> _logger;
@@ -45,6 +48,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
         IApiTestOrderGateService gateService,
+        IApiEndpointMetadataService endpointMetadataService,
+        IApiEndpointParameterDetailService endpointParameterDetailService,
         ILlmScenarioSuggester llmSuggester,
         ISubscriptionLimitGatewayService subscriptionLimitService,
         ILogger<GenerateLlmSuggestionPreviewCommandHandler> logger)
@@ -52,6 +57,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
         _gateService = gateService;
+        _endpointMetadataService = endpointMetadataService;
+        _endpointParameterDetailService = endpointParameterDetailService;
         _llmSuggester = llmSuggester;
         _subscriptionLimitService = subscriptionLimitService;
         _logger = logger;
@@ -108,16 +115,31 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 "Đã có suggestion preview đang chờ review. Sử dụng ForceRefresh=true để tạo mới.");
         }
 
-        // 6) Call LLM pipeline (reuse FE-06 ILlmScenarioSuggester)
-        var endpointMetadataService = _gateService;
+        // 6) Build contract-rich LLM context (metadata + parameter details)
+        var endpointIds = approvedOrder
+            .Select(x => x.EndpointId)
+            .Distinct()
+            .ToList();
+
+        var endpointMetadata = await _endpointMetadataService.GetEndpointMetadataAsync(
+            command.SpecificationId,
+            endpointIds,
+            cancellationToken);
+
+        var endpointParameterDetails = await _endpointParameterDetailService.GetParameterDetailsAsync(
+            command.SpecificationId,
+            endpointIds,
+            cancellationToken);
 
         var llmContext = new LlmScenarioSuggestionContext
         {
             TestSuiteId = suite.Id,
             UserId = command.CurrentUserId,
             Suite = suite,
+            EndpointMetadata = endpointMetadata,
             OrderedEndpoints = approvedOrder,
             SpecificationId = command.SpecificationId,
+            EndpointParameterDetails = endpointParameterDetails.ToDictionary(x => x.EndpointId),
             AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
         };
 
@@ -183,6 +205,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 {
                     HttpMethod = orderItem?.HttpMethod,
                     Url = orderItem?.Path,
+                    BodyType = scenario.SuggestedBodyType,
                     Body = scenario.SuggestedBody,
                     PathParams = scenario.SuggestedPathParams,
                     QueryParams = scenario.SuggestedQueryParams,

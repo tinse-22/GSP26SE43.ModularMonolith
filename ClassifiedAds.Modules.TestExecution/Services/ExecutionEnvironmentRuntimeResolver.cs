@@ -13,6 +13,8 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 
 public class ExecutionEnvironmentRuntimeResolver : IExecutionEnvironmentRuntimeResolver
 {
+    private const string DefaultSyntheticEmailDomain = "example.com";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -35,6 +37,7 @@ public class ExecutionEnvironmentRuntimeResolver : IExecutionEnvironmentRuntimeR
     public async Task<ResolvedExecutionEnvironment> ResolveAsync(ExecutionEnvironment environment, CancellationToken ct = default)
     {
         var variables = DeserializeDictionary(environment.Variables);
+        EnsureBuiltInRunVariables(variables);
         var headers = DeserializeDictionary(environment.Headers);
         var authConfig = _authConfigService.DeserializeAuthConfig(environment.AuthConfig);
 
@@ -54,6 +57,42 @@ public class ExecutionEnvironmentRuntimeResolver : IExecutionEnvironmentRuntimeR
         }
 
         return resolved;
+    }
+
+    private static void EnsureBuiltInRunVariables(Dictionary<string, string> variables)
+    {
+        if (variables == null)
+        {
+            return;
+        }
+
+        var runId = Guid.NewGuid().ToString("N");
+        var runSuffix = runId[..8].ToLowerInvariant();
+        var runStamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+
+        variables["runId"] = runId;
+        variables["runSuffix"] = runSuffix;
+        variables["runTimestamp"] = runStamp;
+
+        if (!variables.ContainsKey("runUniqueEmail"))
+        {
+            variables["runUniqueEmail"] = $"testrun_{runStamp}_{runSuffix}@{DefaultSyntheticEmailDomain}";
+        }
+
+        if (!variables.ContainsKey("testEmail"))
+        {
+            variables["testEmail"] = variables["runUniqueEmail"];
+        }
+
+        if (!variables.ContainsKey("runUniquePassword"))
+        {
+            variables["runUniquePassword"] = $"Test!{runSuffix}Aa1";
+        }
+
+        if (!variables.ContainsKey("testPassword"))
+        {
+            variables["testPassword"] = variables["runUniquePassword"];
+        }
     }
 
     private async Task ResolveAuth(ExecutionAuthConfigModel authConfig, ResolvedExecutionEnvironment resolved, CancellationToken ct)

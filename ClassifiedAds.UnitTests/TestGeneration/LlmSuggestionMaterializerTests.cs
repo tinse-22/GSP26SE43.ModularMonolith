@@ -184,6 +184,37 @@ public class LlmSuggestionMaterializerTests
     }
 
     [Fact]
+    public void MaterializeFromScenario_Should_MapRequestBodyExtractFrom()
+    {
+        var testSuiteId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = endpointId,
+            ScenarioName = "RequestBody extraction",
+            Description = "Variable comes from request body",
+            SuggestedTestType = TestType.HappyPath,
+            Variables = new List<N8nTestCaseVariable>
+            {
+                new()
+                {
+                    VariableName = "registeredEmail",
+                    ExtractFrom = "RequestBody",
+                    JsonPath = "$.email",
+                },
+            },
+        };
+
+        var orderItem = new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/auth/register", OrderIndex = 0 };
+
+        var result = _sut.MaterializeFromScenario(scenario, testSuiteId, orderItem, 0);
+
+        result.Variables.Should().ContainSingle();
+        result.Variables.First().ExtractFrom.Should().Be(ExtractFrom.RequestBody);
+        result.Variables.First().JsonPath.Should().Be("$.email");
+    }
+
+    [Fact]
     public void MaterializeFromScenario_Should_HandleNullVariables()
     {
         // Arrange

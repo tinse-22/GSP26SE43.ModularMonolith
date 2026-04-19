@@ -63,6 +63,8 @@ public class LlmSuggestedScenario
 
     public string SuggestedBody { get; set; }
 
+    public string SuggestedBodyType { get; set; }
+
     public Dictionary<string, string> SuggestedPathParams { get; set; }
 
     public Dictionary<string, string> SuggestedQueryParams { get; set; }

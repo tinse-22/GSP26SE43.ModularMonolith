@@ -472,6 +472,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         return extractFrom.Trim().ToLowerInvariant() switch
         {
             "responsebody" or "response_body" or "body" => ExtractFrom.ResponseBody,
+            "requestbody" or "request_body" => ExtractFrom.RequestBody,
             "responseheader" or "response_header" or "header" => ExtractFrom.ResponseHeader,
             "status" => ExtractFrom.Status,
             _ => ExtractFrom.ResponseBody,

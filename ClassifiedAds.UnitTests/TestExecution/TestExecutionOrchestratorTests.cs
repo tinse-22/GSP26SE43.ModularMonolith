@@ -98,13 +98,33 @@ public class TestExecutionOrchestratorTests
 
         SetupDefaultMocks(new[] { caseA, caseB }, new[] { endpointId });
 
-        // Case A: fails validation
+        // Case A: fails with non-usable result (5xx + non-status-mismatch failure)
         SetupTestCaseExecution(caseA, isPassed: false);
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseA.TestCaseId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 500,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 40,
+            });
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseA.TestCaseId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = false,
+                StatusCodeMatched = false,
+                Failures = new List<ValidationFailureModel>
+                {
+                    new() { Code = "BODY_CONTAINS_MISSING", Message = "Hard failure" },
+                },
+            });
 
         // Case B: would normally pass, but should be skipped
         SetupTestCaseExecution(caseB, isPassed: true);
 
-        TestRunResultModel capturedResult = null;
+        TestRunResultModel? capturedResult = null;
         _resultCollectorMock
             .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
@@ -114,7 +134,7 @@ public class TestExecutionOrchestratorTests
                     Cases = results.Select(r => new TestCaseRunResultModel { TestCaseId = r.TestCaseId, Status = r.Status }).ToList(),
                 };
             })
-            .ReturnsAsync(() => capturedResult);
+            .ReturnsAsync(() => capturedResult!);
 
         // Act
         var result = await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
@@ -123,6 +143,94 @@ public class TestExecutionOrchestratorTests
         result.Cases.Should().HaveCount(2);
         result.Cases[0].Status.Should().Be("Failed");
         result.Cases[1].Status.Should().Be("Skipped");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_NotSkipDependency_WhenOnlyStatusMismatchBut2xx()
+    {
+        // Arrange
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointId, 0);
+        var caseB = CreateTestCase(caseBId, endpointId, 1, dependencyIds: new[] { caseAId });
+
+        SetupDefaultMocks(new[] { caseA, caseB }, new[] { endpointId });
+
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) => new ResolvedTestCaseRequest
+            {
+                TestCaseId = tc.TestCaseId,
+                Name = tc.Name,
+                HttpMethod = "POST",
+                ResolvedUrl = "https://api.example.com/test",
+                TimeoutMs = 30000,
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseAId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 201,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 30,
+            });
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.Is<ResolvedTestCaseRequest>(r => r.TestCaseId == caseBId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 30,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseAId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = false,
+                StatusCodeMatched = false,
+                Failures = new List<ValidationFailureModel>
+                {
+                    new() { Code = "STATUS_CODE_MISMATCH", Message = "Expected 200 but got 201" },
+                },
+            });
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.Is<ExecutionTestCaseDto>(tc => tc.TestCaseId == caseBId), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        TestRunResultModel? capturedResult = null;
+        _resultCollectorMock
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            {
+                capturedResult = new TestRunResultModel
+                {
+                    Cases = results.Select(r => new TestCaseRunResultModel { TestCaseId = r.TestCaseId, Status = r.Status }).ToList(),
+                };
+            })
+            .ReturnsAsync(() => capturedResult!);
+
+        // Act
+        var result = await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        result.Cases.Should().HaveCount(2);
+        result.Cases[0].Status.Should().Be("Failed");
+        result.Cases[1].Status.Should().Be("Passed");
     }
 
     [Fact]
@@ -178,7 +286,7 @@ public class TestExecutionOrchestratorTests
         SetupTestCaseExecution(case1, isPassed: true);
         SetupResultCollector();
 
-        TestRun updatedRun = null;
+        TestRun? updatedRun = null;
         _runRepoMock
             .Setup(x => x.UpdateAsync(It.IsAny<TestRun>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, CancellationToken>((run, _) =>
@@ -213,7 +321,7 @@ public class TestExecutionOrchestratorTests
         SetupDefaultMocks(new[] { case1, case2 }, new[] { endpointId });
 
         // Track variables received by each Resolve call
-        Dictionary<string, string> case2Variables = null;
+        Dictionary<string, string>? case2Variables = null;
 
         _variableResolverMock
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
@@ -247,8 +355,8 @@ public class TestExecutionOrchestratorTests
         // Case 1 extracts "token", case 2 extracts nothing
         var extractCallCount = 0;
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
-            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>>((_, _) =>
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
             {
                 extractCallCount++;
                 return extractCallCount == 1
@@ -272,6 +380,271 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ImplicitlyExtractResourceId_WhenVariableRulesMissing()
+    {
+        // Arrange
+        var createCaseId = Guid.NewGuid();
+        var updateCaseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var createCase = CreateTestCase(createCaseId, endpointId, 0);
+        createCase.Name = "Happy Path: POST /api/categories";
+        createCase.TestType = "HappyPath";
+        createCase.Request.HttpMethod = "POST";
+        createCase.Request.Url = "/api/categories";
+
+        var updateCase = CreateTestCase(updateCaseId, endpointId, 1, new[] { createCaseId });
+        updateCase.Name = "Happy Path: PUT /api/categories/{id}";
+        updateCase.TestType = "HappyPath";
+        updateCase.Request.HttpMethod = "PUT";
+        updateCase.Request.Url = "/api/categories/{id}";
+
+        SetupDefaultMocks(new[] { createCase, updateCase }, new[] { endpointId });
+
+        Dictionary<string, string>? updateVariables = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == updateCaseId)
+                {
+                    updateVariables = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = tc.Request.Url,
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ResolvedTestCaseRequest, CancellationToken>((request, _) =>
+            {
+                var response = request.TestCaseId == createCaseId
+                    ? new HttpTestResponse
+                    {
+                        StatusCode = 201,
+                        Body = "{\"data\":{\"_id\":\"cat-777\"}}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    }
+                    : new HttpTestResponse
+                    {
+                        StatusCode = 200,
+                        Body = "{}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    };
+
+                return Task.FromResult(response);
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        updateVariables.Should().NotBeNull();
+        updateVariables.Should().ContainKey("categoryId");
+        updateVariables["categoryId"].Should().Be("cat-777");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_NotOverwriteForeignResourceIdentifier_WhenVariableAlreadyExists()
+    {
+        // Arrange
+        var createCategoryId = Guid.NewGuid();
+        var createProductId = Guid.NewGuid();
+        var updateCategoryId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var createCategory = CreateTestCase(createCategoryId, endpointId, 0);
+        createCategory.Name = "Happy Path: POST /api/categories";
+        createCategory.TestType = "HappyPath";
+        createCategory.Request.HttpMethod = "POST";
+        createCategory.Request.Url = "/api/categories";
+
+        var createProduct = CreateTestCase(createProductId, endpointId, 1, new[] { createCategoryId });
+        createProduct.Name = "Happy Path: POST /api/products";
+        createProduct.TestType = "HappyPath";
+        createProduct.Request.HttpMethod = "POST";
+        createProduct.Request.Url = "/api/products";
+
+        var updateCategory = CreateTestCase(updateCategoryId, endpointId, 2, new[] { createCategoryId });
+        updateCategory.Name = "Happy Path: PUT /api/categories/{id}";
+        updateCategory.TestType = "HappyPath";
+        updateCategory.Request.HttpMethod = "PUT";
+        updateCategory.Request.Url = "/api/categories/{id}";
+
+        SetupDefaultMocks(new[] { createCategory, createProduct, updateCategory }, new[] { endpointId });
+
+        Dictionary<string, string>? updateVariables = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == updateCategoryId)
+                {
+                    updateVariables = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = tc.Request.Url,
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 201,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        var extractCallCount = 0;
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
+            {
+                extractCallCount++;
+                return extractCallCount switch
+                {
+                    1 => new Dictionary<string, string>
+                    {
+                        ["categoryId"] = "cat-777",
+                    },
+                    2 => new Dictionary<string, string>
+                    {
+                        ["categoryId"] = "prd-999",
+                        ["productId"] = "prd-999",
+                    },
+                    _ => new Dictionary<string, string>(),
+                };
+            });
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        updateVariables.Should().NotBeNull();
+        updateVariables.Should().ContainKey("categoryId");
+        updateVariables["categoryId"].Should().Be("cat-777");
+        updateVariables.Should().ContainKey("productId");
+        updateVariables["productId"].Should().Be("prd-999");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ImplicitlyExtractAuthToken_WhenVariableRulesMissing()
+    {
+        // Arrange
+        var loginCaseId = Guid.NewGuid();
+        var protectedCaseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var loginCase = CreateTestCase(loginCaseId, endpointId, 0);
+        loginCase.Name = "Happy Path: POST /api/auth/login";
+        loginCase.TestType = "HappyPath";
+        loginCase.Request.HttpMethod = "POST";
+        loginCase.Request.Url = "/api/auth/login";
+
+        var protectedCase = CreateTestCase(protectedCaseId, endpointId, 1, new[] { loginCaseId });
+        protectedCase.Name = "Happy Path: POST /api/products";
+        protectedCase.TestType = "HappyPath";
+        protectedCase.Request.HttpMethod = "POST";
+        protectedCase.Request.Url = "/api/products";
+
+        SetupDefaultMocks(new[] { loginCase, protectedCase }, new[] { endpointId });
+
+        Dictionary<string, string>? protectedCaseVariables = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, vars, _) =>
+            {
+                if (tc.TestCaseId == protectedCaseId)
+                {
+                    protectedCaseVariables = new Dictionary<string, string>(vars);
+                }
+
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = tc.Request.Url,
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ResolvedTestCaseRequest, CancellationToken>((request, _) =>
+            {
+                var response = request.TestCaseId == loginCaseId
+                    ? new HttpTestResponse
+                    {
+                        StatusCode = 200,
+                        Body = "{\"data\":{\"token\":\"jwt-implicit-123\"}}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    }
+                    : new HttpTestResponse
+                    {
+                        StatusCode = 201,
+                        Body = "{}",
+                        Headers = new Dictionary<string, string>(),
+                        LatencyMs = 20,
+                    };
+
+                return Task.FromResult(response);
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult { IsPassed = true, StatusCodeMatched = true });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        protectedCaseVariables.Should().NotBeNull();
+        protectedCaseVariables.Should().ContainKey("authToken").WhoseValue.Should().Be("jwt-implicit-123");
+        protectedCaseVariables.Should().ContainKey("accessToken").WhoseValue.Should().Be("jwt-implicit-123");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_ChainAuthTokenThroughMultipleCrudRequests()
     {
         // Arrange — 3 sequential test cases:
@@ -290,8 +663,8 @@ public class TestExecutionOrchestratorTests
         SetupDefaultMocks(new[] { loginCase, createCase, getCase }, new[] { endpointId });
 
         // Track variable bags received by each Resolve call
-        Dictionary<string, string> createVars = null;
-        Dictionary<string, string> getVars = null;
+        Dictionary<string, string>? createVars = null;
+        Dictionary<string, string>? getVars = null;
 
         _variableResolverMock
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
@@ -331,8 +704,8 @@ public class TestExecutionOrchestratorTests
         // Get extracts nothing
         var callIndex = 0;
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>()))
-            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>>((_, _) =>
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns<HttpTestResponse, IReadOnlyList<ExecutionVariableRuleDto>, string>((_, _, _) =>
             {
                 callIndex++;
                 return callIndex switch
@@ -373,6 +746,121 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_AutoHydrateRequiredBody_ForSuccessCase()
+    {
+        // Arrange
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        testCase.Name = "Happy Path: POST /api/auth/login";
+        testCase.TestType = "Happy";
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{}";
+        testCase.Expectation.ExpectedStatus = "[200]";
+
+        SetupDefaultMocks(new[] { testCase }, new[] { endpointId });
+
+        _endpointMetadataMock
+            .Setup(x => x.GetEndpointMetadataAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HasRequiredRequestBody = true,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            IsRequired = true,
+                            Schema = """
+                            {
+                              "type": "object",
+                              "required": ["email", "password"],
+                              "properties": {
+                                "email": { "type": "string", "format": "email" },
+                                "password": { "type": "string", "minLength": 8 }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                },
+            });
+
+        string validatedBody = null;
+        _preValidatorMock
+            .Setup(x => x.Validate(
+                It.IsAny<ExecutionTestCaseDto>(),
+                It.IsAny<ResolvedExecutionEnvironment>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(),
+                It.IsAny<ApiEndpointMetadataDto>()))
+            .Callback<ExecutionTestCaseDto, ResolvedExecutionEnvironment, IReadOnlyDictionary<string, string>, ApiEndpointMetadataDto>((tc, _, _, _) =>
+            {
+                validatedBody = tc.Request.Body;
+            })
+            .Returns(new PreExecutionValidationResult());
+
+        string resolvedBody = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) =>
+            {
+                resolvedBody = tc.Request.Body;
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = "https://api.example.com/auth/login",
+                    BodyType = tc.Request.BodyType,
+                    Body = tc.Request.Body,
+                    TimeoutMs = tc.Request.Timeout,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        validatedBody.Should().NotBeNullOrWhiteSpace();
+        validatedBody.Should().NotBe("{}");
+        validatedBody.Should().Contain("email");
+
+        resolvedBody.Should().NotBeNullOrWhiteSpace();
+        resolvedBody.Should().NotBe("{}");
+        resolvedBody.Should().Contain("password");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_FailCase_WhenUnresolvedVariable()
     {
         // Arrange
@@ -387,7 +875,7 @@ public class TestExecutionOrchestratorTests
             .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
             .Throws(new UnresolvedVariableException("Bien '{{missing}}' chua duoc giai quyet trong URL."));
 
-        TestCaseExecutionResult capturedFailedCase = null;
+        TestCaseExecutionResult? capturedFailedCase = null;
         _resultCollectorMock
             .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
@@ -498,7 +986,7 @@ public class TestExecutionOrchestratorTests
             });
 
         _variableExtractorMock
-            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), testCase.Variables))
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), testCase.Variables, It.IsAny<string>()))
             .Returns(new Dictionary<string, string>());
 
         _validatorMock
@@ -528,7 +1016,7 @@ public class TestExecutionOrchestratorTests
         Guid id,
         Guid endpointId,
         int orderIndex,
-        Guid[] dependencyIds = null)
+        Guid[]? dependencyIds = null)
     {
         return new ExecutionTestCaseDto
         {

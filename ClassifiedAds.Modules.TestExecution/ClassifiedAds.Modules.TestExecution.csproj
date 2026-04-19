@@ -8,6 +8,7 @@
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
         <PackageReference Include="FluentValidation" Version="11.11.0" />
         <PackageReference Include="JsonSchema.Net" Version="*" />
+        <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.6.0" />
         <PackageReference Include="StyleCop.Analyzers" Version="1.1.118">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
