@@ -278,6 +278,162 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_NormalizeBaseUrl_WhenSuiteHasMultipleTopLevelResources()
+    {
+        // Arrange
+        var endpoint1 = Guid.NewGuid();
+        var endpoint2 = Guid.NewGuid();
+        var endpoint3 = Guid.NewGuid();
+
+        var case1 = CreateTestCase(Guid.NewGuid(), endpoint1, 0);
+        case1.Request.Url = "/user/login";
+
+        var case2 = CreateTestCase(Guid.NewGuid(), endpoint2, 1);
+        case2.Request.Url = "/pet";
+
+        var case3 = CreateTestCase(Guid.NewGuid(), endpoint3, 2);
+        case3.Request.Url = "/store/inventory";
+
+        SetupDefaultMocks(new[] { case1, case2, case3 }, new[] { endpoint1, endpoint2, endpoint3 });
+
+        _envResolverMock
+            .Setup(x => x.ResolveAsync(It.IsAny<ExecutionEnvironment>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ResolvedExecutionEnvironment
+            {
+                EnvironmentId = _envId,
+                Name = "Petstore Env",
+                BaseUrl = "https://petstore.swagger.io/v2/store",
+                Variables = new Dictionary<string, string>(),
+                DefaultHeaders = new Dictionary<string, string>(),
+                DefaultQueryParams = new Dictionary<string, string>(),
+            });
+
+        var observedBaseUrls = new List<string>();
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, env) =>
+            {
+                observedBaseUrls.Add(env.BaseUrl);
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request?.HttpMethod ?? "GET",
+                    ResolvedUrl = "https://api.example.com/test",
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 10,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        observedBaseUrls.Should().NotBeEmpty();
+        observedBaseUrls.Should().OnlyContain(url => string.Equals(url, "https://petstore.swagger.io/v2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepBaseUrl_WhenSuiteHasSingleTopLevelResource()
+    {
+        // Arrange
+        var endpoint1 = Guid.NewGuid();
+        var endpoint2 = Guid.NewGuid();
+
+        var case1 = CreateTestCase(Guid.NewGuid(), endpoint1, 0);
+        case1.Request.Url = "/store/inventory";
+
+        var case2 = CreateTestCase(Guid.NewGuid(), endpoint2, 1);
+        case2.Request.Url = "/store/order";
+
+        SetupDefaultMocks(new[] { case1, case2 }, new[] { endpoint1, endpoint2 });
+
+        _envResolverMock
+            .Setup(x => x.ResolveAsync(It.IsAny<ExecutionEnvironment>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ResolvedExecutionEnvironment
+            {
+                EnvironmentId = _envId,
+                Name = "Petstore Store Env",
+                BaseUrl = "https://petstore.swagger.io/v2/store",
+                Variables = new Dictionary<string, string>(),
+                DefaultHeaders = new Dictionary<string, string>(),
+                DefaultQueryParams = new Dictionary<string, string>(),
+            });
+
+        var observedBaseUrls = new List<string>();
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, env) =>
+            {
+                observedBaseUrls.Add(env.BaseUrl);
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request?.HttpMethod ?? "GET",
+                    ResolvedUrl = "https://api.example.com/test",
+                    TimeoutMs = 30000,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 200,
+                Body = "{}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 10,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(It.IsAny<HttpTestResponse>(), It.IsAny<ExecutionTestCaseDto>(), It.IsAny<ApiEndpointMetadataDto>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        observedBaseUrls.Should().NotBeEmpty();
+        observedBaseUrls.Should().OnlyContain(url => string.Equals(url, "https://petstore.swagger.io/v2/store", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_MarkRunAsRunning()
     {
         // Arrange

@@ -5,6 +5,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.AuditLog.Entities;
 using ClassifiedAds.Modules.AuditLog.Queries;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -36,25 +37,43 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
 
         var uow = _idempotentRequestRepository.UnitOfWork;
 
-        await uow.ExecuteInTransactionAsync(async ct =>
+        try
         {
-            await AddOrUpdateAsync(new AuditLogEntry
+            await uow.ExecuteInTransactionAsync(async ct =>
             {
-                UserId = dto.UserId,
-                CreatedDateTime = dto.CreatedDateTime,
-                Action = dto.Action,
-                ObjectId = dto.ObjectId,
-                Log = dto.Log,
-            });
+                await AddOrUpdateAsync(new AuditLogEntry
+                {
+                    UserId = dto.UserId,
+                    CreatedDateTime = dto.CreatedDateTime,
+                    Action = dto.Action,
+                    ObjectId = dto.ObjectId,
+                    Log = dto.Log,
+                });
 
-            await _idempotentRequestRepository.AddAsync(new IdempotentRequest
-            {
-                RequestType = requestType,
-                RequestId = requestId,
-            });
+                await _idempotentRequestRepository.AddAsync(new IdempotentRequest
+                {
+                    RequestType = requestType,
+                    RequestId = requestId,
+                });
 
-            await uow.SaveChangesAsync(ct);
-        });
+                await uow.SaveChangesAsync(ct);
+            });
+        }
+        catch (DbUpdateException ex) when (IsDuplicateIdempotentRequest(ex))
+        {
+            // Another worker/request completed the same idempotent operation first.
+            // Treat this as success so outbox processing can continue safely.
+            return;
+        }
+    }
+
+    private static bool IsDuplicateIdempotentRequest(DbUpdateException exception)
+    {
+        return exception.InnerException is PostgresException postgresException
+            && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
+            && string.Equals(postgresException.ConstraintName,
+                "IX_IdempotentRequests_RequestType_RequestId",
+                StringComparison.Ordinal);
     }
 
     public async Task<List<AuditLogEntryDTO>> GetAuditLogEntriesAsync(AuditLogEntryQueryOptions query)

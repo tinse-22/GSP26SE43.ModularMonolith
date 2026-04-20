@@ -87,6 +87,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         // Resolve runtime environment (auth, headers, etc.) - once per run
         var resolvedEnv = await _envResolver.ResolveAsync(environment, ct);
+        resolvedEnv = NormalizeEnvironmentBaseUrlForMultiResourceSuite(resolvedEnv, executionContext.OrderedTestCases);
 
         // Get retention days from subscription
         var retentionCheck = await _limitService.CheckLimitAsync(
@@ -714,6 +715,116 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 : char.ToUpperInvariant(part[0]) + part[1..]);
 
         return first + string.Concat(rest);
+    }
+
+    private ResolvedExecutionEnvironment NormalizeEnvironmentBaseUrlForMultiResourceSuite(
+        ResolvedExecutionEnvironment resolvedEnv,
+        IReadOnlyCollection<ExecutionTestCaseDto> orderedTestCases)
+    {
+        if (resolvedEnv == null || string.IsNullOrWhiteSpace(resolvedEnv.BaseUrl))
+        {
+            return resolvedEnv;
+        }
+
+        var normalizedBaseUrl = TryNormalizeBaseUrlForMultiResourceSuite(resolvedEnv.BaseUrl, orderedTestCases);
+        if (string.Equals(normalizedBaseUrl, resolvedEnv.BaseUrl, StringComparison.Ordinal))
+        {
+            return resolvedEnv;
+        }
+
+        _logger.LogWarning(
+            "Normalized execution environment base URL for multi-resource suite. OriginalBaseUrl={OriginalBaseUrl}, NormalizedBaseUrl={NormalizedBaseUrl}",
+            resolvedEnv.BaseUrl,
+            normalizedBaseUrl);
+
+        resolvedEnv.BaseUrl = normalizedBaseUrl;
+        return resolvedEnv;
+    }
+
+    private static string TryNormalizeBaseUrlForMultiResourceSuite(
+        string baseUrl,
+        IReadOnlyCollection<ExecutionTestCaseDto> orderedTestCases)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return baseUrl;
+        }
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var absoluteBase)
+            || (absoluteBase.Scheme != Uri.UriSchemeHttp && absoluteBase.Scheme != Uri.UriSchemeHttps))
+        {
+            return baseUrl;
+        }
+
+        var resourceHeads = orderedTestCases?
+            .Select(testCase => ExtractTopLevelResourceSegment(testCase?.Request?.Url))
+            .Where(segment => !string.IsNullOrWhiteSpace(segment))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (resourceHeads == null || resourceHeads.Count < 2)
+        {
+            return baseUrl;
+        }
+
+        var baseSegments = absoluteBase.AbsolutePath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (baseSegments.Count == 0)
+        {
+            return baseUrl;
+        }
+
+        var lastSegment = baseSegments[^1];
+        if (string.IsNullOrWhiteSpace(lastSegment)
+            || IsReservedBasePathSegment(lastSegment)
+            || !resourceHeads.Contains(lastSegment, StringComparer.OrdinalIgnoreCase))
+        {
+            return baseUrl;
+        }
+
+        baseSegments.RemoveAt(baseSegments.Count - 1);
+
+        var normalizedPath = "/" + string.Join("/", baseSegments);
+        var normalizedBuilder = new UriBuilder(absoluteBase)
+        {
+            Path = normalizedPath,
+        };
+
+        return normalizedBuilder.Uri.AbsoluteUri.TrimEnd('/');
+    }
+
+    private static string ExtractTopLevelResourceSegment(string urlOrPath)
+    {
+        var path = ExtractPath(urlOrPath);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var firstSegment = path
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+
+        return string.IsNullOrWhiteSpace(firstSegment)
+            ? null
+            : firstSegment.Trim();
+    }
+
+    private static bool IsReservedBasePathSegment(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return true;
+        }
+
+        if (string.Equals(segment, "api", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IsVersionSegment(segment);
     }
 
     private void LogCaseOutcome(Guid runId, TestCaseExecutionResult result)

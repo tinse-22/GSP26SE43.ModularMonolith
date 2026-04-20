@@ -89,7 +89,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateStatusCode(response, testCase, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 2. Response schema validation
-        TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result, strictMode), ref checksPerformed, ref checksSkipped);
 
         // 3. Header exact-match validation
         TrackCheck(ValidateHeaders(response, expectation, result), ref checksPerformed, ref checksSkipped);
@@ -214,7 +214,8 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ApiEndpointMetadataDto endpointMetadata,
-        TestCaseValidationResult result)
+        TestCaseValidationResult result,
+        bool strictMode)
     {
         // Determine which schema to use
         var schemaJson = expectation.ResponseSchema;
@@ -258,12 +259,24 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
         catch (Exception)
         {
-            result.SchemaMatched = false;
-            AddInvalidExpectationFailure(
-                result,
-                "ResponseSchema",
-                schemaJson,
-                "ResponseSchema không phải JSON schema hợp lệ.");
+            if (strictMode)
+            {
+                result.SchemaMatched = false;
+                AddInvalidExpectationFailure(
+                    result,
+                    "ResponseSchema",
+                    schemaJson,
+                    "ResponseSchema không phải JSON schema hợp lệ.");
+            }
+            else
+            {
+                result.SchemaMatched = null;
+                AddInvalidExpectationWarning(
+                    result,
+                    "ResponseSchema",
+                    "ResponseSchema không phải JSON schema hợp lệ.");
+            }
+
             return true;
         }
 
@@ -840,6 +853,19 @@ public class RuleBasedValidator : IRuleBasedValidator
             Message = $"{target} không đúng định dạng mong đợi. {details}",
             Target = target,
             Actual = Truncate(actualValue, 500),
+        });
+    }
+
+    private static void AddInvalidExpectationWarning(
+        TestCaseValidationResult result,
+        string target,
+        string details)
+    {
+        result.Warnings.Add(new ValidationWarningModel
+        {
+            Code = InvalidExpectationFormatCode,
+            Message = $"{target} không đúng định dạng mong đợi. {details}",
+            Target = target,
         });
     }
 
