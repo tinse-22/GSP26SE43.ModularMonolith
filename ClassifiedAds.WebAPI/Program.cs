@@ -97,6 +97,27 @@ builder.WebHost.UseClassifiedAdsLogger(configuration =>
 var appSettings = new AppSettings();
 configuration.Bind(appSettings);
 
+if (isRunningInContainer || builder.Environment.IsProduction())
+{
+    var defaultConnectionString = configuration.GetConnectionString("Default");
+    if (string.IsNullOrWhiteSpace(defaultConnectionString)
+        || defaultConnectionString.Contains("YOUR_SUPABASE_PROJECT_REF", StringComparison.OrdinalIgnoreCase)
+        || defaultConnectionString.Contains("YOUR_SUPABASE_DB_PASSWORD", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "ConnectionStrings:Default is invalid for production/container runtime. Replace deployment placeholders with real database credentials.");
+    }
+
+    var jwtSecretKey = appSettings.Modules?.Identity?.Jwt?.SecretKey;
+    if (string.IsNullOrWhiteSpace(jwtSecretKey)
+        || jwtSecretKey.Length < 32
+        || jwtSecretKey.Contains("REPLACE_WITH", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "Modules:Identity:Jwt:SecretKey is invalid for production/container runtime. Configure a real secret with at least 32 characters.");
+    }
+}
+
 // Note: WebAPI doesn't have Validate() method on AppSettings like Background does
 // Consider adding validation in future if AppSettings grows complex enough
 // For now, rely on runtime validation via IOptions<T> with ValidateDataAnnotations
