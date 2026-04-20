@@ -141,6 +141,53 @@ public class RuleBasedValidatorTests
     }
 
     [Fact]
+    public void Validate_NegativeExpected4xx_Actual200_Should_PassWithPermissiveAdaptiveWarning()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 200, body: "{}");
+        var testCase = CreateTestCase(expectedStatus: "[400, 422]");
+        testCase.TestType = "Negative";
+        testCase.Name = "Negative Validation: GET /pet/findByStatus";
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            HttpMethod = "GET",
+            Url = "/pet/findByStatus",
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.StatusCodeMatched.Should().BeTrue();
+        result.Warnings.Should().ContainSingle(w => w.Code == "ADAPTIVE_PERMISSIVE_STATUS_MATCH");
+        result.Failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_HappyPathExpected4xx_Actual200_Should_StillFail()
+    {
+        // Arrange
+        var response = CreateResponse(statusCode: 200, body: "{}");
+        var testCase = CreateTestCase(expectedStatus: "[400, 422]");
+        testCase.TestType = "HappyPath";
+        testCase.Name = "Happy Path: GET /pet/findByStatus";
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            HttpMethod = "GET",
+            Url = "/pet/findByStatus",
+        };
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.StatusCodeMatched.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "STATUS_CODE_MISMATCH");
+    }
+
+    [Fact]
     public void Validate_HappyPathGet_Expected200_Actual201_Should_StillFail()
     {
         // Arrange

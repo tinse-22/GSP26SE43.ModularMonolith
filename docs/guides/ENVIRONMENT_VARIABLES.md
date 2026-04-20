@@ -7,7 +7,7 @@ This project uses environment variables to manage sensitive configuration data, 
 ## File Structure
 
 - **`.env`** - Contains actual sensitive values (NEVER commit to git)
-- **`.env.example`** - Template file showing required variables (safe to commit)
+- **`.env.render`** - Template file showing deploy variables (safe to commit)
 - **`docker-compose.yml`** - References environment variables using `${VARIABLE_NAME}` syntax
 
 ## Security Improvements Implemented
@@ -27,20 +27,22 @@ This project uses environment variables to manage sensitive configuration data, 
 
 ### For New Developers
 
-1. Copy the example file:
+1. Create `.env` from project template:
    ```bash
-   cp .env.example .env
+   cp .env.render .env
    ```
 
 2. Update `.env` with your actual credentials:
    ```dotenv
-   POSTGRES_PASSWORD=your_actual_password
-   ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=your_actual_password
+   STANDALONE_DATABASE_MODE=external
+   ConnectionStrings__Default=Host=db.<project-ref>.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<your_supabase_password>;SSL Mode=Require;Trust Server Certificate=true
+   SUPABASE_CONNECTION_STRING=Host=db.<project-ref>.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<your_supabase_password>;SSL Mode=Require;Trust Server Certificate=true
+   SUPABASE_CHECKDEPENDENCY_HOST=db.<project-ref>.supabase.co:5432
    ```
 
-3. Start the recommended local flow:
+3. Start the recommended flow:
    ```bash
-   docker compose up -d db rabbitmq redis mailhog
+   docker compose up -d rabbitmq redis mailhog
    dotnet run --project ClassifiedAds.Migrator
    dotnet run --project ClassifiedAds.WebAPI
    dotnet run --project ClassifiedAds.Background
@@ -48,21 +50,26 @@ This project uses environment variables to manage sensitive configuration data, 
 
 ### Mode Separation
 
-- `.env` is the source of truth for the standalone local flow (`docker compose` + `dotnet run`)
+- `.env` is the source of truth for standalone hosts (`docker compose` + `dotnet run`)
+- Default mode is Supabase (`STANDALONE_DATABASE_MODE=external`)
+- Local fallback mode uses `STANDALONE_DATABASE_MODE=local` + `POSTGRES_*`
 - `ClassifiedAds.AppHost` uses its own local PostgreSQL container by default
 - AppHost local PostgreSQL now persists in Docker volume `classifiedads_apphost_postgres_data`
-- AppHost local PostgreSQL binds to `localhost:5432` for a stable pgAdmin/DBeaver connection
-- `docker ps` may still show a random container port under Aspire; use `localhost:5432` from host-side tools
+- AppHost local PostgreSQL binds to `localhost:55433` by default, and can auto-fallback to another free port
 - Do not run AppHost and standalone hosts at the same time unless you intentionally set the same `ConnectionStrings__Default` for AppHost in the current shell
+- Full switch instructions are in `DB-SWITCHING-GUIDE.md`
 
 ## Environment Variables Reference
 
 ### Database Configuration
 | Variable | Description | Example |
 |----------|-------------|---------|
+| `STANDALONE_DATABASE_MODE` | Standalone DB mode | `external` / `local` |
 | `POSTGRES_USER` | PostgreSQL username | `postgres` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | `SecurePass123!` |
 | `POSTGRES_DB` | Database name | `ClassifiedAds` |
+| `SUPABASE_CONNECTION_STRING` | Dedicated compose DB connection (Supabase) | `Host=db.<ref>.supabase.co;...` |
+| `SUPABASE_CHECKDEPENDENCY_HOST` | Dedicated compose dependency host | `db.<ref>.supabase.co:5432` |
 
 ### Application Environment
 | Variable | Description | Example |
@@ -144,7 +151,7 @@ docker compose exec webapi env | grep POSTGRES
 **Solution**: Ensure `.env` file is in the same directory as `docker-compose.yml`
 
 ### Issue: Connection refused
-**Solution**: Verify database credentials in `.env` match those in `ConnectionStrings__Default`, and that local standalone mode uses `localhost:55432`
+**Solution**: Verify database credentials in `.env` match `ConnectionStrings__Default` and `SUPABASE_CONNECTION_STRING`, or switch to local mode (`STANDALONE_DATABASE_MODE=local`) and use `localhost:55432`
 
 ### Issue: Permission denied
 **Solution**: Check file permissions on `.env` file:

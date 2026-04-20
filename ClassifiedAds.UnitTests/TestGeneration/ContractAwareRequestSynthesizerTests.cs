@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using System.Collections.Generic;
@@ -138,5 +139,84 @@ public class ContractAwareRequestSynthesizerTests
         root.GetProperty("password").GetString().Should().Be("Test123!");
         root.GetProperty("price").GetDecimal().Should().BeGreaterThan(0);
         root.GetProperty("quantity").GetInt32().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void BuildRequestData_Should_SerializeBoundaryPayloads_WithoutThrowing()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/products",
+            RequiresBody = true,
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["name", "quantity"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "quantity": { "type": "integer", "minimum": 1 }
+              }
+            }
+            """,
+        };
+
+        ContractAwareRequestData? result = null;
+        var action = () => result = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Boundary);
+
+        action.Should().NotThrow();
+        result.Should().NotBeNull();
+        result.BodyType.Should().Be("JSON");
+
+        using var document = JsonDocument.Parse(result!.Body);
+        var root = document.RootElement;
+        root.GetProperty("name").GetString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildRequestData_Should_UseUrlEncodedBodyType_ForSwagger2FormFields()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/pet/{petId}",
+            RequiresBody = true,
+            Parameters = new List<ParameterDetailDto>
+            {
+                new() { Name = "name", Location = "Body", DataType = "string" },
+                new() { Name = "status", Location = "Body", DataType = "string" },
+            },
+        };
+
+        var result = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.HappyPath);
+
+        result.BodyType.Should().Be("UrlEncoded");
+        using var document = JsonDocument.Parse(result.Body);
+        var root = document.RootElement;
+        root.GetProperty("name").GetString().Should().NotBeNullOrWhiteSpace();
+        root.GetProperty("status").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void BuildRequestData_Should_UseFormDataBodyType_WhenFileParameterExists()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/pet/{petId}/uploadImage",
+            RequiresBody = true,
+            Parameters = new List<ParameterDetailDto>
+            {
+                new() { Name = "additionalMetadata", Location = "Body", DataType = "string" },
+                new() { Name = "file", Location = "Body", DataType = "file" },
+            },
+        };
+
+        var result = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.HappyPath);
+
+        result.BodyType.Should().Be("FormData");
+        using var document = JsonDocument.Parse(result.Body);
+        var root = document.RootElement;
+        root.GetProperty("file").GetString().Should().Be("sample-file.txt");
     }
 }

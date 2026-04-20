@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -35,6 +36,9 @@ public class N8nIntegrationServiceTests
         capturedRequest.Should().NotBeNull();
         capturedRequest.RequestUri.Should().Be(new Uri("https://example.test/webhook/my-hook"));
         capturedRequest.Headers.Should().Contain(header => header.Key == "x-api-key");
+        capturedRequest.Headers.Should().Contain(header =>
+            string.Equals(header.Key, "x-request-id", StringComparison.OrdinalIgnoreCase) &&
+            header.Value.Any(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     [Fact]
@@ -85,14 +89,89 @@ public class N8nIntegrationServiceTests
         exception.Which.Message.Should().Contain("JSON khong hop le");
     }
 
+    [Fact]
+    public async Task TriggerWebhookAsync_Should_ThrowTransientException_WhenStatusIs524()
+    {
+        var sut = CreateSut(
+            new HttpResponseMessage((HttpStatusCode)524)
+            {
+                Content = new StringContent("upstream timeout", Encoding.UTF8, "text/plain"),
+            });
+
+        var act = () => sut.TriggerWebhookAsync<object, TestWebhookResponse>(
+            "test-hook",
+            new { Name = "payload" });
+
+        var exception = await act.Should().ThrowAsync<N8nTransientException>();
+        exception.Which.StatusCode.Should().Be(524);
+        exception.Which.IsTimeout.Should().BeTrue();
+        exception.Which.WebhookName.Should().Be("test-hook");
+    }
+
+    [Fact]
+    public async Task TriggerWebhookAsync_Should_ThrowTransientException_WhenRequestTimesOut()
+    {
+        var sut = CreateSut((_, _) =>
+            Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException())));
+
+        var act = () => sut.TriggerWebhookAsync<object, TestWebhookResponse>(
+            "test-hook",
+            new { Name = "payload" });
+
+        var exception = await act.Should().ThrowAsync<N8nTransientException>();
+        exception.Which.IsTimeout.Should().BeTrue();
+        exception.Which.WebhookName.Should().Be("test-hook");
+    }
+
+    [Fact]
+    public async Task TriggerWebhookAsync_Should_PropagateCallerCancellation()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var sut = CreateSut((_, cancellationToken) =>
+            Task.FromCanceled<HttpResponseMessage>(cancellationToken));
+
+        var act = () => sut.TriggerWebhookAsync<object, TestWebhookResponse>(
+            "test-hook",
+            new { Name = "payload" },
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task TriggerWebhookWithResultAsync_Should_PropagateCallerCancellation()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var sut = CreateSut((_, cancellationToken) =>
+            Task.FromCanceled<HttpResponseMessage>(cancellationToken));
+
+        var act = () => sut.TriggerWebhookWithResultAsync(
+            "test-hook",
+            new { Name = "payload" },
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     private static N8nIntegrationService CreateSut(
         HttpResponseMessage response,
         Action<HttpRequestMessage>? onRequest = null)
     {
-        var handler = new StubHttpMessageHandler((request, _) =>
+        return CreateSut((request, cancellationToken) => Task.FromResult(response), onRequest);
+    }
+
+    private static N8nIntegrationService CreateSut(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responseFactory,
+        Action<HttpRequestMessage>? onRequest = null)
+    {
+        var handler = new StubHttpMessageHandler((request, cancellationToken) =>
         {
             onRequest?.Invoke(request);
-            return Task.FromResult(response);
+            return responseFactory(request, cancellationToken);
         });
 
         var client = new HttpClient(handler);

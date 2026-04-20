@@ -25,10 +25,39 @@ const int DefaultAppHostPostgresHostPort = 55433;
 const int AppHostPostgresFallbackPortFloor = 55434;
 const int AppHostPostgresFallbackPortCeiling = 55483;
 
-var builder = DistributedApplication.CreateBuilder(args);
-// External DB mode is enabled only when ConnectionStrings__Default is explicitly provided
-// in the current process environment. This avoids accidental appsettings defaults.
+var isRunningInContainer = string.Equals(
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+var processConnectionStringBeforeDotEnv = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+
+if (!isRunningInContainer)
+{
+    dotenv.net.DotEnv.Load(options: new dotenv.net.DotEnvOptions(
+        probeForEnv: true,
+        probeLevelsToSearch: 6,
+        trimValues: true,
+        overwriteExistingVars: false));
+}
+
 var externalConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+var standaloneDatabaseMode = Environment.GetEnvironmentVariable("STANDALONE_DATABASE_MODE");
+if (string.Equals(standaloneDatabaseMode, "external", StringComparison.OrdinalIgnoreCase)
+    && string.IsNullOrWhiteSpace(externalConnectionString))
+{
+    throw new InvalidOperationException(
+        "STANDALONE_DATABASE_MODE=external requires ConnectionStrings__Default in .env or process environment.");
+}
+
+if (string.IsNullOrWhiteSpace(processConnectionStringBeforeDotEnv)
+    && !string.IsNullOrWhiteSpace(externalConnectionString))
+{
+    Console.WriteLine("[AppHost] Loaded ConnectionStrings__Default from .env");
+}
+
+var builder = DistributedApplication.CreateBuilder(args);
+// External DB mode is enabled when ConnectionStrings__Default is available
+// after process environment and optional .env loading.
 var useExternalDatabase = !string.IsNullOrWhiteSpace(externalConnectionString);
 var configuredAppHostPostgresHostPort = ResolveConfiguredAppHostPostgresHostPort();
 var appHostPostgresHostPort = useExternalDatabase

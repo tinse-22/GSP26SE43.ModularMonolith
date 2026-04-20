@@ -1,67 +1,97 @@
-# Database Switching Guide: Local PostgreSQL ↔ Supabase Cloud
+# Database Switching Guide: Supabase Cloud <-> Local PostgreSQL
 
-## Tổng quan
+## Muc tieu
 
-Repo này hỗ trợ 2 chế độ database:
-1. **Local PostgreSQL** — container Docker chạy trên máy local (`127.0.0.1:55432`)
-2. **Supabase Cloud** — session pooler (`aws-1-ap-southeast-2.pooler.supabase.com:5432`)
+Tai lieu nay la playbook de AI Agent (va dev) chuyen nhanh giua:
 
-Tất cả cấu hình tập trung trong file `.env` tại root repo.
+1. Supabase Cloud (final deploy mode)
+2. Local PostgreSQL (dev fallback)
 
----
+Repo hien tai da duoc chuyen sang Supabase-first.
 
-## Files cần thay đổi khi switch
+## Nguon cau hinh chinh
 
-| File | Thay đổi gì |
-|------|-------------|
-| `.env` | `ConnectionStrings__Default`, `CheckDependency__Host`, `APPHOST_DATABASE_MODE` |
-| `ClassifiedAds.Migrator/appsettings.json` | `CheckDependency.Host` (fallback) |
-| `docker-compose.yml` | `CheckDependency__Host` default value |
+1. `.env` (khong commit) cho local runtime va docker compose
+2. `.env.render` cho template deploy
+3. `docker-compose.yml` cho stack container
+4. `ClassifiedAds.Migrator/appsettings.json` cho fallback `CheckDependency:Host`
 
----
+## Luu y quan trong
 
-## Chuyển sang LOCAL PostgreSQL
+1. AppHost khong dung `APPHOST_DATABASE_MODE` de chon DB.
+2. AppHost se chay external DB khi co `ConnectionStrings__Default` trong process env.
+3. Standalone hosts (`WebAPI`, `Background`, `Migrator`) dung `STANDALONE_DATABASE_MODE`:
+   - `external`: uu tien `ConnectionStrings__Default` (Supabase)
+   - `local`: tu build connection tu `POSTGRES_*`
+4. Docker compose da dung bien rieng `SUPABASE_CONNECTION_STRING` va `SUPABASE_CHECKDEPENDENCY_HOST` de tranh loi precedence tu shell env.
 
-### 1. File `.env` — Bật local, tắt Supabase
+## Quick switch: Supabase Cloud (ACTIVE)
+
+Cap nhat `.env`:
 
 ```env
-# Database mode
-APPHOST_DATABASE_MODE=local
+STANDALONE_DATABASE_MODE=external
 
-# Connection Strings — LOCAL (ACTIVE)
+ConnectionStrings__Default=Host=db.pdmbghlidmoobbjsuxgx.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<YOUR_SUPABASE_DB_PASSWORD>;SSL Mode=Require;Trust Server Certificate=true;Timeout=30;Command Timeout=60
+CheckDependency__Host=db.pdmbghlidmoobbjsuxgx.supabase.co:5432
+
+SUPABASE_CONNECTION_STRING=Host=db.pdmbghlidmoobbjsuxgx.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<YOUR_SUPABASE_DB_PASSWORD>;SSL Mode=Require;Trust Server Certificate=true;Timeout=30;Command Timeout=60
+SUPABASE_CHECKDEPENDENCY_HOST=db.pdmbghlidmoobbjsuxgx.supabase.co:5432
+
+# Local fallback (comment)
+# STANDALONE_DATABASE_MODE=local
+# POSTGRES_HOST=127.0.0.1
+# POSTGRES_HOST_PORT=55432
+# POSTGRES_USER=postgres
+# POSTGRES_PASSWORD=Postgre123@
+# POSTGRES_DB=ClassifiedAds
+# ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=Postgre123@;Trust Server Certificate=true;Timeout=30;Command Timeout=60
+# CheckDependency__Host=127.0.0.1:55432
+```
+
+Chay lai stack (neu dang chay local cu):
+
+```powershell
+docker compose down
+docker compose up -d rabbitmq redis mailhog
+dotnet run --project ClassifiedAds.Migrator
+dotnet run --project ClassifiedAds.WebAPI
+dotnet run --project ClassifiedAds.Background
+```
+
+Neu deploy bang full compose image:
+
+```powershell
+docker compose up -d --build
+```
+
+## Quick switch: Local PostgreSQL (INACTIVE fallback)
+
+Cap nhat `.env`:
+
+```env
+STANDALONE_DATABASE_MODE=local
+
+POSTGRES_HOST=127.0.0.1
+POSTGRES_HOST_PORT=55432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=Postgre123@
+POSTGRES_DB=ClassifiedAds
+
 ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=Postgre123@;Trust Server Certificate=true;Timeout=30;Command Timeout=60
 CheckDependency__Host=127.0.0.1:55432
 
-# Connection Strings — Supabase (INACTIVE — comment out)
-# ConnectionStrings__Default=Host=aws-1-ap-southeast-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.pdmbghlidmoobbjsuxgx;Password=0937213289Tin@;SSL Mode=Require;Trust Server Certificate=true;Keepalive=15;Timeout=30;Command Timeout=60
-# CheckDependency__Host=aws-1-ap-southeast-2.pooler.supabase.com:5432
+# Supabase fallback (comment)
+# STANDALONE_DATABASE_MODE=external
+# ConnectionStrings__Default=Host=db.pdmbghlidmoobbjsuxgx.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<YOUR_SUPABASE_DB_PASSWORD>;SSL Mode=Require;Trust Server Certificate=true;Timeout=30;Command Timeout=60
+# CheckDependency__Host=db.pdmbghlidmoobbjsuxgx.supabase.co:5432
+# SUPABASE_CONNECTION_STRING=Host=db.pdmbghlidmoobbjsuxgx.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=<YOUR_SUPABASE_DB_PASSWORD>;SSL Mode=Require;Trust Server Certificate=true;Timeout=30;Command Timeout=60
+# SUPABASE_CHECKDEPENDENCY_HOST=db.pdmbghlidmoobbjsuxgx.supabase.co:5432
 ```
 
-### 2. File `ClassifiedAds.Migrator/appsettings.json`
-
-```json
-"CheckDependency": {
-  "Enabled": false,
-  "Host": "127.0.0.1:55432"
-}
-```
-
-### 3. File `docker-compose.yml` — CheckDependency default
-
-```yaml
-CheckDependency__Host: "${CheckDependency__Host:-127.0.0.1:55432}"
-```
-
-### 4. Đảm bảo local PostgreSQL đang chạy
+Khoi dong local PostgreSQL neu can:
 
 ```powershell
-# Kiểm tra container
-docker ps --filter "publish=55432"
-
-# Nếu chưa chạy, start bằng docker compose profile
-docker compose --profile local-db up -d db
-
-# Hoặc chạy container standalone
 docker run -d --name classifiedads-dev-db \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=Postgre123@ \
@@ -70,101 +100,28 @@ docker run -d --name classifiedads-dev-db \
   postgres:16
 ```
 
-### 5. Chạy migrations (nếu DB mới)
+## AI Agent checklist (bat buoc)
+
+1. Doc `.env` va xac nhan mode dang active (`STANDALONE_DATABASE_MODE`).
+2. Kiem tra `ConnectionStrings__Default` va `CheckDependency__Host` co cung target.
+3. Neu dung docker compose, uu tien `SUPABASE_CONNECTION_STRING` / `SUPABASE_CHECKDEPENDENCY_HOST`.
+4. Chay verify migration:
 
 ```powershell
-dotnet run --project ClassifiedAds.Migrator
+dotnet build ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj --no-restore
+dotnet ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll --verify-migrations
 ```
 
----
+5. Kiem tra compose config:
 
-## Chuyển sang SUPABASE Cloud
-
-### 1. File `.env` — Bật Supabase, tắt local
-
-```env
-# Database mode
-APPHOST_DATABASE_MODE=external
-
-# Connection Strings — LOCAL (INACTIVE — comment out)
-# ConnectionStrings__Default=Host=127.0.0.1;Port=55432;Database=ClassifiedAds;Username=postgres;Password=Postgre123@;Trust Server Certificate=true;Timeout=30;Command Timeout=60
-# CheckDependency__Host=127.0.0.1:55432
-
-# Connection Strings — Supabase SESSION POOLER (ACTIVE)
-ConnectionStrings__Default=Host=aws-1-ap-southeast-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.pdmbghlidmoobbjsuxgx;Password=0937213289Tin@;SSL Mode=Require;Trust Server Certificate=true;Keepalive=15;Timeout=30;Command Timeout=60
-CheckDependency__Host=aws-1-ap-southeast-2.pooler.supabase.com:5432
+```powershell
+docker compose config
 ```
 
-### 2. File `ClassifiedAds.Migrator/appsettings.json`
+6. Neu doi mode, restart service/process truoc khi test.
 
-```json
-"CheckDependency": {
-  "Enabled": false,
-  "Host": "aws-1-ap-southeast-2.pooler.supabase.com:5432"
-}
-```
+## Trang thai hien tai
 
-### 3. File `docker-compose.yml` — CheckDependency default
-
-```yaml
-CheckDependency__Host: "${CheckDependency__Host:-aws-1-ap-southeast-2.pooler.supabase.com:5432}"
-```
-
-### 4. Lưu ý khi dùng Supabase
-
-- **Session pooler (port 5432)** — full SQL, hỗ trợ prepared statements ✅
-- **Transaction pooler (port 6543)** — KHÔNG dùng, gây `ObjectDisposedException` với Npgsql
-- **Direct connection (db.*.supabase.co)** — cần IPv6, không hoạt động trên mạng IPv4-only
-- `PostgresConnectionStringNormalizer.cs` tự động disable Npgsql pooling khi phát hiện Supabase pooler
-
----
-
-## Thông tin kỹ thuật
-
-### Connection String khác biệt chính
-
-| Thuộc tính | Local | Supabase |
-|-----------|-------|----------|
-| Host | `127.0.0.1` | `aws-1-ap-southeast-2.pooler.supabase.com` |
-| Port | `55432` | `5432` |
-| Database | `ClassifiedAds` | `postgres` |
-| Username | `postgres` | `postgres.pdmbghlidmoobbjsuxgx` |
-| SSL Mode | không cần | `Require` |
-| Keepalive | không cần | `15` |
-
-### APPHOST_DATABASE_MODE
-
-- `local` → AppHost tạo local PostgreSQL container (port 55433 cho AppHost)
-- `external` → AppHost dùng `ConnectionStrings__Default` trực tiếp
-
-### Docker Compose profiles
-
-- `local-db` → khởi động `db` service (postgres:16) trên port `${POSTGRES_HOST_PORT:-55432}`
-- `local-redis` → khởi động `redis` service
-
----
-
-## Checklist sau khi switch
-
-1. ✅ Cập nhật `.env` (ConnectionStrings__Default, CheckDependency__Host, APPHOST_DATABASE_MODE)
-2. ✅ Cập nhật `ClassifiedAds.Migrator/appsettings.json` CheckDependency.Host
-3. ✅ Cập nhật `docker-compose.yml` CheckDependency__Host default
-4. ✅ Verify DB đang chạy: `docker ps` hoặc test connection
-5. ✅ Build migrator: `dotnet build ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj`
-6. ✅ Verify migrations: `dotnet ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll --verify-migrations`
-7. ✅ Chạy migrations nếu DB mới: `dotnet run --project ClassifiedAds.Migrator`
-
----
-
-## Trạng thái hiện tại (2026-04-12)
-
-- **Active mode**: LOCAL PostgreSQL
-- **Local DB container**: `classifiedads-dev-db` on `127.0.0.1:55432`
-- **Database name**: `ClassifiedAds`
-- **Latest migrations**: up to date (verified)
-- **Last 5 migrations**:
-  - `20260411032249_RenameStorageSchemaForSupabase`
-  - `20260410064820_AddSoftDeleteToTestCasesAndLlmSuggestions`
-  - `20260407060801_AddTestGenerationJob`
-  - `20260406130000_AddTestCaseResults`
-  - `20260405141923_AddUserStoragePermissionsAndRoleDefaults`
+1. Mode mac dinh: Supabase Cloud
+2. Host mac dinh: `db.pdmbghlidmoobbjsuxgx.supabase.co:5432`
+3. Local PostgreSQL giu lai o dang comment de rollback nhanh

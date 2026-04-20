@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -65,6 +66,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
         ["query"] = ParameterLocation.Query,
         ["header"] = ParameterLocation.Header,
         ["cookie"] = ParameterLocation.Cookie,
+        ["body"] = ParameterLocation.Body,
     };
 
     private readonly IRepository<Project, Guid> _projectRepository;
@@ -222,7 +224,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
         {
             try
             {
-                parsedEndpoints = ParseOpenApiJsonEndpoints(fileContent);
+                parsedEndpoints = await ParseOpenApiJsonEndpointsAsync(fileContent, cancellationToken);
                 parseStatus = ParseStatus.Success;
                 _logger.LogInformation("Parsed {Count} endpoints from OpenAPI JSON.", parsedEndpoints.Count);
             }
@@ -318,186 +320,80 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
     /// Parses the paths object of an OpenAPI 3.x / Swagger 2.x JSON spec and returns
     /// a flat list of endpoints with their parameters and responses.
     /// </summary>
-    private static List<ParsedEndpoint> ParseOpenApiJsonEndpoints(string content)
+    private static async Task<List<ParsedEndpoint>> ParseOpenApiJsonEndpointsAsync(
+        string content,
+        CancellationToken cancellationToken)
     {
-        var result = new List<ParsedEndpoint>();
+        var parser = new Services.OpenApiSpecificationParser();
+        var parseResult = await parser.ParseAsync(
+            Encoding.UTF8.GetBytes(content),
+            "uploaded-openapi.json",
+            cancellationToken);
 
-        using var doc = JsonDocument.Parse(content);
-        var root = doc.RootElement;
-
-        if (!root.TryGetProperty("paths", out var pathsEl))
+        if (!parseResult.Success)
         {
-            return result;
+            throw new ValidationException(parseResult.Errors.FirstOrDefault()
+                ?? "Không thể parse nội dung OpenAPI.");
         }
 
-        foreach (var pathItem in pathsEl.EnumerateObject())
+        return parseResult.Endpoints.Select(parsedEndpoint =>
         {
-            var pathValue = pathItem.Name;
-
-            foreach (var methodItem in pathItem.Value.EnumerateObject())
+            if (!HttpMethodMap.TryGetValue(parsedEndpoint.HttpMethod ?? "GET", out var httpMethod))
             {
-                if (!HttpMethodMap.TryGetValue(methodItem.Name, out var httpMethod))
-                {
-                    continue; // skip non-method keys like "parameters", "summary"
-                }
-
-                var operation = methodItem.Value;
-
-                string operationId = operation.TryGetProperty("operationId", out var opId) ? opId.GetString() : null;
-                string summary = operation.TryGetProperty("summary", out var sumEl) ? sumEl.GetString() : null;
-                string description = operation.TryGetProperty("description", out var descEl) ? descEl.GetString() : null;
-                bool isDeprecated = operation.TryGetProperty("deprecated", out var depEl) && depEl.GetBoolean();
-
-                List<string> tags = new();
-                if (operation.TryGetProperty("tags", out var tagsEl))
-                {
-                    foreach (var tag in tagsEl.EnumerateArray())
-                    {
-                        var tagStr = tag.GetString();
-                        if (!string.IsNullOrEmpty(tagStr))
-                        {
-                            tags.Add(tagStr);
-                        }
-                    }
-                }
-
-                var endpoint = new ApiEndpoint
-                {
-                    HttpMethod = httpMethod,
-                    Path = pathValue,
-                    OperationId = operationId,
-                    Summary = summary,
-                    Description = description,
-                    Tags = tags.Count > 0 ? JsonSerializer.Serialize(tags) : null,
-                    IsDeprecated = isDeprecated,
-                };
-
-                // --- Parameters (path / query / header / cookie) ---
-                var parameters = new List<EndpointParameter>();
-
-                if (operation.TryGetProperty("parameters", out var paramsEl))
-                {
-                    foreach (var paramEl in paramsEl.EnumerateArray())
-                    {
-                        string name = paramEl.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
-                        string inLoc = paramEl.TryGetProperty("in", out var inEl) ? inEl.GetString() : "query";
-                        bool required = paramEl.TryGetProperty("required", out var reqEl) && reqEl.GetBoolean();
-
-                        if (!LocationMap.TryGetValue(inLoc ?? "query", out var location))
-                        {
-                            location = ParameterLocation.Query;
-                        }
-
-                        string dataType = "string";
-                        string format = null;
-                        string schemaRaw = null;
-
-                        if (paramEl.TryGetProperty("schema", out var schemaEl))
-                        {
-                            schemaRaw = Services.OpenApiSpecificationParser.ResolveSchemaJson(schemaEl, root);
-                            if (schemaEl.TryGetProperty("type", out var typeEl))
-                            {
-                                dataType = MapOpenApiType(typeEl.GetString());
-                            }
-
-                            if (schemaEl.TryGetProperty("format", out var formatEl))
-                            {
-                                format = formatEl.GetString();
-                            }
-                        }
-
-                        parameters.Add(new EndpointParameter
-                        {
-                            Name = name,
-                            Location = location,
-                            DataType = dataType,
-                            Format = format,
-                            IsRequired = required || location == ParameterLocation.Path,
-                            Schema = schemaRaw,
-                        });
-                    }
-                }
-
-                // --- Request body as a "body" parameter ---
-                if (operation.TryGetProperty("requestBody", out var requestBodyEl))
-                {
-                    bool bodyRequired = requestBodyEl.TryGetProperty("required", out var bodyReqEl) && bodyReqEl.GetBoolean();
-                    string bodySchema = null;
-
-                    if (requestBodyEl.TryGetProperty("content", out var contentProp))
-                    {
-                        foreach (var media in contentProp.EnumerateObject())
-                        {
-                            if (media.Value.TryGetProperty("schema", out var s))
-                            {
-                                bodySchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
-                                break;
-                            }
-                        }
-                    }
-
-                    parameters.Add(new EndpointParameter
-                    {
-                        Name = "body",
-                        Location = ParameterLocation.Body,
-                        DataType = "object",
-                        IsRequired = bodyRequired,
-                        Schema = bodySchema,
-                    });
-                }
-
-                // --- Responses ---
-                var responses = new List<EndpointResponse>();
-
-                if (operation.TryGetProperty("responses", out var responsesEl))
-                {
-                    foreach (var respItem in responsesEl.EnumerateObject())
-                    {
-                        if (!int.TryParse(respItem.Name, out var statusCode))
-                        {
-                            continue;
-                        }
-
-                        string respDesc = respItem.Value.TryGetProperty("description", out var dEl) ? dEl.GetString() : null;
-                        string respSchema = null;
-
-                        if (respItem.Value.TryGetProperty("content", out var respContent))
-                        {
-                            foreach (var media in respContent.EnumerateObject())
-                            {
-                                if (media.Value.TryGetProperty("schema", out var s))
-                                {
-                                    respSchema = Services.OpenApiSpecificationParser.ResolveSchemaJson(s, root);
-                                    break;
-                                }
-                            }
-                        }
-
-                        responses.Add(new EndpointResponse
-                        {
-                            StatusCode = statusCode,
-                            Description = respDesc,
-                            Schema = respSchema,
-                        });
-                    }
-                }
-
-                result.Add(new ParsedEndpoint(endpoint, parameters, responses));
+                httpMethod = Entities.HttpMethod.GET;
             }
-        }
 
-        return result;
+            var endpoint = new ApiEndpoint
+            {
+                HttpMethod = httpMethod,
+                Path = parsedEndpoint.Path,
+                OperationId = parsedEndpoint.OperationId,
+                Summary = parsedEndpoint.Summary,
+                Description = parsedEndpoint.Description,
+                Tags = parsedEndpoint.Tags?.Count > 0
+                    ? JsonSerializer.Serialize(parsedEndpoint.Tags)
+                    : null,
+                IsDeprecated = parsedEndpoint.IsDeprecated,
+            };
+
+            var parameters = (parsedEndpoint.Parameters ?? new List<Services.ParsedParameter>())
+                .Select(MapParsedParameter)
+                .ToList();
+
+            var responses = (parsedEndpoint.Responses ?? new List<Services.ParsedResponse>())
+                .Select(parsedResponse => new EndpointResponse
+                {
+                    StatusCode = parsedResponse.StatusCode,
+                    Description = parsedResponse.Description,
+                    Schema = parsedResponse.Schema,
+                    Examples = parsedResponse.Examples,
+                    Headers = parsedResponse.Headers,
+                })
+                .ToList();
+
+            return new ParsedEndpoint(endpoint, parameters, responses);
+        }).ToList();
     }
 
-    private static string MapOpenApiType(string openApiType) => openApiType?.ToLowerInvariant() switch
+    private static EndpointParameter MapParsedParameter(Services.ParsedParameter parsedParameter)
     {
-        "integer" => "integer",
-        "number" => "number",
-        "boolean" => "boolean",
-        "object" => "object",
-        "array" => "array",
-        _ => "string",
-    };
+        if (!LocationMap.TryGetValue(parsedParameter.Location ?? "Query", out var location))
+        {
+            location = ParameterLocation.Query;
+        }
+
+        return new EndpointParameter
+        {
+            Name = parsedParameter.Name,
+            Location = location,
+            DataType = parsedParameter.DataType ?? "string",
+            Format = parsedParameter.Format,
+            IsRequired = parsedParameter.IsRequired || location == ParameterLocation.Path,
+            DefaultValue = parsedParameter.DefaultValue,
+            Schema = parsedParameter.Schema,
+            Examples = parsedParameter.Examples,
+        };
+    }
 
     private sealed record ParsedEndpoint(
         ApiEndpoint Endpoint,

@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -54,12 +56,26 @@ public class HttpTestExecutor : IHttpTestExecutor
             // Set body
             if (!string.IsNullOrEmpty(request.Body) && HasBody(request.HttpMethod))
             {
-                var contentType = ResolveContentType(request.BodyType, request.Headers);
-                httpRequest.Content = new StringContent(request.Body, Encoding.UTF8, contentType);
+                httpRequest.Content = CreateHttpContent(request);
 
                 // Apply content headers
                 foreach (var header in request.Headers.Where(h => IsContentHeader(h.Key)))
                 {
+                    if (ShouldSkipManagedContentHeader(request.BodyType, header.Key))
+                    {
+                        continue;
+                    }
+
+                    if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        httpRequest.Content.Headers.Remove(header.Key);
+                    }
+
                     httpRequest.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                 }
             }
@@ -170,6 +186,201 @@ public class HttpTestExecutor : IHttpTestExecutor
             "RAW" => "text/plain",
             _ => "application/json",
         };
+    }
+
+    private static HttpContent CreateHttpContent(ResolvedTestCaseRequest request)
+    {
+        var normalizedBodyType = NormalizeBodyType(request.BodyType);
+
+        return normalizedBodyType switch
+        {
+            "FORMDATA" => CreateMultipartFormDataContent(request.Body),
+            "URLENCODED" => CreateFormUrlEncodedContent(request.Body),
+            _ => CreateTextContent(request.Body, ResolveContentType(request.BodyType, request.Headers)),
+        };
+    }
+
+    private static HttpContent CreateTextContent(string body, string contentType)
+    {
+        var content = new StringContent(body ?? string.Empty, Encoding.UTF8);
+
+        if (!string.IsNullOrWhiteSpace(contentType))
+        {
+            content.Headers.Remove("Content-Type");
+            content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+        }
+
+        return content;
+    }
+
+    private static HttpContent CreateFormUrlEncodedContent(string body)
+    {
+        if (TryParseBodyObject(body, out var bodyObject))
+        {
+            return new FormUrlEncodedContent(BuildFormFields(bodyObject));
+        }
+
+        return CreateTextContent(body, "application/x-www-form-urlencoded");
+    }
+
+    private static HttpContent CreateMultipartFormDataContent(string body)
+    {
+        var content = new MultipartFormDataContent();
+
+        if (TryParseBodyObject(body, out var bodyObject))
+        {
+            foreach (var property in bodyObject)
+            {
+                AddMultipartPart(content, property.Key, property.Value);
+            }
+
+            return content;
+        }
+
+        content.Add(new StringContent(body ?? string.Empty, Encoding.UTF8), "payload");
+        return content;
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> BuildFormFields(JsonObject bodyObject)
+    {
+        foreach (var property in bodyObject)
+        {
+            foreach (var value in EnumerateNodeValues(property.Value))
+            {
+                yield return new KeyValuePair<string, string>(property.Key, ConvertNodeToString(value));
+            }
+        }
+    }
+
+    private static void AddMultipartPart(MultipartFormDataContent content, string name, JsonNode node)
+    {
+        foreach (var value in EnumerateNodeValues(node))
+        {
+            if (IsFileLikeField(name, value))
+            {
+                var fileName = ResolveFileName(name, value);
+                var fileBytes = Encoding.UTF8.GetBytes("sample file content");
+                var fileContent = new ByteArrayContent(fileBytes);
+                fileContent.Headers.TryAddWithoutValidation("Content-Type", "application/octet-stream");
+                content.Add(fileContent, name, fileName);
+                continue;
+            }
+
+            content.Add(new StringContent(ConvertNodeToString(value) ?? string.Empty, Encoding.UTF8), name);
+        }
+    }
+
+    private static IEnumerable<JsonNode> EnumerateNodeValues(JsonNode node)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
+
+        yield return node;
+    }
+
+    private static bool TryParseBodyObject(string body, out JsonObject bodyObject)
+    {
+        try
+        {
+            bodyObject = JsonNode.Parse(body) as JsonObject;
+            return bodyObject != null;
+        }
+        catch
+        {
+            bodyObject = null;
+            return false;
+        }
+    }
+
+    private static string ConvertNodeToString(JsonNode node)
+    {
+        if (node == null)
+        {
+            return string.Empty;
+        }
+
+        if (node is JsonValue value)
+        {
+            if (value.TryGetValue<string>(out var stringValue))
+            {
+                return stringValue ?? string.Empty;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(value.ToJsonString());
+                return document.RootElement.ToString();
+            }
+            catch
+            {
+                return value.ToJsonString().Trim('"');
+            }
+        }
+
+        return node.ToJsonString();
+    }
+
+    private static bool IsFileLikeField(string fieldName, JsonNode node)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName))
+        {
+            return false;
+        }
+
+        if (fieldName.IndexOf("file", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            fieldName.IndexOf("image", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            fieldName.IndexOf("attachment", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            fieldName.IndexOf("avatar", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        var value = ConvertNodeToString(node);
+        return value.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveFileName(string fieldName, JsonNode node)
+    {
+        var value = ConvertNodeToString(node);
+        if (!string.IsNullOrWhiteSpace(value) && value.Contains('.', StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        return string.IsNullOrWhiteSpace(fieldName)
+            ? "upload.txt"
+            : $"{fieldName}.txt";
+    }
+
+    private static bool ShouldSkipManagedContentHeader(string bodyType, string headerName)
+    {
+        return headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
+            && (NormalizeBodyType(bodyType) == "FORMDATA" || NormalizeBodyType(bodyType) == "URLENCODED");
+    }
+
+    private static string NormalizeBodyType(string bodyType)
+    {
+        if (string.IsNullOrWhiteSpace(bodyType))
+        {
+            return string.Empty;
+        }
+
+        return bodyType
+            .Trim()
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .ToUpperInvariant();
     }
 
     private static bool HasBody(string httpMethod)

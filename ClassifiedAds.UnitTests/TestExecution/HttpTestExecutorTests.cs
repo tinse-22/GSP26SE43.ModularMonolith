@@ -292,6 +292,71 @@ public class HttpTestExecutorTests
         capturedRequest.Headers.Contains("X-Custom").Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_UrlEncodedBody_ShouldSendFormUrlEncodedContent()
+    {
+        string capturedBody = null;
+        string capturedContentType = null;
+
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{}"),
+        }, msg =>
+        {
+            capturedBody = msg.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            capturedContentType = msg.Content?.Headers.ContentType?.MediaType;
+        });
+
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest(
+            "POST",
+            "https://api.example.com/pet/1",
+            body: "{\"name\":\"Sample Name\",\"status\":\"available\"}",
+            bodyType: "UrlEncoded");
+
+        var result = await _executor.ExecuteAsync(request);
+
+        result.StatusCode.Should().Be(200);
+        capturedContentType.Should().Be("application/x-www-form-urlencoded");
+        capturedBody.Should().Contain("name=Sample+Name");
+        capturedBody.Should().Contain("status=available");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FormDataBody_ShouldSendMultipartContent()
+    {
+        string capturedBody = null;
+        string capturedContentType = null;
+
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{}"),
+        }, msg =>
+        {
+            capturedBody = msg.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            capturedContentType = msg.Content?.Headers.ContentType?.MediaType;
+        });
+
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest(
+            "POST",
+            "https://api.example.com/pet/1/uploadImage",
+            body: "{\"additionalMetadata\":\"sample meta\",\"file\":\"sample-file.txt\"}",
+            bodyType: "FormData");
+
+        var result = await _executor.ExecuteAsync(request);
+
+        result.StatusCode.Should().Be(200);
+        capturedContentType.Should().Be("multipart/form-data");
+        capturedBody.Should().Contain("name=additionalMetadata");
+        capturedBody.Should().Contain("sample meta");
+        capturedBody.Should().Contain("filename=sample-file.txt");
+    }
+
     #region Helpers
 
     private static ResolvedTestCaseRequest CreateRequest(

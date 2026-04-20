@@ -41,9 +41,9 @@ services:
       dockerfile: ./ClassifiedAds.Migrator/Dockerfile
     environment:
       DOTNET_ENVIRONMENT: "${DOTNET_ENVIRONMENT:-Development}"
-      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
+      ConnectionStrings__Default: "${SUPABASE_CONNECTION_STRING:?SUPABASE_CONNECTION_STRING must be set for Supabase deployment}"
       CheckDependency__Enabled: "true"
-      CheckDependency__Host: "${CheckDependency__Host:-127.0.0.1:55432}"
+      CheckDependency__Host: "${SUPABASE_CHECKDEPENDENCY_HOST:-db.pdmbghlidmoobbjsuxgx.supabase.co:5432}"
 
   webapi:
     image: classifiedads.modularmonolith.webapi
@@ -62,7 +62,7 @@ services:
         required: false
     environment:
       ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
-      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
+      ConnectionStrings__Default: "${SUPABASE_CONNECTION_STRING:?SUPABASE_CONNECTION_STRING must be set for Supabase deployment}"
       Messaging__Provider: "RabbitMQ"
       Messaging__RabbitMQ__HostName: "rabbitmq"
       Messaging__RabbitMQ__UserName: ${Messaging__RabbitMQ__UserName:-guest}
@@ -105,7 +105,7 @@ services:
       Caching__Distributed__Provider: "Redis"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       Caching__Distributed__Redis__InstanceName: "${Caching__Distributed__Redis__InstanceName:-ClassifiedAds_}"
-      ConnectionStrings__Default: "${ConnectionStrings__Default:?ConnectionStrings__Default must be set for Supabase deployment}"
+      ConnectionStrings__Default: "${SUPABASE_CONNECTION_STRING:?SUPABASE_CONNECTION_STRING must be set for Supabase deployment}"
       Modules__Notification__Email__Provider: "SmtpClient"
       Modules__Notification__Email__SmtpClient__Host: "mailhog"
       Modules__Notification__Email__SmtpClient__Port: "1025"

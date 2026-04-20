@@ -1005,6 +1005,18 @@ public class RuleBasedValidator : IRuleBasedValidator
             return true;
         }
 
+        if (IsAdaptivePermissiveStatusMatch(actualStatus, expectedStatuses, testCase, response))
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "ADAPTIVE_PERMISSIVE_STATUS_MATCH",
+                Message = $"Status thực tế {actualStatus} không nằm trong kỳ vọng [{string.Join(", ", expectedStatuses)}], nhưng được chấp nhận vì endpoint thể hiện hành vi permissive cho test case {testCase?.TestType ?? "(unknown)"}.",
+                Target = "ExpectedStatus",
+            });
+
+            return true;
+        }
+
         return false;
     }
 
@@ -1065,6 +1077,37 @@ public class RuleBasedValidator : IRuleBasedValidator
         return false;
     }
 
+    private static bool IsAdaptivePermissiveStatusMatch(
+        int actualStatus,
+        IReadOnlyCollection<int> expectedStatuses,
+        ExecutionTestCaseDto testCase,
+        HttpTestResponse response)
+    {
+        if (actualStatus < 200 || actualStatus >= 300)
+        {
+            return false;
+        }
+
+        if (expectedStatuses == null || expectedStatuses.Count == 0)
+        {
+            return false;
+        }
+
+        if (expectedStatuses.Any(status => status >= 200 && status < 300) ||
+            !expectedStatuses.Any(status => status >= 400 && status < 500))
+        {
+            return false;
+        }
+
+        if (!IsBoundaryOrNegativeCase(testCase))
+        {
+            return false;
+        }
+
+        // Keep explicit error-shaped payload handling in ADAPTIVE_ERROR_PAYLOAD_MATCH.
+        return !LooksLikeErrorPayload(response?.Body);
+    }
+
     private static string NormalizeHttpMethod(string httpMethod)
     {
         return string.IsNullOrWhiteSpace(httpMethod)
@@ -1093,6 +1136,24 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var normalized = testType.Trim().ToLowerInvariant();
         return normalized is "boundary" or "negative";
+    }
+
+    private static bool IsBoundaryOrNegativeCase(ExecutionTestCaseDto testCase)
+    {
+        if (IsBoundaryOrNegative(testCase?.TestType))
+        {
+            return true;
+        }
+
+        var name = testCase?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return name.IndexOf("boundary", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("negative", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static bool LooksLikeErrorPayload(string body)

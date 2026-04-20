@@ -17,6 +17,7 @@ public class PreExecutionValidator : IPreExecutionValidator
 {
     private static readonly Regex PlaceholderRegex = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
+    private static readonly Regex DuplicatedIdentifierPlaceholderRegex = new(@"IdId(s)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -173,6 +174,11 @@ public class PreExecutionValidator : IPreExecutionValidator
                 continue;
             }
 
+            if (IsLegacyBodyQueryRequirementSatisfied(testCase, requiredQueryParam))
+            {
+                continue;
+            }
+
             if (!queryParams.TryGetValue(requiredQueryParam, out var value) || string.IsNullOrWhiteSpace(value))
             {
                 result.Errors.Add(new ValidationFailureModel
@@ -185,6 +191,24 @@ public class PreExecutionValidator : IPreExecutionValidator
                 });
             }
         }
+    }
+
+    private static bool IsLegacyBodyQueryRequirementSatisfied(
+        ExecutionTestCaseDto testCase,
+        string requiredQueryParam)
+    {
+        if (testCase?.Request == null ||
+            !string.Equals(requiredQueryParam, "body", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!BodyRequiredMethods.Contains(testCase.Request.HttpMethod ?? string.Empty))
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(testCase.Request.Body);
     }
 
     private static void ValidateBody(
@@ -445,6 +469,17 @@ public class PreExecutionValidator : IPreExecutionValidator
                 }
 
                 if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                    && IsKnownDuplicatedIdentifierPlaceholderName(varName))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "IDENTIFIER_PLACEHOLDER_DUPLICATE_ID_FALLBACK",
+                        Message = $"Variable '{{{{{varName}}}}}' trong Body có pattern lỗi sinh dữ liệu (duplicate 'Id'). Hệ thống sẽ dùng fallback identifier mặc định để tiếp tục chạy test.",
+                    });
+                    continue;
+                }
+
+                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
                     && !IsIdentifierSemanticVariableName(varName))
                 {
                     result.Warnings.Add(new ValidationWarningModel
@@ -480,6 +515,12 @@ public class PreExecutionValidator : IPreExecutionValidator
         return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
             || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
             || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnownDuplicatedIdentifierPlaceholderName(string variableName)
+    {
+        return !string.IsNullOrWhiteSpace(variableName)
+            && DuplicatedIdentifierPlaceholderRegex.IsMatch(variableName);
     }
 
     private static bool IsNumericSemanticVariableName(string variableName)
