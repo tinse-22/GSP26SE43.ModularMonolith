@@ -142,6 +142,38 @@ public class ContractAwareRequestSynthesizerTests
     }
 
     [Fact]
+    public void BuildRequestData_Should_SerializeBoundaryPayloads_WithoutThrowing()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/products",
+            RequiresBody = true,
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["name", "quantity"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "quantity": { "type": "integer", "minimum": 1 }
+              }
+            }
+            """,
+        };
+
+        ContractAwareRequestData? result = null;
+        var action = () => result = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Boundary);
+
+        action.Should().NotThrow();
+        result.Should().NotBeNull();
+        result.BodyType.Should().Be("JSON");
+
+        using var document = JsonDocument.Parse(result!.Body);
+        var root = document.RootElement;
+        root.GetProperty("name").GetString().Should().BeEmpty();
+    }
+
+    [Fact]
     public void BuildRequestData_Should_UseUrlEncodedBodyType_ForSwagger2FormFields()
     {
         var context = new ContractAwareRequestContext
