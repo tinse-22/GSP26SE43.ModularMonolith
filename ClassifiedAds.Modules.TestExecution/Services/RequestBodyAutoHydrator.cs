@@ -15,6 +15,7 @@ internal static class RequestBodyAutoHydrator
         "POST",
         "PUT",
         "PATCH",
+        "DELETE",
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new()

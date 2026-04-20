@@ -94,7 +94,7 @@ public class HttpTestExecutor : IHttpTestExecutor
                 ContentType = response.Content.Headers.ContentType?.MediaType,
             };
         }
-        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
             sw.Stop();
             return new HttpTestResponse
@@ -176,7 +176,7 @@ public class HttpTestExecutor : IHttpTestExecutor
     {
         return httpMethod?.ToUpperInvariant() switch
         {
-            "POST" or "PUT" or "PATCH" => true,
+            "POST" or "PUT" or "PATCH" or "DELETE" => true,
             _ => false,
         };
     }
