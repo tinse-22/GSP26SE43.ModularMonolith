@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -35,6 +36,9 @@ public class N8nIntegrationServiceTests
         capturedRequest.Should().NotBeNull();
         capturedRequest.RequestUri.Should().Be(new Uri("https://example.test/webhook/my-hook"));
         capturedRequest.Headers.Should().Contain(header => header.Key == "x-api-key");
+        capturedRequest.Headers.Should().Contain(header =>
+            string.Equals(header.Key, "x-request-id", StringComparison.OrdinalIgnoreCase) &&
+            header.Value.Any(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     [Fact]
@@ -117,6 +121,40 @@ public class N8nIntegrationServiceTests
         var exception = await act.Should().ThrowAsync<N8nTransientException>();
         exception.Which.IsTimeout.Should().BeTrue();
         exception.Which.WebhookName.Should().Be("test-hook");
+    }
+
+    [Fact]
+    public async Task TriggerWebhookAsync_Should_PropagateCallerCancellation()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var sut = CreateSut((_, cancellationToken) =>
+            Task.FromCanceled<HttpResponseMessage>(cancellationToken));
+
+        var act = () => sut.TriggerWebhookAsync<object, TestWebhookResponse>(
+            "test-hook",
+            new { Name = "payload" },
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task TriggerWebhookWithResultAsync_Should_PropagateCallerCancellation()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var sut = CreateSut((_, cancellationToken) =>
+            Task.FromCanceled<HttpResponseMessage>(cancellationToken));
+
+        var act = () => sut.TriggerWebhookWithResultAsync(
+            "test-hook",
+            new { Name = "payload" },
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     private static N8nIntegrationService CreateSut(

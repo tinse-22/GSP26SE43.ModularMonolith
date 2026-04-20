@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly.Timeout;
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -88,21 +89,33 @@ public class N8nIntegrationService : IN8nIntegrationService
         CancellationToken cancellationToken = default)
     {
         var url = ResolveWebhookUrl(webhookName);
+        var requestId = Guid.NewGuid().ToString("N");
+        var stopwatch = Stopwatch.StartNew();
 
-        _logger.LogInformation("Triggering n8n webhook {WebhookName} at {Url}", webhookName, url);
+        _logger.LogInformation(
+            "Triggering n8n webhook {WebhookName} at {Url}. RequestId={RequestId}, ConfiguredTimeoutSeconds={ConfiguredTimeoutSeconds}, HttpClientTimeoutSeconds={HttpClientTimeoutSeconds}",
+            webhookName,
+            url,
+            requestId,
+            _options.TimeoutSeconds,
+            (int)_httpClient.Timeout.TotalSeconds);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(payload, options: JsonOptions),
         };
-        ApplyHeaders(request);
+        ApplyHeaders(request, requestId);
 
         try
         {
-            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            using var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
             var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
             var contentType = response.Content?.Headers.ContentType?.MediaType ?? "(missing)";
             var contentLength = response.Content?.Headers.ContentLength;
+            stopwatch.Stop();
 
             if (!response.IsSuccessStatusCode)
             {
@@ -112,8 +125,13 @@ public class N8nIntegrationService : IN8nIntegrationService
                     var isTimeoutLike = IsTimeoutLikeStatusCode(response.StatusCode);
 
                     _logger.LogWarning(
-                        "n8n webhook {WebhookName} returned transient status {StatusCode}. Url={Url}, Body={Body}",
-                        webhookName, statusCode, url, BuildBodySnippet(body));
+                        "n8n webhook {WebhookName} returned transient status {StatusCode}. Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}, Body={Body}",
+                        webhookName,
+                        statusCode,
+                        url,
+                        stopwatch.ElapsedMilliseconds,
+                        requestId,
+                        BuildBodySnippet(body));
 
                     throw new N8nTransientException(
                         isTimeoutLike
@@ -127,8 +145,14 @@ public class N8nIntegrationService : IN8nIntegrationService
                 }
 
                 _logger.LogError(
-                    "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}",
-                    webhookName, response.StatusCode, body);
+                    "n8n webhook {WebhookName} failed. Status={Status}, Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}, Body={Body}",
+                    webhookName,
+                    response.StatusCode,
+                    url,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId,
+                    body);
+
                 throw new ValidationException(
                     $"n8n webhook '{webhookName}' tra ve loi. Status: {response.StatusCode}");
             }
@@ -136,8 +160,14 @@ public class N8nIntegrationService : IN8nIntegrationService
             if (response.StatusCode == HttpStatusCode.NoContent)
             {
                 _logger.LogError(
-                    "n8n webhook {WebhookName} returned no content. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                    webhookName, response.StatusCode, contentType, contentLength);
+                    "n8n webhook {WebhookName} returned no content. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
+                    webhookName,
+                    response.StatusCode,
+                    contentType,
+                    contentLength,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId);
+
                 throw new ValidationException(
                     $"n8n webhook '{webhookName}' tra ve HTTP 204 va khong co JSON response.");
             }
@@ -145,8 +175,14 @@ public class N8nIntegrationService : IN8nIntegrationService
             if (string.IsNullOrWhiteSpace(body))
             {
                 _logger.LogError(
-                    "n8n webhook {WebhookName} returned an empty response body. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                    webhookName, response.StatusCode, contentType, contentLength);
+                    "n8n webhook {WebhookName} returned an empty response body. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
+                    webhookName,
+                    response.StatusCode,
+                    contentType,
+                    contentLength,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId);
+
                 throw new ValidationException(
                     $"n8n webhook '{webhookName}' tra ve body rong. He thong dang cho JSON response.");
             }
@@ -154,8 +190,11 @@ public class N8nIntegrationService : IN8nIntegrationService
             if (!IsJsonContentType(contentType))
             {
                 _logger.LogWarning(
-                    "n8n webhook {WebhookName} returned unexpected content type {ContentType}. Attempting JSON deserialization.",
-                    webhookName, contentType);
+                    "n8n webhook {WebhookName} returned unexpected content type {ContentType}. Attempting JSON deserialization. DurationMs={DurationMs}, RequestId={RequestId}",
+                    webhookName,
+                    contentType,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId);
             }
 
             try
@@ -164,15 +203,26 @@ public class N8nIntegrationService : IN8nIntegrationService
                 if (result is null)
                 {
                     _logger.LogError(
-                        "n8n webhook {WebhookName} returned a null JSON payload. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                        webhookName, response.StatusCode, contentType, contentLength);
+                        "n8n webhook {WebhookName} returned a null JSON payload. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
+                        webhookName,
+                        response.StatusCode,
+                        contentType,
+                        contentLength,
+                        stopwatch.ElapsedMilliseconds,
+                        requestId);
+
                     throw new ValidationException(
                         $"n8n webhook '{webhookName}' tra ve JSON null. He thong dang cho object hop le.");
                 }
 
                 _logger.LogInformation(
-                    "n8n webhook {WebhookName} succeeded. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}",
-                    webhookName, response.StatusCode, contentType, contentLength);
+                    "n8n webhook {WebhookName} succeeded. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
+                    webhookName,
+                    response.StatusCode,
+                    contentType,
+                    contentLength,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId);
 
                 return result;
             }
@@ -180,19 +230,46 @@ public class N8nIntegrationService : IN8nIntegrationService
             {
                 _logger.LogError(
                     ex,
-                    "n8n webhook {WebhookName} returned invalid JSON. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, BodySnippet={BodySnippet}",
-                    webhookName, response.StatusCode, contentType, contentLength, BuildBodySnippet(body));
+                    "n8n webhook {WebhookName} returned invalid JSON. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}, BodySnippet={BodySnippet}",
+                    webhookName,
+                    response.StatusCode,
+                    contentType,
+                    contentLength,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId,
+                    BuildBodySnippet(body));
+
                 throw new ValidationException(
                     $"n8n webhook '{webhookName}' tra ve JSON khong hop le hoac khong dung contract mong doi.",
                     ex);
             }
         }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            _logger.LogWarning(
+                ex,
+                "n8n webhook {WebhookName} cancelled by caller. Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
+
+            throw;
+        }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             throw new N8nTransientException(
                 $"n8n webhook '{webhookName}' timeout sau {_options.TimeoutSeconds}s. Vui long kiem tra n8n workflow hoac thu lai.",
@@ -205,10 +282,16 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             throw new N8nTransientException(
                 $"n8n webhook '{webhookName}' bi huy (timeout). TimeoutSeconds={_options.TimeoutSeconds}.",
@@ -221,10 +304,16 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (TimeoutRejectedException ex)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             throw new N8nTransientException(
                 $"n8n webhook '{webhookName}' bi Polly timeout sau {_options.TimeoutSeconds}s.",
@@ -237,10 +326,15 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (HttpRequestException ex)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} network error. Url={Url}",
-                webhookName, url);
+                "n8n webhook {WebhookName} network error. Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             throw new N8nTransientException(
                 $"n8n webhook '{webhookName}' loi ket noi: {ex.Message}",
@@ -277,6 +371,9 @@ public class N8nIntegrationService : IN8nIntegrationService
         CancellationToken cancellationToken = default)
     {
         string url;
+        var requestId = Guid.NewGuid().ToString("N");
+        var stopwatch = Stopwatch.StartNew();
+
         try
         {
             url = ResolveWebhookUrl(webhookName);
@@ -293,25 +390,39 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
 
         _logger.LogInformation(
-            "Triggering n8n webhook {WebhookName} at {Url} (fire-and-forget). TimeoutSeconds={TimeoutSeconds}, BeBaseUrl={BeBaseUrl}",
-            webhookName, url, _options.TimeoutSeconds, _options.BeBaseUrl);
+            "Triggering n8n webhook {WebhookName} at {Url} (result-based). RequestId={RequestId}, TimeoutSeconds={TimeoutSeconds}, BeBaseUrl={BeBaseUrl}, HttpClientTimeoutSeconds={HttpClientTimeoutSeconds}",
+            webhookName,
+            url,
+            requestId,
+            _options.TimeoutSeconds,
+            _options.BeBaseUrl,
+            (int)_httpClient.Timeout.TotalSeconds);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(payload, options: JsonOptions),
         };
-        ApplyHeaders(request);
+        ApplyHeaders(request, requestId);
 
         try
         {
-            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            using var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            stopwatch.Stop();
 
             if (!response.IsSuccessStatusCode)
             {
                 var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
                 _logger.LogError(
-                    "n8n webhook {WebhookName} failed. Status={Status}, Body={Body}, Url={Url}",
-                    webhookName, response.StatusCode, body, url);
+                    "n8n webhook {WebhookName} failed. Status={Status}, Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}, Body={Body}",
+                    webhookName,
+                    response.StatusCode,
+                    url,
+                    stopwatch.ElapsedMilliseconds,
+                    requestId,
+                    body);
 
                 return new WebhookTriggerResult
                 {
@@ -324,8 +435,12 @@ public class N8nIntegrationService : IN8nIntegrationService
             }
 
             _logger.LogInformation(
-                "n8n webhook {WebhookName} succeeded. Status={Status}, Url={Url}",
-                webhookName, response.StatusCode, url);
+                "n8n webhook {WebhookName} succeeded. Status={Status}, Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                response.StatusCode,
+                url,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             return new WebhookTriggerResult
             {
@@ -334,12 +449,32 @@ public class N8nIntegrationService : IN8nIntegrationService
                 ResolvedUrl = url
             };
         }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            _logger.LogWarning(
+                ex,
+                "n8n webhook {WebhookName} cancelled by caller. Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
+
+            throw;
+        }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} timed out. Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             return new WebhookTriggerResult
             {
@@ -353,10 +488,16 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} was cancelled (likely timeout). Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             return new WebhookTriggerResult
             {
@@ -370,10 +511,16 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (TimeoutRejectedException ex)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}",
-                webhookName, url, _options.TimeoutSeconds);
+                "n8n webhook {WebhookName} rejected by Polly timeout policy. Url={Url}, TimeoutSeconds={TimeoutSeconds}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                _options.TimeoutSeconds,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             return new WebhookTriggerResult
             {
@@ -387,10 +534,15 @@ public class N8nIntegrationService : IN8nIntegrationService
         }
         catch (HttpRequestException ex)
         {
+            stopwatch.Stop();
+
             _logger.LogError(
                 ex,
-                "n8n webhook {WebhookName} network error. Url={Url}",
-                webhookName, url);
+                "n8n webhook {WebhookName} network error. Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}",
+                webhookName,
+                url,
+                stopwatch.ElapsedMilliseconds,
+                requestId);
 
             return new WebhookTriggerResult
             {
@@ -429,11 +581,16 @@ public class N8nIntegrationService : IN8nIntegrationService
         return $"{_options.BaseUrl.TrimEnd('/')}/{relativePath.TrimStart('/')}";
     }
 
-    private void ApplyHeaders(HttpRequestMessage request)
+    private void ApplyHeaders(HttpRequestMessage request, string requestId)
     {
         if (!string.IsNullOrWhiteSpace(_options.ApiKey))
         {
             request.Headers.TryAddWithoutValidation("x-api-key", _options.ApiKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestId))
+        {
+            request.Headers.TryAddWithoutValidation("x-request-id", requestId);
         }
     }
 

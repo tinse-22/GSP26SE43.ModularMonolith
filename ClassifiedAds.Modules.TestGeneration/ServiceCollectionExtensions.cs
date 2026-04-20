@@ -120,9 +120,9 @@ public static class TestGenerationServiceCollectionExtensions
             ? settings.N8nIntegration.TimeoutSeconds
             : 120; // Default 2 minutes for LLM webhook calls
 
-        // n8n cloud webhooks behind proxies typically fail fast around ~100-120s.
-        // Cap attempt timeout to avoid multi-minute request stalls when upstream cannot respond in time.
-        var effectiveAttemptTimeoutSeconds = Math.Min(n8nTimeoutSeconds, 120);
+        // Keep timeout budgets consistent with configured TimeoutSeconds to avoid hidden policy caps.
+        // Total timeout includes a small response/body drain buffer.
+        var effectiveAttemptTimeoutSeconds = n8nTimeoutSeconds;
         var effectiveTotalTimeoutSeconds = effectiveAttemptTimeoutSeconds + 20;
 
         // Named client to exclude from default resilience handler in ServiceDefaults
@@ -141,7 +141,7 @@ public static class TestGenerationServiceCollectionExtensions
         })
         .AddStandardResilienceHandler(options =>
         {
-            // Override standard resilience timeouts for LLM/n8n webhook calls (120s default)
+            // Override standard resilience timeouts for LLM/n8n webhook calls.
             // Standard handler has 10s attempt timeout which is too short for LLM operations
             options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveAttemptTimeoutSeconds);
             options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds);
