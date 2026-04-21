@@ -4,11 +4,11 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.Entities;
 using ClassifiedAds.Modules.TestExecution.Models;
+using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,23 +25,21 @@ public class GetTestRunResultsQuery : IQuery<TestRunResultModel>
 
 public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuery, TestRunResultModel>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ITestExecutionReadGatewayService _gatewayService;
     private readonly ILogger<GetTestRunResultsQueryHandler> _logger;
 
     public GetTestRunResultsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
         ITestExecutionReadGatewayService gatewayService,
         ILogger<GetTestRunResultsQueryHandler> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _gatewayService = gatewayService;
         _logger = logger;
@@ -64,43 +62,13 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
             throw new NotFoundException($"Không tìm thấy test run với mã '{query.RunId}'.");
         }
 
-        if (string.IsNullOrEmpty(run.RedisKey))
-        {
-            return CreateUnavailableResult(run);
-        }
-
-        // Check expiry
         if (run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value < DateTimeOffset.UtcNow)
         {
             return CreateUnavailableResult(run);
         }
 
-        string cached;
-        try
-        {
-            cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to read test run results from cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
-            return CreateUnavailableResult(run);
-        }
-
-        if (string.IsNullOrEmpty(cached))
-        {
-            return CreateUnavailableResult(run);
-        }
-
-        TestRunResultModel result;
-        try
-        {
-            result = JsonSerializer.Deserialize<TestRunResultModel>(cached, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to deserialize cached test run results. RunId={RunId}", run.Id);
-            return CreateUnavailableResult(run);
-        }
+        var result = await TryReadFromCacheAsync(run, cancellationToken)
+            ?? await TryReadFromDatabaseAsync(run, cancellationToken);
 
         if (result == null)
         {
@@ -109,6 +77,49 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
 
         result.Run = TestRunModel.FromEntity(run);
         return result;
+    }
+
+    private async Task<TestRunResultModel> TryReadFromCacheAsync(TestRun run, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(run.RedisKey))
+        {
+            return null;
+        }
+
+        try
+        {
+            var cached = await _cache.GetStringAsync(run.RedisKey, cancellationToken);
+            var result = TestRunResultsStorage.DeserializeCachedResult(cached);
+            if (result != null)
+            {
+                result.ResultsSource = "cache";
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read test run results from cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
+            return null;
+        }
+    }
+
+    private async Task<TestRunResultModel> TryReadFromDatabaseAsync(TestRun run, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var persistedResults = await _resultRepository.ToListAsync(
+                _resultRepository.GetQueryableSet()
+                    .Where(x => x.TestRunId == run.Id)
+                    .OrderBy(x => x.OrderIndex));
+
+            return TestRunResultsStorage.ReconstructFromDatabase(run, persistedResults);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read test run results from database fallback. RunId={RunId}", run.Id);
+            return null;
+        }
     }
 
     private static TestRunResultModel CreateUnavailableResult(TestRun run)

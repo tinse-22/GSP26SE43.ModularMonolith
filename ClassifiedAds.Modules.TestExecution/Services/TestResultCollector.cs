@@ -24,15 +24,18 @@ public class TestResultCollector : ITestResultCollector
     };
 
     private readonly IRepository<TestRun, Guid> _runRepository;
+    private readonly IRepository<TestCaseResult, Guid> _resultRepository;
     private readonly IDistributedCache _cache;
     private readonly ILogger<TestResultCollector> _logger;
 
     public TestResultCollector(
         IRepository<TestRun, Guid> runRepository,
+        IRepository<TestCaseResult, Guid> resultRepository,
         IDistributedCache cache,
         ILogger<TestResultCollector> logger)
     {
         _runRepository = runRepository;
+        _resultRepository = resultRepository;
         _cache = cache;
         _logger = logger;
     }
@@ -94,6 +97,8 @@ public class TestResultCollector : ITestResultCollector
             Cases = caseModels,
         };
 
+        var persistedCaseResults = BuildPersistedCaseResults(run.Id, caseModels);
+
         // Update run entity
         run.TotalTests = caseResults.Count;
         run.PassedCount = passedCount;
@@ -125,12 +130,25 @@ public class TestResultCollector : ITestResultCollector
         // Always persist summary to DB
         try
         {
+            var existingCaseResults = await _resultRepository.ToListAsync(
+                _resultRepository.GetQueryableSet().Where(x => x.TestRunId == run.Id));
+
+            foreach (var existing in existingCaseResults)
+            {
+                _resultRepository.Delete(existing);
+            }
+
+            foreach (var caseResult in persistedCaseResults)
+            {
+                await _resultRepository.AddAsync(caseResult, ct);
+            }
+
             await _runRepository.UpdateAsync(run, ct);
             await _runRepository.UnitOfWork.SaveChangesAsync(ct);
         }
         catch (Exception ex)
         {
-            _logger.LogCritical(ex, "Failed to update test run summary. RunId={RunId}", run.Id);
+            _logger.LogCritical(ex, "Failed to persist test run summary/details. RunId={RunId}", run.Id);
             throw;
         }
 
@@ -143,6 +161,39 @@ public class TestResultCollector : ITestResultCollector
 
         resultModel.Run = TestRunModel.FromEntity(run);
         return resultModel;
+    }
+
+    private static List<TestCaseResult> BuildPersistedCaseResults(Guid runId, IReadOnlyCollection<TestCaseRunResultModel> caseModels)
+    {
+        return (caseModels ?? Array.Empty<TestCaseRunResultModel>())
+            .Select(caseModel => new TestCaseResult
+            {
+                Id = Guid.NewGuid(),
+                TestRunId = runId,
+                TestCaseId = caseModel.TestCaseId,
+                EndpointId = caseModel.EndpointId,
+                Name = caseModel.Name ?? string.Empty,
+                OrderIndex = caseModel.OrderIndex,
+                Status = caseModel.Status ?? "Unknown",
+                HttpStatusCode = caseModel.HttpStatusCode,
+                DurationMs = caseModel.DurationMs,
+                ResolvedUrl = caseModel.ResolvedUrl,
+                RequestHeaders = JsonSerializer.Serialize(caseModel.RequestHeaders ?? new Dictionary<string, string>(), JsonOptions),
+                ResponseHeaders = JsonSerializer.Serialize(caseModel.ResponseHeaders ?? new Dictionary<string, string>(), JsonOptions),
+                ResponseBodyPreview = caseModel.ResponseBodyPreview,
+                FailureReasons = JsonSerializer.Serialize(caseModel.FailureReasons ?? new List<ValidationFailureModel>(), JsonOptions),
+                ExtractedVariables = JsonSerializer.Serialize(caseModel.ExtractedVariables ?? new Dictionary<string, string>(), JsonOptions),
+                DependencyIds = JsonSerializer.Serialize(caseModel.DependencyIds ?? new List<Guid>(), JsonOptions),
+                SkippedBecauseDependencyIds = JsonSerializer.Serialize(caseModel.SkippedBecauseDependencyIds ?? new List<Guid>(), JsonOptions),
+                StatusCodeMatched = caseModel.StatusCodeMatched,
+                SchemaMatched = caseModel.SchemaMatched,
+                HeaderChecksPassed = caseModel.HeaderChecksPassed,
+                BodyContainsPassed = caseModel.BodyContainsPassed,
+                BodyNotContainsPassed = caseModel.BodyNotContainsPassed,
+                JsonPathChecksPassed = caseModel.JsonPathChecksPassed,
+                ResponseTimePassed = caseModel.ResponseTimePassed,
+            })
+            .ToList();
     }
 
     private static string TruncateBody(string body)
