@@ -26,8 +26,22 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int MinAdaptiveScenariosPerEndpoint = 2;
-    private const int MaxAdaptiveScenariosPerEndpoint = 6;
+    private const int MinAdaptiveScenariosPerEndpoint = 10;
+    private const int MaxAdaptiveScenariosPerEndpoint = 10;
+
+    private const int MaxBusinessContextLength = 1200;
+    private const int MaxFeedbackContextLength = 1200;
+    private const int MaxSystemPromptLength = 1200;
+    private const int MaxCombinedPromptLength = 5000;
+    private const int MaxObservationPromptLength = 3000;
+    private const int MaxConfirmationPromptLength = 1200;
+    private const int MaxTaskInstructionLength = 5000;
+    private const int MaxRulesLength = 3500;
+    private const int MaxResponseFormatLength = 2500;
+    private const int MaxSchemaPayloadCountPerKind = 2;
+    private const int MaxSchemaPayloadLength = 2500;
+    private const int MaxParameterDetailCount = 16;
+    private const int MaxParameterDefaultValueLength = 200;
 
     private const string DefaultSuggestionSystemPrompt =
         "You are a senior QA engineer specialising in REST API security and robustness testing. " +
@@ -35,7 +49,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. For each endpoint generate 2-4 scenarios: include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "1. For each endpoint generate about 10 scenarios (target range 8-10): include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
@@ -180,14 +194,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             metadataMap,
             prompts,
             feedbackContext.EndpointFeedbackContexts);
+        var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts).Length;
 
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
 
         // Step 4: Call n8n webhook
         _logger.LogInformation(
-            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, PayloadBytes={PayloadBytes}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
             N8nWebhookNames.GenerateLlmSuggestions,
             context.TestSuiteId,
+            orderedSequence.Count,
+            payloadBytes,
             feedbackContext.FeedbackFingerprint,
             cacheKey);
 
@@ -336,13 +353,13 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Path = orderItem.Path,
                 OperationId = metadata?.OperationId,
                 OrderIndex = orderItem.OrderIndex,
-                BusinessContext = businessContext,
+                BusinessContext = TruncateForPayload(businessContext, MaxBusinessContextLength),
                 FeedbackContext = endpointFeedbackContexts.TryGetValue(orderItem.EndpointId, out var feedbackContext)
-                    ? feedbackContext
+                    ? TruncateForPayload(feedbackContext, MaxFeedbackContextLength)
                     : string.Empty,
                 Prompt = promptPayload,
-                ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
-                ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
+                ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
                 ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
             });
         }
@@ -351,7 +368,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             TestSuiteId = context.TestSuiteId,
             TestSuiteName = context.Suite.Name,
-            GlobalBusinessRules = context.Suite.GlobalBusinessRules,
+            GlobalBusinessRules = TruncateForPayload(context.Suite.GlobalBusinessRules, MaxBusinessContextLength),
             AlgorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap),
             Endpoints = endpointPayloads,
@@ -371,16 +388,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return new N8nPromptPayload
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+            SystemPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
                 ? DefaultSuggestionSystemPrompt
-                : prompt.SystemPrompt,
-            CombinedPrompt = combinedPrompt,
-            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                : prompt.SystemPrompt, MaxSystemPromptLength),
+            CombinedPrompt = TruncateForPayload(combinedPrompt, MaxCombinedPromptLength),
+            ObservationPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
                 ? combinedPrompt
-                : prompt.ObservationPrompt,
-            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                : prompt.ObservationPrompt, MaxObservationPromptLength),
+            ConfirmationPromptTemplate = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
                 ? "Generate only boundary/negative scenarios based on provided API details and business rules; return JSON only."
-                : prompt.ConfirmationPromptTemplate,
+                : prompt.ConfirmationPromptTemplate, MaxConfirmationPromptLength),
         };
     }
 
@@ -416,7 +433,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             sb.AppendLine();
             sb.AppendLine("## Parameter Schemas");
-            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(2))
             {
                 sb.AppendLine(schema);
             }
@@ -426,7 +443,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             sb.AppendLine();
             sb.AppendLine("## Response Schemas");
-            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(2))
             {
                 sb.AppendLine(schema);
             }
@@ -447,12 +464,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return new N8nSuggestionPromptConfig
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
+            SystemPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(systemPrompt)
                 ? DefaultSuggestionSystemPrompt
-                : systemPrompt,
-            TaskInstruction = BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
-            Rules = SuggestionRulesBlock,
-            ResponseFormat = SuggestionResponseFormatBlock,
+                : systemPrompt, MaxSystemPromptLength),
+            TaskInstruction = TruncateForPayload(
+                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
+                MaxTaskInstructionLength),
+            Rules = TruncateForPayload(SuggestionRulesBlock, MaxRulesLength),
+            ResponseFormat = TruncateForPayload(SuggestionResponseFormatBlock, MaxResponseFormatLength),
         };
     }
 
@@ -1476,15 +1495,54 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return new List<N8nParameterDetail>();
         }
 
-        return detail.Parameters.Select(p => new N8nParameterDetail
+        return detail.Parameters
+            .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Name))
+            .OrderByDescending(p => p.IsRequired)
+            .ThenBy(p => p.Location)
+            .ThenBy(p => p.Name)
+            .Take(MaxParameterDetailCount)
+            .Select(p => new N8nParameterDetail
+            {
+                Name = p.Name,
+                Location = p.Location,
+                DataType = p.DataType,
+                Format = p.Format,
+                IsRequired = p.IsRequired,
+                DefaultValue = TruncateForPayload(p.DefaultValue, MaxParameterDefaultValueLength),
+            })
+            .ToList();
+    }
+
+    private static List<string> CompactSchemaPayloads(IEnumerable<string> schemaPayloads)
+    {
+        if (schemaPayloads == null)
         {
-            Name = p.Name,
-            Location = p.Location,
-            DataType = p.DataType,
-            Format = p.Format,
-            IsRequired = p.IsRequired,
-            DefaultValue = p.DefaultValue,
-        }).ToList();
+            return new List<string>();
+        }
+
+        return schemaPayloads
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => TruncateForPayload(x, MaxSchemaPayloadLength))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxSchemaPayloadCountPerKind)
+            .ToList();
+    }
+
+    private static string TruncateForPayload(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength];
     }
 
     private async Task<LlmSuggestionFeedbackContextResult> BuildFeedbackContextSafeAsync(

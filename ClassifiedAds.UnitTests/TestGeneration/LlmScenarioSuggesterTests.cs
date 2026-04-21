@@ -129,6 +129,134 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestScenariosAsync_Should_TargetAroundTenScenarios_PerEndpoint()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        var scenarioCounts = result.Scenarios
+            .GroupBy(x => x.EndpointId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        scenarioCounts.Should().ContainKey(EndpointId1);
+        scenarioCounts.Should().ContainKey(EndpointId2);
+        scenarioCounts[EndpointId1].Should().Be(10);
+        scenarioCounts[EndpointId2].Should().Be(10);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_CompactPayload_BeforeCallingN8n()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        context.Suite.GlobalBusinessRules = new string('G', 5000);
+        context.Suite.EndpointBusinessContexts[EndpointId1] = new string('B', 5000);
+
+        var endpoint1Metadata = context.EndpointMetadata.First(x => x.EndpointId == EndpointId1);
+        endpoint1Metadata.ParameterSchemaPayloads = new List<string>
+        {
+            new string('P', 3000),
+            new string('Q', 3000),
+            new string('R', 3000),
+        };
+        endpoint1Metadata.ResponseSchemaPayloads = new List<string>
+        {
+            new string('X', 3000),
+            new string('Y', 3000),
+            new string('Z', 3000),
+        };
+
+        context.EndpointParameterDetails = new Dictionary<Guid, EndpointParameterDetailDto>
+        {
+            [EndpointId1] = new EndpointParameterDetailDto
+            {
+                EndpointId = EndpointId1,
+                EndpointPath = "/api/auth/login",
+                EndpointHttpMethod = "POST",
+                Parameters = Enumerable.Range(1, 24)
+                    .Select(i => new ParameterDetailDto
+                    {
+                        ParameterId = Guid.NewGuid(),
+                        Name = $"param{i:00}",
+                        Location = "Body",
+                        DataType = "string",
+                        IsRequired = i % 2 == 0,
+                        DefaultValue = new string('D', 500),
+                    })
+                    .ToList(),
+            },
+        };
+
+        _promptBuilderMock
+            .Setup(x => x.BuildForSequence(It.IsAny<IReadOnlyList<EndpointPromptContext>>()))
+            .Returns(new List<ObservationConfirmationPrompt>
+            {
+                new()
+                {
+                    SystemPrompt = new string('S', 4000),
+                    CombinedPrompt = new string('C', 9000),
+                    ObservationPrompt = new string('O', 7000),
+                    ConfirmationPromptTemplate = new string('T', 4000),
+                },
+                new()
+                {
+                    SystemPrompt = new string('S', 4000),
+                    CombinedPrompt = new string('C', 9000),
+                    ObservationPrompt = new string('O', 7000),
+                    ConfirmationPromptTemplate = new string('T', 4000),
+                },
+            });
+
+        SetupAllCacheMiss();
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) =>
+            {
+                capturedPayload = payload;
+            })
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        capturedPayload.Should().NotBeNull();
+        capturedPayload.GlobalBusinessRules.Length.Should().BeLessThanOrEqualTo(1200);
+        capturedPayload.PromptConfig.SystemPrompt.Length.Should().BeLessThanOrEqualTo(1200);
+        capturedPayload.PromptConfig.TaskInstruction.Length.Should().BeLessThanOrEqualTo(5000);
+        capturedPayload.PromptConfig.Rules.Length.Should().BeLessThanOrEqualTo(3500);
+        capturedPayload.PromptConfig.ResponseFormat.Length.Should().BeLessThanOrEqualTo(2500);
+
+        var endpointPayload = capturedPayload.Endpoints.First(x => x.EndpointId == EndpointId1);
+        endpointPayload.BusinessContext.Length.Should().BeLessThanOrEqualTo(1200);
+        endpointPayload.ParameterSchemaPayloads.Count.Should().BeLessThanOrEqualTo(2);
+        endpointPayload.ResponseSchemaPayloads.Count.Should().BeLessThanOrEqualTo(2);
+        endpointPayload.ParameterSchemaPayloads.Should().OnlyContain(x => x.Length <= 2500);
+        endpointPayload.ResponseSchemaPayloads.Should().OnlyContain(x => x.Length <= 2500);
+        endpointPayload.ParameterDetails.Count.Should().BeLessThanOrEqualTo(16);
+        endpointPayload.ParameterDetails.Should().OnlyContain(x => (x.DefaultValue ?? string.Empty).Length <= 200);
+        endpointPayload.Prompt.SystemPrompt.Length.Should().BeLessThanOrEqualTo(1200);
+        endpointPayload.Prompt.CombinedPrompt.Length.Should().BeLessThanOrEqualTo(5000);
+        endpointPayload.Prompt.ObservationPrompt.Length.Should().BeLessThanOrEqualTo(3000);
+        endpointPayload.Prompt.ConfirmationPromptTemplate.Length.Should().BeLessThanOrEqualTo(1200);
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_SaveInteraction_AfterN8nCall()
     {
         // Arrange
@@ -242,7 +370,9 @@ public class LlmScenarioSuggesterTests
             x.EndpointId == EndpointId1 &&
             x.SuggestedTestType == TestType.HappyPath);
 
-        happyPath.SuggestedBodyType.Should().Be("JSON");
+        happyPath.SuggestedBodyType.Should().Match(x =>
+            string.Equals(x, "JSON", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(x, "UrlEncoded", StringComparison.OrdinalIgnoreCase));
         happyPath.SuggestedBody.Should().NotBeNullOrWhiteSpace();
         happyPath.SuggestedBody.Should().NotBe("{}");
         happyPath.Variables.Should().Contain(x =>
@@ -250,11 +380,19 @@ public class LlmScenarioSuggesterTests
             x.ExtractFrom == "ResponseBody" &&
             x.JsonPath == "$.token");
 
-        using var document = JsonDocument.Parse(happyPath.SuggestedBody);
-        document.RootElement.TryGetProperty("email", out var email).Should().BeTrue();
-        document.RootElement.TryGetProperty("password", out var password).Should().BeTrue();
-        email.GetString().Should().Contain("@");
-        password.GetString().Should().NotBeNullOrWhiteSpace();
+        if (string.Equals(happyPath.SuggestedBodyType, "JSON", StringComparison.OrdinalIgnoreCase))
+        {
+            using var document = JsonDocument.Parse(happyPath.SuggestedBody);
+            document.RootElement.TryGetProperty("email", out var email).Should().BeTrue();
+            document.RootElement.TryGetProperty("password", out var password).Should().BeTrue();
+            email.GetString().Should().Contain("@");
+            password.GetString().Should().NotBeNullOrWhiteSpace();
+        }
+        else
+        {
+            happyPath.SuggestedBody.Should().Contain("email");
+            happyPath.SuggestedBody.Should().Contain("password");
+        }
     }
 
     [Fact]

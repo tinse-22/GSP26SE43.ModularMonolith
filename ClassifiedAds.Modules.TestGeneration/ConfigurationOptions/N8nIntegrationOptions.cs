@@ -16,9 +16,9 @@ public class N8nIntegrationOptions
     public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// HTTP request timeout in seconds. Default: 120 (2 minutes) for LLM/webhook calls.
+    /// HTTP request timeout in seconds. Default: 600 (10 minutes) for LLM/webhook calls.
     /// </summary>
-    public int TimeoutSeconds { get; set; } = 120;
+    public int TimeoutSeconds { get; set; } = 600;
 
     /// <summary>
     /// Named webhook paths appended to BaseUrl.
