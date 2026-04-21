@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Http.Resilience;
+using Polly;
 using System;
 using System.Reflection;
 
@@ -109,7 +110,7 @@ public static class TestGenerationServiceCollectionExtensions
             var n8n = settings.N8nIntegration ?? new N8nIntegrationOptions();
             options.BaseUrl = n8n.BaseUrl ?? string.Empty;
             options.ApiKey = n8n.ApiKey ?? string.Empty;
-            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 120 : n8n.TimeoutSeconds;
+            options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 600 : n8n.TimeoutSeconds;
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
             options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
             options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
@@ -118,12 +119,12 @@ public static class TestGenerationServiceCollectionExtensions
 
         var n8nTimeoutSeconds = settings.N8nIntegration?.TimeoutSeconds > 0
             ? settings.N8nIntegration.TimeoutSeconds
-            : 120; // Default 2 minutes for LLM webhook calls
+            : 600; // Default 10 minutes for LLM webhook calls
 
         // Keep timeout budgets consistent with configured TimeoutSeconds to avoid hidden policy caps.
-        // Total timeout includes a small response/body drain buffer.
+        // Use the same 10-minute budget across attempt/total/client timeout.
         var effectiveAttemptTimeoutSeconds = n8nTimeoutSeconds;
-        var effectiveTotalTimeoutSeconds = effectiveAttemptTimeoutSeconds + 20;
+        var effectiveTotalTimeoutSeconds = n8nTimeoutSeconds;
 
         // Named client to exclude from default resilience handler in ServiceDefaults
         const string n8nHttpClientName = "N8nIntegrationHttpClient";
@@ -136,8 +137,8 @@ public static class TestGenerationServiceCollectionExtensions
                 client.BaseAddress = new System.Uri(n8n.BaseUrl);
             }
 
-            // This timeout is a backstop; Polly resilience handler controls actual timeout
-            client.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds + 30);
+            // Keep HttpClient timeout aligned with resilience timeouts (10 minutes by default).
+            client.Timeout = System.TimeSpan.FromSeconds(n8nTimeoutSeconds);
         })
         .AddStandardResilienceHandler(options =>
         {
@@ -145,11 +146,12 @@ public static class TestGenerationServiceCollectionExtensions
             // Standard handler has 10s attempt timeout which is too short for LLM operations
             options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveAttemptTimeoutSeconds);
             options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds);
-            options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(effectiveAttemptTimeoutSeconds * 2);
+            options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(Math.Max(effectiveAttemptTimeoutSeconds * 2, 1200));
 
-            // Avoid multiplying long webhook latency; transient handling + fallback is done at service level.
+            // Light retry for transient network/webhook failures.
             options.Retry.MaxRetryAttempts = 1;
-            options.Retry.ShouldHandle = _ => new System.Threading.Tasks.ValueTask<bool>(false);
+            options.Retry.Delay = System.TimeSpan.FromSeconds(2);
+            options.Retry.BackoffType = DelayBackoffType.Constant;
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());

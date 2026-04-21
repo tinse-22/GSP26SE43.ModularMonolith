@@ -46,6 +46,7 @@ public class GetTestRunResultsQueryHandlerTests
 
         _handler = new GetTestRunResultsQueryHandler(
             _runRepoMock.Object,
+            _resultRepoMock.Object,
             _cacheMock.Object,
             _gatewayMock.Object,
             new Mock<ILogger<GetTestRunResultsQueryHandler>>().Object);
@@ -178,6 +179,45 @@ public class GetTestRunResultsQueryHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_CacheMissing_ShouldFallBackToDatabase()
+    {
+        // Arrange
+        var runId = Guid.NewGuid();
+        var suiteId = Guid.NewGuid();
+        var caseId = Guid.NewGuid();
+        var run = CreateTestRun(runId, suiteId, resultsExpireAt: DateTimeOffset.UtcNow.AddDays(1));
+
+        var query = new GetTestRunResultsQuery
+        {
+            TestSuiteId = suiteId,
+            RunId = runId,
+            CurrentUserId = _ownerId,
+        };
+
+        SetupGateway(suiteId, _ownerId);
+        SetupRunRepository(run);
+
+        _cacheMock.Setup(x => x.GetAsync(run.RedisKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((byte[])null!);
+
+        _resultRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new[]
+            {
+                CreatePersistedResult(runId, caseId),
+            }.AsQueryable());
+
+        // Act
+        var result = await _handler.HandleAsync(query);
+
+        // Assert
+        result.ResultsSource.Should().Be("database");
+        result.Cases.Should().ContainSingle();
+        result.Cases[0].TestCaseId.Should().Be(caseId);
+        result.Cases[0].Name.Should().Be("Recovered case");
+        result.Run.Id.Should().Be(runId);
+    }
+
+    [Fact]
     public async Task HandleAsync_ValidCache_ShouldReturnResults()
     {
         // Arrange
@@ -306,6 +346,37 @@ public class GetTestRunResultsQueryHandlerTests
             DurationMs = 1000,
             RedisKey = redisKey ?? $"testrun:{runId}:results",
             ResultsExpireAt = resultsExpireAt,
+        };
+    }
+
+    private static TestCaseResult CreatePersistedResult(Guid runId, Guid caseId)
+    {
+        return new TestCaseResult
+        {
+            Id = Guid.NewGuid(),
+            TestRunId = runId,
+            TestCaseId = caseId,
+            EndpointId = Guid.NewGuid(),
+            Name = "Recovered case",
+            OrderIndex = 1,
+            Status = "Failed",
+            HttpStatusCode = 500,
+            DurationMs = 150,
+            ResolvedUrl = "/api/recovered",
+            RequestHeaders = "{\"Content-Type\":\"application/json\"}",
+            ResponseHeaders = "{\"X-Trace-Id\":\"trace-001\"}",
+            ResponseBodyPreview = "{\"error\":\"boom\"}",
+            FailureReasons = "[{\"code\":\"STATUS_CODE_MISMATCH\",\"message\":\"Expected 201 but got 500.\",\"target\":\"statusCode\",\"expected\":\"201\",\"actual\":\"500\"}]",
+            ExtractedVariables = "{\"traceId\":\"trace-001\"}",
+            DependencyIds = "[]",
+            SkippedBecauseDependencyIds = "[]",
+            StatusCodeMatched = false,
+            SchemaMatched = false,
+            HeaderChecksPassed = true,
+            BodyContainsPassed = false,
+            BodyNotContainsPassed = true,
+            JsonPathChecksPassed = false,
+            ResponseTimePassed = true,
         };
     }
 
