@@ -318,6 +318,44 @@ public class RuleBasedValidatorTests
         result.Failures.Should().ContainSingle(f => f.Code == "RESPONSE_NOT_JSON");
     }
 
+    [Fact]
+    public void Validate_InvalidResponseSchema_NonStrict_Should_WarnInsteadOfFail()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"name": "test"}""");
+        var testCase = CreateTestCase(responseSchema: "not-json-schema");
+
+        // Act
+        var result = _validator.Validate(response, testCase, strictMode: false);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.SchemaMatched.Should().BeNull();
+        result.Failures.Should().BeEmpty();
+        result.Warnings.Should().ContainSingle(w =>
+            w.Code == "INVALID_EXPECTATION_FORMAT" &&
+            w.Target == "ResponseSchema");
+    }
+
+    [Fact]
+    public void Validate_InvalidResponseSchema_Strict_Should_Fail()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"name": "test"}""");
+        var testCase = CreateTestCase(responseSchema: "not-json-schema");
+
+        // Act
+        var result = _validator.Validate(response, testCase, strictMode: true);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.SchemaMatched.Should().BeFalse();
+        result.Warnings.Should().BeEmpty();
+        result.Failures.Should().ContainSingle(f =>
+            f.Code == "INVALID_EXPECTATION_FORMAT" &&
+            f.Target == "ResponseSchema");
+    }
+
     #endregion
 
     #region Header Checks

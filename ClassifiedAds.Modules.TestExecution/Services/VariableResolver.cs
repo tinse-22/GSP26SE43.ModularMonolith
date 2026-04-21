@@ -223,8 +223,10 @@ public class VariableResolver : IVariableResolver
         candidates.Add("resourceId");
         candidates.Add("id");
 
-        if (TryResolveVariableValue(candidates.Distinct(StringComparer.OrdinalIgnoreCase), variables, out resolved))
+        if (TryResolveVariableValue(candidates.Distinct(StringComparer.OrdinalIgnoreCase), variables, out var candidateResolved)
+            && IsSafeDuplicateIdentifierAliasValue(candidateResolved))
         {
+            resolved = candidateResolved;
             return true;
         }
 
@@ -237,7 +239,8 @@ public class VariableResolver : IVariableResolver
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (availableIdentifierValues.Count == 1)
+        if (availableIdentifierValues.Count == 1
+            && IsSafeDuplicateIdentifierAliasValue(availableIdentifierValues[0]))
         {
             resolved = availableIdentifierValues[0];
             return true;
@@ -245,6 +248,53 @@ public class VariableResolver : IVariableResolver
 
         resolved = null;
         return false;
+    }
+
+    private static bool IsSafeDuplicateIdentifierAliasValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Contains("{{", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Treat compact 32-char hex values as opaque/session-like for idId aliasing.
+        if (IsHex32String(normalized))
+        {
+            return false;
+        }
+
+        if (long.TryParse(normalized, out _)
+            || Guid.TryParse(normalized, out _)
+            || ObjectIdRegex.IsMatch(normalized))
+        {
+            return true;
+        }
+
+        return true;
+    }
+
+    private static bool IsHex32String(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length != 32)
+        {
+            return false;
+        }
+
+        foreach (var ch in value)
+        {
+            if (!Uri.IsHexDigit(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static Dictionary<string, string> NormalizePathParams(
