@@ -559,6 +559,107 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_KeepEnvironmentAuthorization_WhenRequestAuthTemplateUnresolved()
+    {
+        // Arrange
+        var requestHeaders = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer {{authToken}}",
+        });
+        var testCase = CreateTestCase(headers: requestHeaders, httpMethod: "GET", testType: "HappyPath");
+        var variables = new Dictionary<string, string>();
+        var env = CreateEnvironment();
+        env.DefaultHeaders["Authorization"] = "Bearer env-token";
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Headers.Should().ContainKey("Authorization");
+        result.Headers["Authorization"].Should().Be("Bearer env-token");
+    }
+
+    [Fact]
+    public void Resolve_Should_UseSnakeCaseTokenAlias_ForAuthorizationTemplate()
+    {
+        // Arrange
+        var requestHeaders = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer {{authToken}}",
+        });
+        var testCase = CreateTestCase(headers: requestHeaders, httpMethod: "GET", testType: "HappyPath");
+        var variables = new Dictionary<string, string>
+        {
+            ["access_token"] = "jwt-snake-123",
+        };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Headers.Should().ContainKey("Authorization");
+        result.Headers["Authorization"].Should().Be("Bearer jwt-snake-123");
+    }
+
+    [Fact]
+    public void Resolve_Should_ReplaceBearerHeaderTemplate_WithFlexibleSpacing()
+    {
+        // Arrange
+        var headers = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer: {{ token }}",
+        });
+        var testCase = CreateTestCase(headers: headers);
+        var variables = new Dictionary<string, string> { ["token"] = "abc123" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Headers["Authorization"].Should().Be("Bearer abc123");
+    }
+
+    [Fact]
+    public void Resolve_Should_ReplaceTokenHeaderTemplate_WithColonFormat()
+    {
+        // Arrange
+        var headers = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Authorization"] = "Token: {{jwt}}",
+        });
+        var testCase = CreateTestCase(headers: headers);
+        var variables = new Dictionary<string, string> { ["jwt"] = "jwt-987" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Headers["Authorization"].Should().Be("Token jwt-987");
+    }
+
+    [Fact]
+    public void Resolve_Should_ReplaceApiKeyHeaderTemplate_WithEqualsFormat()
+    {
+        // Arrange
+        var headers = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["X-API-Key"] = "ApiKey={{apiKey}}",
+        });
+        var testCase = CreateTestCase(headers: headers);
+        var variables = new Dictionary<string, string> { ["apiKey"] = "key-456" };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Headers["X-API-Key"].Should().Be("ApiKey key-456");
+    }
+
+    [Fact]
     public void Resolve_Should_UseRegisteredCredentials_ForHappyPathLoginBody()
     {
         // Arrange
