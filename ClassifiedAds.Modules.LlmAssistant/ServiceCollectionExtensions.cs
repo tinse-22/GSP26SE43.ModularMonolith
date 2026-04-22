@@ -66,7 +66,7 @@ public static class LlmAssistantServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(
                 settings.FailureExplanation.TimeoutSeconds > 0
                     ? settings.FailureExplanation.TimeoutSeconds
-                    : 30);
+                    : 900);
         });
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());

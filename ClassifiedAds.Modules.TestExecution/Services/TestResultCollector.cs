@@ -106,7 +106,9 @@ public class TestResultCollector : ITestResultCollector
         run.SkippedCount = skippedCount;
         run.DurationMs = totalDurationMs;
         run.CompletedAt = DateTimeOffset.UtcNow;
-        run.Status = failedCount > 0 ? TestRunStatus.Failed : TestRunStatus.Completed;
+        run.Status = caseResults.Any(IsExecutionFailure)
+            ? TestRunStatus.Failed
+            : TestRunStatus.Completed;
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
         // Try to save cache payload
