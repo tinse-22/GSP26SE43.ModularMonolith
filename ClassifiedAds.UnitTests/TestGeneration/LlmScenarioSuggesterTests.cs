@@ -129,7 +129,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_TargetAroundTenScenarios_PerEndpoint()
+    public async Task SuggestScenariosAsync_Should_TargetScenarioCount_ByHttpMethod()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -148,7 +148,72 @@ public class LlmScenarioSuggesterTests
         scenarioCounts.Should().ContainKey(EndpointId1);
         scenarioCounts.Should().ContainKey(EndpointId2);
         scenarioCounts[EndpointId1].Should().Be(10);
-        scenarioCounts[EndpointId2].Should().Be(10);
+        scenarioCounts[EndpointId2].Should().Be(3);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_TargetThreeScenarios_ForDeleteEndpoints()
+    {
+        // Arrange
+        var context = CreateSingleEndpointContext();
+        context.EndpointMetadata[0].HttpMethod = "DELETE";
+        context.EndpointMetadata[0].Path = "/api/users/{id}";
+        context.OrderedEndpoints[0].HttpMethod = "DELETE";
+        context.OrderedEndpoints[0].Path = "/api/users/{id}";
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 50,
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        result.Scenarios.Should().HaveCount(3);
+        result.Scenarios.Should().OnlyContain(x => x.EndpointId == EndpointId1);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_EmitMethodBasedScenarioTargets_InPromptPayload()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) =>
+            {
+                capturedPayload = payload;
+            })
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        capturedPayload.Should().NotBeNull();
+        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints need exactly 3 scenarios total");
+        capturedPayload.PromptConfig.Rules.Should().Contain("POST, PUT, and PATCH endpoints need exactly 10 scenarios total");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target 10 scenarios");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target 3 scenarios");
     }
 
     [Fact]

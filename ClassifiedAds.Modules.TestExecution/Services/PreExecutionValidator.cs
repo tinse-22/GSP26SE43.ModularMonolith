@@ -455,54 +455,263 @@ public class PreExecutionValidator : IPreExecutionValidator
         foreach (Match match in PlaceholderRegex.Matches(value))
         {
             var varName = match.Groups[1].Value;
-            if (!mergedVars.ContainsKey(varName))
+            if (HasResolvableVariable(mergedVars, varName))
             {
-                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
-                    && IsNumericSemanticVariableName(varName))
-                {
-                    result.Warnings.Add(new ValidationWarningModel
-                    {
-                        Code = "NUMERIC_PLACEHOLDER_DEFAULT_FALLBACK",
-                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị số mặc định an toàn để tiếp tục chạy test.",
-                    });
-                    continue;
-                }
+                continue;
+            }
 
-                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
-                    && IsKnownDuplicatedIdentifierPlaceholderName(varName))
+            if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                && IsNumericSemanticVariableName(varName))
+            {
+                result.Warnings.Add(new ValidationWarningModel
                 {
-                    result.Warnings.Add(new ValidationWarningModel
-                    {
-                        Code = "IDENTIFIER_PLACEHOLDER_DUPLICATE_ID_FALLBACK",
-                        Message = $"Variable '{{{{{varName}}}}}' trong Body có pattern lỗi sinh dữ liệu (duplicate 'Id'). Hệ thống sẽ dùng fallback identifier mặc định để tiếp tục chạy test.",
-                    });
-                    continue;
-                }
-
-                if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
-                    && !IsIdentifierSemanticVariableName(varName))
-                {
-                    result.Warnings.Add(new ValidationWarningModel
-                    {
-                        Code = "TEXT_PLACEHOLDER_DEFAULT_FALLBACK",
-                        Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị text mặc định an toàn để tiếp tục chạy test.",
-                    });
-                    continue;
-                }
-
-                result.Errors.Add(new ValidationFailureModel
-                {
-                    Code = "UNRESOLVED_VARIABLE",
-                    Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. " +
-                              "Cách khắc phục: (1) Thêm vào ExecutionEnvironment.Variables, " +
-                              "(2) Đảm bảo test trước có extraction rule, " +
-                              "(3) Re-generate test cases.",
-                    Target = surface,
-                    Expected = $"Giá trị cho {{{{{varName}}}}}",
-                    Actual = "(chưa resolve)",
+                    Code = "NUMERIC_PLACEHOLDER_DEFAULT_FALLBACK",
+                    Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị số mặc định an toàn để tiếp tục chạy test.",
                 });
+                continue;
+            }
+
+            if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                && IsKnownDuplicatedIdentifierPlaceholderName(varName))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "IDENTIFIER_PLACEHOLDER_DUPLICATE_ID_FALLBACK",
+                    Message = $"Variable '{{{{{varName}}}}}' trong Body có pattern lỗi sinh dữ liệu (duplicate 'Id'). Hệ thống sẽ dùng fallback identifier mặc định để tiếp tục chạy test.",
+                });
+                continue;
+            }
+
+            if (string.Equals(surface, "Body", StringComparison.OrdinalIgnoreCase)
+                && !IsIdentifierSemanticVariableName(varName))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "TEXT_PLACEHOLDER_DEFAULT_FALLBACK",
+                    Message = $"Variable '{{{{{varName}}}}}' trong Body chưa có giá trị. Hệ thống sẽ dùng giá trị text mặc định an toàn để tiếp tục chạy test.",
+                });
+                continue;
+            }
+
+            if (ShouldAllowAuthHeaderFallback(surface, varName))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "AUTH_HEADER_PLACEHOLDER_FALLBACK",
+                    Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. Hệ thống sẽ tiếp tục chạy request thật để server tự xác thực.",
+                });
+                continue;
+            }
+
+            if (TryBuildAuthHeaderFallbackWarning(surface, value, varName, out var warningCode, out var warningMessage))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = warningCode,
+                    Message = warningMessage,
+                });
+                continue;
+            }
+
+            if (IsAuthorizationLikeHeader(surface))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "AUTH_HEADER_PLACEHOLDER_FALLBACK",
+                    Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. Hệ thống sẽ tiếp tục chạy request thật để server tự xác thực.",
+                });
+                continue;
+            }
+
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = "UNRESOLVED_VARIABLE",
+                Message = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. " +
+                          "Cách khắc phục: (1) Thêm vào ExecutionEnvironment.Variables, " +
+                          "(2) Đảm bảo test trước có extraction rule, " +
+                          "(3) Re-generate test cases.",
+                Target = surface,
+                Expected = $"Giá trị cho {{{{{varName}}}}}",
+                Actual = "(chưa resolve)",
+            });
+        }
+    }
+
+    private static bool HasResolvableVariable(
+        IReadOnlyDictionary<string, string> mergedVars,
+        string varName)
+    {
+        if (mergedVars == null || string.IsNullOrWhiteSpace(varName))
+        {
+            return false;
+        }
+
+        if (mergedVars.ContainsKey(varName))
+        {
+            return true;
+        }
+
+        if (IsAuthTokenAlias(varName))
+        {
+            foreach (var alias in GetAuthTokenAliases(varName))
+            {
+                if (mergedVars.ContainsKey(alias))
+                {
+                    return true;
+                }
             }
         }
+
+        return false;
+    }
+
+    private static bool IsAuthTokenAlias(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "authToken", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "accessToken", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "token", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "jwt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "sessionToken", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "bearerToken", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldAllowAuthHeaderFallback(string surface, string varName)
+    {
+        return IsSecurityHeader(surface)
+            && IsAuthTokenAlias(varName);
+    }
+
+    private static bool IsAuthorizationLikeHeader(string surface)
+    {
+        return IsSecurityHeader(surface);
+    }
+
+    private static bool TryBuildAuthHeaderFallbackWarning(
+        string surface,
+        string headerValue,
+        string varName,
+        out string warningCode,
+        out string warningMessage)
+    {
+        warningCode = null;
+        warningMessage = null;
+
+        if (string.IsNullOrWhiteSpace(surface) || string.IsNullOrWhiteSpace(headerValue))
+        {
+            return false;
+        }
+
+        if (!IsSecurityHeader(surface))
+        {
+            return false;
+        }
+
+        if (!TryExtractInlineHeaderTokenFormat(headerValue, out var scheme))
+        {
+            warningCode = "AUTH_HEADER_PLACEHOLDER_FALLBACK";
+            warningMessage = $"Variable '{{{{{varName}}}}}' trong {surface} chưa có giá trị. Hệ thống sẽ tiếp tục chạy request thật để server tự xác thực.";
+            return true;
+        }
+
+        warningCode = "AUTH_HEADER_FORMAT_FALLBACK";
+        warningMessage = $"Header {surface} dùng format '{scheme} {{...}}'. Hệ thống sẽ cho phép chạy fallback để cover nhiều kiểu auth header khác nhau.";
+        return true;
+    }
+
+    private static bool IsSecurityHeader(string surface)
+    {
+        if (string.IsNullOrWhiteSpace(surface))
+        {
+            return false;
+        }
+
+        return surface.StartsWith("Header:Authorization", StringComparison.OrdinalIgnoreCase)
+            || surface.StartsWith("Header:Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+            || surface.StartsWith("Header:X-Authorization", StringComparison.OrdinalIgnoreCase)
+            || surface.StartsWith("Header:X-Auth", StringComparison.OrdinalIgnoreCase)
+            || surface.StartsWith("Header:X-API-Key", StringComparison.OrdinalIgnoreCase)
+            || surface.StartsWith("Header:Api-Key", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("authorization", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("auth", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("api-key", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("apikey", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("bearer", StringComparison.OrdinalIgnoreCase)
+            || surface.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryExtractInlineHeaderTokenFormat(string headerValue, out string scheme)
+    {
+        scheme = null;
+        if (string.IsNullOrWhiteSpace(headerValue))
+        {
+            return false;
+        }
+
+        var trimmed = headerValue.Trim();
+        var spaceIndex = trimmed.IndexOf(' ');
+        if (spaceIndex <= 0)
+        {
+            return false;
+        }
+
+        var firstPart = trimmed[..spaceIndex].Trim();
+        var remainder = trimmed[(spaceIndex + 1)..].Trim();
+        if (!remainder.Contains("{{", StringComparison.Ordinal) || !remainder.Contains("}}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.Equals(firstPart, "Bearer", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(firstPart, "Token", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(firstPart, "ApiKey", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(firstPart, "Basic", StringComparison.OrdinalIgnoreCase))
+        {
+            scheme = firstPart;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> GetAuthTokenAliases(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            yield break;
+        }
+
+        var normalized = variableName.Trim();
+        if (string.Equals(normalized, "authToken", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "accessToken";
+            yield return "token";
+            yield return "jwt";
+            yield return "sessionToken";
+            yield return "bearerToken";
+            yield break;
+        }
+
+        if (string.Equals(normalized, "accessToken", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "authToken";
+            yield return "token";
+            yield return "jwt";
+            yield return "sessionToken";
+            yield return "bearerToken";
+            yield break;
+        }
+
+        yield return "authToken";
+        yield return "accessToken";
+        yield return "token";
+        yield return "jwt";
+        yield return "sessionToken";
+        yield return "bearerToken";
     }
 
     private static bool IsIdentifierSemanticVariableName(string variableName)

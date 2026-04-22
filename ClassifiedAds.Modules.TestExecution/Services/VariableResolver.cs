@@ -21,6 +21,12 @@ public class VariableResolver : IVariableResolver
     private static readonly Regex InlinePropertyPlaceholderRegex = new(
         "\"(?<prop>[A-Za-z0-9_]+)\"\\s*:\\s*\"?\\{\\{(?<name>\\w+)\\}\\}\"?",
         RegexOptions.Compiled);
+    private static readonly Regex AuthHeaderTemplateRegex = new(
+        @"^(?<scheme>[A-Za-z][A-Za-z0-9_-]*)\s*[:=]?\s*\{\{\s*(?<name>[A-Za-z0-9_]+)\s*\}\}\s*$",
+        RegexOptions.Compiled);
+    private static readonly Regex AuthHeaderValueWithSeparatorRegex = new(
+        @"^(?<scheme>[A-Za-z][A-Za-z0-9_-]*)\s*[:=]\s*(?<value>.+)$",
+        RegexOptions.Compiled);
     private static readonly Regex ObjectIdRegex = new(@"^[a-fA-F0-9]{24}$", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
@@ -56,6 +62,8 @@ public class VariableResolver : IVariableResolver
         {
             mergedVars[kvp.Key] = kvp.Value;
         }
+
+        ApplyTokenAliases(mergedVars);
 
         // Resolve URL
         var resolvedUrl = ResolvePlaceholders(request.Url ?? string.Empty, mergedVars);
@@ -114,9 +122,22 @@ public class VariableResolver : IVariableResolver
         // Request headers override
         foreach (var kvp in requestHeaders)
         {
-            resolvedHeaders[kvp.Key] = ResolvePlaceholders(kvp.Value, mergedVars);
+            var resolvedValue = ResolvePlaceholders(kvp.Value, mergedVars);
+
+            // Keep concrete auth header from environment when request-level auth template
+            // is still unresolved (e.g., Bearer {{authToken}} but token not yet materialized).
+            if (IsAuthHeaderName(kvp.Key)
+                && ContainsUnresolvedPlaceholder(resolvedValue)
+                && resolvedHeaders.TryGetValue(kvp.Key, out var existingAuthValue)
+                && !ContainsUnresolvedPlaceholder(existingAuthValue))
+            {
+                continue;
+            }
+
+            resolvedHeaders[kvp.Key] = resolvedValue;
         }
 
+        ApplyAuthHeaderTemplates(resolvedHeaders, mergedVars);
         ApplyAuthFallbackHeader(resolvedHeaders, mergedVars);
 
         // Resolve body
@@ -130,6 +151,7 @@ public class VariableResolver : IVariableResolver
         resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
 
         // Build final URL
+        resolvedUrl = NormalizeSwaggerDocsApiUrl(resolvedUrl);
         var finalUrl = BuildFinalUrl(resolvedUrl, environment.BaseUrl);
 
         // Clamp timeout
@@ -356,6 +378,53 @@ public class VariableResolver : IVariableResolver
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
+    private static void ApplyAuthHeaderTemplates(
+        IDictionary<string, string> headers,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (headers == null)
+        {
+            return;
+        }
+
+        foreach (var header in headers.ToList())
+        {
+            if (!IsAuthHeaderName(header.Key) || string.IsNullOrWhiteSpace(header.Value))
+            {
+                continue;
+            }
+
+            if (TryParseAuthHeaderTemplate(header.Value, out var templateScheme, out var variableName))
+            {
+                if (variables == null)
+                {
+                    continue;
+                }
+
+                if (variables.TryGetValue(variableName, out var resolvedValue)
+                    && !string.IsNullOrWhiteSpace(resolvedValue)
+                    && !ContainsUnresolvedPlaceholder(resolvedValue))
+                {
+                    headers[header.Key] = FormatAuthHeaderValue(templateScheme, resolvedValue);
+                }
+
+                continue;
+            }
+
+            if (!TryParseAuthHeaderValueWithSeparator(header.Value, out var scheme, out var currentValue))
+            {
+                continue;
+            }
+
+            if (ContainsUnresolvedPlaceholder(currentValue))
+            {
+                continue;
+            }
+
+            headers[header.Key] = FormatAuthHeaderValue(scheme, currentValue);
+        }
+    }
+
     private static void ApplyAuthFallbackHeader(
         IDictionary<string, string> headers,
         IReadOnlyDictionary<string, string> variables)
@@ -365,24 +434,272 @@ public class VariableResolver : IVariableResolver
             return;
         }
 
-        if (headers.TryGetValue("Authorization", out var existingAuthorization) &&
-            !string.IsNullOrWhiteSpace(existingAuthorization))
+        if (TryGetFirstPresentHeader(headers, new[] { "Authorization", "Proxy-Authorization", "X-Authorization", "X-Auth", "X-API-Key", "Api-Key" }, out var existingAuthHeader))
         {
-            return;
-        }
-
-        foreach (var key in new[] { "authToken", "accessToken", "token", "jwt" })
-        {
-            if (!variables.TryGetValue(key, out var value) ||
-                string.IsNullOrWhiteSpace(value) ||
-                value.Contains("{{", StringComparison.Ordinal))
+            if (!ContainsUnresolvedPlaceholder(existingAuthHeader.Value))
             {
-                continue;
+                return;
             }
 
-            headers["Authorization"] = $"Bearer {value}";
+            if (TryGetFirstTokenValue(variables, out var resolvedToken))
+            {
+                var scheme = ResolvePreferredAuthScheme(existingAuthHeader.Key, existingAuthHeader.Value);
+                headers[existingAuthHeader.Key] = FormatAuthHeaderValue(scheme, resolvedToken);
+            }
+
             return;
         }
+
+        if (TryGetFirstTokenValue(variables, out var fallbackToken))
+        {
+            headers["Authorization"] = $"Bearer {fallbackToken}";
+        }
+    }
+
+    private static string FormatAuthHeaderValue(string scheme, string value)
+    {
+        if (string.IsNullOrWhiteSpace(scheme))
+        {
+            return value;
+        }
+
+        return string.Equals(scheme, "ApiKey", StringComparison.OrdinalIgnoreCase)
+            ? $"ApiKey {value}"
+            : $"{scheme} {value}";
+    }
+
+    private static bool TryParseAuthHeaderTemplate(string headerValue, out string scheme, out string variableName)
+    {
+        scheme = null;
+        variableName = null;
+
+        if (string.IsNullOrWhiteSpace(headerValue))
+        {
+            return false;
+        }
+
+        var match = AuthHeaderTemplateRegex.Match(headerValue);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        scheme = match.Groups["scheme"].Value.Trim();
+        variableName = match.Groups["name"].Value.Trim();
+        return !string.IsNullOrWhiteSpace(scheme) && !string.IsNullOrWhiteSpace(variableName);
+    }
+
+    private static bool TryParseAuthHeaderValueWithSeparator(string headerValue, out string scheme, out string value)
+    {
+        scheme = null;
+        value = null;
+
+        if (string.IsNullOrWhiteSpace(headerValue))
+        {
+            return false;
+        }
+
+        var match = AuthHeaderValueWithSeparatorRegex.Match(headerValue);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        scheme = match.Groups["scheme"].Value.Trim();
+        value = match.Groups["value"].Value.Trim();
+
+        return !string.IsNullOrWhiteSpace(scheme) && !string.IsNullOrWhiteSpace(value);
+    }
+
+    private static bool TryGetFirstPresentHeader(
+        IDictionary<string, string> headers,
+        IEnumerable<string> candidateHeaders,
+        out KeyValuePair<string, string> found)
+    {
+        if (headers == null || candidateHeaders == null)
+        {
+            found = default;
+            return false;
+        }
+
+        foreach (var headerName in candidateHeaders)
+        {
+            if (headers.TryGetValue(headerName, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                found = new KeyValuePair<string, string>(headerName, value);
+                return true;
+            }
+        }
+
+        found = default;
+        return false;
+    }
+
+    private static bool TryGetFirstTokenValue(
+        IReadOnlyDictionary<string, string> variables,
+        out string tokenValue)
+    {
+        tokenValue = null;
+        if (variables == null || variables.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var candidateKey in new[]
+                 {
+                     "authToken",
+                     "auth_token",
+                     "accessToken",
+                     "access_token",
+                     "token",
+                     "jwt",
+                     "idToken",
+                     "id_token",
+                     "sessionToken",
+                     "session_token",
+                     "bearerToken",
+                     "bearer_token",
+                     "apiKey",
+                     "apikey",
+                 })
+        {
+            if (variables.TryGetValue(candidateKey, out var candidate)
+                && !string.IsNullOrWhiteSpace(candidate)
+                && !ContainsUnresolvedPlaceholder(candidate))
+            {
+                tokenValue = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ResolvePreferredAuthScheme(string headerName, string headerValue)
+    {
+        if (TryParseAuthHeaderTemplate(headerValue, out var templateScheme, out _))
+        {
+            return templateScheme;
+        }
+
+        if (string.Equals(headerName, "X-API-Key", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "Api-Key", StringComparison.OrdinalIgnoreCase))
+        {
+            return "ApiKey";
+        }
+
+        if (!string.IsNullOrWhiteSpace(headerValue))
+        {
+            var trimmed = headerValue.Trim();
+            if (trimmed.StartsWith("Token", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Token";
+            }
+
+            if (trimmed.StartsWith("ApiKey", StringComparison.OrdinalIgnoreCase))
+            {
+                return "ApiKey";
+            }
+
+            if (trimmed.StartsWith("Basic", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Basic";
+            }
+        }
+
+        return "Bearer";
+    }
+
+    private static bool IsAuthHeaderName(string headerName)
+    {
+        if (string.IsNullOrWhiteSpace(headerName))
+        {
+            return false;
+        }
+
+        return string.Equals(headerName, "Authorization", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "X-Authorization", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "X-Auth", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "X-API-Key", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(headerName, "Api-Key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsUnresolvedPlaceholder(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value)
+            && value.Contains("{{", StringComparison.Ordinal)
+            && value.Contains("}}", StringComparison.Ordinal);
+    }
+
+    private static void ApplyTokenAliases(Dictionary<string, string> mergedVars)
+    {
+        if (mergedVars == null || mergedVars.Count == 0)
+        {
+            return;
+        }
+
+        var tokenKeys = new[]
+        {
+            "authToken",
+            "auth_token",
+            "accessToken",
+            "access_token",
+            "token",
+            "jwt",
+            "idToken",
+            "id_token",
+            "sessionToken",
+            "session_token",
+            "bearerToken",
+            "bearer_token",
+            "apiKey",
+            "apikey",
+        };
+        foreach (var key in tokenKeys)
+        {
+            if (mergedVars.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) && !value.Contains("{{", StringComparison.Ordinal))
+            {
+                foreach (var alias in GetTokenAliasNames(key))
+                {
+                    if (!mergedVars.ContainsKey(alias) || string.IsNullOrWhiteSpace(mergedVars[alias]))
+                    {
+                        mergedVars[alias] = value;
+                    }
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> GetTokenAliasNames(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            yield break;
+        }
+
+        var normalized = key.Trim();
+        if (string.Equals(normalized, "apiKey", StringComparison.OrdinalIgnoreCase) || string.Equals(normalized, "apikey", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "apiKey";
+            yield return "apikey";
+            yield return "X-API-Key";
+            yield return "Api-Key";
+            yield break;
+        }
+
+        yield return "authToken";
+        yield return "auth_token";
+        yield return "accessToken";
+        yield return "access_token";
+        yield return "token";
+        yield return "jwt";
+        yield return "idToken";
+        yield return "id_token";
+        yield return "sessionToken";
+        yield return "session_token";
+        yield return "bearerToken";
+        yield return "bearer_token";
     }
 
     private static string NormalizeHappyPathCredentials(
@@ -1825,12 +2142,72 @@ public class VariableResolver : IVariableResolver
         // Combine with base URL
         if (!string.IsNullOrEmpty(baseUrl))
         {
+            if (TryBuildUrlWithBaseOverride(baseUrl, resolvedUrl, out var combinedUrl))
+            {
+                return combinedUrl;
+            }
+
             var trimmedBase = baseUrl.TrimEnd('/');
             var trimmedPath = resolvedUrl.TrimStart('/');
             return $"{trimmedBase}/{trimmedPath}";
         }
 
         return resolvedUrl;
+    }
+
+    private static bool TryBuildUrlWithBaseOverride(string baseUrl, string resolvedUrl, out string combinedUrl)
+    {
+        combinedUrl = null;
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedUrl) || resolvedUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!resolvedUrl.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var basePath = baseUri.AbsolutePath.TrimEnd('/');
+        if (!basePath.EndsWith("/api-docs", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var rootBuilder = new UriBuilder(baseUri)
+        {
+            Path = basePath[..^"/api-docs".Length],
+        };
+
+        combinedUrl = rootBuilder.Uri.AbsoluteUri.TrimEnd('/') + resolvedUrl;
+        return true;
+    }
+
+    private static string NormalizeSwaggerDocsApiUrl(string resolvedUrl)
+    {
+        if (string.IsNullOrWhiteSpace(resolvedUrl))
+        {
+            return resolvedUrl;
+        }
+
+        var normalized = ExtractPathOnly(resolvedUrl).Trim();
+        if (!normalized.StartsWith("/api-docs/", StringComparison.OrdinalIgnoreCase))
+        {
+            return resolvedUrl;
+        }
+
+        var apiIndex = normalized.IndexOf("/api/", StringComparison.OrdinalIgnoreCase);
+        if (apiIndex < 0)
+        {
+            return resolvedUrl;
+        }
+
+        return normalized[apiIndex..];
     }
 
     private static Dictionary<string, string> DeserializeDictionary(string json)
