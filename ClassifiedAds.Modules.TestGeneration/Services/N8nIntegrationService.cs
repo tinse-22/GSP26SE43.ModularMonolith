@@ -63,7 +63,7 @@ public sealed class N8nTransientException : ValidationException
 
 public class N8nIntegrationService : IN8nIntegrationService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,

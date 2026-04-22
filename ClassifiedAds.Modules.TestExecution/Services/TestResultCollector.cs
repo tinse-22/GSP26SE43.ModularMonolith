@@ -198,6 +198,18 @@ public class TestResultCollector : ITestResultCollector
             .ToList();
     }
 
+    // A failed case only fails the whole run when execution never reached an HTTP response.
+    private static bool IsExecutionFailure(TestCaseExecutionResult caseResult)
+    {
+        if (caseResult == null)
+        {
+            return false;
+        }
+
+        return string.Equals(caseResult.Status, "Failed", StringComparison.OrdinalIgnoreCase)
+            && !caseResult.HttpStatusCode.HasValue;
+    }
+
     private static string TruncateBody(string body)
     {
         if (string.IsNullOrEmpty(body))
