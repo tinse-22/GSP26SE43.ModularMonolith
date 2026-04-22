@@ -23,12 +23,14 @@ public class TestResultCollectorTests
     };
 
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
+    private readonly Mock<IRepository<TestCaseResult, Guid>> _resultRepoMock;
     private readonly Mock<IDistributedCache> _cacheMock;
     private readonly TestResultCollector _collector;
 
     public TestResultCollectorTests()
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
+        _resultRepoMock = new Mock<IRepository<TestCaseResult, Guid>>();
         _cacheMock = new Mock<IDistributedCache>();
 
         var unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -38,8 +40,16 @@ public class TestResultCollectorTests
         unitOfWorkMock.Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
+        _resultRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(Array.Empty<TestCaseResult>().AsQueryable());
+        _resultRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseResult>>()))
+            .ReturnsAsync((IQueryable<TestCaseResult> query) => query.ToList());
+        _resultRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseResult>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         _collector = new TestResultCollector(
             _runRepoMock.Object,
+            _resultRepoMock.Object,
             _cacheMock.Object,
             new Mock<ILogger<TestResultCollector>>().Object);
     }
@@ -286,6 +296,7 @@ public class TestResultCollectorTests
 
         _runRepoMock.Verify(x => x.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
         _runRepoMock.Verify(x => x.UnitOfWork.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _resultRepoMock.Verify(x => x.AddAsync(It.IsAny<TestCaseResult>(), It.IsAny<CancellationToken>()), Times.Exactly(caseResults.Count));
     }
 
     [Fact]
