@@ -1,0 +1,787 @@
+{
+  "meta": {
+    "generatedBy": "Frontend AI Agent",
+    "date": "2026-04-21",
+    "purpose": "BE đối chiếu FE integration — full workflow Auto Test with LLM",
+    "sourceAnalyzed": ["src/services/", "src/hooks/", "src/pages/", "src/config/api.ts"]
+  },
+  "config": {
+    "baseUrl": "VITE_API_BASE_URL || 'https://localhost:44312/api'",
+    "signalrHubUrl": "VITE_SIGNALR_HUB_URL || 'https://localhost:44312/hubs/notification'",
+    "authStorage": "localStorage keys: authToken, refreshToken, user"
+  },
+  "workflowSteps": [
+    {
+      "stepNumber": 1,
+      "stepName": "Create Project",
+      "objective": "Tạo project mới để chứa spec, test suite, test run",
+      "userAction": "Điền form Name / Description / Type / WorkspaceMode → Submit",
+      "api": {
+        "name": "createProject",
+        "method": "POST",
+        "endpoint": "/projects",
+        "requestParams": null,
+        "requestBody": {
+          "name": "string (required)",
+          "description": "string",
+          "type": "string",
+          "workspaceMode": "\"Manual\" | \"Automated\" (optional)"
+        },
+        "response": {
+          "id": "string (UUID)",
+          "name": "string",
+          "description": "string",
+          "status": "string",
+          "type": "string",
+          "workspaceMode": "string",
+          "totalSpecifications": "number",
+          "activeSpecName": "string | null",
+          "totalEndpoints": "number",
+          "totalTestSuites": "number",
+          "lastRunAt": "string | null"
+        }
+      },
+      "feHandling": "Lưu project.id vào ProjectContext; lưu workspaceMode vào localStorage['projectWorkspaceModes']",
+      "dataToNextStep": ["projectId"],
+      "errorConditions": ["400: name đã tồn tại — FE hiển thị toast lỗi"]
+    },
+    {
+      "stepNumber": 2,
+      "stepName": "Upload API Specification",
+      "objective": "Upload file OpenAPI/Postman/GraphQL để BE parse thành endpoints",
+      "userAction": "Chọn file → chọn SourceType → Submit modal",
+      "api": {
+        "name": "uploadSpecification",
+        "method": "POST",
+        "endpoint": "/projects/{projectId}/specifications/upload",
+        "contentType": "multipart/form-data",
+        "requestParams": null,
+        "requestBody": {
+          "Name": "string (required)",
+          "File": "Blob (required)",
+          "SourceType": "0 (OpenAPI) | 1 (Postman) | 2 (GraphQL) — number",
+          "Version": "string (optional)",
+          "AutoActivate": "boolean",
+          "UploadMethod": "string"
+        },
+        "response": {
+          "id": "string (specificationId)",
+          "name": "string",
+          "version": "string",
+          "parseStatus": "\"Pending\" | \"Success\" | \"Failed\""
+        }
+      },
+      "feHandling": "Nếu parseStatus === 'Pending' → gọi pollParseStatus mỗi 2s, timeout 2 phút",
+      "polling": {
+        "api": "GET /projects/{projectId}/specifications/{specId}",
+        "interval": "2000ms",
+        "timeout": "120000ms",
+        "terminationConditions": ["parseStatus === 'Success'", "parseStatus === 'Failed'"],
+        "onSuccess": "Redirect sang /endpoints?projectId={id}",
+        "onFailure": "Hiển thị error toast với parseErrorDetails"
+      },
+      "alternativeUploadPaths": [
+        {
+          "name": "CURL Import",
+          "method": "POST",
+          "endpoint": "/projects/{id}/specifications/curl-import",
+          "body": { "curlCommand": "string", "name": "string (optional)" }
+        },
+        {
+          "name": "Manual Specification",
+          "method": "POST",
+          "endpoint": "/projects/{id}/specifications/manual",
+          "body": "ManualSpecificationRequest (full endpoint definitions)"
+        }
+      ],
+      "dataToNextStep": ["specificationId"],
+      "errorConditions": ["parseStatus === 'Failed' — hiển thị parseErrorDetails"]
+    },
+    {
+      "stepNumber": 3,
+      "stepName": "Parse & Extract Endpoints",
+      "objective": "Xem danh sách endpoints đã được BE parse từ spec",
+      "userAction": "Tự động load sau parse success, hoặc user chọn spec",
+      "api": {
+        "name": "getEndpoints",
+        "method": "GET",
+        "endpoint": "/projects/{projectId}/specifications/{specId}/endpoints",
+        "requestParams": {
+          "pageNumber": 1,
+          "pageSize": 9999
+        },
+        "requestBody": null,
+        "response": {
+          "type": "Array",
+          "items": {
+            "id": "string",
+            "specificationId": "string",
+            "httpMethod": "string (normalized to 'method' by FE)",
+            "path": "string",
+            "operationId": "string",
+            "summary": "string",
+            "description": "string",
+            "tags": "string[]",
+            "parameters": "array",
+            "responses": "array",
+            "isDeprecated": "boolean"
+          }
+        }
+      },
+      "feHandling": "Normalize httpMethod → method; filter client-side theo method/tag/search",
+      "note": "FE luôn fetch pageSize=9999 (tất cả). BE không hỗ trợ server-side filtering.",
+      "dataToNextStep": ["endpointIds[] (user chọn)"],
+      "errorConditions": ["spec không tồn tại — 404"]
+    },
+    {
+      "stepNumber": 4,
+      "stepName": "Create Test Suite",
+      "objective": "Tạo test suite gắn với spec và endpoints đã chọn",
+      "userAction": "Mở modal → chọn spec → chọn endpoints → nhập Name/Description/BusinessRules → Submit",
+      "api": {
+        "name": "createTestSuite",
+        "method": "POST",
+        "endpoint": "/projects/{projectId}/test-suites",
+        "requestParams": null,
+        "requestBody": {
+          "Name": "string (required, PascalCase!)",
+          "Description": "string (optional)",
+          "ApiSpecId": "string (required, UUID)",
+          "GenerationType": "\"Auto\" | \"Manual\" | \"LLMAssisted\" (required)",
+          "SelectedEndpointIds": ["string (UUID)"],
+          "EndpointBusinessContexts": {
+            "<endpointId>": "context string per endpoint"
+          },
+          "GlobalBusinessRules": "string (optional)"
+        },
+        "response": {
+          "id": "string (suiteId)",
+          "projectId": "string",
+          "apiSpecId": "string",
+          "name": "string",
+          "description": "string",
+          "generationType": "string",
+          "status": "\"Draft\" | \"Active\" | \"Ready\" | \"Archived\"",
+          "approvalStatus": "\"Pending\" | \"Approved\" | \"Rejected\"",
+          "selectedEndpointIds": ["string"],
+          "endpointBusinessContexts": "object",
+          "globalBusinessRules": "string",
+          "selectedEndpointCount": "number",
+          "testCaseCount": "number",
+          "rowVersion": "string"
+        }
+      },
+      "feHandling": "Auto gọi proposeOrder rồi approveOrder sau khi create thành công",
+      "businessRulesNote": {
+        "GlobalBusinessRules": "FE lưu local form state, KHÔNG gọi API khi user nhập. Submit cùng POST /test-suites.",
+        "EndpointBusinessContexts": "FE lưu Record<endpointId, string> trong form state, submit cùng POST /test-suites.",
+        "whenUsed": "BE đọc từ suite record khi LLM generate suggestions — FE không cần truyền lại lúc gọi /llm-suggestions/generate"
+      },
+      "subSteps": [
+        {
+          "name": "Propose Order (Auto)",
+          "method": "POST",
+          "endpoint": "/test-suites/{suiteId}/order-proposals",
+          "body": {
+            "SpecificationId": "string",
+            "SelectedEndpointIds": ["string"],
+            "Source": "\"System\"",
+            "ReasoningNote": "string (optional)"
+          },
+          "response": {
+            "id": "proposalId",
+            "rowVersion": "string",
+            "status": "string"
+          }
+        },
+        {
+          "name": "Approve Order (Auto)",
+          "method": "POST",
+          "endpoint": "/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+          "body": {
+            "RowVersion": "string (from proposeOrder response)",
+            "ReviewNotes": "string (optional)"
+          },
+          "response": {
+            "status": "\"Approved\""
+          }
+        }
+      ],
+      "dataToNextStep": ["suiteId", "apiSpecId", "selectedEndpointIds"],
+      "errorConditions": ["409: rowVersion conflict trên update", "400: invalid endpointIds"]
+    },
+    {
+      "stepNumber": 5,
+      "stepName": "Generate LLM Suggestions",
+      "objective": "Gọi LLM sinh test case suggestions dựa trên spec + business context",
+      "userAction": "Tab Suggestions → Click 'Generate Suggestions'",
+      "api": {
+        "name": "generate",
+        "method": "POST",
+        "endpoint": "/test-suites/{suiteId}/llm-suggestions/generate",
+        "requestParams": null,
+        "requestBody": {
+          "specificationId": "string (required)",
+          "forceRefresh": "boolean (false = use cache, true = regenerate)",
+          "algorithmProfile": {
+            "useObservationConfirmationPrompting": true,
+            "useDependencyAwareOrdering": true,
+            "useSchemaRelationshipAnalysis": true,
+            "useSemanticTokenMatching": true,
+            "useFeedbackLoopContext": true
+          }
+        },
+        "response": {
+          "type": "SuiteSuggestionModel[]",
+          "fields": {
+            "id": "string",
+            "testSuiteId": "string",
+            "endpointId": "string",
+            "suggestedName": "string",
+            "suggestedDescription": "string",
+            "suggestedRequest": "object (method, path, body, headers, params)",
+            "suggestedExpectation": "object (expectedStatus, expectedResponse, assertions)",
+            "suggestedVariables": "array",
+            "suggestedTags": "string[]",
+            "priority": "number",
+            "reviewStatus": "\"Pending\" | \"Approved\" | \"Rejected\" | \"Modified\"",
+            "modifiedContent": "object | null",
+            "appliedTestCaseId": "string | null",
+            "llmModel": "string",
+            "tokensUsed": "number",
+            "feedbackSummary": {
+              "helpfulCount": "number",
+              "notHelpfulCount": "number"
+            }
+          }
+        }
+      },
+      "subSteps": [
+        {
+          "name": "List Suggestions",
+          "method": "GET",
+          "endpoint": "/test-suites/{suiteId}/llm-suggestions",
+          "params": {
+            "reviewStatus": "string (optional)",
+            "testType": "string (optional)",
+            "endpointId": "string (optional)"
+          }
+        },
+        {
+          "name": "Review Suggestion",
+          "method": "PUT",
+          "endpoint": "/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review",
+          "body": {
+            "action": "\"Approve\" | \"Reject\" | \"Modify\"",
+            "rowVersion": "string (required — optimistic concurrency)",
+            "reviewNotes": "string (optional)",
+            "modifiedContent": "object (required when action=Modify)"
+          }
+        },
+        {
+          "name": "Bulk Review",
+          "method": "POST",
+          "endpoint": "/test-suites/{suiteId}/llm-suggestions/bulk-review",
+          "body": {
+            "action": "string",
+            "reviewNotes": "string (optional)",
+            "filterBySuggestionType": "string (optional)",
+            "filterByTestType": "string (optional)",
+            "filterByEndpointId": "string (optional)"
+          }
+        },
+        {
+          "name": "Upsert Feedback",
+          "method": "PUT",
+          "endpoint": "/test-suites/{suiteId}/llm-suggestions/{suggestionId}/feedback",
+          "body": {
+            "signal": "\"Helpful\" | \"NotHelpful\"",
+            "notes": "string (optional)"
+          }
+        }
+      ],
+      "dataToNextStep": ["Approved suggestions → BE materialize thành test cases ở step 6"],
+      "errorConditions": [
+        "409 rowVersion conflict khi review",
+        "404 suggestionId không tồn tại",
+        "LLM rate limit / quota exceeded"
+      ]
+    },
+    {
+      "stepNumber": 6,
+      "stepName": "Generate Test Cases (Job-based)",
+      "objective": "Trigger BE job biến suggestions đã approve thành actual test cases",
+      "userAction": "Click 'Generate Test Cases' từ TestSuiteDetailPage",
+      "api": {
+        "name": "generateTestCases",
+        "method": "POST",
+        "endpoint": "/test-suites/{suiteId}/generate-tests",
+        "requestParams": null,
+        "requestBody": {},
+        "response": {
+          "jobId": "string",
+          "testSuiteId": "string",
+          "mode": "string",
+          "message": "string",
+          "httpStatus": 202
+        }
+      },
+      "polling": {
+        "api": "GET /test-suites/{suiteId}/generation-status",
+        "params": { "jobId": "string" },
+        "interval": "3000ms",
+        "timeout": "300000ms",
+        "statusProgression": [
+          { "status": "Queued", "progress": 15, "display": "Đang xếp hàng..." },
+          { "status": "Triggering", "progress": 30, "display": "Đang khởi tạo..." },
+          { "status": "WaitingForCallback", "progress": 55, "display": "Đang xử lý với LLM..." },
+          { "status": "Completed", "progress": 100, "display": "Hoàn thành!" }
+        ],
+        "onCompleted": "Auto redirect sang /test-suites/{suiteId}?tab=testcases sau 1500ms"
+      },
+      "dataToNextStep": ["testCaseIds[] (từ getTestCases sau generation)"],
+      "errorConditions": [
+        "status=Failed từ job → hiển thị error",
+        "Poll timeout 5 phút → hiển thị timeout error"
+      ]
+    },
+    {
+      "stepNumber": 7,
+      "stepName": "Execute Test Run",
+      "objective": "Chạy test trên môi trường thực tế",
+      "userAction": "Chọn environment → chọn test cases (optional) → click Execute",
+      "preExecutionApis": [
+        {
+          "purpose": "Load environments",
+          "method": "GET",
+          "endpoint": "/projects/{projectId}/execution-environments"
+        },
+        {
+          "purpose": "Load test cases",
+          "method": "GET",
+          "endpoint": "/test-suites/{suiteId}/test-cases",
+          "params": { "pageNumber": 1, "pageSize": 100 }
+        }
+      ],
+      "api": {
+        "name": "startTestRun",
+        "method": "POST",
+        "endpoint": "/test-suites/{suiteId}/test-runs",
+        "requestParams": null,
+        "requestBody": {
+          "environmentId": "string (required, UUID)",
+          "selectedTestCaseIds": "string[] | null (null = all)",
+          "strictValidation": "boolean (required)"
+        },
+        "response": {
+          "id": "string (testRunId)",
+          "testSuiteId": "string",
+          "status": "\"Pending\" | \"Running\" | \"Completed\" | \"Failed\"",
+          "createdAt": "string (ISO)"
+        }
+      },
+      "realtimeUpdates": {
+        "transport": "SignalR",
+        "hubMethod": "SubscribeToTestRun(testRunId)",
+        "event": "TestRunStatusChanged",
+        "payload": {
+          "testRunId": "string",
+          "status": "string",
+          "completedCount": "number",
+          "totalCount": "number",
+          "failedCount": "number"
+        }
+      },
+      "feHandling": "Navigate sang /test-runs?suiteId=&projectId=; subscribe SignalR",
+      "dataToNextStep": ["testRunId", "suiteId"],
+      "errorConditions": [
+        "404: environmentId không tồn tại",
+        "400: no test cases in suite",
+        "SignalR disconnect → FE fallback to polling"
+      ]
+    },
+    {
+      "stepNumber": "8a",
+      "stepName": "On Failure Branch — LLM Failure Explanation",
+      "objective": "Tự động phân tích lỗi bằng LLM cho các test case bị fail",
+      "trigger": "SignalR TestRunStatusChanged với failedCount > 0",
+      "hookUsed": "useAutoLLMAnalysis(projectId, isEnabled)",
+      "hookFlow": [
+        "1. Nhận TestRunStatusChanged từ SignalR",
+        "2. Check processedRuns cache trong localStorage['autoLLMAnalysis_processedRuns']",
+        "3. Skip nếu runId đã được xử lý",
+        "4. Fetch: GET /test-suites/{suiteId}/test-runs/{runId}/results",
+        "5. Filter cases có status === 'Failed'",
+        "6. Concurrent (max 5 parallel): POST /failures/{caseId}/explanation",
+        "7. Update explanationsProgress per case"
+      ],
+      "apis": [
+        {
+          "name": "getExplanation (check existing)",
+          "method": "GET",
+          "endpoint": "/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+          "requestBody": null,
+          "response": "FailureExplanationModel | 404"
+        },
+        {
+          "name": "generateExplanation",
+          "method": "POST",
+          "endpoint": "/test-suites/{suiteId}/test-runs/{runId}/failures/{testCaseId}/explanation",
+          "requestBody": {},
+          "response": {
+            "testSuiteId": "string",
+            "testRunId": "string",
+            "testCaseId": "string",
+            "summaryVi": "string (tóm tắt lỗi tiếng Việt)",
+            "possibleCauses": ["string"],
+            "suggestedNextActions": ["string"]
+          }
+        }
+      ],
+      "hookState": {
+        "isRunning": "boolean",
+        "currentRunId": "string | null",
+        "currentSuiteId": "string | null",
+        "suggestionsStatus": "\"idle\" | \"loading\" | \"success\" | \"error\"",
+        "explanationsStatus": "\"idle\" | \"loading\" | \"partial\" | \"complete\" | \"error\"",
+        "explanationsProgress": { "completed": "number", "total": "number" },
+        "explanationsErrors": "Record<testCaseId, string>"
+      },
+      "feDisplay": {
+        "component": "Floating panel tại TestRunsPage và SuggestionsPage",
+        "shows": ["summaryVi", "possibleCauses[] (accordion)", "suggestedNextActions[] (checklist)"],
+        "actions": ["dismiss (saves dismissedRuns to localStorage)", "retry failed explanations", "cancel"]
+      },
+      "manualFlow": {
+        "page": "SuggestionsPage (/suggestions)",
+        "steps": [
+          "Chọn suite → GET /test-suites/{suiteId}/test-runs",
+          "Chọn run → GET /test-suites/{suiteId}/test-runs/{runId}/results (retry 4x nếu unavailable)",
+          "'Generate All' → parallel POST cho tất cả failed cases"
+        ]
+      }
+    },
+    {
+      "stepNumber": "8b",
+      "stepName": "Deterministic Branch — Test Run Results",
+      "objective": "Xem kết quả chi tiết từng test case sau khi run hoàn thành",
+      "trigger": "User expand run row / SignalR status=Completed",
+      "api": {
+        "name": "getTestRunResults",
+        "method": "GET",
+        "endpoint": "/test-suites/{suiteId}/test-runs/{runId}/results",
+        "requestParams": null,
+        "requestBody": null,
+        "response": {
+          "run": {
+            "id": "string",
+            "status": "string",
+            "startedAt": "string",
+            "completedAt": "string",
+            "totalCount": "number",
+            "passedCount": "number",
+            "failedCount": "number",
+            "skippedCount": "number"
+          },
+          "resultsSource": "\"live\" | \"cached\" | \"unavailable\"",
+          "executedAt": "string (ISO)",
+          "resolvedEnvironmentName": "string",
+          "cases": {
+            "type": "TestCaseRunDetail[]",
+            "fields": {
+              "testCaseId": "string",
+              "name": "string",
+              "status": "\"Passed\" | \"Failed\" | \"Skipped\"",
+              "httpStatusCode": "number",
+              "durationMs": "number",
+              "resolvedUrl": "string",
+              "httpMethod": "string",
+              "requestBody": "object | null",
+              "queryParams": "object",
+              "requestHeaders": "object",
+              "responseHeaders": "object",
+              "responseBodyPreview": "string",
+              "failureReasons": "string[]",
+              "extractedVariables": "Record<string, string>",
+              "dependencyIds": "string[]",
+              "skippedBecauseDependencyIds": "string[]",
+              "statusCodeMatched": "boolean",
+              "schemaMatched": "boolean",
+              "bodyContainsPassed": "boolean",
+              "jsonPathChecksPassed": "boolean",
+              "responseTimePassed": "boolean"
+            }
+          }
+        }
+      },
+      "feHandling": "Cache trong runDetailsById map (memory); retry 4x khi resultsSource=unavailable",
+      "errorConditions": ["resultsSource=unavailable → retry 4× với delay", "404 runId không tồn tại"]
+    },
+    {
+      "stepNumber": 9,
+      "stepName": "Export Report",
+      "objective": "Sinh và tải báo cáo kết quả test run",
+      "userAction": "Chọn suite → chọn run → chọn format → click Generate",
+      "api": {
+        "name": "generateReport",
+        "method": "POST",
+        "endpoint": "/test-suites/{suiteId}/test-runs/{runId}/reports",
+        "requestBody": {
+          "reportType": "\"Summary\" | \"Detailed\" | \"Compliance\"",
+          "format": "\"PDF\" | \"JSON\" | \"Markdown\"",
+          "recentHistoryLimit": "number (optional)"
+        },
+        "response": {
+          "id": "string (reportId)",
+          "status": "string",
+          "generatedAt": "string",
+          "downloadUrl": "string (optional)"
+        }
+      },
+      "downloadApi": {
+        "name": "downloadReport",
+        "method": "GET",
+        "endpoint": "/test-suites/{suiteId}/test-runs/{runId}/reports/{reportId}/download",
+        "response": "Blob (file binary)"
+      },
+      "feHandling": "Tạo object URL từ Blob → trigger <a> click → download file",
+      "reportFormats": {
+        "JSON": {
+          "structure": {
+            "reportType": "string",
+            "generatedAt": "ISO string",
+            "project": { "id": "string", "name": "string" },
+            "testSuite": { "id": "string", "name": "string", "totalCases": "number" },
+            "testRun": {
+              "id": "string",
+              "executedAt": "string",
+              "environment": "string",
+              "duration": "number (ms)",
+              "total": "number",
+              "passed": "number",
+              "failed": "number",
+              "skipped": "number"
+            },
+            "passRate": "number (percentage)",
+            "cases": [
+              {
+                "name": "string",
+                "status": "string",
+                "httpStatusCode": "number",
+                "durationMs": "number",
+                "failureReasons": "string[]",
+                "checks": {
+                  "statusCode": "boolean",
+                  "schema": "boolean",
+                  "bodyContains": "boolean",
+                  "jsonPath": "boolean",
+                  "responseTime": "boolean"
+                }
+              }
+            ],
+            "failureSummary": [
+              {
+                "testCaseId": "string",
+                "name": "string",
+                "failureReasons": "string[]",
+                "explanation": {
+                  "summaryVi": "string",
+                  "possibleCauses": "string[]",
+                  "suggestedNextActions": "string[]"
+                }
+              }
+            ]
+          }
+        },
+        "Markdown": {
+          "sections": [
+            "# Test Run Report header",
+            "## Summary table (Total/Passed/Failed/Skipped/PassRate)",
+            "## Failed Cases (per case: name, reason, LLM analysis)",
+            "## All Cases table"
+          ]
+        }
+      }
+    }
+  ],
+  "branches": {
+    "success": {
+      "description": "Test Run completed, failedCount = 0",
+      "flow": [
+        "GET /results → passRate ≥ threshold → green badge",
+        "useAutoLLMAnalysis skips explanation step",
+        "User generates report → download"
+      ]
+    },
+    "failure": {
+      "description": "Test Run completed, failedCount > 0",
+      "flow": [
+        "SignalR TestRunStatusChanged received",
+        "useAutoLLMAnalysis: check processedRuns cache",
+        "Fetch run results → filter failed cases",
+        "Concurrent (max 5): POST /failures/{caseId}/explanation",
+        "Display floating panel với summaryVi + possibleCauses + suggestedNextActions",
+        "User có thể dismiss (saves dismissedRuns) hoặc retry"
+      ]
+    },
+    "deterministic": {
+      "description": "Xem kết quả check-based không cần LLM",
+      "flow": [
+        "GET /test-runs/{runId}/results",
+        "Read statusCodeMatched, schemaMatched, bodyContainsPassed, jsonPathChecksPassed, responseTimePassed",
+        "Display per-check indicators",
+        "failureReasons[] hiển thị trực tiếp text lỗi từ BE"
+      ]
+    },
+    "review": {
+      "approve": {
+        "trigger": "User click Approve",
+        "api": "PUT /llm-suggestions/{id}/review",
+        "body": { "action": "Approve", "rowVersion": "string" },
+        "result": "reviewStatus = Approved; counted toward generation threshold"
+      },
+      "reject": {
+        "trigger": "User click Reject",
+        "api": "PUT /llm-suggestions/{id}/review",
+        "body": { "action": "Reject", "rowVersion": "string", "reviewNotes": "string (optional)" },
+        "result": "reviewStatus = Rejected; not included in generate-tests"
+      },
+      "modify": {
+        "trigger": "User click Modify + edit content",
+        "api": "PUT /llm-suggestions/{id}/review",
+        "body": { "action": "Modify", "rowVersion": "string", "modifiedContent": "object" },
+        "result": "reviewStatus = Modified; modifiedContent replaces original"
+      },
+      "bulk": {
+        "trigger": "User click Bulk Action",
+        "api": "POST /llm-suggestions/bulk-review",
+        "body": { "action": "string", "filterBy*": "optional filters" }
+      }
+    }
+  },
+  "businessRulesHandling": {
+    "question": "Khi user nhập requirements/business rules thì FE có gọi API không?",
+    "answer": "KHÔNG gọi API ngay khi user nhập",
+    "details": [
+      {
+        "field": "GlobalBusinessRules",
+        "inputLocation": "Create Test Suite modal — textarea",
+        "feStorage": "Local form state (component state)",
+        "whenSubmitted": "Khi user submit tạo suite",
+        "submittedVia": {
+          "method": "POST",
+          "endpoint": "/projects/{projectId}/test-suites",
+          "field": "GlobalBusinessRules"
+        },
+        "howUsed": "BE đọc từ suite record khi LLM generate suggestions — FE không cần truyền lại"
+      },
+      {
+        "field": "EndpointBusinessContexts",
+        "inputLocation": "Per-endpoint input trong modal",
+        "feStorage": "Record<endpointId, string> trong form state",
+        "whenSubmitted": "Khi user submit tạo suite",
+        "submittedVia": {
+          "method": "POST",
+          "endpoint": "/projects/{projectId}/test-suites",
+          "field": "EndpointBusinessContexts"
+        },
+        "howUsed": "BE join với spec content để build LLM prompt"
+      },
+      {
+        "note": "Khi update sau này",
+        "api": "PUT /projects/{projectId}/test-suites/{suiteId}",
+        "body": "{ ...existingData, EndpointBusinessContexts, GlobalBusinessRules, RowVersion }"
+      }
+    ]
+  },
+  "apiSummaryTable": [
+    { "step": 1, "apiName": "createProject", "method": "POST", "endpoint": "/projects", "params": null, "body": "name,description,type,workspaceMode", "responseSummary": "Project object with id", "trigger": "Form submit" },
+    { "step": 2, "apiName": "uploadSpecification", "method": "POST", "endpoint": "/projects/{id}/specifications/upload", "params": null, "body": "FormData: Name,File,SourceType,AutoActivate,UploadMethod", "responseSummary": "{ id, parseStatus }", "trigger": "File upload modal submit" },
+    { "step": "2-poll", "apiName": "pollParseStatus", "method": "GET", "endpoint": "/projects/{id}/specifications/{specId}", "params": null, "body": null, "responseSummary": "{ parseStatus }", "trigger": "Auto poll mỗi 2s" },
+    { "step": 3, "apiName": "getEndpoints", "method": "GET", "endpoint": "/projects/{id}/specifications/{specId}/endpoints", "params": "pageSize=9999", "body": null, "responseSummary": "Endpoint[]", "trigger": "Auto load sau parse Success" },
+    { "step": 4, "apiName": "createTestSuite", "method": "POST", "endpoint": "/projects/{id}/test-suites", "params": null, "body": "Name,ApiSpecId,SelectedEndpointIds,EndpointBusinessContexts,GlobalBusinessRules,GenerationType", "responseSummary": "TestSuite object with id,rowVersion", "trigger": "Modal submit" },
+    { "step": "4a", "apiName": "proposeOrder", "method": "POST", "endpoint": "/test-suites/{id}/order-proposals", "params": null, "body": "SpecificationId,SelectedEndpointIds,Source:System", "responseSummary": "{ id, rowVersion }", "trigger": "Auto sau create suite" },
+    { "step": "4b", "apiName": "approveOrder", "method": "POST", "endpoint": "/test-suites/{id}/order-proposals/{pid}/approve", "params": null, "body": "RowVersion,ReviewNotes?", "responseSummary": "{ status: Approved }", "trigger": "Auto sau proposeOrder" },
+    { "step": 5, "apiName": "generateLLMSuggestions", "method": "POST", "endpoint": "/test-suites/{id}/llm-suggestions/generate", "params": null, "body": "specificationId,forceRefresh,algorithmProfile{5 flags}", "responseSummary": "SuiteSuggestionModel[]", "trigger": "Button click" },
+    { "step": "5-list", "apiName": "listSuggestions", "method": "GET", "endpoint": "/test-suites/{id}/llm-suggestions", "params": "reviewStatus?,testType?,endpointId?", "body": null, "responseSummary": "SuiteSuggestionModel[]", "trigger": "Auto sau generate" },
+    { "step": "5-review", "apiName": "reviewSuggestion", "method": "PUT", "endpoint": "/test-suites/{id}/llm-suggestions/{sid}/review", "params": null, "body": "action,rowVersion,reviewNotes?,modifiedContent?", "responseSummary": "Updated suggestion", "trigger": "Per-item action" },
+    { "step": "5-bulk", "apiName": "bulkReview", "method": "POST", "endpoint": "/test-suites/{id}/llm-suggestions/bulk-review", "params": null, "body": "action,filterBy*", "responseSummary": "{ updated: number }", "trigger": "Bulk action button" },
+    { "step": "5-feedback", "apiName": "upsertFeedback", "method": "PUT", "endpoint": "/test-suites/{id}/llm-suggestions/{sid}/feedback", "params": null, "body": "signal,notes?", "responseSummary": "{ feedbackSummary }", "trigger": "Thumbs up/down" },
+    { "step": 6, "apiName": "generateTestCases", "method": "POST", "endpoint": "/test-suites/{id}/generate-tests", "params": null, "body": "{}", "responseSummary": "{ jobId, mode } 202", "trigger": "Button click" },
+    { "step": "6-poll", "apiName": "pollGenerationStatus", "method": "GET", "endpoint": "/test-suites/{id}/generation-status", "params": "jobId=", "body": null, "responseSummary": "{ status, progress, message }", "trigger": "Auto poll mỗi 3s" },
+    { "step": "7-pre", "apiName": "getEnvironments", "method": "GET", "endpoint": "/projects/{id}/execution-environments", "params": null, "body": null, "responseSummary": "ExecutionEnvironment[]", "trigger": "Pre-execute load" },
+    { "step": "7-pre2", "apiName": "getTestCases", "method": "GET", "endpoint": "/test-suites/{id}/test-cases", "params": "pageNumber=1,pageSize=100", "body": null, "responseSummary": "{ data: TestCase[], total }", "trigger": "Pre-execute load" },
+    { "step": 7, "apiName": "startTestRun", "method": "POST", "endpoint": "/test-suites/{id}/test-runs", "params": null, "body": "environmentId,selectedTestCaseIds?,strictValidation", "responseSummary": "{ id, status }", "trigger": "Execute button" },
+    { "step": "8b", "apiName": "getTestRunResults", "method": "GET", "endpoint": "/test-suites/{id}/test-runs/{rid}/results", "params": null, "body": null, "responseSummary": "TestRunDetailResponse with cases[]", "trigger": "Expand run / auto after SignalR" },
+    { "step": "7-cancel", "apiName": "cancelTestRun", "method": "POST", "endpoint": "/test-suites/{id}/test-runs/{rid}/cancel", "params": null, "body": null, "responseSummary": "{ status: Cancelled }", "trigger": "Cancel button" },
+    { "step": "8a-get", "apiName": "getFailureExplanation", "method": "GET", "endpoint": "/test-suites/{id}/test-runs/{rid}/failures/{cid}/explanation", "params": null, "body": null, "responseSummary": "FailureExplanationModel", "trigger": "Auto (useAutoLLMAnalysis)" },
+    { "step": "8a-post", "apiName": "generateFailureExplanation", "method": "POST", "endpoint": "/test-suites/{id}/test-runs/{rid}/failures/{cid}/explanation", "params": null, "body": "{}", "responseSummary": "FailureExplanationModel", "trigger": "Auto (useAutoLLMAnalysis)" },
+    { "step": 9, "apiName": "generateReport", "method": "POST", "endpoint": "/test-suites/{id}/test-runs/{rid}/reports", "params": null, "body": "reportType,format,recentHistoryLimit?", "responseSummary": "{ id, status }", "trigger": "Button click" },
+    { "step": "9-dl", "apiName": "downloadReport", "method": "GET", "endpoint": "/test-suites/{id}/test-runs/{rid}/reports/{repId}/download", "params": null, "body": null, "responseSummary": "Blob", "trigger": "Download button" }
+  ],
+  "beContractChecklist": {
+    "requiredFieldsMustBeCorrect": [
+      { "api": "POST /test-suites", "field": "Name", "note": "PascalCase — không phải 'name'" },
+      { "api": "POST /test-suites", "field": "ApiSpecId", "note": "UUID từ spec đã parse thành công" },
+      { "api": "POST /test-suites", "field": "SelectedEndpointIds[]", "note": "Mảng UUID hợp lệ từ BE" },
+      { "api": "POST /test-suites", "field": "GenerationType", "note": "Chính xác 'Auto'|'Manual'|'LLMAssisted'" },
+      { "api": "PUT /llm-suggestions/.../review", "field": "rowVersion", "note": "Phải match rowVersion từ response trước" },
+      { "api": "PUT /llm-suggestions/.../review", "field": "action", "note": "Chính xác 'Approve'|'Reject'|'Modify'" },
+      { "api": "POST /test-runs", "field": "environmentId", "note": "UUID hợp lệ, không được null" },
+      { "api": "POST /test-runs", "field": "strictValidation", "note": "Boolean, không thiếu" },
+      { "api": "POST /order-proposals/.../approve", "field": "RowVersion", "note": "Từ response của proposeOrder" },
+      { "api": "POST /specifications/upload", "field": "SourceType", "note": "Số 0/1/2, không phải string" },
+      { "api": "POST /llm-suggestions/generate", "field": "algorithmProfile", "note": "Object đầy đủ 5 boolean fields" }
+    ],
+    "proofOfCorrectIntegration": [
+      { "indicator": "Body keys là PascalCase", "how": "Kiểm tra request body có Name, ApiSpecId không phải name, apiSpecId" },
+      { "indicator": "FE poll parse status trước khi tạo suite", "how": "Spec parseStatus=Success tồn tại trước khi có create-suite request" },
+      { "indicator": "FE auto propose+approve order sau create suite", "how": "order-proposals record tồn tại với status=Approved ngay sau create-suite" },
+      { "indicator": "FE gửi algorithmProfile đầy đủ", "how": "LLM suggestions được generate với đúng 5 flags = true" },
+      { "indicator": "FE dùng rowVersion từ response trước", "how": "Không có 409 Conflict liên tiếp trên review" },
+      { "indicator": "FE subscribe SignalR đúng runId", "how": "SubscribeToTestRun(runId) được call sau startTestRun" },
+      { "indicator": "FE check processedRuns cache", "how": "Cùng runId không generate explanation 2 lần" },
+      { "indicator": "FE retry getTestRunResults khi unavailable", "how": "Thấy nhiều GET trên /results trước khi data available" }
+    ],
+    "statesToVerify": [
+      "TestSuite.selectedEndpointIds phải match endpoints trong spec",
+      "TestSuite.endpointBusinessContexts phải là object, keys là endpointId UUID",
+      "LLMSuggestion.reviewStatus phải là 'Approved' trước khi generate-tests",
+      "OrderProposal.status phải là 'Approved' trước khi execute",
+      "TestRun.environmentId phải resolve đến environment của đúng projectId",
+      "FailureExplanation.testCaseId phải thuộc testRunId được chỉ định"
+    ]
+  },
+  "assumptions": [
+    {
+      "id": 1,
+      "topic": "geminiService.ts — Direct Gemini API",
+      "assumption": "FE có geminiService.ts gọi trực tiếp Gemini API (model gemini-3-flash-preview) cho explainFailure và suggestExecutionOrder. Đây có thể là fallback khi BE chưa sẵn sàng.",
+      "action": "BE cần xác nhận endpoint /failures/{id}/explanation có phải proxy qua Gemini không"
+    },
+    {
+      "id": 2,
+      "topic": "Generation status polling",
+      "assumption": "FE poll /generation-status?jobId= mỗi 3s. Nếu BE dùng SignalR thay thế, FE cần update GeneratingTestCasesPage.",
+      "action": "BE confirm polling vs SignalR cho generation job"
+    },
+    {
+      "id": 3,
+      "topic": "Report format content",
+      "assumption": "Format JSON/Markdown trong report file là assumption dựa trên BE logic. FE chỉ download Blob.",
+      "action": "BE confirm report format structure"
+    },
+    {
+      "id": 4,
+      "topic": "pageSize=9999 cho endpoints",
+      "assumption": "FE không dùng server-side pagination cho endpoints. Có thể là bottleneck với dataset lớn.",
+      "action": "BE nên implement server-side filtering nếu endpoint count > 1000"
+    },
+    {
+      "id": 5,
+      "topic": "resultsSource field",
+      "assumption": "FE retry 4x khi resultsSource === 'unavailable'. BE phải trả về field này trong /results response.",
+      "action": "BE đảm bảo resultsSource luôn có trong response"
+    }
+  ]
+}
