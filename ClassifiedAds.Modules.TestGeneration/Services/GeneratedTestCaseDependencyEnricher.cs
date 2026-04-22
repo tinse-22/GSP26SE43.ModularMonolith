@@ -15,7 +15,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public static class GeneratedTestCaseDependencyEnricher
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = new ()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
