@@ -8,6 +8,31 @@
 
 > **Lưu ý:** Backend chỉ cần `ClientId`, không cần `ClientSecret` — Google OAuth sử dụng xác thực bất đối xứng (asymmetric verification) qua public keys.
 
+### Authorized JavaScript origins (fixing `origin_mismatch`)
+
+If you see the Google error `origin_mismatch`, it means the web origin (protocol+host+port) your app is running on is not listed in the OAuth client's "Authorized JavaScript origins" in Google Cloud Console. Add the exact origin(s) for your frontend here.
+
+- Common dev origins to add:
+  - `http://localhost:3000`
+  - `http://127.0.0.1:3000`
+  - `http://localhost:5174` (used by some dev servers)
+
+To find the exact origin in your browser, open DevTools Console on the page that runs the Google button and run:
+
+```js
+window.location.origin
+```
+
+Then copy the returned value and add it to the OAuth client's Authorized JavaScript origins.
+
+Steps in Google Cloud Console:
+1. Go to APIs & Services → Credentials.
+2. Open the OAuth 2.0 Client ID that matches the `ClientId` shown above.
+3. Under **Authorized JavaScript origins**, click **Add URI** and paste the origin (e.g. `http://localhost:3000`).
+4. Save the client.
+
+After saving, restart your dev server and retry Google Sign-In.
+
 ---
 
 ## 2. Luồng đăng nhập

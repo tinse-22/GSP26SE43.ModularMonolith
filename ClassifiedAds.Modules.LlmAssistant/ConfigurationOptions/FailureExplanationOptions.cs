@@ -6,7 +6,7 @@ public class FailureExplanationOptions
 
     public string Model { get; set; } = "gpt-4.1-mini";
 
-    public int TimeoutSeconds { get; set; } = 30;
+    public int TimeoutSeconds { get; set; } = 300;
 
     public int CacheTtlHours { get; set; } = 24;
 

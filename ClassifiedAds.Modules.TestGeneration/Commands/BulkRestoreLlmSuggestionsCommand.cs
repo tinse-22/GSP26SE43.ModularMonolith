@@ -67,19 +67,37 @@ public class BulkRestoreLlmSuggestionsCommandHandler : ICommandHandler<BulkResto
 
         foreach (var s in suggestions)
         {
-            if (!s.IsDeleted)
+            // Case A: soft-deleted -> restore soft-delete fields
+            if (s.IsDeleted)
             {
-                skippedIds.Add(s.Id);
+                s.IsDeleted = false;
+                s.DeletedAt = null;
+                s.DeletedById = null;
+                s.UpdatedDateTime = now;
+                s.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suggestionRepository.UpdateAsync(s, cancellationToken);
+
+                processedIds.Add(s.Id);
                 continue;
             }
 
-            s.IsDeleted = false;
-            s.DeletedAt = null;
-            s.DeletedById = null;
-            s.UpdatedDateTime = now;
-            await _suggestionRepository.UpdateAsync(s, cancellationToken);
+            // Case B: not deleted but review-state is Superseded or Rejected -> move back to Pending
+            if (s.ReviewStatus == ReviewStatus.Superseded || s.ReviewStatus == ReviewStatus.Rejected)
+            {
+                s.ReviewStatus = ReviewStatus.Pending;
+                s.ReviewedById = null;
+                s.ReviewedAt = null;
+                s.ReviewNotes = null;
+                s.UpdatedDateTime = now;
+                s.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suggestionRepository.UpdateAsync(s, cancellationToken);
 
-            processedIds.Add(s.Id);
+                processedIds.Add(s.Id);
+                continue;
+            }
+
+            // Otherwise skip (neither deleted nor eligible for un-supersede/un-reject)
+            skippedIds.Add(s.Id);
         }
 
         // IDs not found
@@ -98,7 +116,7 @@ public class BulkRestoreLlmSuggestionsCommandHandler : ICommandHandler<BulkResto
             SkippedCount = skippedIds.Count,
             ProcessedIds = processedIds,
             SkippedIds = skippedIds,
-            SkipReason = skippedIds.Count > 0 ? "Chưa bị xóa hoặc không tìm thấy." : null,
+            SkipReason = skippedIds.Count > 0 ? "Chưa bị xóa, không phải Superseded/Rejected, hoặc không tìm thấy." : null,
             OperatedAt = now,
         };
     }

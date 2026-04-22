@@ -187,6 +187,35 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_SetBypassCache_WhenForceRefreshEnabled()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupGateApproved();
+        SetupSubscriptionAllowed();
+        SetupNoPendingSuggestions();
+
+        LlmScenarioSuggestionContext capturedContext = null;
+        _llmSuggesterMock
+            .Setup(x => x.SuggestScenariosAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
+            .Callback<LlmScenarioSuggestionContext, CancellationToken>((ctx, _) => capturedContext = ctx)
+            .ReturnsAsync(new LlmScenarioSuggestionResult
+            {
+                Scenarios = Array.Empty<LlmSuggestedScenario>(),
+                LlmModel = "gpt-4",
+                TokensUsed = 0,
+            });
+
+        var command = CreateValidCommand();
+        command.ForceRefresh = true;
+
+        await _handler.HandleAsync(command);
+
+        capturedContext.Should().NotBeNull();
+        capturedContext.BypassCache.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ThrowValidation_WhenSubscriptionLimitExceeded()
     {
         var suite = CreateSuite();
