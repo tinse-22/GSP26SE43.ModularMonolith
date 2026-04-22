@@ -70,7 +70,7 @@ public class TestResultCollectorTests
     }
 
     [Fact]
-    public async Task CollectAsync_HasFailures_ShouldSetStatusFailed()
+    public async Task CollectAsync_HasAssertionFailures_ShouldSetStatusCompleted()
     {
         // Arrange
         var run = CreateTestRun();
@@ -85,8 +85,39 @@ public class TestResultCollectorTests
         var result = await _collector.CollectAsync(run, caseResults, 7, "Dev");
 
         // Assert
-        run.Status.Should().Be(TestRunStatus.Failed);
+        run.Status.Should().Be(TestRunStatus.Completed);
         run.PassedCount.Should().Be(2);
+        run.FailedCount.Should().Be(1);
+        result.Run.Status.Should().Be("Completed");
+    }
+
+    [Fact]
+    public async Task CollectAsync_HasExecutionFailures_ShouldSetStatusFailed()
+    {
+        // Arrange
+        var run = CreateTestRun();
+        var caseResults = new List<TestCaseExecutionResult>
+        {
+            CreateCaseResult("Passed"),
+            CreateCaseResult(
+                "Failed",
+                httpStatusCode: null,
+                failureReasons: new List<ValidationFailureModel>
+                {
+                    new()
+                    {
+                        Code = "HTTP_REQUEST_ERROR",
+                        Message = "Request timeout",
+                    },
+                }),
+        };
+
+        // Act
+        var result = await _collector.CollectAsync(run, caseResults, 7, "Dev");
+
+        // Assert
+        run.Status.Should().Be(TestRunStatus.Failed);
+        run.PassedCount.Should().Be(1);
         run.FailedCount.Should().Be(1);
         result.Run.Status.Should().Be("Failed");
     }
@@ -111,7 +142,7 @@ public class TestResultCollectorTests
         run.FailedCount.Should().Be(1);
         run.SkippedCount.Should().Be(1);
         run.TotalTests.Should().Be(3);
-        run.Status.Should().Be(TestRunStatus.Failed);
+        run.Status.Should().Be(TestRunStatus.Completed);
     }
 
     #endregion
@@ -329,7 +360,9 @@ public class TestResultCollectorTests
         string status,
         long durationMs = 50,
         string? responseBody = null,
-        Dictionary<string, string>? extractedVariables = null)
+        Dictionary<string, string>? extractedVariables = null,
+        int? httpStatusCode = 200,
+        List<ValidationFailureModel>? failureReasons = null)
     {
         return new TestCaseExecutionResult
         {
@@ -337,11 +370,12 @@ public class TestResultCollectorTests
             Name = $"Test case ({status})",
             OrderIndex = 0,
             Status = status,
-            HttpStatusCode = 200,
+            HttpStatusCode = httpStatusCode,
             DurationMs = durationMs,
             ResolvedUrl = "https://api.example.com/test",
             ResponseBody = responseBody,
             ExtractedVariables = extractedVariables ?? new Dictionary<string, string>(),
+            FailureReasons = failureReasons ?? new List<ValidationFailureModel>(),
         };
     }
 

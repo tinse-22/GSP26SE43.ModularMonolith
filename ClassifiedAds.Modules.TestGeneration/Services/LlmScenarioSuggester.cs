@@ -137,6 +137,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? await BuildFeedbackContextSafeAsync(context, orderedSequence, cancellationToken)
             : LlmSuggestionFeedbackContextResult.Empty;
 
+        var useCacheLookup = algorithmProfile.UseFeedbackLoopContext && !context.BypassCache;
+        if (!useCacheLookup)
+        {
+            _logger.LogInformation(
+                "Skipping LLM suggestion cache lookup. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}",
+                context.TestSuiteId,
+                context.BypassCache,
+                algorithmProfile.UseFeedbackLoopContext);
+        }
+
         // Step 1: Check cache for each endpoint
         var cacheKey = BuildCacheKey(context, orderedSequence, feedbackContext.FeedbackFingerprint);
         _logger.LogInformation(
@@ -145,7 +155,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             feedbackContext.FeedbackFingerprint,
             cacheKey,
             orderedSequence.Count);
-        var cachedResult = algorithmProfile.UseFeedbackLoopContext
+        var cachedResult = useCacheLookup
             ? await TryGetCachedResultAsync(orderedSequence, cacheKey, cancellationToken)
             : null;
         if (cachedResult != null)
@@ -1528,6 +1538,19 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? LlmSuggestionFeedbackContextResult.Empty.FeedbackFingerprint
             : feedbackFingerprint);
         sb.Append(':');
+
+        // Include suite-level business rules so config edits invalidate cache.
+        sb.Append(NormalizeCacheText(context.Suite?.GlobalBusinessRules));
+        sb.Append(':');
+
+        // Include endpoint-level contexts in the same execution order.
+        sb.Append(BuildEndpointBusinessContextSignature(context.Suite, orderedEndpoints));
+        sb.Append(':');
+
+        // Include algorithm switches that affect generation behavior.
+        sb.Append(BuildAlgorithmProfileSignature(context.AlgorithmProfile));
+        sb.Append(':');
+
         foreach (var ep in orderedEndpoints)
         {
             sb.Append(ep.OrderIndex).Append('|');
@@ -1536,6 +1559,55 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(hash)[..16]; // 8-byte hex prefix
+    }
+
+    private static string BuildEndpointBusinessContextSignature(
+        TestSuite suite,
+        IReadOnlyList<ApiOrderItemModel> orderedEndpoints)
+    {
+        if (suite?.EndpointBusinessContexts == null
+            || suite.EndpointBusinessContexts.Count == 0
+            || orderedEndpoints == null
+            || orderedEndpoints.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var endpoint in orderedEndpoints)
+        {
+            suite.EndpointBusinessContexts.TryGetValue(endpoint.EndpointId, out var endpointContext);
+            if (string.IsNullOrWhiteSpace(endpointContext))
+            {
+                continue;
+            }
+
+            sb.Append(endpoint.EndpointId)
+                .Append('=')
+                .Append(NormalizeCacheText(endpointContext))
+                .Append(';');
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildAlgorithmProfileSignature(GenerationAlgorithmProfile profile)
+    {
+        profile ??= new GenerationAlgorithmProfile();
+
+        return string.Concat(
+            profile.UseObservationConfirmationPrompting ? '1' : '0',
+            profile.UseDependencyAwareOrdering ? '1' : '0',
+            profile.UseSchemaRelationshipAnalysis ? '1' : '0',
+            profile.UseSemanticTokenMatching ? '1' : '0',
+            profile.UseFeedbackLoopContext ? '1' : '0');
+    }
+
+    private static string NormalizeCacheText(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim();
     }
 
     private static IReadOnlyList<ApiOrderItemModel> ApplyDependencyAwareOrdering(

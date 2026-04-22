@@ -101,7 +101,9 @@ public class TestResultCollector : ITestResultCollector
         run.SkippedCount = skippedCount;
         run.DurationMs = totalDurationMs;
         run.CompletedAt = DateTimeOffset.UtcNow;
-        run.Status = failedCount > 0 ? TestRunStatus.Failed : TestRunStatus.Completed;
+        run.Status = caseResults.Any(IsExecutionFailure)
+            ? TestRunStatus.Failed
+            : TestRunStatus.Completed;
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
         // Try to save cache payload
@@ -143,6 +145,22 @@ public class TestResultCollector : ITestResultCollector
 
         resultModel.Run = TestRunModel.FromEntity(run);
         return resultModel;
+    }
+
+    private static bool IsExecutionFailure(TestCaseExecutionResult result)
+    {
+        if (result == null || !string.Equals(result.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!result.HttpStatusCode.HasValue)
+        {
+            return true;
+        }
+
+        return result.FailureReasons?.Any(reason =>
+            string.Equals(reason?.Code, "HTTP_REQUEST_ERROR", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     private static string TruncateBody(string body)

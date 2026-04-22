@@ -36,6 +36,11 @@ public class LlmScenarioSuggestionContext
     public IReadOnlyDictionary<Guid, EndpointParameterDetailDto> EndpointParameterDetails { get; set; } = new Dictionary<Guid, EndpointParameterDetailDto>();
 
     public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new GenerationAlgorithmProfile();
+
+    /// <summary>
+    /// If true, skip cache lookup and force a live n8n generation.
+    /// </summary>
+    public bool BypassCache { get; set; }
 }
 
 public class LlmScenarioSuggestionResult

@@ -458,6 +458,67 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestScenariosAsync_Should_BypassCache_WhenBypassCacheIsTrue()
+    {
+        var context = CreateDefaultContext();
+        context.BypassCache = true;
+
+        var cachedScenarios1 = new List<LlmSuggestedScenario>
+        {
+            new() { EndpointId = EndpointId1, ScenarioName = "Cached scenario 1" },
+        };
+        var cachedScenarios2 = new List<LlmSuggestedScenario>
+        {
+            new() { EndpointId = EndpointId2, ScenarioName = "Cached scenario 2" },
+        };
+
+        SetupCacheHit(EndpointId1, cachedScenarios1);
+        SetupCacheHit(EndpointId2, cachedScenarios2);
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        result.FromCache.Should().BeFalse();
+
+        _llmGatewayServiceMock.Verify(
+            x => x.GetCachedSuggestionsAsync(
+                It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        _n8nServiceMock.Verify(
+            x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions,
+                It.IsAny<N8nBoundaryNegativePayload>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenGlobalBusinessRulesChange()
+    {
+        var context1 = CreateDefaultContext();
+        var context2 = CreateDefaultContext();
+        context2.Suite.GlobalBusinessRules = "Updated business rule set";
+
+        var capturedKeys = new List<string>();
+        _llmGatewayServiceMock
+            .Setup(x => x.GetCachedSuggestionsAsync(
+                It.IsAny<Guid>(), 1, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, int, string, CancellationToken>((_, _, key, _) => capturedKeys.Add(key))
+            .ReturnsAsync(new CachedSuggestionsDto { HasCache = false });
+
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        await _sut.SuggestScenariosAsync(context1);
+        await _sut.SuggestScenariosAsync(context2);
+
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenFeedbackFingerprintChanges()
     {
         var context = CreateDefaultContext();

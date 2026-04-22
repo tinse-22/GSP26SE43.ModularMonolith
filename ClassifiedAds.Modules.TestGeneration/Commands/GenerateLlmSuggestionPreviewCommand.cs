@@ -141,6 +141,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             SpecificationId = command.SpecificationId,
             EndpointParameterDetails = endpointParameterDetails.ToDictionary(x => x.EndpointId),
             AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
+            BypassCache = command.ForceRefresh,
         };
 
         var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
