@@ -154,6 +154,60 @@ public class GeneratedTestCaseDependencyEnricherTests
     }
 
     [Fact]
+    public void Enrich_Should_AddExpandedAuthTokenJsonPaths_ForAuthProducer()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+        var protectedEndpointId = Guid.NewGuid();
+
+        var register = CreateTestCase(
+            endpointId: registerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/auth/register",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"testuser@example.com\",\"password\":\"Test123!\"}");
+
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/auth/login",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"email\":\"testuser@example.com\",\"password\":\"Test123!\"}");
+
+        var protectedCase = CreateTestCase(
+            endpointId: protectedEndpointId,
+            httpMethod: TestGenHttpMethod.GET,
+            path: "/api/products",
+            testType: TestType.HappyPath,
+            orderIndex: 2,
+            body: null);
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = registerEndpointId, HttpMethod = "POST", Path = "/api/auth/register", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { registerEndpointId }, IsAuthRelated = true },
+            new() { EndpointId = protectedEndpointId, HttpMethod = "GET", Path = "/api/products", OrderIndex = 2, DependsOnEndpointIds = new List<Guid> { loginEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { register, login, protectedCase }, approvedOrder);
+
+        login.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.access_token");
+        login.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.result.accessToken");
+        login.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.authentication.access_token");
+    }
+
+    [Fact]
     public void Enrich_Should_ReplaceHappyPathRouteParamLiteral_WithDependencyPlaceholder()
     {
         var categoryEndpointId = Guid.NewGuid();

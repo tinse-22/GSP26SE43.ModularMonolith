@@ -26,8 +26,22 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int MinAdaptiveScenariosPerEndpoint = 2;
-    private const int MaxAdaptiveScenariosPerEndpoint = 6;
+    private const int LeanScenarioTargetPerEndpoint = 3;
+    private const int StandardScenarioTargetPerEndpoint = 10;
+
+    private const int MaxBusinessContextLength = 1200;
+    private const int MaxFeedbackContextLength = 1200;
+    private const int MaxSystemPromptLength = 1200;
+    private const int MaxCombinedPromptLength = 5000;
+    private const int MaxObservationPromptLength = 3000;
+    private const int MaxConfirmationPromptLength = 1200;
+    private const int MaxTaskInstructionLength = 5000;
+    private const int MaxRulesLength = 3500;
+    private const int MaxResponseFormatLength = 2500;
+    private const int MaxSchemaPayloadCountPerKind = 2;
+    private const int MaxSchemaPayloadLength = 2500;
+    private const int MaxParameterDetailCount = 16;
+    private const int MaxParameterDefaultValueLength = 200;
 
     private const string DefaultSuggestionSystemPrompt =
         "You are a senior QA engineer specialising in REST API security and robustness testing. " +
@@ -35,23 +49,24 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. For each endpoint generate 2-4 scenarios: include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 3 scenarios total; POST, PUT, and PATCH endpoints need exactly 10 scenarios total; other methods default to 10 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "   - For GET/DELETE, keep only the 3 highest-value checks and avoid low-signal duplicates.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
-        "4. Use UNIQUE synthetic test data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "5. Use UNIQUE synthetic test data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
         "   AUTH FLOW RULES:\n" +
         "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
         "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
         "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
-        "5. endpointId must be the EXACT UUID from input.\n" +
-        "6. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
-        "7. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
-        "8. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n" +
-        "9. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
-        "10. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
-        "11. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
-        "12. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
+        "6. endpointId must be the EXACT UUID from input.\n" +
+        "7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
+        "8. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
+        "9. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n" +
+        "10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
+        "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
+        "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
+        "13. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -190,14 +205,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             metadataMap,
             prompts,
             feedbackContext.EndpointFeedbackContexts);
+        var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts).Length;
 
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
 
         // Step 4: Call n8n webhook
         _logger.LogInformation(
-            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, PayloadBytes={PayloadBytes}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
             N8nWebhookNames.GenerateLlmSuggestions,
             context.TestSuiteId,
+            orderedSequence.Count,
+            payloadBytes,
             feedbackContext.FeedbackFingerprint,
             cacheKey);
 
@@ -346,13 +364,13 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Path = orderItem.Path,
                 OperationId = metadata?.OperationId,
                 OrderIndex = orderItem.OrderIndex,
-                BusinessContext = businessContext,
+                BusinessContext = TruncateForPayload(businessContext, MaxBusinessContextLength),
                 FeedbackContext = endpointFeedbackContexts.TryGetValue(orderItem.EndpointId, out var feedbackContext)
-                    ? feedbackContext
+                    ? TruncateForPayload(feedbackContext, MaxFeedbackContextLength)
                     : string.Empty,
                 Prompt = promptPayload,
-                ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
-                ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
+                ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
                 ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
             });
         }
@@ -361,7 +379,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             TestSuiteId = context.TestSuiteId,
             TestSuiteName = context.Suite.Name,
-            GlobalBusinessRules = context.Suite.GlobalBusinessRules,
+            GlobalBusinessRules = TruncateForPayload(context.Suite.GlobalBusinessRules, MaxBusinessContextLength),
             AlgorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap),
             Endpoints = endpointPayloads,
@@ -381,16 +399,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return new N8nPromptPayload
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+            SystemPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
                 ? DefaultSuggestionSystemPrompt
-                : prompt.SystemPrompt,
-            CombinedPrompt = combinedPrompt,
-            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                : prompt.SystemPrompt, MaxSystemPromptLength),
+            CombinedPrompt = TruncateForPayload(combinedPrompt, MaxCombinedPromptLength),
+            ObservationPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
                 ? combinedPrompt
-                : prompt.ObservationPrompt,
-            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                : prompt.ObservationPrompt, MaxObservationPromptLength),
+            ConfirmationPromptTemplate = TruncateForPayload(string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
                 ? "Generate only boundary/negative scenarios based on provided API details and business rules; return JSON only."
-                : prompt.ConfirmationPromptTemplate,
+                : prompt.ConfirmationPromptTemplate, MaxConfirmationPromptLength),
         };
     }
 
@@ -400,6 +418,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ApiEndpointMetadataDto metadata,
         string businessContext)
     {
+        var target = ComputeAdaptiveScenarioTarget(orderItem, metadata);
         var sb = new StringBuilder();
         sb.AppendLine("# Endpoint Context (Fallback)");
         sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
@@ -407,6 +426,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
         sb.AppendLine();
         sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
+        sb.AppendLine($"Target scenario count for this endpoint: {target} total scenario(s).");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -426,7 +446,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             sb.AppendLine();
             sb.AppendLine("## Parameter Schemas");
-            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            foreach (var schema in metadata.ParameterSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(2))
             {
                 sb.AppendLine(schema);
             }
@@ -436,7 +456,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             sb.AppendLine();
             sb.AppendLine("## Response Schemas");
-            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(3))
+            foreach (var schema in metadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)).Take(2))
             {
                 sb.AppendLine(schema);
             }
@@ -457,12 +477,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return new N8nSuggestionPromptConfig
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
+            SystemPrompt = TruncateForPayload(string.IsNullOrWhiteSpace(systemPrompt)
                 ? DefaultSuggestionSystemPrompt
-                : systemPrompt,
-            TaskInstruction = BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
-            Rules = SuggestionRulesBlock,
-            ResponseFormat = SuggestionResponseFormatBlock,
+                : systemPrompt, MaxSystemPromptLength),
+            TaskInstruction = TruncateForPayload(
+                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
+                MaxTaskInstructionLength),
+            Rules = TruncateForPayload(SuggestionRulesBlock, MaxRulesLength),
+            ResponseFormat = TruncateForPayload(SuggestionResponseFormatBlock, MaxResponseFormatLength),
         };
     }
 
@@ -491,7 +513,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     : "HappyPath, Negative";
 
                 sb.AppendLine(
-                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: target ~{target} scenarios, prioritize {expectedTypes}.");
+                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: target {target} scenarios, prioritize {expectedTypes}.");
             }
         }
 
@@ -776,37 +798,21 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private static int ComputeAdaptiveScenarioTarget(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
     {
-        var score = MinAdaptiveScenariosPerEndpoint;
+        var method = ResolveHttpMethod(endpoint, metadata);
+        return IsLeanScenarioMethod(method)
+            ? LeanScenarioTargetPerEndpoint
+            : StandardScenarioTargetPerEndpoint;
+    }
 
-        var method = (endpoint?.HttpMethod ?? metadata?.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
-        if (method is "POST" or "PUT" or "PATCH")
-        {
-            score += 1;
-        }
+    private static string ResolveHttpMethod(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    {
+        return (endpoint?.HttpMethod ?? metadata?.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
+    }
 
-        if ((endpoint?.IsAuthRelated ?? false) || (metadata?.IsAuthRelated ?? false))
-        {
-            score += 1;
-        }
-
-        var parameterCount = metadata?.ParameterNames?.Count ?? 0;
-        if (parameterCount >= 3)
-        {
-            score += 1;
-        }
-
-        var schemaSignal = (metadata?.ParameterSchemaRefs?.Count ?? 0) + (metadata?.ResponseSchemaRefs?.Count ?? 0);
-        if (schemaSignal >= 2)
-        {
-            score += 1;
-        }
-
-        if ((endpoint?.DependsOnEndpointIds?.Count ?? 0) > 0)
-        {
-            score += 1;
-        }
-
-        return Math.Clamp(score, MinAdaptiveScenariosPerEndpoint, MaxAdaptiveScenariosPerEndpoint);
+    private static bool IsLeanScenarioMethod(string method)
+    {
+        return string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasBoundarySurface(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
@@ -1486,15 +1492,54 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return new List<N8nParameterDetail>();
         }
 
-        return detail.Parameters.Select(p => new N8nParameterDetail
+        return detail.Parameters
+            .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Name))
+            .OrderByDescending(p => p.IsRequired)
+            .ThenBy(p => p.Location)
+            .ThenBy(p => p.Name)
+            .Take(MaxParameterDetailCount)
+            .Select(p => new N8nParameterDetail
+            {
+                Name = p.Name,
+                Location = p.Location,
+                DataType = p.DataType,
+                Format = p.Format,
+                IsRequired = p.IsRequired,
+                DefaultValue = TruncateForPayload(p.DefaultValue, MaxParameterDefaultValueLength),
+            })
+            .ToList();
+    }
+
+    private static List<string> CompactSchemaPayloads(IEnumerable<string> schemaPayloads)
+    {
+        if (schemaPayloads == null)
         {
-            Name = p.Name,
-            Location = p.Location,
-            DataType = p.DataType,
-            Format = p.Format,
-            IsRequired = p.IsRequired,
-            DefaultValue = p.DefaultValue,
-        }).ToList();
+            return new List<string>();
+        }
+
+        return schemaPayloads
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => TruncateForPayload(x, MaxSchemaPayloadLength))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxSchemaPayloadCountPerKind)
+            .ToList();
+    }
+
+    private static string TruncateForPayload(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength];
     }
 
     private async Task<LlmSuggestionFeedbackContextResult> BuildFeedbackContextSafeAsync(

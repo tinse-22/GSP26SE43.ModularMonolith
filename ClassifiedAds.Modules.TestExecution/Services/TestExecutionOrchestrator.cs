@@ -277,18 +277,28 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
 
         // Extract variables
-        var extracted = _variableExtractor
-            .Extract(response, testCase.Variables, resolvedRequest.Body)
+        var extractedFromRules = _variableExtractor
+            .Extract(response, testCase.Variables ?? Array.Empty<ExecutionVariableRuleDto>(), resolvedRequest.Body);
+
+        var extracted = (extractedFromRules ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
         var implicitExtracted = ExtractImplicitVariables(testCase, response);
         foreach (var kvp in implicitExtracted)
+        {
+            extracted[kvp.Key] = kvp.Value;
+        }
+
+        var responseBodyVariables = ExtractResponseBodyVariables(testCase, response);
+        foreach (var kvp in responseBodyVariables)
         {
             if (!extracted.ContainsKey(kvp.Key))
             {
                 extracted[kvp.Key] = kvp.Value;
             }
         }
+
+        PromoteAuthTokenAliases(extracted);
 
         var currentResourceIdVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
         foreach (var kvp in extracted.ToList())
@@ -385,7 +395,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 result["id"] = identifierValue;
             }
 
-            if (IsAuthLikeRequest(testCase) && TryExtractToken(response, bodyDocument, out var tokenValue))
+            const bool allowTextTokenFallback = true;
+            if (TryExtractToken(response, bodyDocument, allowTextTokenFallback, out var tokenValue))
             {
                 result["authToken"] = tokenValue;
                 result["accessToken"] = tokenValue;
@@ -393,6 +404,80 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         return result;
+    }
+
+    private static Dictionary<string, string> ExtractResponseBodyVariables(
+        ExecutionTestCaseDto testCase,
+        HttpTestResponse response)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (response == null || response.StatusCode < 200 || response.StatusCode >= 300)
+        {
+            return result;
+        }
+
+        using var bodyDocument = TryParseJson(response.Body);
+        if (bodyDocument == null)
+        {
+            return result;
+        }
+
+        if (!TryExtractObjectValues(bodyDocument.RootElement, result))
+        {
+            return result;
+        }
+
+        var resourceVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
+        if (TryExtractIdentifier(response, bodyDocument, out var identifierValue) &&
+            !string.IsNullOrWhiteSpace(resourceVariableName))
+        {
+            result[resourceVariableName] = identifierValue;
+        }
+
+        return result;
+    }
+
+    private static bool TryExtractObjectValues(JsonElement element, IDictionary<string, string> result, string prefix = null)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        var extractedAny = false;
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                var key = string.IsNullOrWhiteSpace(prefix)
+                    ? property.Name
+                    : $"{prefix}{property.Name}";
+
+                if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    extractedAny |= TryExtractObjectValues(property.Value, result, key + ".");
+                    continue;
+                }
+
+                var value = property.Value.ToString();
+                if (!string.IsNullOrWhiteSpace(value) && !result.ContainsKey(key))
+                {
+                    result[key] = value;
+                    extractedAny = true;
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var item in element.EnumerateArray())
+            {
+                extractedAny |= TryExtractObjectValues(item, result, $"{prefix}[{index}].");
+                index++;
+            }
+        }
+
+        return extractedAny;
     }
 
     private static JsonDocument TryParseJson(string json)
@@ -425,7 +510,21 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         if (bodyDocument != null)
         {
             var root = bodyDocument.RootElement;
-            foreach (var path in new[] { "$.data._id", "$.data.id", "$._id", "$.id", "$.data.data._id", "$.data.data.id" })
+            foreach (var path in new[]
+            {
+                "$.data._id",
+                "$.data.id",
+                "$.data.userId",
+                "$.data.user.id",
+                "$.data.user._id",
+                "$.user._id",
+                "$.user.id",
+                "$._id",
+                "$.id",
+                "$.userId",
+                "$.data.data._id",
+                "$.data.data.id",
+            })
             {
                 var element = VariableExtractor.NavigateJsonPath(root, path);
                 var value = element?.ToString();
@@ -480,65 +579,248 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
     private static bool TryExtractToken(
         HttpTestResponse response,
         JsonDocument bodyDocument,
+        bool allowTextFallback,
         out string token)
     {
         token = null;
 
-        if (response?.Headers != null)
+        if (TryExtractTokenFromHeaders(response?.Headers, out token))
         {
-            foreach (var header in response.Headers)
-            {
-                if (!header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
-                    string.IsNullOrWhiteSpace(header.Value))
-                {
-                    continue;
-                }
-
-                var rawValue = header.Value.Trim();
-                token = rawValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-                    ? rawValue[7..].Trim()
-                    : rawValue;
-
-                if (!string.IsNullOrWhiteSpace(token))
-                {
-                    return true;
-                }
-            }
+            return true;
         }
 
         if (bodyDocument != null)
         {
             var root = bodyDocument.RootElement;
-            foreach (var path in new[] { "$.data.token", "$.token", "$.data.accessToken", "$.accessToken", "$.data.jwt", "$.jwt" })
+            foreach (var path in new[]
+            {
+                "$.data.token",
+                "$.token",
+                "$.data.accessToken",
+                "$.accessToken",
+                "$.data.access_token",
+                "$.access_token",
+                "$.data.jwt",
+                "$.jwt",
+                "$.data.idToken",
+                "$.idToken",
+                "$.data.id_token",
+                "$.id_token",
+                "$.result.token",
+                "$.result.accessToken",
+                "$.result.access_token",
+                "$.result.jwt",
+                "$.result.idToken",
+                "$.result.id_token",
+                "$.data.data.token",
+                "$.data.data.accessToken",
+                "$.data.data.access_token",
+                "$.data.tokens.accessToken",
+                "$.data.tokens.access_token",
+                "$.tokens.accessToken",
+                "$.tokens.access_token",
+                "$.auth.token",
+                "$.auth.accessToken",
+                "$.auth.access_token",
+                "$.authentication.token",
+                "$.authentication.accessToken",
+                "$.authentication.access_token",
+                "$.data.auth.token",
+                "$.data.auth.accessToken",
+                "$.data.auth.access_token",
+                "$.data.token.value",
+                "$.user.token",
+                "$.user.accessToken",
+                "$.user.access_token",
+            })
             {
                 var element = VariableExtractor.NavigateJsonPath(root, path);
                 var value = element?.ToString();
-                if (!string.IsNullOrWhiteSpace(value))
+                if (TryNormalizeTokenCandidate(value, out token))
                 {
-                    token = value;
                     return true;
                 }
             }
 
-            // Some APIs return auth/session identifiers in a message field
-            // instead of dedicated token properties.
-            foreach (var messagePath in new[] { "$.message", "$.data.message", "$.result.message" })
+            if (TryExtractTokenByKnownJsonKeyRecursive(root, out token))
             {
-                var element = VariableExtractor.NavigateJsonPath(root, messagePath);
-                var value = element?.ToString();
-                if (TryExtractTokenFromText(value, out token))
+                return true;
+            }
+
+            if (allowTextFallback)
+            {
+                // Some APIs return auth/session identifiers in a message field
+                // instead of dedicated token properties.
+                foreach (var messagePath in new[] { "$.message", "$.data.message", "$.result.message" })
                 {
-                    return true;
+                    var element = VariableExtractor.NavigateJsonPath(root, messagePath);
+                    var value = element?.ToString();
+                    if (TryExtractTokenFromText(value, out token))
+                    {
+                        return true;
+                    }
                 }
             }
         }
 
-        if (TryExtractTokenFromText(response?.Body, out token))
+        if (allowTextFallback && TryExtractTokenFromText(response?.Body, out token))
         {
             return true;
         }
 
         return false;
+    }
+
+    private static bool TryExtractTokenFromHeaders(
+        IReadOnlyDictionary<string, string> headers,
+        out string token)
+    {
+        token = null;
+        if (headers == null || headers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var header in headers)
+        {
+            if (string.IsNullOrWhiteSpace(header.Value))
+            {
+                continue;
+            }
+
+            if (header.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase)
+                || header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                if (TryExtractTokenFromSetCookieHeader(header.Value, out token))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (!header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                && !header.Key.Equals("Authentication", StringComparison.OrdinalIgnoreCase)
+                && !header.Key.Equals("Auth-Token", StringComparison.OrdinalIgnoreCase)
+                && !header.Key.Equals("X-Auth-Token", StringComparison.OrdinalIgnoreCase)
+                && !header.Key.Equals("X-Access-Token", StringComparison.OrdinalIgnoreCase)
+                && !header.Key.Equals("X-Token", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryNormalizeTokenCandidate(header.Value, out token)
+                || TryExtractTokenFromText(header.Value, out token))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTokenFromSetCookieHeader(string setCookieValue, out string token)
+    {
+        token = null;
+        if (string.IsNullOrWhiteSpace(setCookieValue))
+        {
+            return false;
+        }
+
+        var match = Regex.Match(
+            setCookieValue,
+            @"(?i)\b(?:access[_-]?token|auth[_-]?token|token|jwt|session(?:_?id)?)\s*=\s*(?<value>[^;,\s]+)",
+            RegexOptions.CultureInvariant);
+
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var candidate = match.Groups["value"].Value.Trim().Trim('"');
+        return TryNormalizeTokenCandidate(candidate, out token);
+    }
+
+    private static bool TryExtractTokenByKnownJsonKeyRecursive(JsonElement element, out string token)
+    {
+        token = null;
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (IsTokenLikePropertyName(property.Name)
+                    && property.Value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array)
+                    && TryNormalizeTokenCandidate(property.Value.ToString(), out token))
+                {
+                    return true;
+                }
+
+                if (TryExtractTokenByKnownJsonKeyRecursive(property.Value, out token))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (TryExtractTokenByKnownJsonKeyRecursive(item, out token))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTokenLikePropertyName(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return false;
+        }
+
+        return propertyName.Equals("token", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("accessToken", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("access_token", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("authToken", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("auth_token", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("jwt", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("idToken", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("id_token", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("sessionToken", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("session_token", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("bearerToken", StringComparison.OrdinalIgnoreCase)
+            || propertyName.Equals("bearer_token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryNormalizeTokenCandidate(string value, out string token)
+    {
+        token = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var candidate = value.Trim().Trim('"');
+        if (candidate.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            candidate = candidate[7..].Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return false;
+        }
+
+        token = candidate;
+        return true;
     }
 
     private static bool TryExtractTokenFromText(string value, out string token)
@@ -572,10 +854,75 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             var candidate = match.Groups["value"].Success
                 ? match.Groups["value"].Value
                 : match.Value;
-            candidate = candidate?.Trim();
-            if (!string.IsNullOrWhiteSpace(candidate))
+            if (TryNormalizeTokenCandidate(candidate, out token))
             {
-                token = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
+    {
+        if (extracted == null || extracted.Count == 0)
+        {
+            return;
+        }
+
+        if (TryGetFirstTokenValue(extracted, out var tokenValue))
+        {
+            extracted["authToken"] = tokenValue;
+            extracted["accessToken"] = tokenValue;
+            if (!extracted.ContainsKey("access_token"))
+            {
+                extracted["access_token"] = tokenValue;
+            }
+
+            if (!extracted.ContainsKey("auth_token"))
+            {
+                extracted["auth_token"] = tokenValue;
+            }
+
+            if (!extracted.ContainsKey("token"))
+            {
+                extracted["token"] = tokenValue;
+            }
+
+            if (!extracted.ContainsKey("jwt"))
+            {
+                extracted["jwt"] = tokenValue;
+            }
+        }
+    }
+
+    private static bool TryGetFirstTokenValue(IReadOnlyDictionary<string, string> values, out string tokenValue)
+    {
+        tokenValue = null;
+        if (values == null || values.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var candidateKey in new[]
+                 {
+                     "authToken",
+                     "auth_token",
+                     "accessToken",
+                     "access_token",
+                     "token",
+                     "jwt",
+                     "idToken",
+                     "id_token",
+                     "sessionToken",
+                     "session_token",
+                     "bearerToken",
+                     "bearer_token",
+                 })
+        {
+            if (values.TryGetValue(candidateKey, out var candidate) && !string.IsNullOrWhiteSpace(candidate))
+            {
+                tokenValue = candidate;
                 return true;
             }
         }
@@ -592,7 +939,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("register", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("session", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("token", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildResourceIdVariableName(string urlOrPath)
