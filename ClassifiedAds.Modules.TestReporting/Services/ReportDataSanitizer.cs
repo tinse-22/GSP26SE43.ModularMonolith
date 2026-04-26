@@ -58,6 +58,7 @@ public class ReportDataSanitizer : IReportDataSanitizer
         {
             TestSuiteId = context.TestSuiteId,
             ProjectId = context.ProjectId,
+            ProjectName = SanitizeText(context.ProjectName),
             ApiSpecId = context.ApiSpecId,
             CreatedById = context.CreatedById,
             SuiteName = SanitizeText(context.SuiteName),
@@ -66,6 +67,7 @@ public class ReportDataSanitizer : IReportDataSanitizer
             OrderedEndpointIds = context.OrderedEndpointIds?.ToArray() ?? Array.Empty<Guid>(),
             Definitions = context.Definitions?.Select(SanitizeDefinition).ToArray() ?? Array.Empty<ReportTestCaseDefinitionDto>(),
             Results = context.Results?.Select(SanitizeResult).ToArray() ?? Array.Empty<ReportTestCaseResultDto>(),
+            Attempts = context.Attempts?.Select(SanitizeAttempt).ToArray() ?? Array.Empty<TestRunExecutionAttemptDto>(),
         };
     }
 
@@ -213,6 +215,36 @@ public class ReportDataSanitizer : IReportDataSanitizer
             BodyNotContainsPassed = result.BodyNotContainsPassed,
             JsonPathChecksPassed = result.JsonPathChecksPassed,
             ResponseTimePassed = result.ResponseTimePassed,
+        };
+    }
+
+    private static TestRunExecutionAttemptDto SanitizeAttempt(TestRunExecutionAttemptDto attempt)
+    {
+        if (attempt == null)
+        {
+            return null;
+        }
+
+        return new TestRunExecutionAttemptDto
+        {
+            ExecutionAttemptId = attempt.ExecutionAttemptId,
+            TestCaseId = attempt.TestCaseId,
+            ParentAttemptId = attempt.ParentAttemptId,
+            AttemptNumber = attempt.AttemptNumber,
+            Status = attempt.Status,
+            RetryReason = attempt.RetryReason,
+            SkippedCause = attempt.SkippedCause,
+            DurationMs = attempt.DurationMs,
+            StartedAt = attempt.StartedAt,
+            CompletedAt = attempt.CompletedAt,
+            FailureReasons = attempt.FailureReasons?.Select(x => new ReportValidationFailureDto
+            {
+                Code = x.Code,
+                Message = SanitizeText(x.Message),
+                Target = x.Target,
+                Expected = SanitizeText(x.Expected),
+                Actual = SanitizeText(x.Actual),
+            }).ToArray() ?? Array.Empty<ReportValidationFailureDto>(),
         };
     }
 

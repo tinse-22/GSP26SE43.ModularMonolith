@@ -124,6 +124,7 @@ public class CsvReportRenderer : IReportRenderer
                     HttpStatusCode = x.HttpStatusCode,
                     DurationMs = x.DurationMs,
                     Details = BuildCaseDetails(x),
+                    TotalAttempts = x.TotalAttempts,
                 }));
         }
 
@@ -157,6 +158,7 @@ public class CsvReportRenderer : IReportRenderer
             $"extractedVariables={FormatDictionary(testCase.ExtractedVariables)}",
             $"failureReasons={FormatFailures(testCase.FailureReasons)}",
             $"bodyPreview={testCase.ResponseBodyPreview}",
+            $"totalAttempts={testCase.TotalAttempts}",
         };
 
         return string.Join(" | ", parts.Where(x => !string.IsNullOrWhiteSpace(x)));
@@ -199,6 +201,7 @@ public class CsvReportRenderer : IReportRenderer
         csv.WriteField("Status");
         csv.WriteField("HttpStatusCode");
         csv.WriteField("DurationMs");
+        csv.WriteField("TotalAttempts");
         csv.WriteField("Details");
         csv.NextRecord();
     }
@@ -215,6 +218,7 @@ public class CsvReportRenderer : IReportRenderer
         csv.WriteField(row.Status);
         csv.WriteField(row.HttpStatusCode);
         csv.WriteField(row.DurationMs);
+        csv.WriteField(row.TotalAttempts);
         csv.WriteField(row.Details);
         csv.NextRecord();
     }
@@ -240,6 +244,8 @@ public class CsvReportRenderer : IReportRenderer
         public int? HttpStatusCode { get; set; }
 
         public long? DurationMs { get; set; }
+
+        public int? TotalAttempts { get; set; }
 
         public string Details { get; set; }
     }

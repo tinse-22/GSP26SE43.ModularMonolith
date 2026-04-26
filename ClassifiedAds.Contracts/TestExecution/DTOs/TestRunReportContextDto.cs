@@ -10,6 +10,8 @@ public class TestRunReportContextDto
 
     public Guid ProjectId { get; set; }
 
+    public string ProjectName { get; set; }
+
     public Guid? ApiSpecId { get; set; }
 
     public Guid CreatedById { get; set; }
@@ -25,6 +27,8 @@ public class TestRunReportContextDto
     public IReadOnlyList<ReportTestCaseDefinitionDto> Definitions { get; set; } = Array.Empty<ReportTestCaseDefinitionDto>();
 
     public IReadOnlyList<ReportTestCaseResultDto> Results { get; set; } = Array.Empty<ReportTestCaseResultDto>();
+
+    public IReadOnlyList<TestRunExecutionAttemptDto> Attempts { get; set; } = Array.Empty<TestRunExecutionAttemptDto>();
 }
 
 public class TestRunReportRunDto
@@ -143,6 +147,10 @@ public class ReportTestCaseResultDto
     public bool? JsonPathChecksPassed { get; set; }
 
     public bool? ResponseTimePassed { get; set; }
+
+    public int ExecutionAttempt { get; set; }
+
+    public int TotalAttempts { get; set; }
 }
 
 public class ReportValidationFailureDto
@@ -156,4 +164,29 @@ public class ReportValidationFailureDto
     public string Expected { get; set; }
 
     public string Actual { get; set; }
+}
+
+public class TestRunExecutionAttemptDto
+{
+    public Guid ExecutionAttemptId { get; set; }
+
+    public Guid TestCaseId { get; set; }
+
+    public Guid? ParentAttemptId { get; set; }
+
+    public int AttemptNumber { get; set; }
+
+    public string Status { get; set; }
+
+    public string RetryReason { get; set; }
+
+    public string SkippedCause { get; set; }
+
+    public long DurationMs { get; set; }
+
+    public DateTimeOffset StartedAt { get; set; }
+
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    public IReadOnlyList<ReportValidationFailureDto> FailureReasons { get; set; } = Array.Empty<ReportValidationFailureDto>();
 }

@@ -1,0 +1,386 @@
+{
+  "$schema": "frontend-flow-handoff",
+  "version": "1.0.0",
+  "documentId": "fe-14-payos-full-flow-handoff",
+  "validatedAgainstCodebaseOn": "2026-04-26",
+  "purpose": "PayOS full frontend handoff for subscription checkout, return handling, and post-checkout verification.",
+  "sourceOfTruth": {
+    "backendController": "ClassifiedAds.Modules.Subscription.Controllers.PaymentsController",
+    "detailedApiContract": "docs/frontend/FE-14-subscription-billing-frontend/payments-api.json",
+    "baseApiRoute": "/api/payments"
+  },
+  "runtimeUrls": {
+    "backendPublicBaseUrl": "https://tnhkllmapi.com",
+    "frontendPublicBaseUrl": "https://llm-api-test-generator.vercel.app",
+    "payOsMerchantApiBaseUrl": "https://api-merchant.payos.vn",
+    "payOsWebhookUrlToConfigureInPayOsDashboard": "https://tnhkllmapi.com/api/payments/payos/webhook",
+    "payOsReturnUrlConfiguredInBackend": "https://tnhkllmapi.com/api/payments/payos/return",
+    "frontendResultUrlBuiltByBackend": "https://llm-api-test-generator.vercel.app/payment/result",
+    "frontendCancelUrlConfiguredInBackend": "https://llm-api-test-generator.vercel.app/payment/cancel"
+  },
+  "authentication": {
+    "scheme": "Bearer",
+    "frontendCallsRequireBearerToken": [
+      "POST /api/payments/subscribe/{planId}",
+      "POST /api/payments/payos/create",
+      "GET /api/payments/{intentId}",
+      "GET /api/subscriptions/me/current"
+    ],
+    "anonymousCallbacksHandledByBackend": [
+      "POST /api/payments/payos/webhook",
+      "GET /api/payments/payos/return"
+    ]
+  },
+  "numericEnums": {
+    "BillingCycle": {
+      "0": "Monthly",
+      "1": "Yearly"
+    },
+    "PaymentIntentStatus": {
+      "0": "RequiresPayment",
+      "1": "Processing",
+      "2": "Succeeded",
+      "3": "Canceled",
+      "4": "Expired"
+    },
+    "PaymentPurpose": {
+      "0": "SubscriptionPurchase",
+      "1": "SubscriptionUpgrade",
+      "2": "SubscriptionRenewal"
+    }
+  },
+  "frontendRoutesToImplement": [
+    {
+      "route": "/payment/result",
+      "queryParams": [
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "allowedValues": [
+            "success",
+            "failed"
+          ],
+          "source": "Backend GET /api/payments/payos/return redirect"
+        },
+        {
+          "name": "intentId",
+          "type": "Guid",
+          "required": false,
+          "source": "Present only when backend can map successful PayOS orderCode to a PaymentIntent"
+        }
+      ],
+      "requiredBehavior": [
+        "If status=success and intentId exists, call GET /api/payments/{intentId}.",
+        "If intent status is not final yet, poll GET /api/payments/{intentId} briefly until status is Succeeded, Canceled, or Expired.",
+        "After Succeeded, call GET /api/subscriptions/me/current to refresh active subscription UI.",
+        "If status=failed or intentId is missing, show failure state and let user return to subscription plans."
+      ]
+    },
+    {
+      "route": "/payment/cancel",
+      "queryParams": [],
+      "requiredBehavior": [
+        "Show canceled checkout state.",
+        "Offer user a way to go back to subscription plans.",
+        "If FE still has a local intentId from checkout state, optionally call GET /api/payments/{intentId} to show the current backend status."
+      ]
+    }
+  ],
+  "flow": [
+    {
+      "step": 1,
+      "name": "Load plans",
+      "frontendAction": "Show subscription plans before checkout.",
+      "request": {
+        "method": "GET",
+        "path": "/api/payments/plans",
+        "headers": {
+          "Authorization": "Bearer <access_token>"
+        },
+        "queryParams": [
+          {
+            "name": "isActive",
+            "type": "bool?",
+            "required": false,
+            "default": true
+          },
+          {
+            "name": "search",
+            "type": "string?",
+            "required": false
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "body": "PlanModel[]"
+      }
+    },
+    {
+      "step": 2,
+      "name": "Create subscription purchase",
+      "frontendAction": "User chooses a plan and billing cycle.",
+      "request": {
+        "method": "POST",
+        "path": "/api/payments/subscribe/{planId}",
+        "headers": {
+          "Authorization": "Bearer <access_token>",
+          "Content-Type": "application/json"
+        },
+        "pathParams": [
+          {
+            "name": "planId",
+            "type": "Guid",
+            "required": true
+          }
+        ],
+        "body": {
+          "billingCycle": 0
+        },
+        "bodyParams": [
+          {
+            "name": "billingCycle",
+            "type": "int",
+            "required": true,
+            "allowedValues": {
+              "0": "Monthly",
+              "1": "Yearly"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "bodyShape": {
+          "requiresPayment": "bool",
+          "paymentIntentId": "Guid?",
+          "subscription": "SubscriptionModel?"
+        },
+        "paidPlanExample": {
+          "requiresPayment": true,
+          "paymentIntentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+          "subscription": null
+        },
+        "freePlanExample": {
+          "requiresPayment": false,
+          "paymentIntentId": null,
+          "subscription": {
+            "id": "91a3f9b2-7e46-4a95-972d-2ce3627ab5bd",
+            "status": 1,
+            "planName": "Free Plan"
+          }
+        }
+      },
+      "frontendDecision": [
+        "If requiresPayment=false, skip PayOS and refresh subscription state.",
+        "If requiresPayment=true, keep paymentIntentId and continue to step 3."
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Create PayOS checkout",
+      "frontendAction": "Ask backend to create/reuse a PayOS checkout link for the payment intent.",
+      "request": {
+        "method": "POST",
+        "path": "/api/payments/payos/create",
+        "headers": {
+          "Authorization": "Bearer <access_token>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "intentId": "a80a548f-ef25-4598-9fe6-0d6859f0cead",
+          "returnUrl": null
+        },
+        "bodyParams": [
+          {
+            "name": "intentId",
+            "type": "Guid",
+            "required": true,
+            "description": "paymentIntentId returned by POST /api/payments/subscribe/{planId}"
+          },
+          {
+            "name": "returnUrl",
+            "type": "string?",
+            "required": false,
+            "maxLength": 500,
+            "recommendedValue": null,
+            "description": "Leave null or omit it so backend uses Modules__Subscription__PayOS__ReturnUrl and can normalize redirect result."
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "bodyShape": {
+          "checkoutUrl": "string",
+          "orderCode": "long"
+        },
+        "example": {
+          "checkoutUrl": "https://pay.payos.vn/web/4c7cc1b2",
+          "orderCode": 260328081512345
+        }
+      },
+      "frontendDecision": [
+        "Persist intentId in local checkout state before redirecting.",
+        "Redirect browser to checkoutUrl.",
+        "Do not show success just because checkoutUrl was created."
+      ]
+    },
+    {
+      "step": 4,
+      "name": "PayOS webhook",
+      "frontendAction": "No frontend action.",
+      "handledBy": "PayOS calls backend directly.",
+      "callback": {
+        "method": "POST",
+        "url": "https://tnhkllmapi.com/api/payments/payos/webhook",
+        "auth": "anonymous",
+        "body": "Raw PayOS JSON payload"
+      },
+      "backendBehavior": [
+        "Backend verifies payload.signature from PayOS JSON body.",
+        "Backend updates PaymentIntent, PaymentTransaction, Subscription, and SubscriptionHistory when payment succeeds.",
+        "Webhook always returns HTTP 200 JSON ack, including ignored/error cases."
+      ]
+    },
+    {
+      "step": 5,
+      "name": "PayOS return redirect",
+      "frontendAction": "User returns from PayOS through backend return endpoint.",
+      "handledBy": "PayOS redirects browser to backend, then backend redirects browser to frontend.",
+      "payOsRedirectToBackend": {
+        "method": "GET",
+        "url": "https://tnhkllmapi.com/api/payments/payos/return",
+        "queryParams": [
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "successValues": [
+              "PAID",
+              "SUCCESS",
+              "COMPLETED"
+            ]
+          },
+          {
+            "name": "orderCode",
+            "type": "long",
+            "required": true
+          }
+        ]
+      },
+      "backendRedirectToFrontend": {
+        "success": "https://llm-api-test-generator.vercel.app/payment/result?status=success&intentId=<paymentIntentId>",
+        "failed": "https://llm-api-test-generator.vercel.app/payment/result?status=failed"
+      }
+    },
+    {
+      "step": 6,
+      "name": "Verify result on frontend",
+      "frontendAction": "Read the real backend payment status after redirect.",
+      "request": {
+        "method": "GET",
+        "path": "/api/payments/{intentId}",
+        "headers": {
+          "Authorization": "Bearer <access_token>"
+        },
+        "pathParams": [
+          {
+            "name": "intentId",
+            "type": "Guid",
+            "required": true
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "bodyShape": {
+          "id": "Guid",
+          "amount": "decimal",
+          "currency": "string",
+          "purpose": "int",
+          "planId": "Guid",
+          "planName": "string?",
+          "billingCycle": "int",
+          "subscriptionId": "Guid?",
+          "status": "int",
+          "checkoutUrl": "string?",
+          "expiresAt": "DateTimeOffset",
+          "orderCode": "long?"
+        }
+      },
+      "frontendDecision": [
+        "status=2 means Succeeded.",
+        "status=3 means Canceled.",
+        "status=4 means Expired.",
+        "status=0 or 1 means not final; FE may poll briefly because webhook/reconcile can finish after redirect."
+      ]
+    },
+    {
+      "step": 7,
+      "name": "Refresh current subscription",
+      "frontendAction": "After successful payment, refresh the user's current subscription.",
+      "request": {
+        "method": "GET",
+        "path": "/api/subscriptions/me/current",
+        "headers": {
+          "Authorization": "Bearer <access_token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "SubscriptionModel or null depending on backend state"
+      }
+    }
+  ],
+  "doNotDo": [
+    "Do not send frontend URL as returnUrl unless FE intentionally wants to bypass backend /api/payments/payos/return.",
+    "Do not treat PayOS query params alone as proof of success.",
+    "Do not depend on webhook response in FE; FE never calls webhook.",
+    "Do not send enum names like Monthly or Yearly; backend expects numeric enum values.",
+    "Do not assume admin token can read any user's PaymentIntent through GET /api/payments/{intentId}; current runtime checks owner."
+  ],
+  "recommendedFrontendStateMachine": {
+    "idle": "No checkout in progress.",
+    "creatingIntent": "POST /api/payments/subscribe/{planId} is running.",
+    "creatingCheckout": "POST /api/payments/payos/create is running.",
+    "redirectingToPayOs": "Browser is being redirected to checkoutUrl.",
+    "returnedFromPayOs": "Frontend is on /payment/result with status and optional intentId.",
+    "verifying": "GET /api/payments/{intentId} polling or reading latest state.",
+    "succeeded": "PaymentIntent.status=2 and subscription refresh has completed.",
+    "failed": "Return status failed, PaymentIntent.status=3/4, or verification fails."
+  },
+  "errorHandling": [
+    {
+      "endpoint": "POST /api/payments/subscribe/{planId}",
+      "cases": [
+        "400 when request body is invalid, plan inactive, or billing cycle unsupported.",
+        "404 when planId does not exist."
+      ]
+    },
+    {
+      "endpoint": "POST /api/payments/payos/create",
+      "cases": [
+        "400 when intent is already Succeeded, Canceled, Expired, expired by time, PayOS config is missing, or PayOS rejects create-link.",
+        "404 when intent does not exist or does not belong to current user."
+      ]
+    },
+    {
+      "endpoint": "GET /api/payments/{intentId}",
+      "cases": [
+        "404 when intent does not exist or does not belong to current user."
+      ]
+    }
+  ],
+  "minimalFrontendImplementationChecklist": [
+    "Implement /payment/result route.",
+    "Implement /payment/cancel route.",
+    "Use numeric billingCycle values: 0 Monthly, 1 Yearly.",
+    "Leave payos/create returnUrl null or omitted.",
+    "Persist intentId before redirecting to checkoutUrl.",
+    "On /payment/result, call GET /api/payments/{intentId} and then GET /api/subscriptions/me/current.",
+    "Show pending state when PaymentIntent status is RequiresPayment or Processing.",
+    "Show success only when PaymentIntent status is Succeeded.",
+    "Show failed/canceled/expired state for Canceled or Expired."
+  ]
+}
