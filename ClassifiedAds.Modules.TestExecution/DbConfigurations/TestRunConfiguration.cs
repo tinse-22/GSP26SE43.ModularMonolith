@@ -23,5 +23,7 @@ public class TestRunConfiguration : IEntityTypeConfiguration<TestRun>
         builder.HasIndex(x => x.TriggeredById);
         builder.HasIndex(x => x.Status);
         builder.HasIndex(x => new { x.TestSuiteId, x.RunNumber }).IsUnique();
+
+        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

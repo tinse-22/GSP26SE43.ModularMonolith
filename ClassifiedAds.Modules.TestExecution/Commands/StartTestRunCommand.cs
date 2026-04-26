@@ -28,7 +28,7 @@ public class StartTestRunCommand : ICommand
 
     public bool StrictValidation { get; set; }
 
-    public int MaxRetryAttempts { get; set; } = 0;
+    public int MaxRetryAttempts { get; set; } = 3;
 
     /// <summary>
     /// Enables the retry mechanism for failed test cases whose only failures are expectation

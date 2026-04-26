@@ -82,6 +82,7 @@ public class TestResultCollector : ITestResultCollector
             ExtractedVariables = MaskSensitiveVariables(r.ExtractedVariables),
             DependencyIds = r.DependencyIds?.ToList() ?? new List<Guid>(),
             SkippedBecauseDependencyIds = r.SkippedBecauseDependencyIds ?? new List<Guid>(),
+            SkippedCause = r.SkippedCause,
             StatusCodeMatched = r.StatusCodeMatched,
             SchemaMatched = r.SchemaMatched,
             HeaderChecksPassed = r.HeaderChecksPassed,

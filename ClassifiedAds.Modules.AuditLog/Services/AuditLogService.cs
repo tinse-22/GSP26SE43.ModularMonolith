@@ -4,6 +4,8 @@ using ClassifiedAds.Contracts.AuditLog.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.AuditLog.Entities;
 using ClassifiedAds.Modules.AuditLog.Queries;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,25 +31,32 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
         var requestType = "ADD_AUDIT_LOG_ENTRY";
         var uow = _idempotentRequestRepository.UnitOfWork;
 
-        await uow.ExecuteInTransactionAsync(async ct =>
+        try
         {
-            var inserted = await TryInsertIdempotentRequestAsync(requestType, requestId, ct);
-            if (!inserted)
+            await uow.ExecuteInTransactionAsync(async ct =>
             {
-                return;
-            }
+                var inserted = await TryInsertIdempotentRequestAsync(requestType, requestId, ct);
+                if (!inserted)
+                {
+                    return;
+                }
 
-            await AddOrUpdateAsync(new AuditLogEntry
-            {
-                UserId = dto.UserId,
-                CreatedDateTime = dto.CreatedDateTime,
-                Action = dto.Action,
-                ObjectId = dto.ObjectId,
-                Log = dto.Log,
-            }, ct);
+                await AddOrUpdateAsync(new AuditLogEntry
+                {
+                    UserId = dto.UserId,
+                    CreatedDateTime = dto.CreatedDateTime,
+                    Action = dto.Action,
+                    ObjectId = dto.ObjectId,
+                    Log = dto.Log,
+                }, ct);
 
-            await uow.SaveChangesAsync(ct);
-        });
+                await uow.SaveChangesAsync(ct);
+            });
+        }
+        catch (DbUpdateException ex) when (IsDuplicateIdempotentRequestException(ex))
+        {
+            return;
+        }
     }
 
     private async Task<bool> TryInsertIdempotentRequestAsync(string requestType, string requestId, CancellationToken cancellationToken)
@@ -69,6 +78,16 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
 
         await _idempotentRequestRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    private static bool IsDuplicateIdempotentRequestException(DbUpdateException ex)
+    {
+        return ex.InnerException is PostgresException postgresException
+            && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
+            && string.Equals(
+                postgresException.ConstraintName,
+                "IX_IdempotentRequests_RequestType_RequestId",
+                StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<List<AuditLogEntryDTO>> GetAuditLogEntriesAsync(AuditLogEntryQueryOptions query)
