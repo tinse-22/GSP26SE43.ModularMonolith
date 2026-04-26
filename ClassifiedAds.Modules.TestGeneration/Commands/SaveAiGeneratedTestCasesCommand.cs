@@ -63,6 +63,12 @@ public class AiGeneratedTestCaseDto
     public AiTestCaseRequestDto Request { get; set; }
     public AiTestCaseExpectationDto Expectation { get; set; }
     public List<AiTestCaseVariableDto> Variables { get; set; } = new();
+
+    /// <summary>
+    /// SRS requirement IDs that this test case covers.
+    /// Populated by the LLM when the generation payload includes SRS requirements context.
+    /// </summary>
+    public List<Guid> CoveredRequirementIds { get; set; } = new();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -91,6 +97,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestCaseVariable, Guid> _testCaseVariableRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
     private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
+    private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
@@ -101,6 +108,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestCaseVariable, Guid> testCaseVariableRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
         IRepository<TestGenerationJob, Guid> jobRepository,
+        IRepository<TestCaseRequirementLink, Guid> linkRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
@@ -110,6 +118,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         _testCaseVariableRepository = testCaseVariableRepository;
         _versionRepository = versionRepository;
         _jobRepository = jobRepository;
+        _linkRepository = linkRepository;
         _logger = logger;
     }
 
@@ -148,6 +157,16 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
             if (existing.Count > 0)
             {
+                // Also delete any existing traceability links for these test cases.
+                var existingIds = existing.Select(x => x.Id).ToHashSet();
+                var existingLinks = await _linkRepository.ToListAsync(
+                    _linkRepository.GetQueryableSet()
+                        .Where(x => existingIds.Contains(x.TestCaseId)));
+                if (existingLinks.Count > 0)
+                {
+                    await _linkRepository.BulkDeleteAsync(existingLinks, ct);
+                }
+
                 await _testCaseRepository.BulkDeleteAsync(existing, ct);
             }
 
@@ -241,6 +260,31 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 }
 
                 orderIdx++;
+            }
+
+            // Insert traceability links for test cases that reported coveredRequirementIds.
+            // Build a lookup: (dto index → persisted TestCase) using parallel list.
+            var dtoList = command.TestCases;
+            for (var i = 0; i < dtoList.Count && i < persistedTestCases.Count; i++)
+            {
+                var dto = dtoList[i];
+                if (dto.CoveredRequirementIds == null || dto.CoveredRequirementIds.Count == 0)
+                    continue;
+
+                var tc = persistedTestCases[i];
+                foreach (var reqId in dto.CoveredRequirementIds.Distinct())
+                {
+                    if (reqId == Guid.Empty) continue;
+                    var link = new TestCaseRequirementLink
+                    {
+                        Id = Guid.NewGuid(),
+                        TestCaseId = tc.Id,
+                        SrsRequirementId = reqId,
+                        TraceabilityScore = 1.0f,
+                        MappingRationale = "Auto-linked by LLM during test case generation.",
+                    };
+                    await _linkRepository.AddAsync(link, ct);
+                }
             }
 
             await _versionRepository.AddAsync(new TestSuiteVersion

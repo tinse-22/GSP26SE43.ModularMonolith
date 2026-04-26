@@ -106,7 +106,35 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
 
         var finalTestCaseIdSet = finalTestCaseIds.ToHashSet();
 
-        // 4. Batch load all related data by testCaseIds
+        // 4. Auto-expand selection with transitive dependencies (avoids cross-batch dependency errors).
+        // Load all suite-wide dependencies once, then BFS-expand the selection set.
+        if (selectedTestCaseIds != null && selectedTestCaseIds.Count > 0)
+        {
+            var allSuiteDependencies = await _dependencyRepository.ToListAsync(
+                _dependencyRepository.GetQueryableSet()
+                    .Where(x => enabledTestCaseIds.Contains(x.TestCaseId)));
+
+            var depLookup = allSuiteDependencies
+                .GroupBy(x => x.TestCaseId)
+                .ToDictionary(g => g.Key, g => g.Select(d => d.DependsOnTestCaseId).ToList());
+
+            var queue = new Queue<Guid>(finalTestCaseIdSet);
+            while (queue.Count > 0)
+            {
+                var tcId = queue.Dequeue();
+                if (!depLookup.TryGetValue(tcId, out var deps)) continue;
+                foreach (var depId in deps)
+                {
+                    if (!finalTestCaseIdSet.Contains(depId) && enabledTestCaseMap.ContainsKey(depId))
+                    {
+                        finalTestCaseIdSet.Add(depId);
+                        queue.Enqueue(depId);
+                    }
+                }
+            }
+        }
+
+        // 5. Batch load all related data by the (potentially expanded) finalTestCaseIdSet
         var requests = await _requestRepository.ToListAsync(
             _requestRepository.GetQueryableSet()
                 .Where(x => finalTestCaseIdSet.Contains(x.TestCaseId)));
@@ -123,12 +151,6 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             _dependencyRepository.GetQueryableSet()
                 .Where(x => finalTestCaseIdSet.Contains(x.TestCaseId)));
 
-        // 5. Validate dependency closure for selected cases
-        if (selectedTestCaseIds != null && selectedTestCaseIds.Count > 0)
-        {
-            ValidateDependencyClosure(dependencies, finalTestCaseIdSet, enabledTestCaseMap);
-        }
-
         // 6. Build in-memory dictionaries for mapping
         var requestMap = requests.ToDictionary(x => x.TestCaseId);
         var expectationMap = expectations.ToDictionary(x => x.TestCaseId);
@@ -144,7 +166,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             : new List<Guid>();
 
         // 8. Build baseline order from endpoint/custom order, then enforce dependency topology.
-        var baselineOrderedCases = finalTestCaseIds
+        var baselineOrderedCases = finalTestCaseIdSet
             .Select(id => enabledTestCaseMap[id])
             .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
                 ? endpointOrderMap[tc.EndpointId.Value]
@@ -194,30 +216,6 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             {
                 throw new ValidationException($"Test case '{tc.Name}' đã bị vô hiệu hóa, không thể chọn để chạy.");
             }
-        }
-    }
-
-    private static void ValidateDependencyClosure(
-        List<TestCaseDependency> dependencies,
-        HashSet<Guid> selectedIdSet,
-        Dictionary<Guid, TestCase> enabledMap)
-    {
-        var missingDeps = new List<string>();
-
-        foreach (var dep in dependencies)
-        {
-            if (!selectedIdSet.Contains(dep.DependsOnTestCaseId))
-            {
-                var dependentName = enabledMap.TryGetValue(dep.TestCaseId, out var tc) ? tc.Name : dep.TestCaseId.ToString();
-                var dependsOnName = enabledMap.TryGetValue(dep.DependsOnTestCaseId, out var depTc) ? depTc.Name : dep.DependsOnTestCaseId.ToString();
-                missingDeps.Add($"'{dependentName}' phụ thuộc '{dependsOnName}'");
-            }
-        }
-
-        if (missingDeps.Count > 0)
-        {
-            throw new ValidationException(
-                $"Danh sách test case được chọn thiếu các dependency cần thiết: {string.Join("; ", missingDeps)}.");
         }
     }
 

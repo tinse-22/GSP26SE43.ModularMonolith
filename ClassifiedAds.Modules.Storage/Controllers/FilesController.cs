@@ -70,7 +70,7 @@ public class FilesController : Controller
             Name = model.Name,
             Description = model.Description,
             Size = model.FormFile.Length,
-            UploadedTime = DateTime.Now,
+            UploadedTime = DateTimeOffset.UtcNow,
             FileName = model.FormFile.FileName,
             Encrypted = model.Encrypted,
             OwnerId = _currentUser.UserId,

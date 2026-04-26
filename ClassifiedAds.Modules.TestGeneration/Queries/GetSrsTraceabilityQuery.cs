@@ -24,17 +24,20 @@ public class GetSrsTraceabilityQuery : IQuery<TraceabilityMatrix>
 public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQuery, TraceabilityMatrix>
 {
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
     private readonly IRepository<SrsRequirement, Guid> _requirementRepository;
     private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
 
     public GetSrsTraceabilityQueryHandler(
         IRepository<TestSuite, Guid> suiteRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
         IRepository<SrsRequirement, Guid> requirementRepository,
         IRepository<TestCaseRequirementLink, Guid> linkRepository,
         IRepository<TestCase, Guid> testCaseRepository)
     {
         _suiteRepository = suiteRepository;
+        _srsDocumentRepository = srsDocumentRepository;
         _requirementRepository = requirementRepository;
         _linkRepository = linkRepository;
         _testCaseRepository = testCaseRepository;
@@ -51,7 +54,17 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
             throw new NotFoundException($"TestSuite {query.TestSuiteId} khong tim thay.");
         }
 
-        if (suite.SrsDocumentId == null)
+        // Resolve SrsDocumentId: prefer the FK on the suite, fall back to reverse lookup via SrsDocument.TestSuiteId.
+        var srsDocumentId = suite.SrsDocumentId;
+        if (srsDocumentId == null)
+        {
+            var linkedDoc = await _srsDocumentRepository.FirstOrDefaultAsync(
+                _srsDocumentRepository.GetQueryableSet()
+                    .Where(x => x.TestSuiteId == query.TestSuiteId && !x.IsDeleted));
+            srsDocumentId = linkedDoc?.Id;
+        }
+
+        if (srsDocumentId == null)
         {
             return new TraceabilityMatrix
             {
@@ -63,7 +76,7 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
 
         var requirements = await _requirementRepository.ToListAsync(
             _requirementRepository.GetQueryableSet()
-                .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
+                .Where(x => x.SrsDocumentId == srsDocumentId.Value)
                 .OrderBy(x => x.DisplayOrder));
 
         if (!requirements.Any())
@@ -71,7 +84,7 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
             return new TraceabilityMatrix
             {
                 TestSuiteId = query.TestSuiteId,
-                SrsDocumentId = suite.SrsDocumentId,
+                SrsDocumentId = srsDocumentId,
                 Requirements = new List<TraceabilityRequirementRow>(),
             };
         }
@@ -128,7 +141,7 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
         return new TraceabilityMatrix
         {
             TestSuiteId = query.TestSuiteId,
-            SrsDocumentId = suite.SrsDocumentId,
+            SrsDocumentId = srsDocumentId,
             Requirements = rows,
             TotalRequirements = total,
             CoveredRequirements = covered,

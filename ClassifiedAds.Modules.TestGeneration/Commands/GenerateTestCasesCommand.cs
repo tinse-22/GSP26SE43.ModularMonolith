@@ -178,6 +178,20 @@ public class N8nGenerateTestsPayload
 
     /// <summary>Sent back by n8n in the x-callback-api-key header so BE can validate it.</summary>
     public string CallbackApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SRS requirements linked to this test suite. Present when the suite has a linked SRS document.
+    /// LLM should use these to populate coveredRequirementIds per test case.
+    /// </summary>
+    public List<N8nSrsRequirement> SrsRequirements { get; set; } = new();
+}
+
+public class N8nSrsRequirement
+{
+    public Guid Id { get; set; }
+    public string Code { get; set; }
+    public string Title { get; set; }
+    public string Description { get; set; }
 }
 
 public class N8nOrderedEndpoint

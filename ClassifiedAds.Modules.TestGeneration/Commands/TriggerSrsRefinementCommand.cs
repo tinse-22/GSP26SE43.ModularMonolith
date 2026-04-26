@@ -38,6 +38,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
     private readonly IRepository<SrsAnalysisJob, Guid> _jobRepository;
     private readonly IN8nIntegrationService _n8nService;
     private readonly N8nIntegrationOptions _n8nOptions;
+    private readonly Dispatcher _dispatcher;
     private readonly ILogger<TriggerSrsRefinementCommandHandler> _logger;
 
     private const string WebhookName = "refine-srs-requirements";
@@ -49,6 +50,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         IRepository<SrsAnalysisJob, Guid> jobRepository,
         IN8nIntegrationService n8nService,
         IOptions<N8nIntegrationOptions> n8nOptions,
+        Dispatcher dispatcher,
         ILogger<TriggerSrsRefinementCommandHandler> logger)
     {
         _srsDocumentRepository = srsDocumentRepository;
@@ -57,6 +59,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         _jobRepository = jobRepository;
         _n8nService = n8nService;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
+        _dispatcher = dispatcher;
         _logger = logger;
     }
 
@@ -131,42 +134,44 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
             UserAnswers = userAnswers,
         };
 
-        var callbackUrl = $"{_n8nOptions.BeBaseUrl}/api/srs-refinement-callback/{job.Id}";
-
         var payload = new N8nSrsRefinementPayload
         {
             SrsDocumentId = doc.Id,
             JobId = job.Id,
             RequirementsToRefine = new List<N8nSrsRequirementToRefine> { requirementToRefine },
-            CallbackUrl = callbackUrl,
-            CallbackApiKey = _n8nOptions.CallbackApiKey,
         };
 
-        // Trigger n8n
+        // Call n8n synchronously — wait for full result (like LLM suggestion / analyze-srs flow)
         job.Status = SrsAnalysisJobStatus.Triggering;
         job.TriggeredAt = DateTimeOffset.UtcNow;
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        var result = await _n8nService.TriggerWebhookWithResultAsync(WebhookName, payload, cancellationToken);
-
-        if (result.Success)
+        SrsRefinementCallbackRequest callbackData;
+        try
         {
-            job.Status = SrsAnalysisJobStatus.Processing;
-            _logger.LogInformation(
-                "SRS refinement job triggered. JobId={JobId}, RequirementId={RequirementId}",
-                job.Id, command.RequirementId);
+            callbackData = await _n8nService.TriggerWebhookAsync<N8nSrsRefinementPayload, SrsRefinementCallbackRequest>(
+                WebhookName, payload, cancellationToken);
         }
-        else
+        catch (Exception ex)
         {
             job.Status = SrsAnalysisJobStatus.Failed;
-            job.ErrorMessage = result.ErrorMessage;
+            job.ErrorMessage = ex.Message;
             job.CompletedAt = DateTimeOffset.UtcNow;
-            _logger.LogError(
-                "Failed to trigger SRS refinement via n8n. JobId={JobId}, Error={Error}",
-                job.Id, result.ErrorMessage);
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            _logger.LogError(ex, "SRS refinement n8n call failed. JobId={JobId}", job.Id);
+            throw;
         }
 
-        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        // n8n returned results — process them via the callback handler
+        await _dispatcher.DispatchAsync(new ProcessSrsRefinementCallbackCommand
+        {
+            JobId = job.Id,
+            RefinedRequirements = callbackData?.RefinedRequirements ?? new List<N8nSrsRefinedRequirement>(),
+        }, cancellationToken);
+
+        _logger.LogInformation(
+            "SRS refinement completed synchronously. JobId={JobId}, RequirementId={RequirementId}",
+            job.Id, command.RequirementId);
     }
 }
 
@@ -182,11 +187,6 @@ public class N8nSrsRefinementPayload
     [JsonPropertyName("requirementsToRefine")]
     public List<N8nSrsRequirementToRefine> RequirementsToRefine { get; set; } = new();
 
-    [JsonPropertyName("callbackUrl")]
-    public string CallbackUrl { get; set; }
-
-    [JsonPropertyName("callbackApiKey")]
-    public string CallbackApiKey { get; set; }
 }
 
 public class N8nSrsRequirementToRefine

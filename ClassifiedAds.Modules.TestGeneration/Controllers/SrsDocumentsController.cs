@@ -277,6 +277,32 @@ public class SrsDocumentsController : ControllerBase
         return Accepted(new { JobId = command.JobId, Message = "Refinement job queued. Poll /analysis-jobs/{jobId} for status." });
     }
 
+    /// <summary>FE-18A: Update SRS document (e.g. link to a test suite).</summary>
+    [Authorize(Permissions.AddSrsDocument)]
+    [HttpPatch("{srsDocumentId:guid}")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(SrsDocumentModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SrsDocumentModel>> Update(
+        Guid projectId,
+        Guid srsDocumentId,
+        [FromBody] UpdateSrsDocumentRequest request)
+    {
+        var command = new UpdateSrsDocumentCommand
+        {
+            ProjectId = projectId,
+            SrsDocumentId = srsDocumentId,
+            CurrentUserId = _currentUser.UserId,
+            TestSuiteId = request.TestSuiteId,
+            ClearTestSuiteId = request.ClearTestSuiteId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        return Ok(command.Result);
+    }
+
     /// <summary>FE-18A: Soft-delete SRS document.</summary>
     [Authorize(Permissions.DeleteSrsDocument)]
     [HttpDelete("{srsDocumentId:guid}")]
