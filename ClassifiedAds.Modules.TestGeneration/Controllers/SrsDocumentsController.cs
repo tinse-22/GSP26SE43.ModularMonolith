@@ -85,6 +85,7 @@ public class SrsDocumentsController : ControllerBase
             ProjectId = projectId,
             CurrentUserId = _currentUser.UserId,
             Title = request.Title,
+            TestSuiteId = request.TestSuiteId,
             SourceType = request.SourceType,
             RawContent = request.RawContent,
             StorageFileId = request.StorageFileId,

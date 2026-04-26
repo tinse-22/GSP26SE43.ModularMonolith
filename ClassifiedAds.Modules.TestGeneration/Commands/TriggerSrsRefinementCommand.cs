@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +39,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
     private readonly IRepository<SrsAnalysisJob, Guid> _jobRepository;
     private readonly IN8nIntegrationService _n8nService;
     private readonly N8nIntegrationOptions _n8nOptions;
+    private readonly Dispatcher _dispatcher;
     private readonly ILogger<TriggerSrsRefinementCommandHandler> _logger;
 
     private const string WebhookName = "refine-srs-requirements";
@@ -49,6 +51,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         IRepository<SrsAnalysisJob, Guid> jobRepository,
         IN8nIntegrationService n8nService,
         IOptions<N8nIntegrationOptions> n8nOptions,
+        Dispatcher dispatcher,
         ILogger<TriggerSrsRefinementCommandHandler> logger)
     {
         _srsDocumentRepository = srsDocumentRepository;
@@ -57,6 +60,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         _jobRepository = jobRepository;
         _n8nService = n8nService;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
+        _dispatcher = dispatcher;
         _logger = logger;
     }
 
@@ -156,6 +160,11 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
                 "SRS refinement job triggered. JobId={JobId}, RequirementId={RequirementId}",
                 job.Id, command.RequirementId);
         }
+        else if (ShouldUseLocalFallback(result))
+        {
+            await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
+            return;
+        }
         else
         {
             job.Status = SrsAnalysisJobStatus.Failed;
@@ -167,6 +176,97 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         }
 
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task ApplyLocalFallbackAsync(
+        SrsAnalysisJob job,
+        SrsRequirement req,
+        IReadOnlyCollection<SrsRequirementClarification> clarifications,
+        CancellationToken cancellationToken)
+    {
+        var refinedRequirement = new N8nSrsRefinedRequirement
+        {
+            RequirementId = req.Id,
+            RequirementCode = req.RequirementCode,
+            RefinedConstraints = BuildRefinedConstraints(req, clarifications),
+            RefinedConfidenceScore = Math.Min(1f, Math.Max(req.ConfidenceScore ?? 0.65f, 0.65f) + (clarifications.Count * 0.1f)),
+            RefinementSummary = "Local fallback refinement applied because the SRS refinement webhook is unavailable.",
+        };
+
+        _logger.LogWarning(
+            "SRS refinement webhook is unavailable. Falling back to local refinement. JobId={JobId}, RequirementId={RequirementId}",
+            job.Id,
+            req.Id);
+
+        await _dispatcher.DispatchAsync(new ProcessSrsRefinementCallbackCommand
+        {
+            JobId = job.Id,
+            RefinedRequirements = new List<N8nSrsRefinedRequirement> { refinedRequirement },
+        }, cancellationToken);
+    }
+
+    private static bool ShouldUseLocalFallback(WebhookTriggerResult result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        return ContainsIgnoreCase(result.ErrorMessage, "Status: NotFound")
+            || ContainsIgnoreCase(result.ErrorDetails, "not registered");
+    }
+
+    private static string BuildRefinedConstraints(
+        SrsRequirement requirement,
+        IReadOnlyCollection<SrsRequirementClarification> clarifications)
+    {
+        var refined = TryDeserializeConstraints(requirement.RefinedConstraints)
+            ?? TryDeserializeConstraints(requirement.TestableConstraints)
+            ?? new List<Dictionary<string, string>>();
+
+        if (refined.Count == 0)
+        {
+            refined.Add(new Dictionary<string, string>
+            {
+                ["constraint"] = requirement.Description ?? requirement.Title,
+                ["priority"] = "High",
+            });
+        }
+
+        foreach (var clarification in clarifications.Where(x => x.IsAnswered))
+        {
+            refined.Add(new Dictionary<string, string>
+            {
+                ["constraint"] = $"Clarified: {clarification.Question} => {clarification.UserAnswer}",
+                ["priority"] = clarification.IsCritical ? "High" : "Medium",
+            });
+        }
+
+        return JsonSerializer.Serialize(refined);
+    }
+
+    private static List<Dictionary<string, string>> TryDeserializeConstraints(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<Dictionary<string, string>>>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool ContainsIgnoreCase(string input, string value)
+    {
+        return !string.IsNullOrWhiteSpace(input)
+            && !string.IsNullOrWhiteSpace(value)
+            && input.Contains(value, StringComparison.OrdinalIgnoreCase);
     }
 }
 
