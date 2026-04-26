@@ -1,4 +1,5 @@
 ﻿using ClassifiedAds.Contracts.TestGeneration.DTOs;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -22,12 +23,14 @@ public class TestExecutionReadGatewayServiceTests
     private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
     private readonly Mock<IRepository<TestCaseDependency, Guid>> _dependencyRepoMock;
     private readonly Mock<IApiTestOrderGateService> _orderGateServiceMock;
+    private readonly Mock<IProjectOwnershipGatewayService> _projectOwnershipGatewayServiceMock;
     private readonly TestExecutionReadGatewayService _service;
 
     private readonly Guid _suiteId = Guid.NewGuid();
     private readonly Guid _projectId = Guid.NewGuid();
     private readonly Guid _apiSpecId = Guid.NewGuid();
     private readonly Guid _userId = Guid.NewGuid();
+    private const string ProjectName = "Checkout API";
 
     public TestExecutionReadGatewayServiceTests()
     {
@@ -38,6 +41,10 @@ public class TestExecutionReadGatewayServiceTests
         _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
         _dependencyRepoMock = new Mock<IRepository<TestCaseDependency, Guid>>();
         _orderGateServiceMock = new Mock<IApiTestOrderGateService>();
+        _projectOwnershipGatewayServiceMock = new Mock<IProjectOwnershipGatewayService>();
+        _projectOwnershipGatewayServiceMock
+            .Setup(x => x.GetProjectNameAsync(_projectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ProjectName);
 
         _service = new TestExecutionReadGatewayService(
             _suiteRepoMock.Object,
@@ -46,7 +53,8 @@ public class TestExecutionReadGatewayServiceTests
             _expectationRepoMock.Object,
             _variableRepoMock.Object,
             _dependencyRepoMock.Object,
-            _orderGateServiceMock.Object);
+            _orderGateServiceMock.Object,
+            _projectOwnershipGatewayServiceMock.Object);
     }
 
     [Fact]
@@ -79,6 +87,7 @@ public class TestExecutionReadGatewayServiceTests
         // Assert
         result.TestSuiteId.Should().Be(_suiteId);
         result.ProjectId.Should().Be(_projectId);
+        result.ProjectName.Should().Be(ProjectName);
         result.CreatedById.Should().Be(_userId);
         result.Status.Should().Be("Ready");
     }

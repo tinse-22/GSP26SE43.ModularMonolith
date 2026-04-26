@@ -73,7 +73,7 @@ public class ExcelReportRenderer : IReportRenderer
         sheet.Cell(row, 1).Style.Font.Underline = XLFontUnderlineValues.Single;
         row++;
 
-        AddSummaryRow(sheet, ref row, "Coverage Percent", document.Coverage?.CoveragePercent / 100.0);
+        AddSummaryRow(sheet, ref row, "Coverage Percent", document.Coverage?.CoveragePercent / 100m);
         sheet.Cell(row - 1, 2).Style.NumberFormat.Format = "0.00%";
         AddSummaryRow(sheet, ref row, "Tested Endpoints", document.Coverage?.TestedEndpoints);
         AddSummaryRow(sheet, ref row, "Total Endpoints", document.Coverage?.TotalEndpoints);
@@ -297,7 +297,7 @@ public class ExcelReportRenderer : IReportRenderer
         sheet.Range(rowIdx, 1, rowIdx, 1).Merge();
         rowIdx++;
 
-        sheet.Cell(rowIdx, 1).Value = "Path";
+        sheet.Cell(rowIdx, 1).Value = "Endpoint";
         sheet.Cell(rowIdx, 1).Style.Font.Bold = true;
         sheet.Cell(rowIdx, 1).Style.Fill.BackgroundColor = XLColor.LightPink;
         rowIdx++;

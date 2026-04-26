@@ -10,4 +10,8 @@ public interface IProjectOwnershipGatewayService
         Guid projectId,
         Guid userId,
         CancellationToken ct = default);
+
+    Task<string> GetProjectNameAsync(
+        Guid projectId,
+        CancellationToken ct = default);
 }

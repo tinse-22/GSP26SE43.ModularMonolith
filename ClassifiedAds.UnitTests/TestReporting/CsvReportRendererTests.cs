@@ -19,7 +19,7 @@ public class CsvReportRendererTests
         // Assert
         result.FileName.Should().EndWith(".csv");
         result.ContentType.Should().Be("text/csv; charset=utf-8");
-        content.Should().Contain("Section,Key,Value,TestCaseId,EndpointId,OrderIndex,Name,Status,HttpStatusCode,DurationMs,Details");
+        content.Should().Contain("Section,Key,Value,TestCaseId,EndpointId,OrderIndex,Name,Status,HttpStatusCode,DurationMs,TotalAttempts,Details");
         content.IndexOf("summary,suiteName,Checkout Regression", StringComparison.Ordinal)
             .Should().BeLessThan(content.IndexOf("failure_distribution,STATUS_CODE_MISMATCH,1", StringComparison.Ordinal));
         content.IndexOf("failure_distribution,STATUS_CODE_MISMATCH,1", StringComparison.Ordinal)

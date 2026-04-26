@@ -20,6 +20,7 @@ internal static class ReportTestData
     public static readonly Guid TestCaseIdOrders = Guid.Parse("88888888-8888-8888-8888-888888888888");
     public static readonly Guid TestCaseIdUsers = Guid.Parse("99999999-9999-9999-9999-999999999999");
     public static readonly Guid TestCaseIdPayments = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    public const string ProjectName = "Checkout API";
 
     public static TestRunReportContextDto CreateContext()
     {
@@ -27,6 +28,7 @@ internal static class ReportTestData
         {
             TestSuiteId = SuiteId,
             ProjectId = ProjectId,
+            ProjectName = ProjectName,
             ApiSpecId = ApiSpecId,
             CreatedById = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             SuiteName = "Checkout Regression",
@@ -249,6 +251,45 @@ internal static class ReportTestData
                     ResponseTimePassed = false,
                 },
             },
+            Attempts = new[]
+            {
+                new TestRunExecutionAttemptDto
+                {
+                    ExecutionAttemptId = Guid.Parse("abababab-abab-abab-abab-abababababab"),
+                    TestCaseId = TestCaseIdOrders,
+                    AttemptNumber = 1,
+                    Status = "Passed",
+                    RetryReason = null,
+                    SkippedCause = null,
+                    DurationMs = 430,
+                    StartedAt = new DateTimeOffset(2026, 3, 16, 12, 0, 0, TimeSpan.Zero),
+                    CompletedAt = new DateTimeOffset(2026, 3, 16, 12, 0, 1, TimeSpan.Zero),
+                    FailureReasons = Array.Empty<ReportValidationFailureDto>(),
+                },
+                new TestRunExecutionAttemptDto
+                {
+                    ExecutionAttemptId = Guid.Parse("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc"),
+                    TestCaseId = TestCaseIdUsers,
+                    AttemptNumber = 1,
+                    Status = "Failed",
+                    RetryReason = "token=raw-retry-token",
+                    SkippedCause = "cookie=secret-cookie",
+                    DurationMs = 1200,
+                    StartedAt = new DateTimeOffset(2026, 3, 16, 12, 0, 2, TimeSpan.Zero),
+                    CompletedAt = new DateTimeOffset(2026, 3, 16, 12, 0, 4, TimeSpan.Zero),
+                    FailureReasons = new[]
+                    {
+                        new ReportValidationFailureDto
+                        {
+                            Code = "STATUS_CODE_MISMATCH",
+                            Message = "Expected 200 but got 500",
+                            Target = "statusCode",
+                            Expected = "200",
+                            Actual = "500",
+                        },
+                    },
+                },
+            },
         };
     }
 
@@ -301,7 +342,7 @@ internal static class ReportTestData
             },
             UncoveredPaths = new List<string>
             {
-                "/api/payments",
+                "GET /api/payments",
             },
             CalculatedAt = new DateTimeOffset(2026, 3, 16, 12, 3, 0, TimeSpan.Zero),
         };
@@ -325,6 +366,7 @@ internal static class ReportTestData
                 ["STATUS_CODE_MISMATCH"] = 1,
             },
             RecentRuns = CreateContext().RecentRuns,
+            Attempts = CreateContext().Attempts,
             Cases = new[]
             {
                 new TestRunReportCaseDocumentModel

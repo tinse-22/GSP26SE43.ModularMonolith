@@ -35,6 +35,7 @@ public class TestReportGeneratorTests
             TestRunId = ReportTestData.RunId,
         };
         TestReport persistedReport = null;
+        TestRunReportDocumentModel capturedDocument = null;
 
         reportRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(unitOfWorkMock.Object);
         unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
@@ -63,6 +64,7 @@ public class TestReportGeneratorTests
 
         jsonRendererMock.SetupGet(x => x.Format).Returns(ReportFormat.JSON);
         jsonRendererMock.Setup(x => x.RenderAsync(It.IsAny<TestRunReportDocumentModel>(), It.IsAny<CancellationToken>()))
+            .Callback<TestRunReportDocumentModel, CancellationToken>((document, _) => capturedDocument = document)
             .ReturnsAsync(new RenderedReportFile
             {
                 Content = System.Text.Encoding.UTF8.GetBytes("{\"ok\":true}"),
@@ -122,6 +124,9 @@ public class TestReportGeneratorTests
         existingCoverage.ByMethod.Should().Contain("\"POST\":100");
         existingCoverage.ByTag.Should().Contain("\"payments\":0");
         existingCoverage.UncoveredPaths.Should().Contain("/api/payments");
+        capturedDocument.Should().NotBeNull();
+        capturedDocument.FileBaseName.Should().StartWith($"@{ReportTestData.ProjectName}-TestPlan-_-TestCase-v1.0-detailed-");
+        capturedDocument.Attempts.Should().HaveCount(2);
         jsonRendererMock.Verify(x => x.RenderAsync(It.IsAny<TestRunReportDocumentModel>(), It.IsAny<CancellationToken>()), Times.Once);
         storageGatewayMock.Verify(x => x.UploadAsync(It.IsAny<StorageUploadFileRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         coverageRepositoryMock.Verify(x => x.UpdateAsync(existingCoverage, It.IsAny<CancellationToken>()), Times.Once);

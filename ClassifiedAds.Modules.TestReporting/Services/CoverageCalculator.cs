@@ -42,7 +42,7 @@ public class CoverageCalculator : ICoverageCalculator
             ByTag = BuildByTag(descriptors, testedEndpointIds),
             UncoveredPaths = descriptors
                 .Where(x => !testedEndpointIds.Contains(x.EndpointId))
-                .Select(x => x.Path)
+                .Select(FormatEndpointDisplay)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -177,6 +177,18 @@ public class CoverageCalculator : ICoverageCalculator
         return string.IsNullOrWhiteSpace(value)
             ? "UNKNOWN"
             : value.Trim().ToUpperInvariant();
+    }
+
+    private static string FormatEndpointDisplay(ScopedEndpointDescriptor descriptor)
+    {
+        if (descriptor == null || string.IsNullOrWhiteSpace(descriptor.Path))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(descriptor.Method) || string.Equals(descriptor.Method, "UNKNOWN", StringComparison.OrdinalIgnoreCase)
+            ? descriptor.Path
+            : $"{descriptor.Method} {descriptor.Path}";
     }
 
     private static string NormalizePath(string value)

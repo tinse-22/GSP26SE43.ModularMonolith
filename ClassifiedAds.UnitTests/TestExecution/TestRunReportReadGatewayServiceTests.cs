@@ -164,6 +164,7 @@ public class TestRunReportReadGatewayServiceTests
         // Assert
         result.TestSuiteId.Should().Be(_suiteId);
         result.ProjectId.Should().Be(_projectId);
+        result.ProjectName.Should().Be("Checkout API");
         result.ApiSpecId.Should().Be(_apiSpecId);
         result.CreatedById.Should().Be(_ownerId);
         result.SuiteName.Should().Be("Report Suite");
@@ -299,6 +300,7 @@ public class TestRunReportReadGatewayServiceTests
             {
                 TestSuiteId = _suiteId,
                 ProjectId = _projectId,
+                ProjectName = "Checkout API",
                 ApiSpecId = _apiSpecId,
                 CreatedById = _ownerId,
                 Status = "Ready",
@@ -338,6 +340,7 @@ public class TestRunReportReadGatewayServiceTests
                 {
                     TestSuiteId = _suiteId,
                     ProjectId = _projectId,
+                    ProjectName = "Checkout API",
                     ApiSpecId = _apiSpecId,
                     CreatedById = _ownerId,
                     Status = "Ready",

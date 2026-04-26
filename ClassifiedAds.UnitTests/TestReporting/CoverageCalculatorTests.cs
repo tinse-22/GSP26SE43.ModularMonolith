@@ -31,6 +31,6 @@ public class CoverageCalculatorTests
             ["payments"] = 0m,
             ["users"] = 100m,
         });
-        result.UncoveredPaths.Should().Equal("/api/payments");
+        result.UncoveredPaths.Should().Equal("GET /api/payments");
     }
 }
