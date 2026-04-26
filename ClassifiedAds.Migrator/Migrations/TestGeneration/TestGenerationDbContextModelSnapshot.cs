@@ -18,7 +18,7 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("testgen")
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.4")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -272,6 +272,313 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.ToTable("OutboxMessages", "testgen");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsAnalysisJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorDetails")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("JobType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset>("QueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("RequirementsExtracted")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("SrsDocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset?>("TriggeredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TriggeredById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QueuedAt");
+
+                    b.HasIndex("SrsDocumentId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TriggeredById");
+
+                    b.HasIndex("SrsDocumentId", "QueuedAt");
+
+                    b.ToTable("SrsAnalysisJobs", "testgen");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("AnalysisStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset?>("AnalyzedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("ParsedMarkdown")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RawContent")
+                        .HasColumnType("text");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("StorageFileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TestSuiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TestSuiteId");
+
+                    b.HasIndex("ProjectId", "AnalysisStatus");
+
+                    b.HasIndex("ProjectId", "IsDeleted");
+
+                    b.ToTable("SrsDocuments", "testgen");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Ambiguities")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Assumptions")
+                        .HasColumnType("jsonb");
+
+                    b.Property<float?>("ConfidenceScore")
+                        .HasColumnType("real");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("EndpointId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsReviewed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MappedEndpointPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<float?>("RefinedConfidenceScore")
+                        .HasColumnType("real");
+
+                    b.Property<string>("RefinedConstraints")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("RefinementRound")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("RequirementCode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("RequirementType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("SrsDocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TestableConstraints")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EndpointId");
+
+                    b.HasIndex("ReviewedById");
+
+                    b.HasIndex("SrsDocumentId");
+
+                    b.HasIndex("SrsDocumentId", "DisplayOrder");
+
+                    b.HasIndex("SrsDocumentId", "RequirementCode")
+                        .IsUnique();
+
+                    b.ToTable("SrsRequirements", "testgen");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirementClarification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("AmbiguitySource")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("AnsweredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AnsweredById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsAnswered")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsCritical")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Question")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("SrsRequirementId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SuggestedOptions")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserAnswer")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnsweredById");
+
+                    b.HasIndex("SrsRequirementId");
+
+                    b.HasIndex("SrsRequirementId", "DisplayOrder");
+
+                    b.HasIndex("SrsRequirementId", "IsAnswered");
+
+                    b.ToTable("SrsRequirementClarifications", "testgen");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
                 {
                     b.Property<Guid>("Id")
@@ -319,6 +626,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<int>("OrderIndex")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("PrimaryRequirementId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Priority")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -355,6 +665,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.HasIndex("EndpointId");
 
                     b.HasIndex("LastModifiedById");
+
+                    b.HasIndex("PrimaryRequirementId");
 
                     b.HasIndex("TestSuiteId");
 
@@ -574,6 +886,46 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsUnique();
 
                     b.ToTable("TestCaseRequests", "testgen");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseRequirementLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MappingRationale")
+                        .HasColumnType("text");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("SrsRequirementId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TestCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<float?>("TraceabilityScore")
+                        .HasColumnType("real");
+
+                    b.Property<DateTimeOffset?>("UpdatedDateTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SrsRequirementId");
+
+                    b.HasIndex("TestCaseId", "SrsRequirementId")
+                        .IsUnique();
+
+                    b.ToTable("TestCaseRequirementLinks", "testgen");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseVariable", b =>
@@ -894,6 +1246,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<string>("SelectedEndpointIds")
                         .HasColumnType("jsonb");
 
+                    b.Property<Guid?>("SrsDocumentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -920,6 +1275,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.HasIndex("LastModifiedById");
 
                     b.HasIndex("ProjectId");
+
+                    b.HasIndex("SrsDocumentId");
 
                     b.HasIndex("Status");
 
@@ -1010,8 +1367,46 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("Suggestion");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsAnalysisJob", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsDocument", "SrsDocument")
+                        .WithMany("AnalysisJobs")
+                        .HasForeignKey("SrsDocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SrsDocument");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsDocument", "SrsDocument")
+                        .WithMany("Requirements")
+                        .HasForeignKey("SrsDocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SrsDocument");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirementClarification", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", "SrsRequirement")
+                        .WithMany("Clarifications")
+                        .HasForeignKey("SrsRequirementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SrsRequirement");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
                 {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", null)
+                        .WithMany()
+                        .HasForeignKey("PrimaryRequirementId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestSuite", "TestSuite")
                         .WithMany("TestCases")
                         .HasForeignKey("TestSuiteId")
@@ -1073,6 +1468,25 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("TestCase");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseRequirementLink", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", "SrsRequirement")
+                        .WithMany("TestCaseLinks")
+                        .HasForeignKey("SrsRequirementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", "TestCase")
+                        .WithMany("RequirementLinks")
+                        .HasForeignKey("TestCaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SrsRequirement");
+
+                    b.Navigation("TestCase");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCaseVariable", b =>
                 {
                     b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", "TestCase")
@@ -1117,6 +1531,16 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("TestSuite");
                 });
 
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestSuite", b =>
+                {
+                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsDocument", "SrsDocument")
+                        .WithMany()
+                        .HasForeignKey("SrsDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("SrsDocument");
+                });
+
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestSuiteVersion", b =>
                 {
                     b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.TestSuite", "TestSuite")
@@ -1126,6 +1550,20 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsRequired();
 
                     b.Navigation("TestSuite");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsDocument", b =>
+                {
+                    b.Navigation("AnalysisJobs");
+
+                    b.Navigation("Requirements");
+                });
+
+            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", b =>
+                {
+                    b.Navigation("Clarifications");
+
+                    b.Navigation("TestCaseLinks");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
@@ -1139,6 +1577,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("Expectation");
 
                     b.Navigation("Request");
+
+                    b.Navigation("RequirementLinks");
 
                     b.Navigation("Variables");
                 });

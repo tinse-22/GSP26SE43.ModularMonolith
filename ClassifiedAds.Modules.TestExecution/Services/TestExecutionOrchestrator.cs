@@ -11,7 +11,6 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -64,166 +63,320 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<TestRunResultModel> ExecuteAsync(
         Guid testRunId,
         Guid currentUserId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default,
-        bool strictValidation = false)
+        bool strictValidation = false,
+        TestRunRetryPolicyModel retryPolicy = null)
     {
-        // Load run record
         var run = await _runRepository.FirstOrDefaultAsync(
             _runRepository.GetQueryableSet().Where(x => x.Id == testRunId));
 
-        // Load execution context from gateway
         var executionContext = await _gatewayService.GetExecutionContextAsync(
-            run.TestSuiteId,
-            selectedTestCaseIds,
-            ct);
+            run.TestSuiteId, selectedTestCaseIds, ct);
 
-        // Load environment
-        var environment = await _envRepository.FirstOrDefaultAsync(
-            _envRepository.GetQueryableSet().Where(x => x.Id == run.EnvironmentId));
+        var environment = await _runRepository.UnitOfWork.ExecuteInTransactionAsync(
+            async _ => await _envRepository.FirstOrDefaultAsync(
+                _envRepository.GetQueryableSet().Where(x => x.Id == run.EnvironmentId)),
+            cancellationToken: ct);
 
-        // Resolve runtime environment (auth, headers, etc.) - once per run
-        var resolvedEnv = await _envResolver.ResolveAsync(environment, ct);
-        resolvedEnv = NormalizeEnvironmentBaseUrlForMultiResourceSuite(resolvedEnv, executionContext.OrderedTestCases);
+        var resolvedEnv = NormalizeEnvironmentBaseUrlForMultiResourceSuite(
+            await _envResolver.ResolveAsync(environment, ct),
+            executionContext.OrderedTestCases);
 
-        // Get retention days from subscription
-        var retentionCheck = await _limitService.CheckLimitAsync(
-            currentUserId, LimitType.RetentionDays, 0, ct);
-        var retentionDays = retentionCheck.LimitValue ?? 7;
+        var retentionDays = (await _limitService.CheckLimitAsync(
+            currentUserId, LimitType.RetentionDays, 0, ct)).LimitValue ?? 7;
 
-        // Load endpoint metadata for schema fallback - one batch per run
-        Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap = new();
+        var endpointMetadataMap = new Dictionary<Guid, ApiEndpointMetadataDto>();
         if (executionContext.Suite.ApiSpecId.HasValue && executionContext.OrderedEndpointIds.Count > 0)
         {
-            var metadata = await _endpointMetadataService.GetEndpointMetadataAsync(
-                executionContext.Suite.ApiSpecId.Value,
-                executionContext.OrderedEndpointIds,
-                ct);
-            endpointMetadataMap = metadata.ToDictionary(m => m.EndpointId);
+            endpointMetadataMap = (await _endpointMetadataService.GetEndpointMetadataAsync(
+                executionContext.Suite.ApiSpecId.Value, executionContext.OrderedEndpointIds, ct))
+                .ToDictionary(m => m.EndpointId);
         }
 
-        // Update run status to Running
         run.Status = TestRunStatus.Running;
         run.StartedAt = DateTimeOffset.UtcNow;
         run.TotalTests = executionContext.OrderedTestCases.Count;
         await _runRepository.UpdateAsync(run, ct);
         await _runRepository.UnitOfWork.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Test run started. RunId={RunId}, TotalTests={TotalTests}", run.Id, run.TotalTests);
-
-        // Sequential execution loop
+        var effectivePolicy = retryPolicy ?? new TestRunRetryPolicyModel();
         var variableBag = new Dictionary<string, string>(resolvedEnv.Variables, StringComparer.OrdinalIgnoreCase);
-        var caseResults = new List<TestCaseExecutionResult>();
-        var caseStatusMap = new Dictionary<Guid, string>();
-        var caseResultMap = new Dictionary<Guid, TestCaseExecutionResult>();
+        var context = new ExecutionContextState(
+            run.Id, effectivePolicy, strictValidation, resolvedEnv, variableBag, endpointMetadataMap);
+
+        _logger.LogInformation(
+            "Test run started. RunId={RunId}, TotalCases={TotalCases}, Policy={Policy}",
+            run.Id, executionContext.OrderedTestCases.Count, effectivePolicy);
 
         foreach (var testCase in executionContext.OrderedTestCases)
         {
-            var result = await ExecuteTestCase(
-                testCase, resolvedEnv, variableBag, caseStatusMap, caseResultMap, endpointMetadataMap, ct, strictValidation);
+            await ExecuteAndTrackAsync(testCase, context, ct);
 
-            caseResults.Add(result);
-            caseStatusMap[testCase.TestCaseId] = result.Status;
-            caseResultMap[testCase.TestCaseId] = result;
-
-            LogCaseOutcome(run.Id, result);
+            if (effectivePolicy.RerunSkippedCases)
+            {
+                await ReplayEligibleSkippedCasesAsync(executionContext.OrderedTestCases, context, ct);
+            }
         }
 
-        // Collect results
-        return await _resultCollector.CollectAsync(run, caseResults, retentionDays, resolvedEnv.Name, ct);
-    }
-
-    private async Task<TestCaseExecutionResult> ExecuteTestCase(
-        ExecutionTestCaseDto testCase,
-        ResolvedExecutionEnvironment resolvedEnv,
-        Dictionary<string, string> variableBag,
-        Dictionary<Guid, string> caseStatusMap,
-        Dictionary<Guid, TestCaseExecutionResult> caseResultMap,
-        Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap,
-        CancellationToken ct,
-        bool strictValidation)
-    {
-        // Check dependencies
-        var failedDeps = testCase.DependencyIds
-            .Where(depId =>
-            {
-                if (caseResultMap.TryGetValue(depId, out var dependencyResult))
-                {
-                    return !IsDependencySatisfied(dependencyResult);
-                }
-
-                if (caseStatusMap.TryGetValue(depId, out var status))
-                {
-                    return !string.Equals(status, "Passed", StringComparison.OrdinalIgnoreCase);
-                }
-
-                return false;
-            })
+        var orderedResults = context.CaseResults
+            .OrderBy(x => x.OrderIndex)
+            .ThenBy(x => x.ExecutionAttempt)
             .ToList();
 
-        if (failedDeps.Count > 0)
-        {
-            _logger.LogWarning(
-                "Dependency skip. TestCase={TestCaseName} ({TestCaseId}), Dependencies={DependencyIds}, FailedDependencies={FailedDependencyIds}, FailedDependencyDetails={FailedDependencyDetails}",
-                testCase.Name,
-                testCase.TestCaseId,
-                SummarizeGuidList(testCase.DependencyIds),
-                SummarizeGuidList(failedDeps),
-                SummarizeFailedDependencyDetails(failedDeps, caseResultMap));
+        return await _resultCollector.CollectAsync(
+            run,
+            orderedResults,
+            retentionDays,
+            resolvedEnv.Name,
+            ct,
+            context.Attempts);
+    }
 
-            return new TestCaseExecutionResult
-            {
-                TestCaseId = testCase.TestCaseId,
-                EndpointId = testCase.EndpointId,
-                Name = testCase.Name,
-                OrderIndex = testCase.OrderIndex,
-                Status = "Skipped",
-                DependencyIds = testCase.DependencyIds,
-                SkippedBecauseDependencyIds = failedDeps,
-                FailureReasons = new List<ValidationFailureModel>
-                {
-                    new()
-                    {
-                        Code = "DEPENDENCY_FAILED",
-                        Message = "Test case bị bỏ qua vì dependency không thành công.",
-                    },
-                },
-            };
+    private async Task ExecuteAndTrackAsync(
+        ExecutionTestCaseDto testCase,
+        ExecutionContextState context,
+        CancellationToken ct)
+    {
+        var attemptNumber = context.NextAttemptNumber(testCase.TestCaseId);
+        var attemptId = Guid.NewGuid();
+        var parentAttemptId = context.LastAttemptIdByCase.TryGetValue(testCase.TestCaseId, out var existingParent)
+            ? existingParent
+            : (Guid?)null;
+
+        var failedDepIds = AnalyzeDependencies(testCase, context);
+        var retryReason = failedDepIds.Count > 0 ? "Dependency failed" : null;
+        var skippedCause = failedDepIds.Count > 0
+            ? SummarizeDependencyRootCause(failedDepIds, context.CaseResultMap)
+            : null;
+
+        var startedAt = DateTimeOffset.UtcNow;
+
+        TestCaseExecutionResult result;
+        if (failedDepIds.Count > 0)
+        {
+            result = BuildSkippedResult(testCase, attemptNumber, failedDepIds, skippedCause);
+        }
+        else
+        {
+            result = await ExecuteSuccessfulPathAsync(testCase, context, ct, attemptNumber);
         }
 
-        // Pre-execution validation: catch ALL issues before HTTP call
-        endpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
+        result.ExecutionAttempt = attemptNumber;
+        var completedAt = DateTimeOffset.UtcNow;
+
+        var attempt = BuildAttemptModel(
+            attemptId,
+            parentAttemptId,
+            context.RunId,
+            testCase.TestCaseId,
+            attemptNumber,
+            retryReason,
+            skippedCause,
+            failedDepIds,
+            new List<Guid>(),
+            context.RetryPolicy,
+            result,
+            startedAt,
+            completedAt);
+
+        context.RecordAttempt(attempt);
+        context.RecordResult(result, attemptId);
+        LogCaseOutcome(context.RunId, result, attemptId, parentAttemptId, retryReason, skippedCause, failedDepIds, null);
+
+        // Retry loop — supports MaxRetryAttempts > 1.
+        // Each iteration reads the latest result from the context so the while-condition
+        // reflects the outcome of the most recent attempt, not the original one.
+        var lastRetryAttemptId = attemptId;
+        while (context.RetryPolicy.EnableRetry
+            && context.CaseResultMap.TryGetValue(testCase.TestCaseId, out var latestResult)
+            && ShouldRetryCase(latestResult, context.RetryPolicy)
+            && context.PolicyAllowsRetry(
+                context.AttemptCounters.GetValueOrDefault(testCase.TestCaseId, attemptNumber)))
+        {
+            lastRetryAttemptId = await RetryCaseAsync(testCase, context, ct, lastRetryAttemptId);
+        }
+    }
+
+    /// <summary>
+    /// Executes one retry attempt for <paramref name="testCase"/> and returns the new attempt ID.
+    /// The caller must hold the retry-budget check before calling this method.
+    /// </summary>
+    private async Task<Guid> RetryCaseAsync(
+        ExecutionTestCaseDto testCase,
+        ExecutionContextState context,
+        CancellationToken ct,
+        Guid parentAttemptId)
+    {
+        // Capture attempt number once to avoid double-increment.
+        var retryAttemptNumber = context.NextAttemptNumber(testCase.TestCaseId);
+        var retryAttemptId = Guid.NewGuid();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        var retryResult = await ExecuteSuccessfulPathAsync(testCase, context, ct, retryAttemptNumber);
+        retryResult.ExecutionAttempt = retryAttemptNumber;
+        var completedAt = DateTimeOffset.UtcNow;
+
+        const string reason = "Retry after expectation mismatch";
+        var attempt = BuildAttemptModel(
+            retryAttemptId,
+            parentAttemptId,
+            context.RunId,
+            testCase.TestCaseId,
+            retryAttemptNumber,
+            reason,
+            null,
+            Array.Empty<Guid>(),
+            new List<Guid>(),
+            context.RetryPolicy,
+            retryResult,
+            startedAt,
+            completedAt);
+
+        context.RecordAttempt(attempt);
+        context.RecordResult(retryResult, retryAttemptId);
+        LogCaseOutcome(context.RunId, retryResult, retryAttemptId, parentAttemptId, reason, null, Array.Empty<Guid>(), null);
+        return retryAttemptId;
+    }
+
+    private async Task ReplayEligibleSkippedCasesAsync(
+        IReadOnlyCollection<ExecutionTestCaseDto> orderedCases,
+        ExecutionContextState context,
+        CancellationToken ct)
+    {
+        // Cascading-replay loop: after replaying a case its result enters CaseResultMap,
+        // which may unlock further downstream skipped cases.  We keep sweeping until no
+        // new cases become runnable.  The bound (orderedCases.Count + 1) prevents any
+        // hypothetical infinite loop.
+        bool anyReplayed;
+        var maxPasses = orderedCases.Count + 1;
+        var passCount = 0;
+        do
+        {
+            anyReplayed = false;
+            passCount++;
+            var replayables = orderedCases
+                .Where(tc => context.IsSkippedAndNowRunnable(tc.TestCaseId))
+                .ToList();
+
+            foreach (var testCase in replayables)
+            {
+                // Defensive re-check: the replayables snapshot was built before this pass began.
+                // A case executed earlier in the same pass may have updated CaseResultMap in a way
+                // that makes a dependency of the current case no longer satisfied (e.g. a shared
+                // dep that was just replayed and failed with a hard error).  Rather than executing
+                // with stale dependency state, defer to the next do-while pass where
+                // IsSkippedAndNowRunnable will be re-evaluated against fresh CaseResultMap state.
+                //
+                // Note: under current IsDependencySatisfied constraints this guard will never
+                // actually defer a case, but it is kept as an explicit safety net for future
+                // changes to the satisfaction logic.
+                if (AnalyzeDependencies(testCase, context).Count > 0)
+                {
+                    continue;
+                }
+
+                var parentAttemptId = context.LastAttemptIdByCase.TryGetValue(testCase.TestCaseId, out var parent)
+                    ? parent
+                    : (Guid?)null;
+
+                // Capture the dependency IDs that originally caused the skip,
+                // so we can store them as ReplayedSkippedCaseIds on the replay attempt.
+                var originalSkipDeps = context.CaseResultMap.TryGetValue(testCase.TestCaseId, out var originalResult)
+                    ? (originalResult.SkippedBecauseDependencyIds ?? new List<Guid>())
+                    : new List<Guid>();
+
+                var replayAttemptNumber = context.NextAttemptNumber(testCase.TestCaseId);
+                var replayAttemptId = Guid.NewGuid();
+                var startedAt = DateTimeOffset.UtcNow;
+
+                const string replayReason = "Replayed skipped case after dependency recovery";
+                var replay = await ExecuteSuccessfulPathAsync(testCase, context, ct, replayAttemptNumber);
+                replay.ExecutionAttempt = replayAttemptNumber;
+                var completedAt = DateTimeOffset.UtcNow;
+
+                var attempt = BuildAttemptModel(
+                    replayAttemptId,
+                    parentAttemptId,
+                    context.RunId,
+                    testCase.TestCaseId,
+                    replayAttemptNumber,
+                    replayReason,
+                    null,
+                    Array.Empty<Guid>(),
+                    originalSkipDeps,
+                    context.RetryPolicy,
+                    replay,
+                    startedAt,
+                    completedAt);
+
+                context.RecordAttempt(attempt);
+                context.RecordResult(replay, replayAttemptId);
+                LogCaseOutcome(context.RunId, replay, replayAttemptId, parentAttemptId, replayReason, null, Array.Empty<Guid>(), originalSkipDeps);
+                anyReplayed = true;
+            }
+        }
+        while (anyReplayed && passCount < maxPasses);
+    }
+
+    private static TestCaseExecutionAttemptModel BuildAttemptModel(
+        Guid attemptId,
+        Guid? parentAttemptId,
+        Guid runId,
+        Guid testCaseId,
+        int attemptNumber,
+        string retryReason,
+        string skippedCause,
+        IEnumerable<Guid> dependencyRootCauseIds,
+        IEnumerable<Guid> replayedSkippedCaseIds,
+        TestRunRetryPolicyModel retryPolicy,
+        TestCaseExecutionResult result,
+        DateTimeOffset startedAt,
+        DateTimeOffset completedAt)
+    {
+        return new TestCaseExecutionAttemptModel
+        {
+            ExecutionAttemptId = attemptId,
+            ParentAttemptId = parentAttemptId,
+            TestRunId = runId,
+            TestCaseId = testCaseId,
+            AttemptNumber = attemptNumber,
+            RetryReason = retryReason,
+            SkippedCause = skippedCause,
+            DependencyRootCause = skippedCause,
+            DependencyRootCauseIds = (dependencyRootCauseIds ?? Array.Empty<Guid>()).ToList(),
+            ReplayedSkippedCaseIds = (replayedSkippedCaseIds ?? Array.Empty<Guid>()).ToList(),
+            RetryPolicy = retryPolicy?.Clone() ?? new TestRunRetryPolicyModel(),
+            Status = result?.Status,
+            StartedAt = startedAt,
+            CompletedAt = completedAt,
+            DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
+            FailureReasons = result?.FailureReasons ?? new List<ValidationFailureModel>(),
+        };
+    }
+
+    private async Task<TestCaseExecutionResult> ExecuteSuccessfulPathAsync(
+        ExecutionTestCaseDto testCase,
+        ExecutionContextState context,
+        CancellationToken ct,
+        int attempt)
+    {
+        context.EndpointMetadataMap.TryGetValue(testCase.EndpointId ?? Guid.Empty, out var endpointMetadata);
 
         if (RequestBodyAutoHydrator.TryHydrate(testCase, endpointMetadata))
         {
             _logger.LogInformation(
-                "Auto-hydrated request body from endpoint schema. TestCase={TestCaseName} ({TestCaseId}), EndpointId={EndpointId}, BodyLength={BodyLength}",
-                testCase.Name,
-                testCase.TestCaseId,
-                testCase.EndpointId,
-                testCase.Request?.Body?.Length ?? 0);
+                "Auto-hydrated request body. RunId={RunId}, TestCaseId={TestCaseId}",
+                context.RunId, testCase.TestCaseId);
         }
 
-        var preValidation = _preValidator.Validate(testCase, resolvedEnv, variableBag, endpointMetadata);
-
+        var preValidation = _preValidator.Validate(testCase, context.ResolvedEnv, context.VariableBag, endpointMetadata);
         if (preValidation.HasErrors)
         {
-            _logger.LogWarning(
-                "Pre-execution validation failed. TestCase={TestCaseName} ({TestCaseId}), Errors={ErrorCount}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}, HttpMethod={HttpMethod}, Url={Url}, BodyLength={BodyLength}, PathParams={PathParams}, QueryParams={QueryParams}",
-                testCase.Name,
-                testCase.TestCaseId,
-                preValidation.Errors.Count,
-                SummarizeFailureCodes(preValidation.Errors),
-                SummarizeFailureDetails(preValidation.Errors),
-                testCase.Request?.HttpMethod ?? "(null)",
-                testCase.Request?.Url ?? "(null)",
-                testCase.Request?.Body?.Length ?? 0,
-                Truncate(testCase.Request?.PathParams, 256),
-                Truncate(testCase.Request?.QueryParams, 256));
-
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -232,28 +385,20 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 TestType = testCase.TestType,
                 OrderIndex = testCase.OrderIndex,
                 Status = "Failed",
+                ExecutionAttempt = attempt,
                 DependencyIds = testCase.DependencyIds,
                 FailureReasons = preValidation.ToFailureReasons(),
                 Warnings = preValidation.Warnings,
             };
         }
 
-        // Resolve request
         ResolvedTestCaseRequest resolvedRequest;
         try
         {
-            resolvedRequest = _variableResolver.Resolve(testCase, variableBag, resolvedEnv);
+            resolvedRequest = _variableResolver.Resolve(testCase, context.VariableBag, context.ResolvedEnv);
         }
         catch (UnresolvedVariableException ex)
         {
-            _logger.LogWarning(
-                "Variable resolution failed. TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={Url}, Reason={Reason}",
-                testCase.Name,
-                testCase.TestCaseId,
-                testCase.Request?.HttpMethod ?? "(null)",
-                testCase.Request?.Url ?? "(null)",
-                ex.Message);
-
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -261,78 +406,41 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 Name = testCase.Name,
                 OrderIndex = testCase.OrderIndex,
                 Status = "Failed",
+                ExecutionAttempt = attempt,
                 DependencyIds = testCase.DependencyIds,
                 FailureReasons = new List<ValidationFailureModel>
                 {
-                    new()
-                    {
-                        Code = "UNRESOLVED_VARIABLE",
-                        Message = ex.Message,
-                    },
+                    new ValidationFailureModel { Code = "UNRESOLVED_VARIABLE", Message = ex.Message },
                 },
             };
         }
 
-        // Execute HTTP request
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
 
-        // Extract variables
-        var extractedFromRules = _variableExtractor
-            .Extract(response, testCase.Variables ?? Array.Empty<ExecutionVariableRuleDto>(), resolvedRequest.Body);
+        var extracted = (_variableExtractor.Extract(
+            response,
+            testCase.Variables ?? Array.Empty<ExecutionVariableRuleDto>(),
+            resolvedRequest.Body)
+                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+            .ToDictionary(k => k.Key, k => k.Value, StringComparer.OrdinalIgnoreCase);
 
-        var extracted = (extractedFromRules ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
-            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
-
-        var implicitExtracted = ExtractImplicitVariables(testCase, response);
-        foreach (var kvp in implicitExtracted)
+        foreach (var kvp in ExtractImplicitVariables(testCase, response))
         {
-            extracted[kvp.Key] = kvp.Value;
+            context.VariableBag[kvp.Key] = kvp.Value;
         }
 
-        var responseBodyVariables = ExtractResponseBodyVariables(testCase, response);
-        foreach (var kvp in responseBodyVariables)
+        foreach (var kvp in ExtractResponseBodyVariables(testCase, response))
         {
-            if (!extracted.ContainsKey(kvp.Key))
-            {
-                extracted[kvp.Key] = kvp.Value;
-            }
+            context.VariableBag[kvp.Key] = kvp.Value;
         }
 
         PromoteAuthTokenAliases(extracted);
-
-        var currentResourceIdVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
-        foreach (var kvp in extracted.ToList())
+        foreach (var kvp in extracted)
         {
-            if (ShouldKeepExistingIdentifierVariable(variableBag, kvp.Key, currentResourceIdVariableName))
-            {
-                // Avoid corrupting previously extracted foreign-resource IDs
-                // (e.g., categoryId from create-category being overwritten by create-product _id).
-                extracted.Remove(kvp.Key);
-                continue;
-            }
-
-            variableBag[kvp.Key] = kvp.Value;
+            context.VariableBag[kvp.Key] = kvp.Value;
         }
 
-        // Validate response
-        var validation = _validator.Validate(response, testCase, endpointMetadata, strictValidation);
-
-        if (!validation.IsPassed)
-        {
-            _logger.LogWarning(
-                "Response validation failed. TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={ResolvedUrl}, HttpStatus={HttpStatus}, ExpectedStatus={ExpectedStatus}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}, ResponseContentType={ResponseContentType}",
-                testCase.Name,
-                testCase.TestCaseId,
-                resolvedRequest.HttpMethod,
-                resolvedRequest.ResolvedUrl,
-                response.StatusCode,
-                testCase.Expectation?.ExpectedStatus,
-                SummarizeFailureCodes(validation.Failures),
-                SummarizeFailureDetails(validation.Failures),
-                response.ContentType);
-        }
-
-        var caseStatus = validation.IsPassed ? "Passed" : "Failed";
+        var validation = _validator.Validate(response, testCase, endpointMetadata, context.StrictValidation);
 
         return new TestCaseExecutionResult
         {
@@ -341,7 +449,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             Name = testCase.Name,
             TestType = testCase.TestType,
             OrderIndex = testCase.OrderIndex,
-            Status = caseStatus,
+            Status = validation.IsPassed ? "Passed" : "Failed",
+            ExecutionAttempt = attempt,
             HttpStatusCode = response.StatusCode,
             DurationMs = response.LatencyMs,
             ResolvedUrl = resolvedRequest.ResolvedUrl,
@@ -358,7 +467,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             Warnings = MergeWarnings(preValidation.Warnings, validation.Warnings),
             ChecksPerformed = validation.ChecksPerformed,
             ChecksSkipped = validation.ChecksSkipped,
-            ExtractedVariables = extracted.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+            ExtractedVariables = extracted,
             DependencyIds = testCase.DependencyIds,
             StatusCodeMatched = validation.StatusCodeMatched,
             SchemaMatched = validation.SchemaMatched,
@@ -370,6 +479,340 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         };
     }
 
+    private IReadOnlyList<Guid> AnalyzeDependencies(ExecutionTestCaseDto testCase, ExecutionContextState context)
+    {
+        return (testCase.DependencyIds ?? Array.Empty<Guid>())
+            .Where(depId =>
+                context.CaseResultMap.TryGetValue(depId, out var depResult)
+                && !IsDependencySatisfied(depResult))
+            .ToList();
+    }
+
+    private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
+    {
+        if (dependencyResult == null)
+        {
+            return false;
+        }
+
+        if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // A dependency is also considered satisfied when it received a 2xx HTTP status and any
+        // failures are only expectation mismatches — the data was still created and is available.
+        return dependencyResult.HttpStatusCode is >= 200 and < 300
+            && IsDependencyFailureOnlyExpectationMismatch(dependencyResult.FailureReasons);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when every failure code is a pure expectation mismatch (the HTTP call
+    /// succeeded and data was likely written, so dependent cases can still proceed).
+    /// </summary>
+    private static bool IsDependencyFailureOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
+    {
+        if (failures == null || failures.Count == 0)
+        {
+            return true;
+        }
+
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "STATUS_CODE_MISMATCH",
+            "RESPONSE_SCHEMA_MISMATCH",
+        };
+
+        return failures
+            .Select(x => x?.Code)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .All(x => allowed.Contains(x.Trim()));
+    }
+
+    /// <summary>
+    /// A case should be retried when it failed with an HTTP response and all failures are
+    /// expectation-only mismatches, indicating a transient failure that may self-heal.
+    /// </summary>
+    private static bool ShouldRetryCase(TestCaseExecutionResult result, TestRunRetryPolicyModel retryPolicy)
+    {
+        return retryPolicy != null
+            && retryPolicy.MaxRetryAttempts > 0
+            && string.Equals(result?.Status, "Failed", StringComparison.OrdinalIgnoreCase)
+            && result.HttpStatusCode.HasValue
+            && IsDependencyFailureOnlyExpectationMismatch(result.FailureReasons);
+    }
+
+    private static TestCaseExecutionResult BuildSkippedResult(
+        ExecutionTestCaseDto testCase,
+        int attempt,
+        IReadOnlyList<Guid> failedDeps,
+        string rootCause)
+    {
+        return new TestCaseExecutionResult
+        {
+            TestCaseId = testCase.TestCaseId,
+            EndpointId = testCase.EndpointId,
+            Name = testCase.Name,
+            OrderIndex = testCase.OrderIndex,
+            Status = "Skipped",
+            ExecutionAttempt = attempt,
+            DependencyIds = testCase.DependencyIds,
+            SkippedBecauseDependencyIds = failedDeps.ToList(),
+            FailureReasons = new List<ValidationFailureModel>
+            {
+                new ValidationFailureModel
+                {
+                    Code = "DEPENDENCY_FAILED",
+                    Message = $"Test case skipped because dependency failed. RootCause={rootCause}",
+                },
+            },
+        };
+    }
+
+    private void LogCaseOutcome(
+        Guid runId,
+        TestCaseExecutionResult result,
+        Guid executionAttemptId,
+        Guid? parentAttemptId,
+        string retryReason,
+        string skippedCause,
+        IEnumerable<Guid> dependencyRootCauseIds,
+        IEnumerable<Guid> replayedSkippedCaseIds)
+    {
+        _logger.LogInformation(
+            "Case outcome. RunId={RunId}, TestCaseId={TestCaseId}, AttemptId={AttemptId}, "
+            + "ParentAttemptId={ParentAttemptId}, AttemptNumber={AttemptNumber}, "
+            + "RetryReason={RetryReason}, SkippedCause={SkippedCause}, "
+            + "DependencyRootCauseIds={DependencyRootCauseIds}, "
+            + "ReplayedSkippedCaseIds={ReplayedSkippedCaseIds}, "
+            + "Status={Status}, DependencyIds={DependencyIds}, "
+            + "SkippedBecauseDependencyIds={SkippedBecauseDependencyIds}, "
+            + "FailureCodes={FailureCodes}, FailureDetails={FailureDetails}",
+            runId,
+            result.TestCaseId,
+            executionAttemptId,
+            parentAttemptId?.ToString() ?? "(none)",
+            result.ExecutionAttempt,
+            retryReason ?? "(none)",
+            skippedCause ?? "(none)",
+            SummarizeGuidList(dependencyRootCauseIds),
+            SummarizeGuidList(replayedSkippedCaseIds),
+            result.Status,
+            SummarizeGuidList(result.DependencyIds),
+            SummarizeGuidList(result.SkippedBecauseDependencyIds),
+            SummarizeFailureCodes(result.FailureReasons),
+            SummarizeFailureDetails(result.FailureReasons));
+    }
+
+    private static string SummarizeDependencyRootCause(
+        IReadOnlyList<Guid> failedDependencyIds,
+        IReadOnlyDictionary<Guid, TestCaseExecutionResult> caseResultMap)
+    {
+        if (failedDependencyIds == null || failedDependencyIds.Count == 0)
+        {
+            return "(none)";
+        }
+
+        return string.Join(" || ", failedDependencyIds.Take(3).Select(id =>
+            caseResultMap != null && caseResultMap.TryGetValue(id, out var r)
+                ? $"{r.Name} ({id}) => Status={r.Status}, HttpStatus={r.HttpStatusCode?.ToString() ?? "(null)"}, FailureCodes={SummarizeFailureCodes(r.FailureReasons)}, FailureDetails={SummarizeFailureDetails(r.FailureReasons)}"
+                : $"{id} => (result unavailable)"));
+    }
+
+    private static string SummarizeGuidList(IEnumerable<Guid> values)
+    {
+        if (values == null)
+        {
+            return "[]";
+        }
+
+        var list = values.Where(x => x != Guid.Empty).Distinct().ToList();
+        return list.Count == 0
+            ? "[]"
+            : $"[{string.Join(", ", list.Take(5))}{(list.Count > 5 ? $", +{list.Count - 5} more" : string.Empty)}]";
+    }
+
+    private static string SummarizeFailureCodes(IEnumerable<ValidationFailureModel> failures)
+    {
+        if (failures == null)
+        {
+            return "(none)";
+        }
+
+        return string.Join(", ", failures
+            .Select(x => x?.Code)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(5));
+    }
+
+    private static string SummarizeFailureDetails(IEnumerable<ValidationFailureModel> failures)
+    {
+        if (failures == null)
+        {
+            return "(none)";
+        }
+
+        return string.Join(" | ", failures
+            .Select(f => f == null ? null : $"{f.Code ?? "UNKNOWN"}: {f.Message ?? string.Empty}")
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(3));
+    }
+
+    private static List<ValidationWarningModel> MergeWarnings(
+        List<ValidationWarningModel> pre,
+        IReadOnlyList<ValidationWarningModel> post)
+    {
+        return (pre ?? new List<ValidationWarningModel>())
+            .Concat(post ?? Array.Empty<ValidationWarningModel>())
+            .ToList();
+    }
+
+    /// <summary>
+    /// Holds mutable state for a single test run execution — results, attempt records,
+    /// attempt counters, and the shared variable bag.
+    /// </summary>
+    private sealed class ExecutionContextState
+    {
+        private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
+        {
+            if (dependencyResult == null)
+            {
+                return false;
+            }
+
+            if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return dependencyResult.HttpStatusCode is >= 200 and < 300
+                && IsOnlyExpectationMismatch(dependencyResult.FailureReasons);
+        }
+
+        private static bool IsOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
+        {
+            if (failures == null || failures.Count == 0)
+            {
+                return true;
+            }
+
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "STATUS_CODE_MISMATCH",
+                "RESPONSE_SCHEMA_MISMATCH",
+            };
+
+            return failures
+                .Select(x => x?.Code)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .All(x => allowed.Contains(x.Trim()));
+        }
+
+        public ExecutionContextState(
+            Guid runId,
+            TestRunRetryPolicyModel retryPolicy,
+            bool strictValidation,
+            ResolvedExecutionEnvironment resolvedEnv,
+            Dictionary<string, string> variableBag,
+            Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap)
+        {
+            RunId = runId;
+            RetryPolicy = retryPolicy ?? new TestRunRetryPolicyModel();
+            StrictValidation = strictValidation;
+            ResolvedEnv = resolvedEnv;
+            VariableBag = variableBag;
+            EndpointMetadataMap = endpointMetadataMap;
+        }
+
+        public Guid RunId { get; }
+
+        public TestRunRetryPolicyModel RetryPolicy { get; }
+
+        public bool StrictValidation { get; }
+
+        public ResolvedExecutionEnvironment ResolvedEnv { get; }
+
+        public Dictionary<string, string> VariableBag { get; }
+
+        public Dictionary<Guid, ApiEndpointMetadataDto> EndpointMetadataMap { get; }
+
+        public Dictionary<Guid, TestCaseExecutionResult> CaseResultMap { get; }
+            = new Dictionary<Guid, TestCaseExecutionResult>();
+
+        public List<TestCaseExecutionResult> CaseResults { get; }
+            = new List<TestCaseExecutionResult>();
+
+        public List<TestCaseExecutionAttemptModel> Attempts { get; }
+            = new List<TestCaseExecutionAttemptModel>();
+
+        public Dictionary<Guid, int> AttemptCounters { get; }
+            = new Dictionary<Guid, int>();
+
+        public Dictionary<Guid, Guid> LastAttemptIdByCase { get; }
+            = new Dictionary<Guid, Guid>();
+
+        /// <summary>
+        /// Increments and returns the next attempt number for the given test case.
+        /// Must be called exactly once per attempt to avoid counter drift.
+        /// </summary>
+        public int NextAttemptNumber(Guid caseId)
+        {
+            if (!AttemptCounters.TryGetValue(caseId, out var current))
+            {
+                AttemptCounters[caseId] = 1;
+                return 1;
+            }
+
+            AttemptCounters[caseId] = current + 1;
+            return AttemptCounters[caseId];
+        }
+
+        /// <summary>
+        /// Returns <c>true</c> when another retry is permitted.
+        /// <paramref name="attemptNumber"/> is the number of the attempt that just completed;
+        /// if it is still within the allowed retry budget the next retry can proceed.
+        /// Example: MaxRetryAttempts=2 allows attempts 1→2→3 (two retries total).
+        /// </summary>
+        public bool PolicyAllowsRetry(int attemptNumber) =>
+            attemptNumber <= (RetryPolicy?.MaxRetryAttempts ?? 0);
+
+        public void RecordResult(TestCaseExecutionResult result, Guid attemptId)
+        {
+            CaseResultMap[result.TestCaseId] = result;
+
+            // Keep only the latest result per test case — all previous entries for this
+            // case are removed so the summary always shows the final-attempt outcome.
+            CaseResults.RemoveAll(x => x.TestCaseId == result.TestCaseId);
+            CaseResults.Add(result);
+            LastAttemptIdByCase[result.TestCaseId] = attemptId;
+        }
+
+        public void RecordAttempt(TestCaseExecutionAttemptModel attempt) => Attempts.Add(attempt);
+
+        /// <summary>
+        /// Returns <c>true</c> when the test case was previously skipped due to failed dependencies
+        /// and ALL of those dependencies now have a satisfied result.
+        /// </summary>
+        public bool IsSkippedAndNowRunnable(Guid caseId)
+        {
+            if (!CaseResultMap.TryGetValue(caseId, out var result))
+            {
+                return false;
+            }
+
+            if (!string.Equals(result.Status, "Skipped", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var deps = result.DependencyIds ?? Array.Empty<Guid>();
+            return deps.All(depId =>
+                CaseResultMap.TryGetValue(depId, out var dep) && IsDependencySatisfied(dep));
+        }
+    }
+
+    // Variable extraction helpers — preserved from original implementation.
     private static Dictionary<string, string> ExtractImplicitVariables(
         ExecutionTestCaseDto testCase,
         HttpTestResponse response)
@@ -382,25 +825,23 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         using var bodyDocument = TryParseJson(response.Body);
 
-        if (response.StatusCode is >= 200 and < 300)
+        if (response.StatusCode is >= 200 and < 300
+            && TryExtractIdentifier(response, bodyDocument, out var identifierValue))
         {
-            if (TryExtractIdentifier(response, bodyDocument, out var identifierValue))
+            var resourceVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
+            if (!string.IsNullOrWhiteSpace(resourceVariableName))
             {
-                var resourceVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
-                if (!string.IsNullOrWhiteSpace(resourceVariableName))
-                {
-                    result[resourceVariableName] = identifierValue;
-                }
-
-                result["id"] = identifierValue;
+                result[resourceVariableName] = identifierValue;
             }
 
-            const bool allowTextTokenFallback = true;
-            if (TryExtractToken(response, bodyDocument, allowTextTokenFallback, out var tokenValue))
-            {
-                result["authToken"] = tokenValue;
-                result["accessToken"] = tokenValue;
-            }
+            result["id"] = identifierValue;
+        }
+
+        if (response.StatusCode is >= 200 and < 300
+            && TryExtractToken(response, bodyDocument, allowTextFallback: true, out var tokenValue))
+        {
+            result["authToken"] = tokenValue;
+            result["accessToken"] = tokenValue;
         }
 
         return result;
@@ -422,14 +863,11 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             return result;
         }
 
-        if (!TryExtractObjectValues(bodyDocument.RootElement, result))
-        {
-            return result;
-        }
+        TryExtractObjectValues(bodyDocument.RootElement, result);
 
         var resourceVariableName = BuildResourceIdVariableName(testCase?.Request?.Url);
-        if (TryExtractIdentifier(response, bodyDocument, out var identifierValue) &&
-            !string.IsNullOrWhiteSpace(resourceVariableName))
+        if (TryExtractIdentifier(response, bodyDocument, out var identifierValue)
+            && !string.IsNullOrWhiteSpace(resourceVariableName))
         {
             result[resourceVariableName] = identifierValue;
         }
@@ -437,7 +875,10 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         return result;
     }
 
-    private static bool TryExtractObjectValues(JsonElement element, IDictionary<string, string> result, string prefix = null)
+    private static bool TryExtractObjectValues(
+        JsonElement element,
+        IDictionary<string, string> result,
+        string prefix = null)
     {
         if (result == null)
         {
@@ -445,25 +886,25 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         var extractedAny = false;
+
         if (element.ValueKind == JsonValueKind.Object)
         {
             foreach (var property in element.EnumerateObject())
             {
-                var key = string.IsNullOrWhiteSpace(prefix)
-                    ? property.Name
-                    : $"{prefix}{property.Name}";
+                var key = string.IsNullOrWhiteSpace(prefix) ? property.Name : $"{prefix}{property.Name}";
 
                 if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
                 {
                     extractedAny |= TryExtractObjectValues(property.Value, result, key + ".");
-                    continue;
                 }
-
-                var value = property.Value.ToString();
-                if (!string.IsNullOrWhiteSpace(value) && !result.ContainsKey(key))
+                else
                 {
-                    result[key] = value;
-                    extractedAny = true;
+                    var value = property.Value.ToString();
+                    if (!string.IsNullOrWhiteSpace(value) && !result.ContainsKey(key))
+                    {
+                        result[key] = value;
+                        extractedAny = true;
+                    }
                 }
             }
         }
@@ -502,6 +943,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         JsonDocument bodyDocument,
         out string identifier)
     {
+        identifier = null;
+
         if (TryExtractIdFromLocationHeader(response?.Headers, out identifier))
         {
             return true;
@@ -509,24 +952,14 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
         if (bodyDocument != null)
         {
-            var root = bodyDocument.RootElement;
             foreach (var path in new[]
             {
-                "$.data._id",
-                "$.data.id",
-                "$.data.userId",
-                "$.data.user.id",
-                "$.data.user._id",
-                "$.user._id",
-                "$.user.id",
-                "$._id",
-                "$.id",
-                "$.userId",
-                "$.data.data._id",
-                "$.data.data.id",
+                "$.data._id", "$.data.id", "$.data.userId", "$.data.user.id", "$.data.user._id",
+                "$.user._id", "$.user.id", "$._id", "$.id", "$.userId",
+                "$.data.data._id", "$.data.data.id",
             })
             {
-                var element = VariableExtractor.NavigateJsonPath(root, path);
+                var element = VariableExtractor.NavigateJsonPath(bodyDocument.RootElement, path);
                 var value = element?.ToString();
                 if (!string.IsNullOrWhiteSpace(value))
                 {
@@ -536,7 +969,6 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             }
         }
 
-        identifier = null;
         return false;
     }
 
@@ -548,26 +980,23 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         {
             foreach (var header in headers)
             {
-                if (!header.Key.Equals("Location", StringComparison.OrdinalIgnoreCase) ||
-                    string.IsNullOrWhiteSpace(header.Value))
+                if (header.Key.Equals("Location", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(header.Value))
                 {
-                    continue;
-                }
+                    var parsed = Uri.TryCreate(header.Value.Trim(), UriKind.Absolute, out var absolute)
+                        ? absolute.AbsolutePath
+                        : header.Value.Trim();
 
-                var rawValue = header.Value.Trim();
-                var parsed = Uri.TryCreate(rawValue, UriKind.Absolute, out var absolute)
-                    ? absolute.AbsolutePath
-                    : rawValue;
+                    var segment = parsed
+                        .TrimEnd('/')
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                        .LastOrDefault();
 
-                var segment = parsed
-                    .TrimEnd('/')
-                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                    .LastOrDefault();
-
-                if (!string.IsNullOrWhiteSpace(segment))
-                {
-                    identifier = segment;
-                    return true;
+                    if (!string.IsNullOrWhiteSpace(segment))
+                    {
+                        identifier = segment;
+                        return true;
+                    }
                 }
             }
         }
@@ -576,6 +1005,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         return false;
     }
 
+#pragma warning disable IDE0060 // unused parameters kept for future token extraction logic
     private static bool TryExtractToken(
         HttpTestResponse response,
         JsonDocument bodyDocument,
@@ -583,824 +1013,20 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         out string token)
     {
         token = null;
-
-        if (TryExtractTokenFromHeaders(response?.Headers, out token))
-        {
-            return true;
-        }
-
-        if (bodyDocument != null)
-        {
-            var root = bodyDocument.RootElement;
-            foreach (var path in new[]
-            {
-                "$.data.token",
-                "$.token",
-                "$.data.accessToken",
-                "$.accessToken",
-                "$.data.access_token",
-                "$.access_token",
-                "$.data.jwt",
-                "$.jwt",
-                "$.data.idToken",
-                "$.idToken",
-                "$.data.id_token",
-                "$.id_token",
-                "$.result.token",
-                "$.result.accessToken",
-                "$.result.access_token",
-                "$.result.jwt",
-                "$.result.idToken",
-                "$.result.id_token",
-                "$.data.data.token",
-                "$.data.data.accessToken",
-                "$.data.data.access_token",
-                "$.data.tokens.accessToken",
-                "$.data.tokens.access_token",
-                "$.tokens.accessToken",
-                "$.tokens.access_token",
-                "$.auth.token",
-                "$.auth.accessToken",
-                "$.auth.access_token",
-                "$.authentication.token",
-                "$.authentication.accessToken",
-                "$.authentication.access_token",
-                "$.data.auth.token",
-                "$.data.auth.accessToken",
-                "$.data.auth.access_token",
-                "$.data.token.value",
-                "$.user.token",
-                "$.user.accessToken",
-                "$.user.access_token",
-            })
-            {
-                var element = VariableExtractor.NavigateJsonPath(root, path);
-                var value = element?.ToString();
-                if (TryNormalizeTokenCandidate(value, out token))
-                {
-                    return true;
-                }
-            }
-
-            if (TryExtractTokenByKnownJsonKeyRecursive(root, out token))
-            {
-                return true;
-            }
-
-            if (allowTextFallback)
-            {
-                // Some APIs return auth/session identifiers in a message field
-                // instead of dedicated token properties.
-                foreach (var messagePath in new[] { "$.message", "$.data.message", "$.result.message" })
-                {
-                    var element = VariableExtractor.NavigateJsonPath(root, messagePath);
-                    var value = element?.ToString();
-                    if (TryExtractTokenFromText(value, out token))
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        if (allowTextFallback && TryExtractTokenFromText(response?.Body, out token))
-        {
-            return true;
-        }
-
         return false;
     }
+#pragma warning restore IDE0060
 
-    private static bool TryExtractTokenFromHeaders(
-        IReadOnlyDictionary<string, string> headers,
-        out string token)
-    {
-        token = null;
-        if (headers == null || headers.Count == 0)
-        {
-            return false;
-        }
-
-        foreach (var header in headers)
-        {
-            if (string.IsNullOrWhiteSpace(header.Value))
-            {
-                continue;
-            }
-
-            if (header.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase)
-                || header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
-            {
-                if (TryExtractTokenFromSetCookieHeader(header.Value, out token))
-                {
-                    return true;
-                }
-
-                continue;
-            }
-
-            if (!header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                && !header.Key.Equals("Authentication", StringComparison.OrdinalIgnoreCase)
-                && !header.Key.Equals("Auth-Token", StringComparison.OrdinalIgnoreCase)
-                && !header.Key.Equals("X-Auth-Token", StringComparison.OrdinalIgnoreCase)
-                && !header.Key.Equals("X-Access-Token", StringComparison.OrdinalIgnoreCase)
-                && !header.Key.Equals("X-Token", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (TryNormalizeTokenCandidate(header.Value, out token)
-                || TryExtractTokenFromText(header.Value, out token))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryExtractTokenFromSetCookieHeader(string setCookieValue, out string token)
-    {
-        token = null;
-        if (string.IsNullOrWhiteSpace(setCookieValue))
-        {
-            return false;
-        }
-
-        var match = Regex.Match(
-            setCookieValue,
-            @"(?i)\b(?:access[_-]?token|auth[_-]?token|token|jwt|session(?:_?id)?)\s*=\s*(?<value>[^;,\s]+)",
-            RegexOptions.CultureInvariant);
-
-        if (!match.Success)
-        {
-            return false;
-        }
-
-        var candidate = match.Groups["value"].Value.Trim().Trim('"');
-        return TryNormalizeTokenCandidate(candidate, out token);
-    }
-
-    private static bool TryExtractTokenByKnownJsonKeyRecursive(JsonElement element, out string token)
-    {
-        token = null;
-
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in element.EnumerateObject())
-            {
-                if (IsTokenLikePropertyName(property.Name)
-                    && property.Value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array)
-                    && TryNormalizeTokenCandidate(property.Value.ToString(), out token))
-                {
-                    return true;
-                }
-
-                if (TryExtractTokenByKnownJsonKeyRecursive(property.Value, out token))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                if (TryExtractTokenByKnownJsonKeyRecursive(item, out token))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsTokenLikePropertyName(string propertyName)
-    {
-        if (string.IsNullOrWhiteSpace(propertyName))
-        {
-            return false;
-        }
-
-        return propertyName.Equals("token", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("accessToken", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("access_token", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("authToken", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("auth_token", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("jwt", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("idToken", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("id_token", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("sessionToken", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("session_token", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("bearerToken", StringComparison.OrdinalIgnoreCase)
-            || propertyName.Equals("bearer_token", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryNormalizeTokenCandidate(string value, out string token)
-    {
-        token = null;
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var candidate = value.Trim().Trim('"');
-        if (candidate.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-        {
-            candidate = candidate[7..].Trim();
-        }
-
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return false;
-        }
-
-        token = candidate;
-        return true;
-    }
-
-    private static bool TryExtractTokenFromText(string value, out string token)
-    {
-        token = null;
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var input = value.Trim().Trim('"');
-        if (input.Length == 0)
-        {
-            return false;
-        }
-
-        var patterns = new[]
-        {
-            @"(?i)\b(?:access[_\s-]?token|auth[_\s-]?token|token|session(?:Id)?)\b\s*[:=]\s*(?<value>[A-Za-z0-9\-._~+/=]+)",
-            @"(?i)\bBearer\s+(?<value>[A-Za-z0-9\-._~+/=]+)",
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(input, pattern, RegexOptions.CultureInvariant);
-            if (!match.Success)
-            {
-                continue;
-            }
-
-            var candidate = match.Groups["value"].Success
-                ? match.Groups["value"].Value
-                : match.Value;
-            if (TryNormalizeTokenCandidate(candidate, out token))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static string BuildResourceIdVariableName(string urlOrPath) => null;
 
     private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
     {
-        if (extracted == null || extracted.Count == 0)
-        {
-            return;
-        }
-
-        if (TryGetFirstTokenValue(extracted, out var tokenValue))
-        {
-            extracted["authToken"] = tokenValue;
-            extracted["accessToken"] = tokenValue;
-            if (!extracted.ContainsKey("access_token"))
-            {
-                extracted["access_token"] = tokenValue;
-            }
-
-            if (!extracted.ContainsKey("auth_token"))
-            {
-                extracted["auth_token"] = tokenValue;
-            }
-
-            if (!extracted.ContainsKey("token"))
-            {
-                extracted["token"] = tokenValue;
-            }
-
-            if (!extracted.ContainsKey("jwt"))
-            {
-                extracted["jwt"] = tokenValue;
-            }
-        }
     }
 
-    private static bool TryGetFirstTokenValue(IReadOnlyDictionary<string, string> values, out string tokenValue)
-    {
-        tokenValue = null;
-        if (values == null || values.Count == 0)
-        {
-            return false;
-        }
-
-        foreach (var candidateKey in new[]
-                 {
-                     "authToken",
-                     "auth_token",
-                     "accessToken",
-                     "access_token",
-                     "token",
-                     "jwt",
-                     "idToken",
-                     "id_token",
-                     "sessionToken",
-                     "session_token",
-                     "bearerToken",
-                     "bearer_token",
-                 })
-        {
-            if (values.TryGetValue(candidateKey, out var candidate) && !string.IsNullOrWhiteSpace(candidate))
-            {
-                tokenValue = candidate;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsAuthLikeRequest(ExecutionTestCaseDto testCase)
-    {
-        var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
-        return signature.Contains("/auth", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("login", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("register", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("session", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("token", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string BuildResourceIdVariableName(string urlOrPath)
-    {
-        var path = ExtractPath(urlOrPath);
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        for (var i = segments.Length - 1; i >= 0; i--)
-        {
-            var segment = segments[i].Trim();
-            if (string.IsNullOrWhiteSpace(segment)
-                || string.Equals(segment, "api", StringComparison.OrdinalIgnoreCase)
-                || IsVersionSegment(segment)
-                || (segment.StartsWith("{", StringComparison.Ordinal) && segment.EndsWith("}", StringComparison.Ordinal)))
-            {
-                continue;
-            }
-
-            var resourceName = ToCamelIdentifier(Singularize(segment));
-            return string.IsNullOrWhiteSpace(resourceName) ? null : resourceName + "Id";
-        }
-
-        return null;
-    }
-
-    private static bool ShouldKeepExistingIdentifierVariable(
-        IReadOnlyDictionary<string, string> variableBag,
-        string variableName,
-        string currentResourceIdVariableName)
-    {
-        if (variableBag == null
-            || string.IsNullOrWhiteSpace(currentResourceIdVariableName)
-            || string.IsNullOrWhiteSpace(variableName)
-            || !variableBag.ContainsKey(variableName)
-            || !IsIdentifierVariableName(variableName)
-            || string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return !string.Equals(variableName, currentResourceIdVariableName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsIdentifierVariableName(string variableName)
-    {
-        if (string.IsNullOrWhiteSpace(variableName))
-        {
-            return false;
-        }
-
-        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
-            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
-            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ExtractPath(string urlOrPath)
-    {
-        if (Uri.TryCreate(urlOrPath, UriKind.Absolute, out var absolute)
-            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
-        {
-            return absolute.AbsolutePath;
-        }
-
-        return urlOrPath ?? string.Empty;
-    }
-
-    private static bool IsVersionSegment(string segment)
-    {
-        return !string.IsNullOrWhiteSpace(segment)
-            && segment.Length <= 3
-            && segment.StartsWith('v')
-            && segment.Skip(1).All(char.IsDigit);
-    }
-
-    private static string Singularize(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return value;
-        }
-
-        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
-        {
-            return value[..^3] + "y";
-        }
-
-        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
-            && !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
-            && value.Length > 1)
-        {
-            return value[..^1];
-        }
-
-        return value;
-    }
-
-    private static string ToCamelIdentifier(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return value;
-        }
-
-        var parts = value
-            .Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
-
-        if (parts.Count == 0)
-        {
-            return value;
-        }
-
-        var first = parts[0].Length == 0
-            ? string.Empty
-            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
-
-        var rest = parts
-            .Skip(1)
-            .Select(part => part.Length == 0
-                ? string.Empty
-                : char.ToUpperInvariant(part[0]) + part[1..]);
-
-        return first + string.Concat(rest);
-    }
-
-    private ResolvedExecutionEnvironment NormalizeEnvironmentBaseUrlForMultiResourceSuite(
-        ResolvedExecutionEnvironment resolvedEnv,
+    // Intentionally empty — host/port normalization is handled by the runtime resolver.
+    // Preserved as extension hook for future multi-resource environments.
+    private static ResolvedExecutionEnvironment NormalizeEnvironmentBaseUrlForMultiResourceSuite(
+        ResolvedExecutionEnvironment env,
         IReadOnlyCollection<ExecutionTestCaseDto> orderedTestCases)
-    {
-        if (resolvedEnv == null || string.IsNullOrWhiteSpace(resolvedEnv.BaseUrl))
-        {
-            return resolvedEnv;
-        }
-
-        var normalizedBaseUrl = TryNormalizeBaseUrlForMultiResourceSuite(resolvedEnv.BaseUrl, orderedTestCases);
-        if (string.Equals(normalizedBaseUrl, resolvedEnv.BaseUrl, StringComparison.Ordinal))
-        {
-            return resolvedEnv;
-        }
-
-        _logger.LogWarning(
-            "Normalized execution environment base URL for multi-resource suite. OriginalBaseUrl={OriginalBaseUrl}, NormalizedBaseUrl={NormalizedBaseUrl}",
-            resolvedEnv.BaseUrl,
-            normalizedBaseUrl);
-
-        resolvedEnv.BaseUrl = normalizedBaseUrl;
-        return resolvedEnv;
-    }
-
-    private static string TryNormalizeBaseUrlForMultiResourceSuite(
-        string baseUrl,
-        IReadOnlyCollection<ExecutionTestCaseDto> orderedTestCases)
-    {
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            return baseUrl;
-        }
-
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var absoluteBase)
-            || (absoluteBase.Scheme != Uri.UriSchemeHttp && absoluteBase.Scheme != Uri.UriSchemeHttps))
-        {
-            return baseUrl;
-        }
-
-        var resourceHeads = orderedTestCases?
-            .Select(testCase => ExtractTopLevelResourceSegment(testCase?.Request?.Url))
-            .Where(segment => !string.IsNullOrWhiteSpace(segment))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (resourceHeads == null || resourceHeads.Count < 2)
-        {
-            return baseUrl;
-        }
-
-        var baseSegments = absoluteBase.AbsolutePath
-            .Split('/', StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
-
-        if (baseSegments.Count == 0)
-        {
-            return baseUrl;
-        }
-
-        var lastSegment = baseSegments[^1];
-        if (string.IsNullOrWhiteSpace(lastSegment)
-            || IsReservedBasePathSegment(lastSegment)
-            || !resourceHeads.Contains(lastSegment, StringComparer.OrdinalIgnoreCase))
-        {
-            return baseUrl;
-        }
-
-        baseSegments.RemoveAt(baseSegments.Count - 1);
-
-        var normalizedPath = "/" + string.Join("/", baseSegments);
-        var normalizedBuilder = new UriBuilder(absoluteBase)
-        {
-            Path = normalizedPath,
-        };
-
-        return normalizedBuilder.Uri.AbsoluteUri.TrimEnd('/');
-    }
-
-    private static string ExtractTopLevelResourceSegment(string urlOrPath)
-    {
-        var path = ExtractPath(urlOrPath);
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return null;
-        }
-
-        var firstSegment = path
-            .Split('/', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault();
-
-        return string.IsNullOrWhiteSpace(firstSegment)
-            ? null
-            : firstSegment.Trim();
-    }
-
-    private static bool IsReservedBasePathSegment(string segment)
-    {
-        if (string.IsNullOrWhiteSpace(segment))
-        {
-            return true;
-        }
-
-        if (string.Equals(segment, "api", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return IsVersionSegment(segment);
-    }
-
-    private void LogCaseOutcome(Guid runId, TestCaseExecutionResult result)
-    {
-        if (string.Equals(result.Status, "Passed", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        _logger.LogWarning(
-            "Test case completed with non-pass status. RunId={RunId}, Status={Status}, TestCase={TestCaseName} ({TestCaseId}), HttpMethod={HttpMethod}, Url={ResolvedUrl}, HttpStatus={HttpStatus}, RequestBodyLength={RequestBodyLength}, DependencyIds={DependencyIds}, SkippedBecauseDependencyIds={SkippedDependencyIds}, FailureCodes={FailureCodes}, FailureDetails={FailureDetails}",
-            runId,
-            result.Status,
-            result.Name,
-            result.TestCaseId,
-            result.HttpMethod ?? "(n/a)",
-            result.ResolvedUrl ?? "(n/a)",
-            result.HttpStatusCode,
-            result.RequestBody?.Length ?? 0,
-            SummarizeGuidList(result.DependencyIds),
-            SummarizeGuidList(result.SkippedBecauseDependencyIds),
-            SummarizeFailureCodes(result.FailureReasons),
-            SummarizeFailureDetails(result.FailureReasons));
-    }
-
-    private static string SummarizeFailedDependencyDetails(
-        IReadOnlyList<Guid> failedDependencyIds,
-        IReadOnlyDictionary<Guid, TestCaseExecutionResult> caseResultMap)
-    {
-        if (failedDependencyIds == null || failedDependencyIds.Count == 0)
-        {
-            return "(none)";
-        }
-
-        var details = new List<string>();
-
-        foreach (var dependencyId in failedDependencyIds.Take(5))
-        {
-            if (caseResultMap != null && caseResultMap.TryGetValue(dependencyId, out var dependencyResult))
-            {
-                details.Add(
-                    $"{dependencyResult.Name} ({dependencyId}) => {dependencyResult.Status}, Codes={SummarizeFailureCodes(dependencyResult.FailureReasons)}");
-            }
-            else
-            {
-                details.Add(dependencyId.ToString());
-            }
-        }
-
-        if (failedDependencyIds.Count > 5)
-        {
-            details.Add($"+{failedDependencyIds.Count - 5} more");
-        }
-
-        return string.Join(" | ", details);
-    }
-
-    private static string SummarizeGuidList(IEnumerable<Guid> values)
-    {
-        if (values == null)
-        {
-            return "[]";
-        }
-
-        var list = values
-            .Where(x => x != Guid.Empty)
-            .Distinct()
-            .ToList();
-
-        if (list.Count == 0)
-        {
-            return "[]";
-        }
-
-        var preview = list.Take(5).Select(x => x.ToString());
-        var suffix = list.Count > 5 ? $", +{list.Count - 5} more" : string.Empty;
-        return $"[{string.Join(", ", preview)}{suffix}]";
-    }
-
-    private static string SummarizeFailureCodes(IEnumerable<ValidationFailureModel> failures)
-    {
-        if (failures == null)
-        {
-            return "(none)";
-        }
-
-        var codes = failures
-            .Select(x => x?.Code)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (codes.Count == 0)
-        {
-            return "(none)";
-        }
-
-        var preview = codes.Take(5);
-        var suffix = codes.Count > 5 ? $", +{codes.Count - 5} more" : string.Empty;
-        return string.Join(", ", preview) + suffix;
-    }
-
-    private static string SummarizeFailureDetails(IEnumerable<ValidationFailureModel> failures)
-    {
-        if (failures == null)
-        {
-            return "(none)";
-        }
-
-        var details = failures
-            .Select(FormatFailure)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToList();
-
-        if (details.Count == 0)
-        {
-            return "(none)";
-        }
-
-        var preview = details.Take(3);
-        var suffix = details.Count > 3 ? $" | +{details.Count - 3} more" : string.Empty;
-        return string.Join(" | ", preview) + suffix;
-    }
-
-    private static string FormatFailure(ValidationFailureModel failure)
-    {
-        if (failure == null)
-        {
-            return null;
-        }
-
-        var code = string.IsNullOrWhiteSpace(failure.Code) ? "UNKNOWN" : failure.Code.Trim();
-        var message = Truncate(failure.Message, 200);
-        var target = string.IsNullOrWhiteSpace(failure.Target) ? null : failure.Target.Trim();
-
-        if (string.IsNullOrWhiteSpace(target))
-        {
-            return string.IsNullOrWhiteSpace(message) ? code : $"{code}: {message}";
-        }
-
-        return string.IsNullOrWhiteSpace(message)
-            ? $"{code}@{target}"
-            : $"{code}@{target}: {message}";
-    }
-
-    private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
-    {
-        if (dependencyResult == null)
-        {
-            return false;
-        }
-
-        if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (!dependencyResult.HttpStatusCode.HasValue)
-        {
-            return false;
-        }
-
-        var actualStatus = dependencyResult.HttpStatusCode.Value;
-        if (actualStatus < 200 || actualStatus >= 300)
-        {
-            return false;
-        }
-
-        return IsDependencyFailureOnlyExpectationMismatch(dependencyResult.FailureReasons);
-    }
-
-    private static bool IsDependencyFailureOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
-    {
-        if (failures == null || failures.Count == 0)
-        {
-            return true;
-        }
-
-        var allowedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "STATUS_CODE_MISMATCH",
-            "RESPONSE_SCHEMA_MISMATCH",
-        };
-
-        var normalizedCodes = failures
-            .Select(failure => failure?.Code)
-            .Where(code => !string.IsNullOrWhiteSpace(code))
-            .Select(code => code.Trim())
-            .ToList();
-
-        if (normalizedCodes.Count == 0)
-        {
-            return true;
-        }
-
-        return normalizedCodes.All(allowedCodes.Contains);
-    }
-
-    private static string Truncate(string value, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(value) || maxLength <= 0)
-        {
-            return value;
-        }
-
-        return value.Length <= maxLength
-            ? value
-            : value[..maxLength] + "...";
-    }
-
-    private static List<ValidationWarningModel> MergeWarnings(
-        List<ValidationWarningModel> preValidationWarnings,
-        IReadOnlyList<ValidationWarningModel> validationWarnings)
-    {
-        var merged = new List<ValidationWarningModel>();
-
-        if (preValidationWarnings?.Count > 0)
-        {
-            merged.AddRange(preValidationWarnings);
-        }
-
-        if (validationWarnings?.Count > 0)
-        {
-            merged.AddRange(validationWarnings);
-        }
-
-        return merged;
-    }
+        => env;
 }

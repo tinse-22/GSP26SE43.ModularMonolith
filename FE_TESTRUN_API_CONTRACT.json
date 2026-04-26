@@ -1,0 +1,663 @@
+{
+  "module": "ClassifiedAds.Modules.TestExecution",
+  "controller": "TestRunsController",
+  "baseRoute": "/api/test-suites/{suiteId:guid}/test-runs",
+  "generatedAt": "2026-04-25",
+  "schemaVersion": "4.1.0",
+  "changesSinceLastVersion": {
+    "apiContractChanged": false,
+    "note": "Request/response JSON shape UNCHANGED. Only internal engine behavior changed. FE does NOT need to rewire API calls. However FE must handle 4 behavioral differences described below.",
+    "behavioralChanges": [
+      {
+        "id": "BC-1",
+        "field": "response.Cases",
+        "change": "Each testCaseId now appears EXACTLY ONCE — the final-attempt outcome. Previously duplicates could appear when MaxRetryAttempts >= 1. FE should no longer de-duplicate Cases by testCaseId.",
+        "impact": "LOW — if FE was already rendering Cases as a flat list, this is a fix not a break."
+      },
+      {
+        "id": "BC-2",
+        "field": "response.Attempts",
+        "change": "When MaxRetryAttempts > 1 the Attempts array now contains the FULL retry chain (attempt1 → attempt2 → attempt3). Previously only one retry was generated regardless of MaxRetryAttempts.",
+        "impact": "MEDIUM — if FE renders the attempt tree it now receives a deeper tree. No structural change; just more nodes."
+      },
+      {
+        "id": "BC-3",
+        "field": "response.Attempts (replay)",
+        "change": "Cascading replay is now multi-pass. If dependency A is recovered, case B (which depended on A) is replayed. If B then passes and case C depends on B, C is also replayed in the same run. Previously only one replay sweep was done.",
+        "impact": "MEDIUM — FE may see more replay attempts in the tree. RetryReason will be 'Replayed skipped case after dependency recovery'."
+      },
+      {
+        "id": "BC-4",
+        "field": "request.retryPolicy.maxRetryAttempts",
+        "change": "Values > 1 now work correctly. Previously only 1 retry happened regardless of value. FE can now safely expose a numeric input for this field.",
+        "impact": "LOW — fix, not a break."
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "id": "EP-1",
+      "name": "StartTestRun",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "auth": true,
+      "permission": "StartTestRun",
+      "description": "Tạo và chạy một test run mới. Đây là long-running operation — response trả về SAU KHI toàn bộ run hoàn thành.",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "uuid",
+          "required": true,
+          "description": "ID của test suite cần chạy"
+        }
+      ],
+      "requestBody": {
+        "contentType": "application/json",
+        "schema": {
+          "environmentId": {
+            "type": "uuid | null",
+            "required": false,
+            "default": null,
+            "description": "ID của execution environment. Nếu null, dùng environment mặc định của project."
+          },
+          "selectedTestCaseIds": {
+            "type": "uuid[]",
+            "required": false,
+            "default": null,
+            "description": "Danh sách testCaseId muốn chạy. Nếu null hoặc rỗng thì chạy toàn bộ suite."
+          },
+          "strictValidation": {
+            "type": "boolean",
+            "required": false,
+            "default": false,
+            "description": "Bật strict mode: schema mismatch sẽ fail thay vì warning."
+          },
+          "retryPolicy": {
+            "type": "object | null",
+            "required": false,
+            "default": null,
+            "description": "Nếu có, ưu tiên hơn các scalar field bên dưới (maxRetryAttempts, retryFailedDependencies, rerunSkippedCases).",
+            "schema": {
+              "maxRetryAttempts": {
+                "type": "integer",
+                "required": false,
+                "default": 0,
+                "min": 0,
+                "max": 3,
+                "description": "Số lần retry tối đa cho mỗi test case thất bại. 0 = không retry. Tối đa 3. Giá trị lớn hơn sẽ bị clamp xuống 3 phía server."
+              },
+              "retryFailedDependencies": {
+                "type": "boolean",
+                "required": false,
+                "default": true,
+                "description": "Có retry những test case thất bại do dependency fail không."
+              },
+              "rerunSkippedCases": {
+                "type": "boolean",
+                "required": false,
+                "default": true,
+                "description": "Sau khi dependency được retry và pass, có replay lại những test case đã bị skip không."
+              }
+            }
+          },
+          "maxRetryAttempts": {
+            "type": "integer",
+            "required": false,
+            "default": 0,
+            "description": "Scalar fallback — chỉ dùng nếu retryPolicy là null. Tối đa 3."
+          },
+          "retryFailedDependencies": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Scalar fallback — chỉ dùng nếu retryPolicy là null."
+          },
+          "rerunSkippedCases": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Scalar fallback — chỉ dùng nếu retryPolicy là null."
+          }
+        },
+        "examples": {
+          "minimal": {
+            "environmentId": null,
+            "selectedTestCaseIds": null,
+            "strictValidation": false,
+            "retryPolicy": null
+          },
+          "withRetry": {
+            "environmentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "selectedTestCaseIds": [
+              "11111111-1111-1111-1111-111111111111",
+              "22222222-2222-2222-2222-222222222222"
+            ],
+            "strictValidation": false,
+            "retryPolicy": {
+              "maxRetryAttempts": 2,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          },
+          "noRetryNoReplay": {
+            "environmentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "selectedTestCaseIds": null,
+            "strictValidation": true,
+            "retryPolicy": {
+              "maxRetryAttempts": 0,
+              "retryFailedDependencies": false,
+              "rerunSkippedCases": false
+            }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Run hoàn thành. Body = TestRunResultModel.",
+          "schema": "$ref: #/schemas/TestRunResultModel"
+        },
+        "400": {
+          "description": "Validation error — suiteId thiếu, testCaseIds không hợp lệ, hoặc suite chưa Ready."
+        },
+        "404": {
+          "description": "Suite hoặc environment không tìm thấy."
+        },
+        "409": {
+          "description": "Đã đạt giới hạn concurrent runs hoặc monthly quota."
+        }
+      }
+    },
+    {
+      "id": "EP-2",
+      "name": "GetTestRunResults",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+      "auth": true,
+      "permission": "GetTestRuns",
+      "description": "Lấy kết quả đầy đủ của một run đã hoàn thành, bao gồm attempt tree. Đây là endpoint FE dùng để hiển thị detail view.",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "uuid",
+          "required": true
+        },
+        {
+          "name": "runId",
+          "type": "uuid",
+          "required": true
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Kết quả đầy đủ.",
+          "schema": "$ref: #/schemas/TestRunResultModel"
+        },
+        "404": {
+          "description": "Run không tìm thấy hoặc không thuộc suite này."
+        },
+        "409": {
+          "description": "Run vẫn đang chạy (status = Running)."
+        }
+      }
+    },
+    {
+      "id": "EP-3",
+      "name": "GetTestRuns",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "auth": true,
+      "permission": "GetTestRuns",
+      "description": "Lấy danh sách runs với pagination.",
+      "queryParams": [
+        {
+          "name": "pageNumber",
+          "type": "integer",
+          "default": 1
+        },
+        {
+          "name": "pageSize",
+          "type": "integer",
+          "default": 20
+        },
+        {
+          "name": "status",
+          "type": "string | null",
+          "enum": ["Pending", "Running", "Completed", "Failed"],
+          "required": false,
+          "default": null,
+          "description": "Filter theo status. null = tất cả."
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": "$ref: #/schemas/PagedTestRunModel"
+        }
+      }
+    },
+    {
+      "id": "EP-4",
+      "name": "GetTestRun",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}",
+      "auth": true,
+      "permission": "GetTestRuns",
+      "description": "Lấy summary của một run (không có case details hay attempts). Dùng cho list view.",
+      "responses": {
+        "200": {
+          "schema": "$ref: #/schemas/TestRunModel"
+        },
+        "404": {}
+      }
+    }
+  ],
+  "schemas": {
+    "TestRunResultModel": {
+      "description": "Full result của một test run, bao gồm summary, case list, và attempt lineage tree.",
+      "properties": {
+        "run": {
+          "type": "TestRunModel",
+          "description": "Summary của run."
+        },
+        "resultsSource": {
+          "type": "string",
+          "enum": ["cache", "unavailable"],
+          "description": "'cache' = data đầy đủ. 'unavailable' = cache write fail, chỉ có run summary."
+        },
+        "executedAt": {
+          "type": "ISO8601 datetime",
+          "description": "Thời điểm run bắt đầu thực thi."
+        },
+        "resolvedEnvironmentName": {
+          "type": "string",
+          "description": "Tên environment đã dùng."
+        },
+        "cases": {
+          "type": "TestCaseRunResultModel[]",
+          "description": "QUAN TRỌNG (BC-1): Mỗi testCaseId xuất hiện ĐÚNG 1 LẦN — kết quả của attempt cuối cùng. FE không cần de-dup. Sắp xếp theo orderIndex ASC."
+        },
+        "attempts": {
+          "type": "TestCaseExecutionAttemptModel[]",
+          "description": "Toàn bộ lịch sử attempt (gốc + retry + replay). Một testCase có thể có nhiều entries. Dùng để render attempt timeline / tree."
+        },
+        "attemptChildrenMap": {
+          "type": "{ [attemptId: string]: string[] }",
+          "description": "Map từ attemptId → danh sách child attemptIds. Dùng để render attempt tree cho FE. Root nodes = những attemptId không có parentAttemptId."
+        }
+      },
+      "example": {
+        "run": {
+          "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "testSuiteId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "environmentId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "runNumber": 5,
+          "status": "Failed",
+          "startedAt": "2026-04-25T10:00:00Z",
+          "completedAt": "2026-04-25T10:00:12Z",
+          "totalTests": 3,
+          "passedCount": 1,
+          "failedCount": 1,
+          "skippedCount": 1,
+          "durationMs": 12000,
+          "resultsExpireAt": "2026-05-02T10:00:12Z",
+          "hasDetailedResults": true,
+          "createdDateTime": "2026-04-25T10:00:00Z",
+          "updatedDateTime": "2026-04-25T10:00:12Z"
+        },
+        "resultsSource": "cache",
+        "executedAt": "2026-04-25T10:00:00Z",
+        "resolvedEnvironmentName": "Staging",
+        "cases": [
+          {
+            "testCaseId": "11111111-1111-1111-1111-111111111111",
+            "status": "Failed",
+            "executionAttempt": 2,
+            "_note": "executionAttempt=2 vì đây là kết quả của retry lần 2. Đây là final outcome."
+          },
+          {
+            "testCaseId": "22222222-2222-2222-2222-222222222222",
+            "status": "Passed",
+            "executionAttempt": 1
+          },
+          {
+            "testCaseId": "33333333-3333-3333-3333-333333333333",
+            "status": "Skipped",
+            "executionAttempt": 1,
+            "skippedBecauseDependencyIds": ["11111111-1111-1111-1111-111111111111"]
+          }
+        ],
+        "attempts": [
+          {
+            "executionAttemptId": "a1a1a1a1-0000-0000-0000-000000000000",
+            "parentAttemptId": null,
+            "testRunId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "testCaseId": "11111111-1111-1111-1111-111111111111",
+            "attemptNumber": 1,
+            "status": "Failed",
+            "retryReason": null,
+            "skippedCause": null,
+            "dependencyRootCause": null,
+            "dependencyRootCauseIds": [],
+            "replayedSkippedCaseIds": [],
+            "isReplay": false,
+            "startedAt": "2026-04-25T10:00:00Z",
+            "completedAt": "2026-04-25T10:00:03Z",
+            "durationMs": 3000,
+            "failureReasons": [
+              {
+                "code": "STATUS_CODE_MISMATCH",
+                "message": "Expected 201, got 500",
+                "target": "statusCode",
+                "expected": "201",
+                "actual": "500"
+              }
+            ],
+            "retryPolicy": {
+              "maxRetryAttempts": 2,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          },
+          {
+            "executionAttemptId": "a2a2a2a2-0000-0000-0000-000000000000",
+            "parentAttemptId": "a1a1a1a1-0000-0000-0000-000000000000",
+            "testRunId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "testCaseId": "11111111-1111-1111-1111-111111111111",
+            "attemptNumber": 2,
+            "status": "Failed",
+            "retryReason": "Retry after dependency recovery",
+            "skippedCause": null,
+            "dependencyRootCause": null,
+            "dependencyRootCauseIds": [],
+            "replayedSkippedCaseIds": [],
+            "isReplay": false,
+            "startedAt": "2026-04-25T10:00:03Z",
+            "completedAt": "2026-04-25T10:00:06Z",
+            "durationMs": 3000,
+            "failureReasons": [
+              {
+                "code": "STATUS_CODE_MISMATCH",
+                "message": "Expected 201, got 503",
+                "target": "statusCode",
+                "expected": "201",
+                "actual": "503"
+              }
+            ],
+            "retryPolicy": {
+              "maxRetryAttempts": 2,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          },
+          {
+            "executionAttemptId": "b1b1b1b1-0000-0000-0000-000000000000",
+            "parentAttemptId": null,
+            "testRunId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "testCaseId": "22222222-2222-2222-2222-222222222222",
+            "attemptNumber": 1,
+            "status": "Passed",
+            "retryReason": null,
+            "skippedCause": null,
+            "dependencyRootCause": null,
+            "dependencyRootCauseIds": [],
+            "replayedSkippedCaseIds": [],
+            "isReplay": false,
+            "startedAt": "2026-04-25T10:00:06Z",
+            "completedAt": "2026-04-25T10:00:09Z",
+            "durationMs": 3000,
+            "failureReasons": [],
+            "retryPolicy": {
+              "maxRetryAttempts": 2,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          },
+          {
+            "executionAttemptId": "c1c1c1c1-0000-0000-0000-000000000000",
+            "parentAttemptId": null,
+            "testRunId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "testCaseId": "33333333-3333-3333-3333-333333333333",
+            "attemptNumber": 1,
+            "status": "Skipped",
+            "retryReason": "Dependency failed",
+            "skippedCause": "TC-Login (11111111...) => Status=Failed, HttpStatus=500, FailureCodes=STATUS_CODE_MISMATCH",
+            "dependencyRootCause": "TC-Login (11111111...) => Status=Failed",
+            "dependencyRootCauseIds": ["11111111-1111-1111-1111-111111111111"],
+            "replayedSkippedCaseIds": [],
+            "isReplay": false,
+            "startedAt": "2026-04-25T10:00:00Z",
+            "completedAt": "2026-04-25T10:00:00Z",
+            "durationMs": 0,
+            "failureReasons": [
+              {
+                "code": "DEPENDENCY_FAILED",
+                "message": "Test case skipped because dependency failed. RootCause=TC-Login (11111111...) => Status=Failed"
+              }
+            ],
+            "retryPolicy": {
+              "maxRetryAttempts": 2,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          }
+        ],
+        "attemptChildrenMap": {
+          "a1a1a1a1-0000-0000-0000-000000000000": ["a2a2a2a2-0000-0000-0000-000000000000"],
+          "a2a2a2a2-0000-0000-0000-000000000000": [],
+          "b1b1b1b1-0000-0000-0000-000000000000": [],
+          "c1c1c1c1-0000-0000-0000-000000000000": []
+        }
+      }
+    },
+    "TestRunModel": {
+      "description": "Summary của một test run (không có case details).",
+      "properties": {
+        "id": { "type": "uuid" },
+        "testSuiteId": { "type": "uuid" },
+        "environmentId": { "type": "uuid" },
+        "runNumber": { "type": "integer", "description": "Số thứ tự run trong suite, tăng dần." },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Running", "Completed", "Failed"],
+          "description": "Completed = tất cả cases đã pass hoặc skipped. Failed = có ít nhất 1 case failed mà không nhận được HTTP response."
+        },
+        "startedAt": { "type": "ISO8601 datetime | null" },
+        "completedAt": { "type": "ISO8601 datetime | null" },
+        "totalTests": { "type": "integer" },
+        "passedCount": { "type": "integer" },
+        "failedCount": { "type": "integer" },
+        "skippedCount": { "type": "integer" },
+        "durationMs": { "type": "integer", "description": "Tổng duration của tất cả cases." },
+        "resultsExpireAt": { "type": "ISO8601 datetime | null" },
+        "hasDetailedResults": { "type": "boolean", "description": "true nếu cache còn hiệu lực và FE có thể gọi /results." },
+        "createdDateTime": { "type": "ISO8601 datetime" },
+        "updatedDateTime": { "type": "ISO8601 datetime | null" }
+      }
+    },
+    "TestCaseRunResultModel": {
+      "description": "Kết quả FINAL của một test case. Luôn là kết quả của attempt cuối cùng (BC-1).",
+      "properties": {
+        "testCaseId": { "type": "uuid" },
+        "endpointId": { "type": "uuid | null" },
+        "name": { "type": "string" },
+        "testType": { "type": "string", "enum": ["HappyPath", "Boundary", "Negative", "Manual"] },
+        "orderIndex": { "type": "integer", "description": "Thứ tự trong suite. Dùng để sort." },
+        "status": { "type": "string", "enum": ["Passed", "Failed", "Skipped"] },
+        "executionAttempt": {
+          "type": "integer",
+          "description": "Số attempt khi đạt được kết quả này. 1 = lần đầu, 2 = sau retry 1 lần, v.v."
+        },
+        "httpStatusCode": { "type": "integer | null", "description": "null nếu không gửi được request (connection fail)." },
+        "durationMs": { "type": "integer" },
+        "resolvedUrl": { "type": "string", "description": "URL thực tế đã gọi sau khi resolve variables." },
+        "httpMethod": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+        "bodyType": { "type": "string | null", "enum": ["json", "form", "none", null] },
+        "requestBody": { "type": "string | null", "description": "Truncated tại 64KB. Sensitive fields đã bị mask." },
+        "queryParams": { "type": "{ [key: string]: string }" },
+        "timeoutMs": { "type": "integer" },
+        "expectedStatus": { "type": "string | null", "description": "Expectation đã cấu hình, e.g. '201', '2xx'." },
+        "requestHeaders": { "type": "{ [key: string]: string }" },
+        "responseHeaders": { "type": "{ [key: string]: string }" },
+        "responseBodyPreview": { "type": "string | null", "description": "Truncated tại 64KB." },
+        "failureReasons": { "type": "ValidationFailureModel[]" },
+        "warnings": { "type": "ValidationWarningModel[]" },
+        "hasWarnings": { "type": "boolean", "description": "Computed: warnings.length > 0." },
+        "checksPerformed": { "type": "integer" },
+        "checksSkipped": { "type": "integer" },
+        "extractedVariables": {
+          "type": "{ [key: string]: string }",
+          "description": "Variables extracted từ response. Sensitive keys (token, secret, password, apikey) sẽ là '******'."
+        },
+        "dependencyIds": { "type": "uuid[]", "description": "Các testCase mà case này phụ thuộc vào." },
+        "skippedBecauseDependencyIds": {
+          "type": "uuid[]",
+          "description": "Nếu status=Skipped, đây là danh sách dependency đã fail gây ra skip."
+        },
+        "statusCodeMatched": { "type": "boolean" },
+        "schemaMatched": { "type": "boolean | null", "description": "null nếu không check schema." },
+        "headerChecksPassed": { "type": "boolean | null" },
+        "bodyContainsPassed": { "type": "boolean | null" },
+        "bodyNotContainsPassed": { "type": "boolean | null" },
+        "jsonPathChecksPassed": { "type": "boolean | null" },
+        "responseTimePassed": { "type": "boolean | null" }
+      }
+    },
+    "TestCaseExecutionAttemptModel": {
+      "description": "Một attempt trong lịch sử execution của một test case. Dùng để render attempt timeline hoặc tree.",
+      "properties": {
+        "executionAttemptId": { "type": "uuid", "description": "ID duy nhất của attempt này." },
+        "parentAttemptId": {
+          "type": "uuid | null",
+          "description": "null = attempt gốc (lần đầu tiên). Không null = đây là retry hoặc replay của attempt cha."
+        },
+        "testRunId": { "type": "uuid" },
+        "testCaseId": { "type": "uuid" },
+        "attemptNumber": {
+          "type": "integer",
+          "description": "1 = lần đầu, 2 = retry lần 1, 3 = retry lần 2, ... Số này tăng per testCase, không phải toàn run."
+        },
+        "status": { "type": "string", "enum": ["Passed", "Failed", "Skipped"] },
+        "retryReason": {
+          "type": "string | null",
+          "enum": [
+            null,
+            "Dependency failed",
+            "Retry after dependency recovery",
+            "Replayed skipped case after dependency recovery"
+          ],
+          "description": "null = attempt gốc không phải retry. Các giá trị khác: xem enum."
+        },
+        "skippedCause": {
+          "type": "string | null",
+          "description": "Human-readable summary lý do skip: tên + ID + status + failure codes của dependency gốc."
+        },
+        "dependencyRootCause": {
+          "type": "string | null",
+          "description": "Alias của skippedCause. Cùng giá trị."
+        },
+        "dependencyRootCauseIds": {
+          "type": "uuid[]",
+          "description": "IDs của dependency trực tiếp gây ra skip/retry."
+        },
+        "replayedSkippedCaseIds": {
+          "type": "uuid[]",
+          "description": "Chỉ có giá trị khi retryReason='Replayed skipped case after dependency recovery'. Chứa IDs của những case đã bị skip trước đó mà attempt này đang replay."
+        },
+        "isReplay": {
+          "type": "boolean",
+          "description": "true khi retryReason chứa 'Replay'. Computed từ retryReason."
+        },
+        "startedAt": { "type": "ISO8601 datetime" },
+        "completedAt": { "type": "ISO8601 datetime | null" },
+        "durationMs": { "type": "integer" },
+        "failureReasons": { "type": "ValidationFailureModel[]" },
+        "retryPolicy": {
+          "type": "TestRunRetryPolicyModel",
+          "description": "Policy đã áp dụng tại thời điểm attempt này được tạo. Snapshot — không thay đổi khi policy thay đổi."
+        }
+      }
+    },
+    "TestRunRetryPolicyModel": {
+      "properties": {
+        "maxRetryAttempts": { "type": "integer", "default": 0 },
+        "retryFailedDependencies": { "type": "boolean", "default": true },
+        "rerunSkippedCases": { "type": "boolean", "default": true }
+      }
+    },
+    "ValidationFailureModel": {
+      "properties": {
+        "code": {
+          "type": "string",
+          "knownValues": [
+            "STATUS_CODE_MISMATCH",
+            "RESPONSE_SCHEMA_MISMATCH",
+            "HEADER_CHECK_FAILED",
+            "BODY_CONTAINS_CHECK_FAILED",
+            "BODY_NOT_CONTAINS_CHECK_FAILED",
+            "JSON_PATH_CHECK_FAILED",
+            "RESPONSE_TIME_EXCEEDED",
+            "DEPENDENCY_FAILED",
+            "UNRESOLVED_VARIABLE",
+            "PRE_EXECUTION_VALIDATION_FAILED"
+          ]
+        },
+        "message": { "type": "string" },
+        "target": { "type": "string | null", "description": "Field/path gây ra failure." },
+        "expected": { "type": "string | null" },
+        "actual": { "type": "string | null" }
+      }
+    },
+    "ValidationWarningModel": {
+      "properties": {
+        "code": {
+          "type": "string",
+          "knownValues": [
+            "NO_EXPECTATION_DEFINED",
+            "ALL_CHECKS_SKIPPED",
+            "SCHEMA_NOT_FOUND",
+            "PARTIAL_SCHEMA_MATCH"
+          ]
+        },
+        "message": { "type": "string" },
+        "target": { "type": "string | null" }
+      }
+    },
+    "PagedTestRunModel": {
+      "properties": {
+        "items": { "type": "TestRunModel[]" },
+        "totalCount": { "type": "integer" },
+        "pageNumber": { "type": "integer" },
+        "pageSize": { "type": "integer" }
+      }
+    }
+  },
+  "feRenderingGuide": {
+    "attemptTree": {
+      "description": "Cách render attempt tree từ response",
+      "algorithm": [
+        "1. Lấy tất cả attemptIds trong attempts[]",
+        "2. Root nodes = attempts có parentAttemptId === null",
+        "3. Với mỗi node, lấy children từ attemptChildrenMap[attemptId] hoặc filter attempts có parentAttemptId = node.executionAttemptId",
+        "4. Render theo attemptNumber tăng dần trong cùng testCaseId",
+        "5. Group theo testCaseId để hiển thị per-case timeline"
+      ],
+      "pseudocode": "const roots = attempts.filter(a => !a.parentAttemptId);\nconst getChildren = (id) => (attemptChildrenMap[id] || []).map(childId => attempts.find(a => a.executionAttemptId === childId));\n// Render tree DFS từ roots"
+    },
+    "caseSummaryTable": {
+      "description": "Cách hiển thị bảng tóm tắt cases",
+      "notes": [
+        "Dùng cases[] (không phải attempts[]) cho summary table — mỗi row = 1 testCaseId",
+        "cases[].executionAttempt cho biết đây là kết quả của attempt thứ mấy",
+        "Nếu executionAttempt > 1, hiện badge 'Retried' hoặc 'Replayed' cạnh status",
+        "Nếu status=Skipped, hiện skippedBecauseDependencyIds với tên của dependency case"
+      ]
+    },
+    "retryBadgeLogic": {
+      "Passed, executionAttempt=1": "✅ Passed",
+      "Passed, executionAttempt>1": "✅ Passed (Retried)",
+      "Failed, executionAttempt=1": "❌ Failed",
+      "Failed, executionAttempt>1": "❌ Failed (after N retries)",
+      "Skipped": "⏭ Skipped — depends on [X, Y]",
+      "isReplay=true": "🔁 Replayed"
+    }
+  }
+}

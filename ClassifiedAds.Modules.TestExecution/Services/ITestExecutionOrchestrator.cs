@@ -13,5 +13,6 @@ public interface ITestExecutionOrchestrator
         Guid currentUserId,
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default,
-        bool strictValidation = false);
+        bool strictValidation = false,
+        TestRunRetryPolicyModel retryPolicy = null);
 }

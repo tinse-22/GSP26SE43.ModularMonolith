@@ -63,7 +63,13 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IRepository<LlmSuggestionFeedback, Guid>, Repository<LlmSuggestionFeedback, Guid>>()
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
             .AddScoped<IRepository<OutboxMessage, Guid>, Repository<OutboxMessage, Guid>>()
-            .AddScoped<IRepository<TestGenerationJob, Guid>, Repository<TestGenerationJob, Guid>>();
+            .AddScoped<IRepository<TestGenerationJob, Guid>, Repository<TestGenerationJob, Guid>>()
+            // FE-18: SRS repositories
+            .AddScoped<IRepository<SrsDocument, Guid>, Repository<SrsDocument, Guid>>()
+            .AddScoped<IRepository<SrsRequirement, Guid>, Repository<SrsRequirement, Guid>>()
+            .AddScoped<IRepository<SrsAnalysisJob, Guid>, Repository<SrsAnalysisJob, Guid>>()
+            .AddScoped<IRepository<SrsRequirementClarification, Guid>, Repository<SrsRequirementClarification, Guid>>()
+            .AddScoped<IRepository<TestCaseRequirementLink, Guid>, Repository<TestCaseRequirementLink, Guid>>();
 
         // Register paper-based algorithms (standalone, reusable, no DB dependency)
         services

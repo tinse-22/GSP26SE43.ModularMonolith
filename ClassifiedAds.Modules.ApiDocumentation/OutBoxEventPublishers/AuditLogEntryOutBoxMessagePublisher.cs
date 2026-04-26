@@ -5,7 +5,6 @@ using ClassifiedAds.Modules.ApiDocumentation.Constants;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-
 namespace ClassifiedAds.Modules.ApiDocumentation.OutboxMessagePublishers;
 
 public class AuditLogEntryOutboxMessagePublisher : IOutboxMessagePublisher

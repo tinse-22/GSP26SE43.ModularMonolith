@@ -13,5 +13,6 @@ public interface ITestResultCollector
         IReadOnlyList<TestCaseExecutionResult> caseResults,
         int retentionDays,
         string environmentName,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        IReadOnlyList<TestCaseExecutionAttemptModel> attempts = null);
 }

@@ -57,5 +57,14 @@ public class TestCaseConfiguration : IEntityTypeConfiguration<Entities.TestCase>
             .WithOne(x => x.TestCase)
             .HasForeignKey<Entities.TestCaseExpectation>(x => x.TestCaseId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // SRS traceability: nullable FK — test cases not created from SRS have null here
+        builder.HasIndex(x => x.PrimaryRequirementId);
+
+        builder.HasOne<Entities.SrsRequirement>()
+            .WithMany()
+            .HasForeignKey(x => x.PrimaryRequirementId)
+            .OnDelete(DeleteBehavior.SetNull)
+            .IsRequired(false);
     }
 }
