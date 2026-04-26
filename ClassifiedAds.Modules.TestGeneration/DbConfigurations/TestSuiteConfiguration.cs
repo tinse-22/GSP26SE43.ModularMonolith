@@ -77,5 +77,13 @@ public class TestSuiteConfiguration : IEntityTypeConfiguration<Entities.TestSuit
         builder.HasIndex(x => x.ApprovalStatus);
         builder.HasIndex(x => x.ApprovedById);
         builder.HasIndex(x => x.LastModifiedById);
+        builder.HasIndex(x => x.SrsDocumentId);
+
+        // Nullable FK — not all test suites are linked to an SRS document
+        builder.HasOne(x => x.SrsDocument)
+            .WithMany()
+            .HasForeignKey(x => x.SrsDocumentId)
+            .OnDelete(DeleteBehavior.SetNull)
+            .IsRequired(false);
     }
 }

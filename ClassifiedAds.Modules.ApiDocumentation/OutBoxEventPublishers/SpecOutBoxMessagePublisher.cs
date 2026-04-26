@@ -59,7 +59,6 @@ public class SpecOutboxMessagePublisher : IOutboxMessagePublisher
             using var doc = JsonDocument.Parse(outbox.Payload);
             var root = doc.RootElement;
 
-            // The outbox payload is the serialized ApiSpecification entity
             if (root.TryGetProperty("Id", out var idElement))
             {
                 specId = idElement.GetGuid();

@@ -17,7 +17,7 @@ public class TestResultCollector : ITestResultCollector
     private const int MaxResponseBodyPreviewLength = 65536;
     private static readonly string[] SensitiveKeywords = { "token", "secret", "password", "apikey" };
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -45,14 +45,15 @@ public class TestResultCollector : ITestResultCollector
         IReadOnlyList<TestCaseExecutionResult> caseResults,
         int retentionDays,
         string environmentName,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<TestCaseExecutionAttemptModel> attempts = null)
     {
         var passedCount = caseResults.Count(r => r.Status == "Passed");
         var failedCount = caseResults.Count(r => r.Status == "Failed");
         var skippedCount = caseResults.Count(r => r.Status == "Skipped");
         var totalDurationMs = caseResults.Sum(r => r.DurationMs);
 
-        // Build result model
+        // ── Case models ──────────────────────────────────────────────────────
         var caseModels = caseResults.Select(r => new TestCaseRunResultModel
         {
             TestCaseId = r.TestCaseId,
@@ -61,6 +62,7 @@ public class TestResultCollector : ITestResultCollector
             TestType = r.TestType,
             OrderIndex = r.OrderIndex,
             Status = r.Status,
+            ExecutionAttempt = r.ExecutionAttempt,
             HttpStatusCode = r.HttpStatusCode,
             DurationMs = r.DurationMs,
             ResolvedUrl = r.ResolvedUrl,
@@ -89,17 +91,34 @@ public class TestResultCollector : ITestResultCollector
             ResponseTimePassed = r.ResponseTimePassed,
         }).ToList();
 
+        // ── Attempt models ───────────────────────────────────────────────────
+        // Stamp TestRunId on every attempt (the orchestrator doesn't know the run's ID until after
+        // the run entity is fetched, so we normalise it here).
+        var attemptModels = (attempts ?? Array.Empty<TestCaseExecutionAttemptModel>())
+            .Select(a =>
+            {
+                a.TestRunId = run.Id;   // ensure run ID is set
+                return a;
+            })
+            .ToList();
+
+        // ── Attempt children map (for FE tree rendering) ─────────────────────
+        var attemptChildrenMap = BuildAttemptChildrenMap(attemptModels);
+
+        // ── Result model ─────────────────────────────────────────────────────
         var resultModel = new TestRunResultModel
         {
             ResultsSource = "cache",
             ExecutedAt = run.StartedAt ?? DateTimeOffset.UtcNow,
             ResolvedEnvironmentName = environmentName,
             Cases = caseModels,
+            Attempts = attemptModels,
+            AttemptChildrenMap = attemptChildrenMap,
         };
 
+        // ── DB persistence ───────────────────────────────────────────────────
         var persistedCaseResults = BuildPersistedCaseResults(run.Id, caseModels);
 
-        // Update run entity
         run.TotalTests = caseResults.Count;
         run.PassedCount = passedCount;
         run.FailedCount = failedCount;
@@ -111,7 +130,7 @@ public class TestResultCollector : ITestResultCollector
             : TestRunStatus.Completed;
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
-        // Try to save cache payload
+        // ── Cache write ──────────────────────────────────────────────────────
         bool cacheSaved = false;
         try
         {
@@ -126,10 +145,13 @@ public class TestResultCollector : ITestResultCollector
         }
         catch (Exception ex)
         {
-            _logger.LogCritical(ex, "Failed to save test run results to cache. RunId={RunId}, RedisKey={RedisKey}", run.Id, run.RedisKey);
+            _logger.LogCritical(
+                ex,
+                "Failed to save test run results to cache. RunId={RunId}, RedisKey={RedisKey}",
+                run.Id, run.RedisKey);
         }
 
-        // Always persist summary to DB
+        // ── DB write (always) ────────────────────────────────────────────────
         try
         {
             var existingCaseResults = await _resultRepository.ToListAsync(
@@ -154,10 +176,11 @@ public class TestResultCollector : ITestResultCollector
             throw;
         }
 
-        // If cache failed after summary is saved, keep run successful but mark source.
         if (!cacheSaved)
         {
-            _logger.LogWarning("Test run {RunId}: summary saved but cache write failed; returning without cached details", run.Id);
+            _logger.LogWarning(
+                "Test run {RunId}: summary saved but cache write failed; returning without cached details",
+                run.Id);
             resultModel.ResultsSource = "unavailable";
         }
 
@@ -165,7 +188,48 @@ public class TestResultCollector : ITestResultCollector
         return resultModel;
     }
 
-    private static List<TestCaseResult> BuildPersistedCaseResults(Guid runId, IReadOnlyCollection<TestCaseRunResultModel> caseModels)
+    // ──────────────────────────────────────────────────────────────────────────
+    // Attempt children map
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a map from each attempt ID to the list of its direct child attempt IDs.
+    /// Enables the FE to render the attempt lineage as a tree.
+    /// </summary>
+    private static Dictionary<Guid, List<Guid>> BuildAttemptChildrenMap(
+        IReadOnlyList<TestCaseExecutionAttemptModel> attempts)
+    {
+        var map = new Dictionary<Guid, List<Guid>>();
+
+        foreach (var attempt in attempts)
+        {
+            // Every attempt should appear as a key (even if it has no children).
+            if (!map.ContainsKey(attempt.ExecutionAttemptId))
+            {
+                map[attempt.ExecutionAttemptId] = new List<Guid>();
+            }
+
+            if (attempt.ParentAttemptId.HasValue)
+            {
+                if (!map.TryGetValue(attempt.ParentAttemptId.Value, out var children))
+                {
+                    children = new List<Guid>();
+                    map[attempt.ParentAttemptId.Value] = children;
+                }
+
+                children.Add(attempt.ExecutionAttemptId);
+            }
+        }
+
+        return map;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // DB persistence builder
+    // ──────────────────────────────────────────────────────────────────────────
+    private static List<TestCaseResult> BuildPersistedCaseResults(
+        Guid runId,
+        IReadOnlyCollection<TestCaseRunResultModel> caseModels)
     {
         return (caseModels ?? Array.Empty<TestCaseRunResultModel>())
             .Select(caseModel => new TestCaseResult
@@ -180,13 +244,19 @@ public class TestResultCollector : ITestResultCollector
                 HttpStatusCode = caseModel.HttpStatusCode,
                 DurationMs = caseModel.DurationMs,
                 ResolvedUrl = caseModel.ResolvedUrl,
-                RequestHeaders = JsonSerializer.Serialize(caseModel.RequestHeaders ?? new Dictionary<string, string>(), JsonOptions),
-                ResponseHeaders = JsonSerializer.Serialize(caseModel.ResponseHeaders ?? new Dictionary<string, string>(), JsonOptions),
+                RequestHeaders = JsonSerializer.Serialize(
+                    caseModel.RequestHeaders ?? new Dictionary<string, string>(), JsonOptions),
+                ResponseHeaders = JsonSerializer.Serialize(
+                    caseModel.ResponseHeaders ?? new Dictionary<string, string>(), JsonOptions),
                 ResponseBodyPreview = caseModel.ResponseBodyPreview,
-                FailureReasons = JsonSerializer.Serialize(caseModel.FailureReasons ?? new List<ValidationFailureModel>(), JsonOptions),
-                ExtractedVariables = JsonSerializer.Serialize(caseModel.ExtractedVariables ?? new Dictionary<string, string>(), JsonOptions),
-                DependencyIds = JsonSerializer.Serialize(caseModel.DependencyIds ?? new List<Guid>(), JsonOptions),
-                SkippedBecauseDependencyIds = JsonSerializer.Serialize(caseModel.SkippedBecauseDependencyIds ?? new List<Guid>(), JsonOptions),
+                FailureReasons = JsonSerializer.Serialize(
+                    caseModel.FailureReasons ?? new List<ValidationFailureModel>(), JsonOptions),
+                ExtractedVariables = JsonSerializer.Serialize(
+                    caseModel.ExtractedVariables ?? new Dictionary<string, string>(), JsonOptions),
+                DependencyIds = JsonSerializer.Serialize(
+                    caseModel.DependencyIds ?? new List<Guid>(), JsonOptions),
+                SkippedBecauseDependencyIds = JsonSerializer.Serialize(
+                    caseModel.SkippedBecauseDependencyIds ?? new List<Guid>(), JsonOptions),
                 StatusCodeMatched = caseModel.StatusCodeMatched,
                 SchemaMatched = caseModel.SchemaMatched,
                 HeaderChecksPassed = caseModel.HeaderChecksPassed,
@@ -198,7 +268,14 @@ public class TestResultCollector : ITestResultCollector
             .ToList();
     }
 
-    // A failed case only fails the whole run when execution never reached an HTTP response.
+    // ──────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A failed case fails the whole run only when execution never reached an HTTP response
+    /// (connection failure, DNS error, timeout before any response, etc.).
+    /// </summary>
     private static bool IsExecutionFailure(TestCaseExecutionResult caseResult)
     {
         if (caseResult == null)
@@ -222,7 +299,8 @@ public class TestResultCollector : ITestResultCollector
             : body;
     }
 
-    private static Dictionary<string, string> MaskSensitiveVariables(Dictionary<string, string> variables)
+    private static Dictionary<string, string> MaskSensitiveVariables(
+        Dictionary<string, string> variables)
     {
         if (variables == null || variables.Count == 0)
         {

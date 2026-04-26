@@ -1,0 +1,421 @@
+{
+  "module": "ClassifiedAds.Modules.TestGeneration",
+  "controller": "TestCasesController",
+  "baseRoute": "/api/test-suites/{suiteId}/test-cases",
+  "purpose": "Danh sach API de FE kiem tra da noi dung chua va param truyen co dung khong",
+  "endpoints": [
+    {
+      "name": "GenerateHappyPath",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases/generate-happy-path",
+      "auth": true,
+      "permission": "GenerateTestCases",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "GenerateHappyPathTestCasesRequest",
+        "requiredFields": [
+          {
+            "name": "SpecificationId",
+            "type": "Guid",
+            "required": false,
+            "notes": "Co the null tuy flow"
+          },
+          {
+            "name": "ForceRegenerate",
+            "type": "Boolean",
+            "required": false,
+            "notes": "Default false"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GenerateBoundaryNegative",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases/generate-boundary-negative",
+      "auth": true,
+      "permission": "GenerateBoundaryNegativeTestCases",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "GenerateBoundaryNegativeTestCasesRequest",
+        "requiredFields": [
+          {
+            "name": "SpecificationId",
+            "type": "Guid",
+            "required": false
+          },
+          {
+            "name": "ForceRegenerate",
+            "type": "Boolean",
+            "required": false
+          },
+          {
+            "name": "IncludePathMutations",
+            "type": "Boolean",
+            "required": false
+          },
+          {
+            "name": "IncludeBodyMutations",
+            "type": "Boolean",
+            "required": false
+          },
+          {
+            "name": "IncludeLlmSuggestions",
+            "type": "Boolean",
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "GetAllTestCases",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases",
+      "auth": true,
+      "permission": "GetTestCases",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "testType",
+          "type": "string",
+          "required": false,
+          "notes": "HappyPath, BoundaryNegative, ..."
+        },
+        {
+          "name": "includeDisabled",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "includeDeleted",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "GetTestCaseById",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "auth": true,
+      "permission": "GetTestCases",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        },
+        {
+          "name": "testCaseId",
+          "type": "Guid",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "AddTestCase",
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases",
+      "auth": true,
+      "permission": "AddTestCase",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "AddTestCaseRequest",
+        "requiredFields": [
+          {
+            "name": "EndpointId",
+            "type": "Guid",
+            "required": false
+          },
+          {
+            "name": "Name",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "Description",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "TestType",
+            "type": "string",
+            "required": true,
+            "notes": "Gia tri enum TestType"
+          },
+          {
+            "name": "Priority",
+            "type": "int",
+            "required": false
+          },
+          {
+            "name": "IsEnabled",
+            "type": "boolean",
+            "required": false
+          },
+          {
+            "name": "Tags",
+            "type": "array[string]",
+            "required": false
+          },
+          {
+            "name": "Request",
+            "type": "object",
+            "required": false,
+            "fields": [
+              {
+                "name": "HttpMethod",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Url",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Headers",
+                "type": "dictionary<string,string>",
+                "required": false
+              },
+              {
+                "name": "PathParams",
+                "type": "dictionary<string,string>",
+                "required": false
+              },
+              {
+                "name": "QueryParams",
+                "type": "dictionary<string,string>",
+                "required": false
+              },
+              {
+                "name": "BodyType",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Body",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Timeout",
+                "type": "int",
+                "required": false,
+                "default": 30000
+              }
+            ]
+          },
+          {
+            "name": "Expectation",
+            "type": "object",
+            "required": false,
+            "fields": [
+              {
+                "name": "ExpectedStatus",
+                "type": "string",
+                "required": false,
+                "notes": "JSON array string, vi du [200,201]"
+              },
+              {
+                "name": "ResponseSchema",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "HeaderChecks",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "BodyContains",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "BodyNotContains",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "JsonPathChecks",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "MaxResponseTime",
+                "type": "int",
+                "required": false
+              }
+            ]
+          },
+          {
+            "name": "Variables",
+            "type": "array<object>",
+            "required": false,
+            "fields": [
+              {
+                "name": "VariableName",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "ExtractFrom",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "JsonPath",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "HeaderName",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Regex",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "DefaultValue",
+                "type": "string",
+                "required": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateTestCase",
+      "method": "PUT",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "auth": true,
+      "permission": "UpdateTestCase",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        },
+        {
+          "name": "testCaseId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "UpdateTestCaseRequest",
+        "sameShapeAs": "AddTestCaseRequest"
+      }
+    },
+    {
+      "name": "DeleteTestCase",
+      "method": "DELETE",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+      "auth": true,
+      "permission": "DeleteTestCase",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        },
+        {
+          "name": "testCaseId",
+          "type": "Guid",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "ToggleTestCase",
+      "method": "PATCH",
+      "path": "/api/test-suites/{suiteId}/test-cases/{testCaseId}/toggle",
+      "auth": true,
+      "permission": "UpdateTestCase",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        },
+        {
+          "name": "testCaseId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "ToggleTestCaseRequest",
+        "requiredFields": [
+          {
+            "name": "IsEnabled",
+            "type": "boolean",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReorderTestCases",
+      "method": "PATCH",
+      "path": "/api/test-suites/{suiteId}/test-cases/reorder",
+      "auth": true,
+      "permission": "UpdateTestCase",
+      "routeParams": [
+        {
+          "name": "suiteId",
+          "type": "Guid",
+          "required": true
+        }
+      ],
+      "body": {
+        "type": "ReorderTestCasesRequest",
+        "requiredFields": [
+          {
+            "name": "TestCaseIds",
+            "type": "array[Guid]",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "note_for_FE": [
+    "Neu FE gui request bi fail 400 thi kiem tra ten field va kieu du lieu JSON.",
+    "Param route bat buoc: suiteId, va voi detail/update/delete/toggle thi co them testCaseId.",
+    "Expectation phai gui trong Add/Update neu muon backend luu expected de validate luc run test.",
+    "ExpectedStatus hien backend dang nhan dang chuoi JSON array, khong phai int don.",
+    "Endpoint generate-happy-path / generate-boundary-negative co the tra 201 hoac 202 tuy cau hinh n8n."
+  ]
+}

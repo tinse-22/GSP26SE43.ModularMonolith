@@ -4,10 +4,10 @@ using ClassifiedAds.Contracts.AuditLog.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.AuditLog.Entities;
 using ClassifiedAds.Modules.AuditLog.Queries;
-using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.AuditLog.Services;
@@ -27,53 +27,48 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
     public async Task AddAsync(AuditLogEntryDTO dto, string requestId)
     {
         var requestType = "ADD_AUDIT_LOG_ENTRY";
-
-        var requestProcessed = await _idempotentRequestRepository.GetQueryableSet().AnyAsync(x => x.RequestType == requestType && x.RequestId == requestId);
-
-        if (requestProcessed)
-        {
-            return;
-        }
-
         var uow = _idempotentRequestRepository.UnitOfWork;
 
-        try
+        await uow.ExecuteInTransactionAsync(async ct =>
         {
-            await uow.ExecuteInTransactionAsync(async ct =>
+            var inserted = await TryInsertIdempotentRequestAsync(requestType, requestId, ct);
+            if (!inserted)
             {
-                await AddOrUpdateAsync(new AuditLogEntry
-                {
-                    UserId = dto.UserId,
-                    CreatedDateTime = dto.CreatedDateTime,
-                    Action = dto.Action,
-                    ObjectId = dto.ObjectId,
-                    Log = dto.Log,
-                });
+                return;
+            }
 
-                await _idempotentRequestRepository.AddAsync(new IdempotentRequest
-                {
-                    RequestType = requestType,
-                    RequestId = requestId,
-                });
+            await AddOrUpdateAsync(new AuditLogEntry
+            {
+                UserId = dto.UserId,
+                CreatedDateTime = dto.CreatedDateTime,
+                Action = dto.Action,
+                ObjectId = dto.ObjectId,
+                Log = dto.Log,
+            }, ct);
 
-                await uow.SaveChangesAsync(ct);
-            });
-        }
-        catch (DbUpdateException ex) when (IsDuplicateIdempotentRequest(ex))
-        {
-            // Another worker/request completed the same idempotent operation first.
-            // Treat this as success so outbox processing can continue safely.
-            return;
-        }
+            await uow.SaveChangesAsync(ct);
+        });
     }
 
-    private static bool IsDuplicateIdempotentRequest(DbUpdateException exception)
+    private async Task<bool> TryInsertIdempotentRequestAsync(string requestType, string requestId, CancellationToken cancellationToken)
     {
-        return exception.InnerException is PostgresException postgresException
-            && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
-            && string.Equals(postgresException.ConstraintName,
-                "IX_IdempotentRequests_RequestType_RequestId",
-                StringComparison.Ordinal);
+        var existingRequest = await _idempotentRequestRepository.FirstOrDefaultAsync(
+            _idempotentRequestRepository.GetQueryableSet()
+                .Where(x => x.RequestType == requestType && x.RequestId == requestId));
+
+        if (existingRequest != null)
+        {
+            return false;
+        }
+
+        await _idempotentRequestRepository.AddAsync(new IdempotentRequest
+        {
+            RequestType = requestType,
+            RequestId = requestId,
+        }, cancellationToken);
+
+        await _idempotentRequestRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     public async Task<List<AuditLogEntryDTO>> GetAuditLogEntriesAsync(AuditLogEntryQueryOptions query)

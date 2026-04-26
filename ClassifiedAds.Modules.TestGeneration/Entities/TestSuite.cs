@@ -88,10 +88,18 @@ public class TestSuite : Entity<Guid>, IAggregateRoot
     /// </summary>
     public Guid? LastModifiedById { get; set; }
 
+    /// <summary>
+    /// Optional link to an SRS document providing requirement-driven context for test generation.
+    /// When set, the LLM uses extracted requirements and constraints from the SRS document
+    /// instead of (or in addition to) the free-text GlobalBusinessRules.
+    /// </summary>
+    public Guid? SrsDocumentId { get; set; }
+
     // Navigation properties
     public ICollection<TestCase> TestCases { get; set; } = new List<TestCase>();
     public ICollection<TestSuiteVersion> Versions { get; set; } = new List<TestSuiteVersion>();
     public ICollection<TestOrderProposal> OrderProposals { get; set; } = new List<TestOrderProposal>();
+    public SrsDocument SrsDocument { get; set; }
 }
 
 public enum GenerationType

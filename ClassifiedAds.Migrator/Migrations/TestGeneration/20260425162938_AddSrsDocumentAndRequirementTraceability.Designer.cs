@@ -3,6 +3,7 @@ using System;
 using ClassifiedAds.Modules.TestGeneration.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 {
     [DbContext(typeof(TestGenerationDbContext))]
-    partial class TestGenerationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260425162938_AddSrsDocumentAndRequirementTraceability")]
+    partial class AddSrsDocumentAndRequirementTraceability
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -292,11 +295,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
-                    b.Property<string>("JobType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
                     b.Property<DateTimeOffset>("QueuedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -455,17 +453,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
-                    b.Property<float?>("RefinedConfidenceScore")
-                        .HasColumnType("real");
-
-                    b.Property<string>("RefinedConstraints")
-                        .HasColumnType("jsonb");
-
-                    b.Property<int>("RefinementRound")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<string>("RequirementCode")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -515,68 +502,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsUnique();
 
                     b.ToTable("SrsRequirements", "testgen");
-                });
-
-            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirementClarification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasDefaultValueSql("gen_random_uuid()");
-
-                    b.Property<string>("AmbiguitySource")
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("AnsweredAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("AnsweredById")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedDateTime")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("DisplayOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsAnswered")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsCritical")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Question")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasColumnType("bytea");
-
-                    b.Property<Guid>("SrsRequirementId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SuggestedOptions")
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTimeOffset?>("UpdatedDateTime")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UserAnswer")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AnsweredById");
-
-                    b.HasIndex("SrsRequirementId");
-
-                    b.HasIndex("SrsRequirementId", "DisplayOrder");
-
-                    b.HasIndex("SrsRequirementId", "IsAnswered");
-
-                    b.ToTable("SrsRequirementClarifications", "testgen");
                 });
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
@@ -1389,17 +1314,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Navigation("SrsDocument");
                 });
 
-            modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirementClarification", b =>
-                {
-                    b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", "SrsRequirement")
-                        .WithMany("Clarifications")
-                        .HasForeignKey("SrsRequirementId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("SrsRequirement");
-                });
-
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.TestCase", b =>
                 {
                     b.HasOne("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", null)
@@ -1561,8 +1475,6 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 
             modelBuilder.Entity("ClassifiedAds.Modules.TestGeneration.Entities.SrsRequirement", b =>
                 {
-                    b.Navigation("Clarifications");
-
                     b.Navigation("TestCaseLinks");
                 });
 
