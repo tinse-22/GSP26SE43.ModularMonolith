@@ -24,6 +24,8 @@ public class ReportDataSanitizerTests
         var result = sanitizer.Sanitize(context);
 
         // Assert
+        result.ProjectName.Should().Be(ReportTestData.ProjectName);
+        result.Attempts.Should().HaveCount(2);
         result.Definitions[0].Request.Headers.Should().Contain("***MASKED***");
         result.Definitions[0].Request.Headers.Should().NotContain("raw-order-token");
         result.Definitions[0].Request.QueryParams.Should().Contain("***MASKED***");
@@ -38,5 +40,9 @@ public class ReportDataSanitizerTests
         result.Results[1].ResponseBodyPreview.Should().NotContain("raw-failure-password");
         result.Results[1].ResponseBodyPreview.Should().NotContain("raw-response-token");
         result.Results[1].ResponseBodyPreview.Length.Should().BeLessThanOrEqualTo(45);
+        result.Attempts[1].RetryReason.Should().Contain("***MASKED***");
+        result.Attempts[1].RetryReason.Should().NotContain("raw-retry-token");
+        result.Attempts[1].SkippedCause.Should().Contain("***MASKED***");
+        result.Attempts[1].SkippedCause.Should().NotContain("secret-cookie");
     }
 }

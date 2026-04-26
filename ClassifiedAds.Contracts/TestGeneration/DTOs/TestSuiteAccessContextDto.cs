@@ -8,6 +8,8 @@ public class TestSuiteAccessContextDto
 
     public Guid ProjectId { get; set; }
 
+    public string ProjectName { get; set; }
+
     public Guid? ApiSpecId { get; set; }
 
     public string GenerationType { get; set; }

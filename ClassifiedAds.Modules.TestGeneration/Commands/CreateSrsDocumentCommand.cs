@@ -4,6 +4,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,6 +15,8 @@ public class CreateSrsDocumentCommand : ICommand
     public Guid ProjectId { get; set; }
 
     public Guid CurrentUserId { get; set; }
+
+    public Guid? TestSuiteId { get; set; }
 
     public string Title { get; set; }
 
@@ -29,10 +32,14 @@ public class CreateSrsDocumentCommand : ICommand
 public class CreateSrsDocumentCommandHandler : ICommandHandler<CreateSrsDocumentCommand>
 {
     private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<TestSuite, Guid> _suiteRepository;
 
-    public CreateSrsDocumentCommandHandler(IRepository<SrsDocument, Guid> srsDocumentRepository)
+    public CreateSrsDocumentCommandHandler(
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<TestSuite, Guid> suiteRepository)
     {
         _srsDocumentRepository = srsDocumentRepository;
+        _suiteRepository = suiteRepository;
     }
 
     public async Task HandleAsync(CreateSrsDocumentCommand command, CancellationToken cancellationToken = default)
@@ -57,9 +64,23 @@ public class CreateSrsDocumentCommandHandler : ICommandHandler<CreateSrsDocument
             throw new ValidationException("StorageFileId la bat buoc khi SourceType la FileUpload.");
         }
 
+        TestSuite suite = null;
+        if (command.TestSuiteId.HasValue)
+        {
+            suite = await _suiteRepository.FirstOrDefaultAsync(
+                _suiteRepository.GetQueryableSet()
+                    .Where(x => x.Id == command.TestSuiteId.Value && x.ProjectId == command.ProjectId));
+
+            if (suite == null)
+            {
+                throw new NotFoundException($"TestSuite {command.TestSuiteId.Value} khong tim thay.");
+            }
+        }
+
         var doc = new SrsDocument
         {
             ProjectId = command.ProjectId,
+            TestSuiteId = command.TestSuiteId,
             Title = command.Title,
             SourceType = command.SourceType,
             RawContent = command.RawContent,
@@ -72,6 +93,15 @@ public class CreateSrsDocumentCommandHandler : ICommandHandler<CreateSrsDocument
 
         await _srsDocumentRepository.AddAsync(doc, cancellationToken);
         await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+        if (suite != null)
+        {
+            suite.SrsDocumentId = doc.Id;
+            suite.LastModifiedById = command.CurrentUserId;
+            suite.RowVersion = Guid.NewGuid().ToByteArray();
+            await _suiteRepository.UpdateAsync(suite, cancellationToken);
+            await _suiteRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         command.Result = SrsDocumentModel.FromEntity(doc);
     }

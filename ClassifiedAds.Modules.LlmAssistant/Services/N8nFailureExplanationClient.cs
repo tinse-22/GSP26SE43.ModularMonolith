@@ -68,44 +68,49 @@ public class N8nFailureExplanationClient : ILlmFailureExplanationClient
                 $"Failure explanation provider trả về HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
         }
 
-        try
-        {
-            return ParseResponse(responseText);
-        }
-        catch (JsonException ex)
-        {
-            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Provider response không phải JSON hợp lệ.", ex);
-        }
+        return ParseResponse(responseText);
     }
 
     private static FailureExplanationProviderResponse ParseResponse(string responseText)
     {
-        using var document = JsonDocument.Parse(responseText);
-        if (TryMapResponse(document.RootElement, out var result))
+        if (string.IsNullOrWhiteSpace(responseText))
         {
-            return result;
+            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Provider response trống.");
         }
 
-        foreach (var wrapperName in new[] { "data", "result", "response", "output" })
+        try
         {
-            if (!document.RootElement.TryGetProperty(wrapperName, out var nested))
-            {
-                continue;
-            }
-
-            if (TryMapResponse(nested, out result))
+            using var document = JsonDocument.Parse(responseText);
+            if (TryMapResponse(document.RootElement, out var result))
             {
                 return result;
             }
 
-            if (nested.ValueKind == JsonValueKind.String)
+            foreach (var wrapperName in new[] { "data", "result", "response", "output" })
             {
-                using var nestedDocument = JsonDocument.Parse(nested.GetString());
-                if (TryMapResponse(nestedDocument.RootElement, out result))
+                if (!document.RootElement.TryGetProperty(wrapperName, out var nested))
+                {
+                    continue;
+                }
+
+                if (TryMapResponse(nested, out result))
                 {
                     return result;
                 }
+
+                if (nested.ValueKind == JsonValueKind.String)
+                {
+                    using var nestedDocument = JsonDocument.Parse(nested.GetString());
+                    if (TryMapResponse(nestedDocument.RootElement, out result))
+                    {
+                        return result;
+                    }
+                }
             }
+        }
+        catch (JsonException ex)
+        {
+            throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Provider response không phải JSON hợp lệ.", ex);
         }
 
         throw new ValidationException("FAILURE_EXPLANATION_PROVIDER_INVALID_JSON: Thiếu các trường JSON bắt buộc.");

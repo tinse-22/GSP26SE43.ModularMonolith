@@ -29,7 +29,7 @@ public class TestReport : Entity<Guid>, IAggregateRoot
     public ReportType ReportType { get; set; }
 
     /// <summary>
-    /// Report format: PDF, CSV, JSON, HTML.
+    /// Report format: PDF, CSV, JSON, HTML, Excel.
     /// </summary>
     public ReportFormat Format { get; set; }
 
@@ -56,5 +56,6 @@ public enum ReportFormat
     PDF = 0,
     CSV = 1,
     JSON = 2,
-    HTML = 3
+    HTML = 3,
+    Excel = 4
 }

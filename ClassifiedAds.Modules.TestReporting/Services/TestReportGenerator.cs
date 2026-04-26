@@ -164,12 +164,13 @@ public class TestReportGenerator : ITestReportGenerator
             SuiteName = context.SuiteName,
             ReportType = reportType,
             GeneratedAt = generatedAt,
-            FileBaseName = BuildFileBaseName(context.Run.RunNumber, reportType, format, generatedAt),
+            FileBaseName = BuildFileBaseName(context.ProjectName, context.Run.RunNumber, reportType, format, generatedAt),
             Run = context.Run,
             Coverage = coverage,
             FailureDistribution = BuildFailureDistribution(context.Results),
             RecentRuns = context.RecentRuns?.ToArray() ?? Array.Empty<TestRunHistoryItemDto>(),
             Cases = BuildCases(context),
+            Attempts = context.Attempts?.ToArray() ?? Array.Empty<TestRunExecutionAttemptDto>(),
         };
     }
 
@@ -251,6 +252,7 @@ public class TestReportGenerator : ITestReportGenerator
                     BodyNotContainsPassed = result?.BodyNotContainsPassed,
                     JsonPathChecksPassed = result?.JsonPathChecksPassed,
                     ResponseTimePassed = result?.ResponseTimePassed,
+                    TotalAttempts = result?.TotalAttempts ?? 0,
                 };
             })
             .OrderBy(x => x.OrderIndex)
@@ -258,9 +260,10 @@ public class TestReportGenerator : ITestReportGenerator
             .ToArray();
     }
 
-    private static string BuildFileBaseName(int runNumber, ReportType reportType, ReportFormat format, DateTimeOffset generatedAt)
+    private static string BuildFileBaseName(string projectName, int runNumber, ReportType reportType, ReportFormat format, DateTimeOffset generatedAt)
     {
-        return $"test-run-{runNumber}-{reportType.ToString().ToLowerInvariant()}-{format.ToString().ToLowerInvariant()}-{generatedAt.UtcDateTime:yyyyMMddTHHmmssZ}";
+        var safeProjectName = string.IsNullOrWhiteSpace(projectName) ? "ModularMonolith" : projectName;
+        return $"@{safeProjectName}-TestPlan-_-TestCase-v1.0-{reportType.ToString().ToLowerInvariant()}-{generatedAt.UtcDateTime:yyyyMMddTHHmmssZ}";
     }
 
     private DateTimeOffset? ResolveExpiration(DateTimeOffset generatedAt)

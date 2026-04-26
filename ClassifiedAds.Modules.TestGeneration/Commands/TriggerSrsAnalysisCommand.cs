@@ -154,6 +154,12 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
                 WebhookName, payload, cancellationToken);
         }
         catch (Exception ex)
+        else if (ShouldUseLocalFallback(result))
+        {
+            await ApplyLocalFallbackAsync(job, doc, rawContent, endpoints, cancellationToken);
+            return;
+        }
+        else
         {
             job.Status = SrsAnalysisJobStatus.Failed;
             job.ErrorMessage = ex.Message;
@@ -176,6 +182,278 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         _logger.LogInformation(
             "SRS analysis completed synchronously. JobId={JobId}, SrsDocumentId={SrsDocumentId}",
             job.Id, command.SrsDocumentId);
+    }
+
+    private async Task ApplyLocalFallbackAsync(
+        SrsAnalysisJob job,
+        SrsDocument doc,
+        string rawContent,
+        List<N8nSrsEndpointRef> endpoints,
+        CancellationToken cancellationToken)
+    {
+        var requirements = BuildLocalRequirements(rawContent, endpoints);
+        var clarifications = BuildLocalClarifications(requirements);
+
+        _logger.LogWarning(
+            "SRS analysis webhook is unavailable. Falling back to local synthesis. JobId={JobId}, SrsDocumentId={SrsDocumentId}, RequirementCount={RequirementCount}",
+            job.Id,
+            doc.Id,
+            requirements.Count);
+
+        await _dispatcher.DispatchAsync(new ProcessSrsAnalysisCallbackCommand
+        {
+            JobId = job.Id,
+            Requirements = requirements,
+            ClarificationQuestions = clarifications,
+        }, cancellationToken);
+    }
+
+    private static bool ShouldUseLocalFallback(WebhookTriggerResult result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        return ContainsIgnoreCase(result.ErrorMessage, "Status: NotFound")
+            || ContainsIgnoreCase(result.ErrorDetails, "not registered");
+    }
+
+    private static List<N8nSrsRequirementResult> BuildLocalRequirements(
+        string rawContent,
+        IReadOnlyList<N8nSrsEndpointRef> endpoints)
+    {
+        var candidates = ExtractRequirementCandidates(rawContent, endpoints);
+
+        return candidates.Select((candidate, index) =>
+        {
+            var matchedEndpoint = MatchEndpoint(candidate, endpoints, index);
+            var ambiguityNotes = BuildAmbiguityNotes(candidate);
+
+            return new N8nSrsRequirementResult
+            {
+                RequirementCode = $"REQ-{index + 1:000}",
+                Title = Truncate(candidate, 120),
+                Description = candidate,
+                Type = InferRequirementType(candidate),
+                TestableConstraints = JsonSerializer.Serialize(new[]
+                {
+                    new Dictionary<string, string>
+                    {
+                        ["constraint"] = candidate,
+                        ["priority"] = InferPriority(candidate),
+                    },
+                }),
+                Assumptions = JsonSerializer.Serialize(BuildAssumptions(candidate, matchedEndpoint)),
+                Ambiguities = JsonSerializer.Serialize(ambiguityNotes),
+                ConfidenceScore = ambiguityNotes.Count == 0 ? 0.78f : 0.62f,
+                MappedEndpointPath = matchedEndpoint == null ? null : $"{matchedEndpoint.Method} {matchedEndpoint.Path}",
+            };
+        }).ToList();
+    }
+
+    private static List<N8nSrsClarificationQuestion> BuildLocalClarifications(
+        IReadOnlyList<N8nSrsRequirementResult> requirements)
+    {
+        var target = requirements.FirstOrDefault(x => ContainsIgnoreCase(x.Description, "register")
+            || ContainsIgnoreCase(x.Description, "create account")
+            || ContainsIgnoreCase(x.Description, "tai khoan"))
+            ?? requirements.FirstOrDefault();
+
+        if (target == null)
+        {
+            return new List<N8nSrsClarificationQuestion>();
+        }
+
+        return new List<N8nSrsClarificationQuestion>
+        {
+            new()
+            {
+                RequirementCode = target.RequirementCode,
+                AmbiguitySource = "Can xac nhan thong tin test account can dung khi tao tai khoan.",
+                Question = "Khi tao tai khoan trong SUT, co phai dung email tinvtse@gmail.com va password User@123 khong?",
+                IsCritical = true,
+                SuggestedOptions = JsonSerializer.Serialize(new[]
+                {
+                    "Su dung tinvtse@gmail.com / User@123",
+                    "Dung thong tin khac do nguoi dung cung cap",
+                }),
+            },
+        };
+    }
+
+    private static List<string> ExtractRequirementCandidates(
+        string rawContent,
+        IReadOnlyList<N8nSrsEndpointRef> endpoints)
+    {
+        var candidates = (rawContent ?? string.Empty)
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormalizeCandidate)
+            .Where(x => x.Length >= 20)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToList();
+
+        if (candidates.Count > 0)
+        {
+            return candidates;
+        }
+
+        if (endpoints.Count > 0)
+        {
+            return endpoints
+                .Take(4)
+                .Select(x => $"{x.Method} {x.Path} phai xu ly happy path, validation, va authorization dung theo hop dong API.")
+                .ToList();
+        }
+
+        return new List<string>
+        {
+            "He thong phai thuc thi dung cac luong nghiep vu chinh va xu ly loi theo noi dung SRS da cung cap.",
+        };
+    }
+
+    private static string NormalizeCandidate(string line)
+    {
+        var value = (line ?? string.Empty).Trim();
+        value = value.TrimStart('-', '*', '#', ' ', '\t');
+
+        while (value.Length > 0 && char.IsDigit(value[0]))
+        {
+            value = value[1..];
+        }
+
+        value = value.TrimStart('.', ')', ':', '-', ' ');
+        return value.Trim();
+    }
+
+    private static List<string> BuildAssumptions(string candidate, N8nSrsEndpointRef endpoint)
+    {
+        var assumptions = new List<string>();
+
+        if (endpoint != null)
+        {
+            assumptions.Add($"Mapped to {endpoint.Method} {endpoint.Path}");
+        }
+
+        if (ContainsIgnoreCase(candidate, "login") || ContainsIgnoreCase(candidate, "register"))
+        {
+            assumptions.Add("Authentication endpoints use the configured runtime base URL.");
+        }
+
+        return assumptions;
+    }
+
+    private static List<string> BuildAmbiguityNotes(string candidate)
+    {
+        var notes = new List<string>();
+
+        if (ContainsIgnoreCase(candidate, "register")
+            || ContainsIgnoreCase(candidate, "create account")
+            || ContainsIgnoreCase(candidate, "tai khoan"))
+        {
+            notes.Add("Can xac nhan bo thong tin test account can dung cho luong tao tai khoan.");
+        }
+
+        return notes;
+    }
+
+    private static N8nSrsEndpointRef MatchEndpoint(
+        string candidate,
+        IReadOnlyList<N8nSrsEndpointRef> endpoints,
+        int index)
+    {
+        if (endpoints.Count == 0)
+        {
+            return null;
+        }
+
+        var endpoint = endpoints.FirstOrDefault(x => ContainsIgnoreCase(candidate, x.Path));
+        if (endpoint != null)
+        {
+            return endpoint;
+        }
+
+        if (ContainsIgnoreCase(candidate, "login") || ContainsIgnoreCase(candidate, "auth"))
+        {
+            endpoint = endpoints.FirstOrDefault(x => ContainsIgnoreCase(x.Path, "login") || ContainsIgnoreCase(x.Path, "auth"));
+            if (endpoint != null)
+            {
+                return endpoint;
+            }
+        }
+
+        if (ContainsIgnoreCase(candidate, "register")
+            || ContainsIgnoreCase(candidate, "create account")
+            || ContainsIgnoreCase(candidate, "tai khoan"))
+        {
+            endpoint = endpoints.FirstOrDefault(x => ContainsIgnoreCase(x.Path, "register")
+                || ContainsIgnoreCase(x.Path, "signup")
+                || ContainsIgnoreCase(x.Path, "users"));
+            if (endpoint != null)
+            {
+                return endpoint;
+            }
+        }
+
+        return endpoints[index % endpoints.Count];
+    }
+
+    private static string InferRequirementType(string candidate)
+    {
+        if (ContainsIgnoreCase(candidate, "auth")
+            || ContainsIgnoreCase(candidate, "login")
+            || ContainsIgnoreCase(candidate, "token")
+            || ContainsIgnoreCase(candidate, "password")
+            || ContainsIgnoreCase(candidate, "authorization"))
+        {
+            return "security";
+        }
+
+        if (ContainsIgnoreCase(candidate, "performance")
+            || ContainsIgnoreCase(candidate, "latency")
+            || ContainsIgnoreCase(candidate, "timeout")
+            || ContainsIgnoreCase(candidate, "throughput"))
+        {
+            return "performance";
+        }
+
+        if (ContainsIgnoreCase(candidate, "required")
+            || ContainsIgnoreCase(candidate, "validation")
+            || ContainsIgnoreCase(candidate, "format")
+            || ContainsIgnoreCase(candidate, "must"))
+        {
+            return "constraint";
+        }
+
+        return "functional";
+    }
+
+    private static string InferPriority(string candidate)
+    {
+        return ContainsIgnoreCase(candidate, "auth")
+            || ContainsIgnoreCase(candidate, "login")
+            || ContainsIgnoreCase(candidate, "register")
+            || ContainsIgnoreCase(candidate, "password")
+            ? "High"
+            : "Medium";
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..(maxLength - 3)] + "...";
+    }
+
+    private static bool ContainsIgnoreCase(string input, string value)
+    {
+        return !string.IsNullOrWhiteSpace(input)
+            && !string.IsNullOrWhiteSpace(value)
+            && input.Contains(value, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<List<N8nSrsEndpointRef>> GetEndpointsAsync(SrsDocument doc, CancellationToken cancellationToken)

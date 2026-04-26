@@ -19,5 +19,7 @@ public class ExecutionEnvironmentConfiguration : IEntityTypeConfiguration<Execut
 
         builder.HasIndex(x => x.ProjectId);
         builder.HasIndex(x => new { x.ProjectId, x.IsDefault });
+
+        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

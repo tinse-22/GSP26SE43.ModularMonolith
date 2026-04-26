@@ -76,10 +76,15 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
                 .ThenByDescending(x => x.Id)
                 .Take(normalizedRecentHistoryLimit));
 
+        var attemptMap = runResults.Attempts
+            .GroupBy(x => x.TestCaseId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         return new TestRunReportContextDto
         {
             TestSuiteId = suiteContext.TestSuiteId,
             ProjectId = suiteContext.ProjectId,
+            ProjectName = suiteContext.ProjectName,
             ApiSpecId = suiteContext.ApiSpecId,
             CreatedById = suiteContext.CreatedById,
             SuiteName = suiteContext.Name,
@@ -92,7 +97,10 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
             Results = (runResults.Cases ?? new List<TestCaseRunResultModel>())
                 .OrderBy(x => x.OrderIndex)
                 .ThenBy(x => x.TestCaseId)
-                .Select(MapResult)
+                .Select(x => MapResult(x, attemptMap.GetValueOrDefault(x.TestCaseId, 0)))
+                .ToArray(),
+            Attempts = runResults.Attempts
+                .Select(MapAttempt)
                 .ToArray(),
         };
     }
@@ -181,7 +189,7 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
         };
     }
 
-    private static ReportTestCaseResultDto MapResult(TestCaseRunResultModel result)
+    private static ReportTestCaseResultDto MapResult(TestCaseRunResultModel result, int totalAttempts)
     {
         return new ReportTestCaseResultDto
         {
@@ -220,6 +228,33 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
             BodyNotContainsPassed = result.BodyNotContainsPassed,
             JsonPathChecksPassed = result.JsonPathChecksPassed,
             ResponseTimePassed = result.ResponseTimePassed,
+            ExecutionAttempt = result.ExecutionAttempt,
+            TotalAttempts = totalAttempts,
+        };
+    }
+
+    private static TestRunExecutionAttemptDto MapAttempt(TestCaseExecutionAttemptModel attempt)
+    {
+        return new TestRunExecutionAttemptDto
+        {
+            ExecutionAttemptId = attempt.ExecutionAttemptId,
+            TestCaseId = attempt.TestCaseId,
+            ParentAttemptId = attempt.ParentAttemptId,
+            AttemptNumber = attempt.AttemptNumber,
+            Status = attempt.Status,
+            RetryReason = attempt.RetryReason,
+            SkippedCause = attempt.SkippedCause,
+            DurationMs = attempt.DurationMs,
+            StartedAt = attempt.StartedAt,
+            CompletedAt = attempt.CompletedAt,
+            FailureReasons = attempt.FailureReasons?.Select(x => new ReportValidationFailureDto
+            {
+                Code = x.Code,
+                Message = x.Message,
+                Target = x.Target,
+                Expected = x.Expected,
+                Actual = x.Actual,
+            }).ToArray() ?? Array.Empty<ReportValidationFailureDto>(),
         };
     }
 

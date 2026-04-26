@@ -31,6 +31,21 @@ public class ProjectOwnershipGatewayService : IProjectOwnershipGatewayService
         return IsOwnedByUserCoreAsync(projectId, userId, ct);
     }
 
+    public async Task<string> GetProjectNameAsync(
+        Guid projectId,
+        CancellationToken ct = default)
+    {
+        if (projectId == Guid.Empty)
+        {
+            return null;
+        }
+
+        return await _projectRepository.GetQueryableSet()
+            .Where(x => x.Id == projectId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(ct);
+    }
+
     private async Task<bool> IsOwnedByUserCoreAsync(Guid projectId, Guid userId, CancellationToken ct)
     {
         var ownerId = await _projectRepository.GetQueryableSet()

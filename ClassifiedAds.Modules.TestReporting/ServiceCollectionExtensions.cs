@@ -55,10 +55,12 @@ public static class TestReportingServiceCollectionExtensions
             .AddScoped<PdfReportRenderer>()
             .AddScoped<CsvReportRenderer>()
             .AddScoped<JsonReportRenderer>()
+            .AddScoped<ExcelReportRenderer>()
             .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<PdfReportRenderer>())
             .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<CsvReportRenderer>())
             .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<JsonReportRenderer>())
-            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<HtmlReportRenderer>());
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<HtmlReportRenderer>())
+            .AddScoped<IReportRenderer>(serviceProvider => serviceProvider.GetRequiredService<ExcelReportRenderer>());
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());
 

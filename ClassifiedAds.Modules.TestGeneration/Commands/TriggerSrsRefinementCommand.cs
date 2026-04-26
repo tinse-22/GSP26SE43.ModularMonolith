@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -152,7 +153,13 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
             callbackData = await _n8nService.TriggerWebhookAsync<N8nSrsRefinementPayload, SrsRefinementCallbackRequest>(
                 WebhookName, payload, cancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex_)
+        else if (ShouldUseLocalFallback(result))
+        {
+            await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
+            return;
+        }
+        else
         {
             job.Status = SrsAnalysisJobStatus.Failed;
             job.ErrorMessage = ex.Message;
@@ -172,6 +179,97 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         _logger.LogInformation(
             "SRS refinement completed synchronously. JobId={JobId}, RequirementId={RequirementId}",
             job.Id, command.RequirementId);
+    
+
+    private async Task ApplyLocalFallbackAsync(
+        SrsAnalysisJob job,
+        SrsRequirement req,
+        IReadOnlyCollection<SrsRequirementClarification> clarifications,
+        CancellationToken cancellationToken)
+    {
+        var refinedRequirement = new N8nSrsRefinedRequirement
+        {
+            RequirementId = req.Id,
+            RequirementCode = req.RequirementCode,
+            RefinedConstraints = BuildRefinedConstraints(req, clarifications),
+            RefinedConfidenceScore = Math.Min(1f, Math.Max(req.ConfidenceScore ?? 0.65f, 0.65f) + (clarifications.Count * 0.1f)),
+            RefinementSummary = "Local fallback refinement applied because the SRS refinement webhook is unavailable.",
+        };
+
+        _logger.LogWarning(
+            "SRS refinement webhook is unavailable. Falling back to local refinement. JobId={JobId}, RequirementId={RequirementId}",
+            job.Id,
+            req.Id);
+
+        await _dispatcher.DispatchAsync(new ProcessSrsRefinementCallbackCommand
+        {
+            JobId = job.Id,
+            RefinedRequirements = new List<N8nSrsRefinedRequirement> { refinedRequirement },
+        }, cancellationToken);
+    }
+
+    private static bool ShouldUseLocalFallback(WebhookTriggerResult result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        return ContainsIgnoreCase(result.ErrorMessage, "Status: NotFound")
+            || ContainsIgnoreCase(result.ErrorDetails, "not registered");
+    }
+
+    private static string BuildRefinedConstraints(
+        SrsRequirement requirement,
+        IReadOnlyCollection<SrsRequirementClarification> clarifications)
+    {
+        var refined = TryDeserializeConstraints(requirement.RefinedConstraints)
+            ?? TryDeserializeConstraints(requirement.TestableConstraints)
+            ?? new List<Dictionary<string, string>>();
+
+        if (refined.Count == 0)
+        {
+            refined.Add(new Dictionary<string, string>
+            {
+                ["constraint"] = requirement.Description ?? requirement.Title,
+                ["priority"] = "High",
+            });
+        }
+
+        foreach (var clarification in clarifications.Where(x => x.IsAnswered))
+        {
+            refined.Add(new Dictionary<string, string>
+            {
+                ["constraint"] = $"Clarified: {clarification.Question} => {clarification.UserAnswer}",
+                ["priority"] = clarification.IsCritical ? "High" : "Medium",
+            });
+        }
+
+        return JsonSerializer.Serialize(refined);
+    }
+
+    private static List<Dictionary<string, string>> TryDeserializeConstraints(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<Dictionary<string, string>>>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool ContainsIgnoreCase(string input, string value)
+    {
+        return !string.IsNullOrWhiteSpace(input)
+            && !string.IsNullOrWhiteSpace(value)
+            && input.Contains(value, StringComparison.OrdinalIgnoreCase);
     }
 }
 

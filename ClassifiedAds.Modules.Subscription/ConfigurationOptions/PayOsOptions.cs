@@ -2,11 +2,29 @@ namespace ClassifiedAds.Modules.Subscription.ConfigurationOptions;
 
 public class PayOsOptions
 {
+    private string _secretKey = string.Empty;
+
     public string ClientId { get; set; } = string.Empty;
 
     public string ApiKey { get; set; } = string.Empty;
 
-    public string SecretKey { get; set; } = string.Empty;
+    public string SecretKey
+    {
+        get => _secretKey;
+        set => _secretKey = value ?? string.Empty;
+    }
+
+    public string ChecksumKey
+    {
+        get => _secretKey;
+        set
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                _secretKey = value;
+            }
+        }
+    }
 
     public string BaseUrl { get; set; } = "https://api-merchant.payos.vn";
 

@@ -1,0 +1,70 @@
+{
+  "module": "TestExecution",
+  "resource": "ExecutionEnvironment",
+  "basePath": "/api/projects/{projectId}/execution-environments",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/",
+      "description": "Get all execution environments for a project",
+      "response": "List<ExecutionEnvironmentModel>"
+    },
+    {
+      "method": "GET",
+      "path": "/{environmentId}",
+      "description": "Get a specific execution environment",
+      "response": "ExecutionEnvironmentModel"
+    },
+    {
+      "method": "POST",
+      "path": "/",
+      "description": "Create a new execution environment",
+      "body": {
+        "name": "string (Required, max 100)",
+        "baseUrl": "string (Required, max 500)",
+        "variables": "Map<string, string>",
+        "headers": "Map<string, string>",
+        "authConfig": "ExecutionAuthConfigModel",
+        "isDefault": "boolean"
+      },
+      "response": "ExecutionEnvironmentModel (Status 201)"
+    },
+    {
+      "method": "PUT",
+      "path": "/{environmentId}",
+      "description": "Update an existing execution environment",
+      "body": {
+        "rowVersion": "string (Required, Base64)",
+        "name": "string (Required, max 100)",
+        "baseUrl": "string (Required, max 500)",
+        "variables": "Map<string, string>",
+        "headers": "Map<string, string>",
+        "authConfig": "ExecutionAuthConfigModel",
+        "isDefault": "boolean"
+      },
+      "response": "ExecutionEnvironmentModel (Status 200)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/{environmentId}?rowVersion={rowVersion}",
+      "description": "Delete an execution environment",
+      "queryParams": {
+        "rowVersion": "string (Required, Base64)"
+      },
+      "response": "NoContent (Status 204)"
+    }
+  ],
+  "models": {
+    "ExecutionEnvironmentModel": {
+      "id": "guid",
+      "projectId": "guid",
+      "name": "string",
+      "baseUrl": "string",
+      "variables": "string (JSON)",
+      "headers": "string (JSON)",
+      "authConfig": "string (JSON)",
+      "isDefault": "boolean",
+      "rowVersion": "string (Base64)"
+    }
+  }
+}

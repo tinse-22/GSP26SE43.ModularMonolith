@@ -7,6 +7,8 @@ public class CreateSrsDocumentRequest
 {
     public string Title { get; set; }
 
+    public Guid? TestSuiteId { get; set; }
+
     public SrsSourceType SourceType { get; set; }
 
     /// <summary>
