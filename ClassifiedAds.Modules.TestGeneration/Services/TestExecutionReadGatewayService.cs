@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
@@ -21,6 +22,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
     private readonly IRepository<TestCaseVariable, Guid> _variableRepository;
     private readonly IRepository<TestCaseDependency, Guid> _dependencyRepository;
     private readonly IApiTestOrderGateService _orderGateService;
+    private readonly IProjectOwnershipGatewayService _projectOwnershipGatewayService;
 
     public TestExecutionReadGatewayService(
         IRepository<TestSuite, Guid> suiteRepository,
@@ -29,7 +31,8 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         IRepository<TestCaseExpectation, Guid> expectationRepository,
         IRepository<TestCaseVariable, Guid> variableRepository,
         IRepository<TestCaseDependency, Guid> dependencyRepository,
-        IApiTestOrderGateService orderGateService)
+        IApiTestOrderGateService orderGateService,
+        IProjectOwnershipGatewayService projectOwnershipGatewayService)
     {
         _suiteRepository = suiteRepository;
         _testCaseRepository = testCaseRepository;
@@ -38,6 +41,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         _variableRepository = variableRepository;
         _dependencyRepository = dependencyRepository;
         _orderGateService = orderGateService;
+        _projectOwnershipGatewayService = projectOwnershipGatewayService;
     }
 
     public async Task<TestSuiteAccessContextDto> GetSuiteAccessContextAsync(
@@ -52,10 +56,13 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             throw new NotFoundException($"Không tìm thấy test suite với mã '{testSuiteId}'.");
         }
 
+        var projectName = await _projectOwnershipGatewayService.GetProjectNameAsync(suite.ProjectId, ct);
+
         return new TestSuiteAccessContextDto
         {
             TestSuiteId = suite.Id,
             ProjectId = suite.ProjectId,
+            ProjectName = projectName,
             ApiSpecId = suite.ApiSpecId,
             GenerationType = suite.GenerationType.ToString(),
             CreatedById = suite.CreatedById,
