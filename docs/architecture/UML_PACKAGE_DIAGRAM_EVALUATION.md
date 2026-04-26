@@ -13,7 +13,6 @@
 - [UML Package Diagram — Sub-System Evaluation \& Package Explanation](#uml-package-diagram--sub-system-evaluation--package-explanation)
   - [Table of Contents](#table-of-contents)
   - [1. Overall System Package Diagram](#1-overall-system-package-diagram)
-    - [Overall Package Diagram (PlantUML)](#overall-package-diagram-plantuml)
     - [Overall Package Diagram (Mermaid)](#overall-package-diagram-mermaid)
   - [2. Sub-System Breakdown](#2-sub-system-breakdown)
     - [2.1 Core Layers Sub-System](#21-core-layers-sub-system)
@@ -60,169 +59,22 @@ The system follows a **Modular Monolith with Shared Layered Core** architecture.
 Client Applications (planned) → Hosts → Feature Modules → Core Layers
 ```
 
-### Overall Package Diagram (PlantUML)
-
-```plantuml
-@startuml overall_package_diagram
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 11
-skinparam padding 4
-
-skinparam package {
-  BackgroundColor<<client>> #FFFDE7
-  BackgroundColor<<host>> #E3F2FD
-  BackgroundColor<<module>> #FFF3E0
-  BackgroundColor<<core>> #E8F5E9
-  BackgroundColor<<shared>> #F3E5F5
-  BorderColor<<client>> #F57F17
-  BorderColor<<host>> #1565C0
-  BorderColor<<module>> #E65100
-  BorderColor<<core>> #2E7D32
-  BorderColor<<shared>> #7B1FA2
-}
-
-package "Client Applications «planned»" <<client>> {
-  [WebApp (SPA)] as WebApp
-  note right of WebApp
-    Tech stack: TBD
-    Roles: Admin, Developer,
-    Tester, Viewer
-  end note
-}
-
-package "Hosts" <<host>> {
-  [AppHost] as AH
-  [WebAPI] as WAPI
-  [Background] as BG
-  [Migrator] as MIG
-}
-
-package "Shared Platform" <<shared>> {
-  [ServiceDefaults] as SD
-}
-
-package "Feature Modules" <<module>> {
-  package "API Quality Lifecycle" as BC1 {
-    [ApiDocumentation] as ADOC
-    [TestGeneration] as TGEN
-    [TestExecution] as TEXE
-    [TestReporting] as TREP
-  }
-  package "Identity & Collaboration" as BC2 {
-    [Identity] as IDN
-    [AuditLog] as ALOG
-    [Notification] as NOTF
-  }
-  package "Monetization & Assets" as BC3 {
-    [Subscription] as SUB
-    [Storage] as STR
-  }
-  package "Support" as BC4 {
-    [Configuration] as CFG
-    [LlmAssistant] as LLM
-  }
-}
-
-package "Core Layers" <<core>> {
-  [Application] as APP
-  [Domain] as DOM
-  [Infrastructure] as INF
-  [Persistence.PostgreSQL] as PG
-  [Contracts] as CTR
-  [CrossCuttingConcerns] as CCC
-}
-
-' Client → Host
-WebApp ..> WAPI : REST API
-
-' Hosts orchestration
-AH --> WAPI
-AH --> BG
-AH --> MIG
-
-' Hosts → ServiceDefaults
-WAPI --> SD
-BG --> SD
-MIG --> SD
-
-' Hosts → Modules (simplified)
-WAPI --> BC1 : composes
-WAPI --> BC2 : composes
-WAPI --> BC3 : composes
-WAPI --> BC4 : composes
-BG --> BC2 : composes
-BG --> BC3 : composes
-MIG --> BC1 : composes
-MIG --> BC2 : composes
-MIG --> BC3 : composes
-MIG --> BC4 : composes
-
-' Modules → Core
-BC1 --> APP
-BC1 --> DOM
-BC1 --> INF
-BC1 --> PG
-BC1 --> CCC
-BC2 --> APP
-BC2 --> DOM
-BC2 --> INF
-BC2 --> PG
-BC2 --> CCC
-BC3 --> APP
-BC3 --> DOM
-BC3 --> INF
-BC3 --> PG
-BC3 --> CCC
-BC4 --> APP
-BC4 --> DOM
-BC4 --> INF
-BC4 --> PG
-BC4 --> CCC
-
-' Core internal
-APP --> DOM
-DOM --> CCC
-INF --> APP
-INF --> DOM
-PG --> DOM
-PG --> CCC
-
-' Cross-module via Contracts (representative sample)
-BC1 ..> CTR : uses
-BC2 ..> CTR : uses
-BC3 ..> CTR : uses
-BC4 ..> CTR : uses
-
-legend right
-  |= Layer |= Color |= Description |
-  | Client | <#FFFDE7> | Planned SPA (unimplemented) |
-  | Hosts | <#E3F2FD> | Composition roots / entry points |
-  | Modules | <#FFF3E0> | Bounded context packages |
-  | Core | <#E8F5E9> | Shared layered kernel |
-  | Shared | <#F3E5F5> | Aspire defaults |
-end legend
-@enduml
-```
-
 ### Overall Package Diagram (Mermaid)
 
+This document targets Mermaid/draw.io rendering only. PlantUML syntax was removed to avoid parser errors in Mermaid-only environments.
+
 ```mermaid
-graph TB
-    subgraph Client["Client Applications «planned»"]
-        WebApp["WebApp (SPA)"]
+flowchart TB
+    subgraph Client["Client Applications"]
+        WebApp["WebApp SPA<br/>PLANNED"]
     end
 
     subgraph Hosts["Hosts"]
-        AppHost
-        WebAPI
-        Background
-        Migrator
-    end
-
-    subgraph Shared["Shared Platform"]
-        ServiceDefaults
+        AppHost["AppHost"]
+        WebAPI["WebAPI"]
+        Background["Background"]
+        Migrator["Migrator"]
+        ServiceDefaults["ServiceDefaults"]
     end
 
     subgraph Modules["Feature Modules"]
@@ -232,45 +84,59 @@ graph TB
             TestExec["TestExecution"]
             TestRep["TestReporting"]
         end
-        subgraph BC_ID["Identity & Collaboration"]
-            Identity
-            AuditLog
-            Notification
+        subgraph BC_ID["Identity and Collaboration"]
+            Identity["Identity"]
+            AuditLog["AuditLog"]
+            Notification["Notification"]
         end
-        subgraph BC_MON["Monetization & Assets"]
-            Subscription
-            Storage
+        subgraph BC_MON["Monetization and Assets"]
+            Subscription["Subscription"]
+            Storage["Storage"]
         end
         subgraph BC_SUP["Support"]
-            Configuration
-            LlmAssistant
+            Configuration["Configuration"]
+            LlmAssistant["LlmAssistant"]
         end
     end
 
     subgraph Core["Core Layers"]
-        Application
-        Domain
-        Infrastructure
+        Application["Application"]
+        Domain["Domain"]
+        Infrastructure["Infrastructure"]
         Postgres["Persistence.PostgreSQL"]
-        Contracts
+        Contracts["Contracts"]
         CCC["CrossCuttingConcerns"]
     end
 
-    WebApp -.->|REST| WebAPI
+    WebApp -.->|PLANNED REST| WebAPI
     AppHost --> WebAPI
     AppHost --> Background
     AppHost --> Migrator
+    AppHost --> ServiceDefaults
+
     WebAPI --> ServiceDefaults
     Background --> ServiceDefaults
     Migrator --> ServiceDefaults
+
     WebAPI --> Modules
+    Background --> ApiDoc
+    Background --> TestGen
     Background --> BC_ID
     Background --> BC_MON
+    Background --> LlmAssistant
     Migrator --> Modules
-    Modules --> Core
+
+    Modules ==> Application
+    Modules ==> Domain
+    Modules ==> Infrastructure
+    Modules ==> Postgres
+    Modules ==> CCC
+    Modules -.-> Contracts
+
     Application --> Domain
     Domain --> CCC
     Infrastructure --> Application
+    Infrastructure --> Contracts
     Infrastructure --> Domain
     Postgres --> Domain
     Postgres --> CCC
@@ -280,8 +146,9 @@ graph TB
     classDef module fill:#FFF3E0,stroke:#E65100,color:#000
     classDef core fill:#E8F5E9,stroke:#2E7D32,color:#000
     classDef shared fill:#F3E5F5,stroke:#7B1FA2,color:#000
+    classDef planned fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray:5 5,color:#616161
 
-    class WebApp client
+    class WebApp planned
     class AppHost,WebAPI,Background,Migrator host
     class ApiDoc,TestGen,TestExec,TestRep,Identity,AuditLog,Notification,Subscription,Storage,Configuration,LlmAssistant module
     class Application,Domain,Infrastructure,Postgres,Contracts,CCC core
@@ -296,86 +163,22 @@ graph TB
 
 **Purpose:** Provides the shared layered kernel that all feature modules depend on. Implements Clean Architecture with inward dependency direction.
 
-```plantuml
-@startuml core_subsystem
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 12
+```mermaid
+flowchart TB
+    App["ClassifiedAds.Application"]
+    Domain["ClassifiedAds.Domain"]
+    CCC["ClassifiedAds.CrossCuttingConcerns"]
+    Infra["ClassifiedAds.Infrastructure"]
+    Contracts["ClassifiedAds.Contracts"]
+    PG["ClassifiedAds.Persistence.PostgreSQL"]
 
-skinparam package {
-  BackgroundColor #E8F5E9
-  BorderColor #2E7D32
-}
-
-package "Core Layers" {
-  package "ClassifiedAds.Application" as APP {
-    [Dispatcher]
-    [ICommandHandler<T>]
-    [IQueryHandler<TQ,TR>]
-    [CrudService<T>]
-    [Decorators]
-  }
-
-  package "ClassifiedAds.Domain" as DOM {
-    [Entity (base)]
-    [IAggregateRoot]
-    [IRepository<T>]
-    [IUnitOfWork]
-    [IDomainEvent]
-    [IMessageBus]
-    [Result Pattern]
-    [Value Objects]
-  }
-
-  package "ClassifiedAds.Infrastructure" as INF {
-    [Messaging (RabbitMQ/Kafka/ASB)]
-    [Storages (Local/Azure/AWS)]
-    [Notification (Email/SMS/Web)]
-    [Monitoring (OTel)]
-    [Caching (Redis)]
-    [Web Middleware]
-    [HealthChecks]
-  }
-
-  package "ClassifiedAds.Persistence.PostgreSQL" as PG {
-    [DbContextRepository<TDb,T>]
-    [DbContextUnitOfWork<TDb>]
-  }
-
-  package "ClassifiedAds.CrossCuttingConcerns" as CCC {
-    [IDateTimeProvider]
-    [IDistributedLock]
-    [Csv/Excel/Html/Pdf]
-    [Exceptions]
-    [ExtensionMethods]
-  }
-
-  package "ClassifiedAds.Contracts" as CTR {
-    [ICurrentUser]
-    [IUserService]
-    [IAuditLogService]
-    [IEmailMessageService]
-    [IStorageFileGatewayService]
-    [ISubscriptionLimitGatewayService]
-    [IApiEndpointMetadataService]
-  }
-}
-
-APP --> DOM : depends
-DOM --> CCC : depends
-INF --> APP : depends
-INF --> DOM : depends
-PG --> DOM : depends
-PG --> CCC : depends
-
-note bottom of CTR
-  Cross-module communication
-  boundary — all modules
-  depend on contracts, not
-  on each other
-end note
-@enduml
+    App --> Domain
+    Domain --> CCC
+    Infra --> App
+    Infra --> Contracts
+    Infra --> Domain
+    PG --> Domain
+    PG --> CCC
 ```
 
 | Package | .cs Files | Role |
@@ -385,7 +188,7 @@ end note
 | `ClassifiedAds.Infrastructure` | 115 | Concrete implementations: messaging (RabbitMQ/Kafka/Azure Service Bus), file storage (Local/Azure/AWS/Firebase), notifications (Email/SMS/SignalR), monitoring (OpenTelemetry), caching (Redis), web middleware |
 | `ClassifiedAds.Persistence.PostgreSQL` | 2 | Generic EF Core `IRepository<T>` and `IUnitOfWork` implementations for PostgreSQL |
 | `ClassifiedAds.CrossCuttingConcerns` | 25 | Shared utility interfaces (CSV, Excel, PDF, HTML, DateTime, DistributedLock), exceptions, extension methods |
-| `ClassifiedAds.Contracts` | 20 | **Cross-module communication boundary** — 7 service interfaces + 8 DTOs + 2 enums organized by module context |
+| `ClassifiedAds.Contracts` | 86 | **Cross-module communication boundary** — service interfaces, DTOs, and enums organized by module context |
 
 **Dependency Rules:**
 - `Application → Domain` (application orchestrates domain logic)
@@ -400,65 +203,41 @@ end note
 
 **Purpose:** Encapsulates business capabilities as independent bounded context packages. Each module owns its schema, entities, DbContext, and business logic.
 
-```plantuml
-@startuml modules_subsystem
-left to right direction
-skinparam packageStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 10
+```mermaid
+flowchart TB
+    subgraph APIQuality["API Quality Lifecycle"]
+        ApiDoc["ApiDocumentation"]
+        TestGen["TestGeneration"]
+        TestExec["TestExecution"]
+        TestRep["TestReporting"]
+    end
+    subgraph IdentityCollab["Identity and Collaboration"]
+        Identity["Identity"]
+        AuditLog["AuditLog"]
+        Notification["Notification"]
+    end
+    subgraph MonetizationAssets["Monetization and Assets"]
+        Subscription["Subscription"]
+        Storage["Storage"]
+    end
+    subgraph Support["Support"]
+        Configuration["Configuration"]
+        LlmAssistant["LlmAssistant"]
+    end
 
-skinparam package {
-  BackgroundColor<<api>> #FFF9C4
-  BackgroundColor<<id>> #F3E5F5
-  BackgroundColor<<mon>> #FFCCBC
-  BackgroundColor<<sup>> #E0F7FA
-}
-
-package "API Quality Lifecycle" <<api>> {
-  package "ApiDocumentation" {
-    [3 Controllers\n11 Commands\n10 Queries\n4 Services\n9 Entities]
-  }
-  package "TestGeneration" {
-    [2 Controllers\n6 Commands\n4 Queries\n9 Services\n4 Algorithms\n11 Entities]
-  }
-  package "TestExecution" {
-    [1 Controller\n2 Commands\n2 Queries\n2 Services\n4 Entities]
-  }
-  package "TestReporting" {
-    [0 Controllers\n0 Commands\n0 Queries\n4 Entities\n«skeleton only»]
-  }
-}
-
-package "Identity & Collaboration" <<id>> {
-  package "Identity" {
-    [3 Controllers\n10 Commands\n5 Queries\n8 Services\n8 Entities]
-  }
-  package "AuditLog" {
-    [1 Controller\n3 Queries\n1 Service\n2 Entities]
-  }
-  package "Notification" {
-    [0 Controllers\n2 Commands\n2 Services\n3 Entities\nSignalR Hub]
-  }
-}
-
-package "Monetization & Assets" <<mon>> {
-  package "Subscription" {
-    [3 Controllers\n13 Commands\n11 Queries\n3 Services\n9 Entities\nPayOS Integration]
-  }
-  package "Storage" {
-    [1 Controller\n1 Command\n3 Queries\n1 Service\n3 Entities\nFile Gateway]
-  }
-}
-
-package "Support" <<sup>> {
-  package "Configuration" {
-    [1 Controller\n2 Entities\nExcel Import/Export]
-  }
-  package "LlmAssistant" {
-    [0 Controllers\n0 Commands\n0 Queries\n4 Entities\n«skeleton only»]
-  }
-}
-@enduml
+    ApiDoc -.->|Contracts.Identity| Identity
+    ApiDoc -.->|Contracts.Subscription| Subscription
+    ApiDoc -.->|Contracts.Storage| Storage
+    ApiDoc -.->|Contracts.AuditLog| AuditLog
+    ApiDoc -.->|Contracts.TestGeneration| TestGen
+    TestGen -.->|Contracts.LlmAssistant| LlmAssistant
+    TestExec -.->|Contracts.TestGeneration| TestGen
+    TestRep -.->|Contracts.TestExecution| TestExec
+    LlmAssistant -.->|Contracts.TestExecution| TestExec
+    Subscription -.->|Contracts.Notification| Notification
+    Storage -.->|Contracts.AuditLog| AuditLog
+    Identity -.->|Contracts.Notification| Notification
+    AuditLog -.->|Contracts.Identity| Identity
 ```
 
 **Cross-Module Coupling (via Contracts only):**
@@ -488,46 +267,42 @@ package "Support" <<sup>> {
 
 **Purpose:** Composition roots that wire modules together and serve as entry points for the application.
 
-```plantuml
-@startuml hosts_subsystem
-left to right direction
-skinparam packageStyle rectangle
-skinparam shadowing false
-skinparam defaultFontSize 11
+```mermaid
+flowchart LR
+    AppHost["AppHost"]
+    WebAPI["WebAPI"]
+    Background["Background"]
+    Migrator["Migrator"]
+    ServiceDefaults["ServiceDefaults"]
 
-skinparam package {
-  BackgroundColor<<host>> #E3F2FD
-  BorderColor<<host>> #1565C0
-}
+    AppHost --> WebAPI
+    AppHost --> Background
+    AppHost --> Migrator
+    AppHost --> ServiceDefaults
+    WebAPI --> ServiceDefaults
+    Background --> ServiceDefaults
+    Migrator --> ServiceDefaults
 
-package "Hosts" <<host>> {
-  package "AppHost (.NET Aspire)" {
-    [Orchestrates:\nPostgreSQL, RabbitMQ,\nRedis, MailHog\n+ WebAPI, Background, Migrator]
-  }
-
-  package "WebAPI (REST)" {
-    [JWT Auth + Swagger/Scalar\nSignalR Hub + CORS\n9 modules composed\nExposes 15 controllers]
-  }
-
-  package "Background (Workers)" {
-    [Outbox publishers\nEmail/SMS senders\nMessage bus consumers\nCron jobs\n5 modules composed]
-  }
-
-  package "Migrator (DB)" {
-    [EF Core migrations\nDbUp SQL scripts\n10 modules composed\nRun-to-completion]
-  }
-}
-@enduml
+    WebAPI --> ApiDoc["ApiDocumentation"]
+    WebAPI --> TestGen["TestGeneration"]
+    WebAPI --> TestExec["TestExecution"]
+    WebAPI --> TestRep["TestReporting"]
+    WebAPI --> LlmAssistant["LlmAssistant"]
+    Background --> ApiDoc
+    Background --> TestGen
+    Background --> LlmAssistant
+    Migrator --> TestRep
+    Migrator --> LlmAssistant
 ```
 
 | Host | .cs Files | Modules Composed | Role |
 |------|-----------|-----------------|------|
 | **AppHost** | 1 | (orchestrates WebAPI, Background, Migrator) | .NET Aspire orchestrator — provisions PostgreSQL, RabbitMQ, Redis, MailHog; manages service startup order |
-| **WebAPI** | 5 | ApiDocumentation, TestGeneration, TestExecution, Identity, AuditLog, Notification, Subscription, Storage, Configuration | REST API host — JWT authentication, Swagger/Scalar docs, SignalR hub, CORS, rate limiting, global exception handling |
-| **Background** | 4 | Identity, AuditLog, Notification, Subscription, Storage | Background worker host — outbox message publishing, email/SMS sending, message bus consuming, cron jobs |
-| **Migrator** | 53 | ApiDocumentation, TestGeneration, TestExecution, TestReporting, Identity, AuditLog, Notification, Subscription, Storage, Configuration | Database migration runner — EF Core migrations for all module DbContexts + DbUp SQL scripts |
+| **WebAPI** | 5 | ApiDocumentation, TestGeneration, TestExecution, TestReporting, Identity, AuditLog, Notification, Subscription, Storage, Configuration, LlmAssistant | REST API host — JWT authentication, Swagger/Scalar docs, SignalR hub, CORS, rate limiting, global exception handling |
+| **Background** | 4 | ApiDocumentation, TestGeneration, Identity, AuditLog, Notification, Subscription, Storage, LlmAssistant | Background worker host — outbox message publishing, email/SMS sending, message bus consuming, cron jobs |
+| **Migrator** | 53 | ApiDocumentation, TestGeneration, TestExecution, TestReporting, Identity, AuditLog, Notification, Subscription, Storage, Configuration, LlmAssistant | Database migration runner — EF Core migrations for all module DbContexts + DbUp SQL scripts |
 
-**Notable gap:** `LlmAssistant` has a `DbContext` but is **not composed by any host** (not in WebAPI, not in Background, not in Migrator). This means its migrations are not applied.
+**Current note:** `LlmAssistant` is composed by WebAPI, Background, and Migrator in current project references.
 
 ---
 
@@ -636,69 +411,26 @@ package "Hosts" <<host>> {
 
 **Bounded Context:** API Quality Lifecycle
 **FEs Covered:** FE-02, FE-03, FE-11, FE-12, FE-13
-**Status:** ✅ Fully Implemented (85 .cs files)
+**Status:** Implemented (current source scan: 94 .cs files)
 
-```plantuml
-@startuml pkg_apidoc
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam shadowing false
+```mermaid
+flowchart TB
+    ApiDoc["ClassifiedAds.Modules.ApiDocumentation"]
+    Controllers["Controllers"]
+    Commands["Commands"]
+    Queries["Queries"]
+    Entities["Entities"]
+    Services["Services"]
+    Persistence["Persistence"]
+    Events["EventHandlers and Outbox"]
 
-package "ClassifiedAds.Modules.ApiDocumentation" {
-  package "Controllers" {
-    [ProjectsController]
-    [SpecificationsController]
-    [EndpointsController]
-  }
-
-  package "Commands (11)" {
-    [AddUpdateProjectCommand]
-    [UploadApiSpecificationCommand]
-    [AddUpdateEndpointCommand]
-    [ImportCurlCommand]
-    [CreateManualSpecificationCommand]
-    [ActivateSpecificationCommand]
-    [...]
-  }
-
-  package "Queries (10)" {
-    [GetProjectsQuery]
-    [GetSpecificationsQuery]
-    [GetEndpointsQuery]
-    [GetResolvedUrlQuery]
-    [GetPathParamMutationsQuery]
-    [...]
-  }
-
-  package "Entities (9)" {
-    [Project]
-    [ApiSpecification]
-    [ApiEndpoint]
-    [EndpointParameter]
-    [EndpointResponse]
-    [EndpointSecurityReq]
-    [SecurityScheme]
-  }
-
-  package "Services" {
-    [CurlParser]
-    [PathParameterTemplateService]
-    [ApiEndpointMetadataService]
-  }
-
-  package "Persistence" {
-    [ApiDocumentationDbContext]
-    [Repository<T>]
-  }
-
-  package "EventHandlers + Outbox" {
-    [ProjectCreated/Updated/DeletedEventHandler]
-    [SpecCreated/Updated/DeletedEventHandler]
-    [OutboxMessageFactory]
-    [PublishEventWorker]
-  }
-}
-@enduml
+    ApiDoc --> Controllers
+    ApiDoc --> Commands
+    ApiDoc --> Queries
+    ApiDoc --> Entities
+    ApiDoc --> Services
+    ApiDoc --> Persistence
+    ApiDoc --> Events
 ```
 
 | Namespace | Purpose |
@@ -722,69 +454,27 @@ package "ClassifiedAds.Modules.ApiDocumentation" {
 ### 3.3 Feature Module: TestGeneration
 
 **Bounded Context:** API Quality Lifecycle
-**FEs Covered:** FE-04 (scope), FE-05A (order proposal ✅), FE-05B (test case gen 🔨), FE-06 (boundary/negative 📋)
-**Status:** 🔨 ~65% Implemented (71 .cs files)
+**FEs Covered:** FE-04 (scope), FE-05A (order proposal), FE-05B (test case generation), FE-06 (boundary/negative)
+**Status:** Implemented/active development (current source scan: 191 .cs files)
 
-```plantuml
-@startuml pkg_testgen
-top to bottom direction
-skinparam packageStyle rectangle
-skinparam shadowing false
+```mermaid
+flowchart TB
+    TestGen["ClassifiedAds.Modules.TestGeneration"]
+    Controllers["Controllers"]
+    Algorithms["Algorithms"]
+    Commands["Commands"]
+    Queries["Queries"]
+    Entities["Entities"]
+    Services["Services"]
+    Persistence["Persistence"]
 
-package "ClassifiedAds.Modules.TestGeneration" {
-  package "Controllers" {
-    [TestOrderController]
-    [TestSuitesController]
-  }
-
-  package "Algorithms" #FFF9C4 {
-    [DependencyAwareTopologicalSorter\n(Kahn's algorithm — KAT paper)]
-    [SemanticTokenMatcher\n(5-tier matching — SPDG paper)]
-    [SchemaRelationshipAnalyzer\n(Warshall's transitive closure — KAT)]
-    [ObservationConfirmationPromptBuilder\n(COmbine/RBCTest paper)]
-  }
-
-  package "Commands (6)" {
-    [ProposeApiTestOrderCommand]
-    [ApproveApiTestOrderCommand]
-    [RejectApiTestOrderCommand]
-    [ReorderApiTestOrderCommand]
-    [AddUpdateTestSuiteScopeCommand]
-    [ArchiveTestSuiteScopeCommand]
-  }
-
-  package "Queries (4)" {
-    [GetLatestApiTestOrderProposalQuery]
-    [GetApiTestOrderGateStatusQuery]
-    [GetTestSuiteScopeQuery]
-    [GetTestSuiteScopesQuery]
-  }
-
-  package "Entities (11)" {
-    [TestSuite]
-    [TestSuiteVersion]
-    [TestOrderProposal]
-    [TestCase]
-    [TestCaseRequest]
-    [TestCaseExpectation]
-    [TestCaseVariable]
-    [TestDataSet]
-    [TestCaseChangeLog]
-  }
-
-  package "Services (9)" {
-    [ApiTestOrderService]
-    [ApiTestOrderAlgorithm]
-    [ApiTestOrderGateService]
-    [TestSuiteScopeService]
-    [ApiTestOrderModelMapper]
-  }
-
-  package "Persistence" {
-    [TestGenerationDbContext]
-  }
-}
-@enduml
+    TestGen --> Controllers
+    TestGen --> Algorithms
+    TestGen --> Commands
+    TestGen --> Queries
+    TestGen --> Entities
+    TestGen --> Services
+    TestGen --> Persistence
 ```
 
 | Namespace | Purpose |
@@ -804,8 +494,8 @@ package "ClassifiedAds.Modules.TestGeneration" {
 ### 3.4 Feature Module: TestExecution
 
 **Bounded Context:** API Quality Lifecycle
-**FEs Covered:** FE-04 (environment CRUD ✅), FE-07 (execution engine 🔨 20%), FE-08 (validation 📋 0%)
-**Status:** 🔨 ~25% Implemented (25 .cs files)
+**FEs Covered:** FE-04 (environment CRUD), FE-07 (execution engine), FE-08 (validation)
+**Status:** Implemented/active development (current source scan: 67 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -816,15 +506,15 @@ package "ClassifiedAds.Modules.TestGeneration" {
 | `.Services` | `ExecutionAuthConfigService` (136 lines: Bearer/Basic/ApiKey/OAuth2 config) |
 | `.Persistence` | Own DbContext (`testexecution` schema) |
 
-**Missing (planned for FE-07/08):** Test run execution engine, HTTP client executor, test case runner, result collection, dependency chaining, rule-based validation engine.
+**Current scope note:** execution and validation capabilities continue in FE-07/08; see current source for implemented services.
 
 ---
 
 ### 3.5 Feature Module: TestReporting
 
 **Bounded Context:** API Quality Lifecycle
-**FEs Covered:** FE-10 (reports 📋 5%)
-**Status:** 📋 Skeleton Only (13 .cs files)
+**FEs Covered:** FE-10 (reports/export)
+**Status:** Implemented/active development (current source scan: 37 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -833,7 +523,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 | `.Persistence` | Own DbContext (`testreporting` schema), `Repository<T>` |
 | `.ConfigurationOptions` | Module options + connection string config |
 
-**Missing (planned for FE-10):** Controllers, commands, queries, services, report generation logic, PDF/CSV export.
+**Current scope note:** report APIs and export capabilities continue in FE-10; see current source for implemented services.
 
 ---
 
@@ -841,7 +531,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Identity & Collaboration
 **FEs Covered:** FE-01
-**Status:** ✅ Fully Implemented (80 .cs files)
+**Status:** Implemented (current source scan: 89 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -864,7 +554,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Identity & Collaboration
 **FEs Covered:** Cross-cutting (supports all modules)
-**Status:** ✅ Fully Implemented (17 .cs files)
+**Status:** Implemented (current source scan: 17 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -881,7 +571,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Identity & Collaboration
 **FEs Covered:** Cross-cutting (supports Identity, Subscription email notifications)
-**Status:** ✅ Fully Implemented (29 .cs files)
+**Status:** Implemented (current source scan: 29 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -899,7 +589,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Monetization & Assets
 **FEs Covered:** FE-14
-**Status:** ✅ ~95% Implemented (88 .cs files — largest module)
+**Status:** Implemented/active development (current source scan: 88 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -919,7 +609,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Monetization & Assets
 **FEs Covered:** Cross-cutting (supports file upload for ApiDocumentation, Identity avatar)
-**Status:** ✅ Fully Implemented (33 .cs files)
+**Status:** Implemented (current source scan: 33 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -937,7 +627,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Support
 **FEs Covered:** System configuration management
-**Status:** ✅ Fully Implemented (21 .cs files)
+**Status:** Implemented (current source scan: 21 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -954,7 +644,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 
 **Bounded Context:** Support
 **FEs Covered:** FE-06 (partial), FE-09, FE-15, FE-16, FE-17
-**Status:** 📋 Skeleton Only (13 .cs files)
+**Status:** Implemented/active development (current source scan: 37 .cs files)
 
 | Namespace | Purpose |
 |-----------|---------|
@@ -963,9 +653,7 @@ package "ClassifiedAds.Modules.TestGeneration" {
 | `.Persistence` | Own DbContext (`llmassistant` schema) |
 | `.ConfigurationOptions` | Module options + connection string config |
 
-**Missing (planned):** Controllers, commands, queries, services, LLM API client, prompt execution runtime, suggestion review UI APIs.
-
-**Known issue:** Has DbContext but is **not referenced by Migrator** — migrations will not be applied.
+**Current note:** `LlmAssistant` is referenced by WebAPI, Background, and Migrator in current project references.
 
 ---
 
@@ -1006,57 +694,82 @@ package "ClassifiedAds.Modules.TestGeneration" {
 This is the **most architecturally significant** package — it defines the only allowed interface between modules.
 
 ```mermaid
-graph LR
-    subgraph Contracts
-        subgraph "Contracts.Identity"
-            ICurrentUser
-            IUserService
+flowchart LR
+    subgraph Contracts["ClassifiedAds.Contracts"]
+        subgraph CIdentity["Contracts.Identity"]
+            ICurrentUser["ICurrentUser"]
+            IUserService["IUserService"]
         end
-        subgraph "Contracts.AuditLog"
-            IAuditLogService
+        subgraph CAuditLog["Contracts.AuditLog"]
+            IAuditLogService["IAuditLogService"]
         end
-        subgraph "Contracts.Notification"
-            IEmailMessageService
-            IEmailTemplateService
+        subgraph CNotification["Contracts.Notification"]
+            IEmailMessageService["IEmailMessageService"]
+            IEmailTemplateService["IEmailTemplateService"]
         end
-        subgraph "Contracts.Storage"
-            IStorageFileGatewayService
+        subgraph CStorage["Contracts.Storage"]
+            IStorageFileGatewayService["IStorageFileGatewayService"]
         end
-        subgraph "Contracts.Subscription"
-            ISubscriptionLimitGatewayService
+        subgraph CSubscription["Contracts.Subscription"]
+            ISubscriptionLimitGatewayService["ISubscriptionLimitGatewayService"]
         end
-        subgraph "Contracts.ApiDocumentation"
-            IApiEndpointMetadataService
+        subgraph CApiDoc["Contracts.ApiDocumentation"]
+            IApiEndpointMetadataService["IApiEndpointMetadataService"]
+        end
+        subgraph CTestGen["Contracts.TestGeneration"]
+            ITestCaseReadGatewayService["ITestCaseReadGatewayService"]
+        end
+        subgraph CTestExec["Contracts.TestExecution"]
+            ITestFailureReadGatewayService["ITestFailureReadGatewayService"]
+        end
+        subgraph CLlm["Contracts.LlmAssistant"]
+            ILlmScenarioSuggestionService["ILlmScenarioSuggestionService"]
         end
     end
 
-    ApiDocumentation -->|uses| ICurrentUser
-    ApiDocumentation -->|uses| ISubscriptionLimitGatewayService
-    ApiDocumentation -->|uses| IStorageFileGatewayService
-    ApiDocumentation -->|uses| IAuditLogService
+    ApiDocumentation -.-> ICurrentUser
+    ApiDocumentation -.-> ISubscriptionLimitGatewayService
+    ApiDocumentation -.-> IStorageFileGatewayService
+    ApiDocumentation -.-> IAuditLogService
+    ApiDocumentation -.-> ITestCaseReadGatewayService
 
-    TestGeneration -->|uses| IApiEndpointMetadataService
-    TestGeneration -->|uses| ICurrentUser
+    TestGeneration -.-> IApiEndpointMetadataService
+    TestGeneration -.-> ICurrentUser
+    TestGeneration -.-> ISubscriptionLimitGatewayService
+    TestGeneration -.-> IStorageFileGatewayService
+    TestGeneration -.-> ILlmScenarioSuggestionService
 
-    TestExecution -->|uses| ICurrentUser
+    TestExecution -.-> IApiEndpointMetadataService
+    TestExecution -.-> ICurrentUser
+    TestExecution -.-> ISubscriptionLimitGatewayService
+    TestExecution -.-> ITestCaseReadGatewayService
 
-    Subscription -->|uses| ICurrentUser
-    Subscription -->|uses| IUserService
-    Subscription -->|uses| IEmailMessageService
-    Subscription -->|uses| IAuditLogService
+    TestReporting -.-> IApiEndpointMetadataService
+    TestReporting -.-> ICurrentUser
+    TestReporting -.-> IStorageFileGatewayService
+    TestReporting -.-> ITestCaseReadGatewayService
+    TestReporting -.-> ITestFailureReadGatewayService
 
-    Storage -->|uses| ICurrentUser
-    Storage -->|uses| IAuditLogService
+    LlmAssistant -.-> IApiEndpointMetadataService
+    LlmAssistant -.-> ICurrentUser
+    LlmAssistant -.-> ITestCaseReadGatewayService
+    LlmAssistant -.-> ITestFailureReadGatewayService
 
-    Identity -->|uses| IEmailMessageService
+    Subscription -.-> ICurrentUser
+    Subscription -.-> IUserService
+    Subscription -.-> IEmailMessageService
+    Subscription -.-> IAuditLogService
 
-    AuditLog -->|uses| IUserService
+    Storage -.-> ICurrentUser
+    Storage -.-> IAuditLogService
+    Identity -.-> IEmailMessageService
+    AuditLog -.-> IUserService
 
     classDef contract fill:#E8F5E9,stroke:#2E7D32,color:#000
     classDef module fill:#FFF3E0,stroke:#E65100,color:#000
 
-    class ICurrentUser,IUserService,IAuditLogService,IEmailMessageService,IEmailTemplateService,IStorageFileGatewayService,ISubscriptionLimitGatewayService,IApiEndpointMetadataService contract
-    class ApiDocumentation,TestGeneration,TestExecution,Subscription,Storage,Identity,AuditLog module
+    class ICurrentUser,IUserService,IAuditLogService,IEmailMessageService,IEmailTemplateService,IStorageFileGatewayService,ISubscriptionLimitGatewayService,IApiEndpointMetadataService,ITestCaseReadGatewayService,ITestFailureReadGatewayService,ILlmScenarioSuggestionService contract
+    class ApiDocumentation,TestGeneration,TestExecution,TestReporting,LlmAssistant,Subscription,Storage,Identity,AuditLog module
 ```
 
 **Architectural principle:** Modules consume contract interfaces; the implementing module registers its concrete class. The DI container in the host resolves the dependency at runtime. This ensures:
@@ -1068,20 +781,19 @@ graph LR
 
 ## 4. Module Maturity Assessment
 
-| Module | .cs Files | Controllers | Commands | Queries | Services | Entities | Maturity |
-|--------|-----------|-------------|----------|---------|----------|----------|----------|
-| **ApiDocumentation** | 85 | 3 | 11 | 10 | 4 | 9 | ✅ Production-ready |
-| **Identity** | 80 | 3 | 10 | 5 | 8 | 8 | ✅ Production-ready |
-| **Subscription** | 88 | 3 | 13 | 11 | 3 | 9 | ✅ Production-ready |
-| **TestGeneration** | 71 | 2 | 6 | 4 | 9 | 11 | 🔨 ~65% — FE-05A done, FE-05B/06 in progress |
-| **Storage** | 33 | 1 | 1 | 3 | 1 | 3 | ✅ Production-ready |
-| **Notification** | 29 | 0 | 2 | 0 | 2 | 3 | ✅ Production-ready (event-driven, no REST API) |
-| **TestExecution** | 25 | 1 | 2 | 2 | 2 | 4 | 🔨 ~25% — environment CRUD done, engine missing |
-| **Configuration** | 21 | 1 | 0 | 0 | 0 | 2 | ✅ Production-ready |
-| **AuditLog** | 17 | 1 | 0 | 3 | 1 | 2 | ✅ Production-ready |
-| **TestReporting** | 13 | 0 | 0 | 0 | 0 | 4 | 📋 Skeleton — entities & DbContext only |
-| **LlmAssistant** | 13 | 0 | 0 | 0 | 0 | 4 | 📋 Skeleton — entities & DbContext only |
-| **TOTAL** | **475** | **15** | **45** | **38** | **30** | **59** | |
+| Module | .cs Files | Controllers | Status |
+|--------|-----------|-------------|--------|
+| **ApiDocumentation** | 94 | 3 | Active / see module details |
+| **Identity** | 89 | 3 | Active / see module details |
+| **Subscription** | 88 | 3 | Active / see module details |
+| **TestGeneration** | 191 | 8 | Active / see module details |
+| **Storage** | 33 | 1 | Active / see module details |
+| **Notification** | 29 | 0 | Active / see module details |
+| **TestExecution** | 67 | 2 | Active / see module details |
+| **Configuration** | 21 | 1 | Active / see module details |
+| **AuditLog** | 17 | 1 | Active / see module details |
+| **TestReporting** | 37 | 1 | Active / see module details |
+| **LlmAssistant** | 32 | 1 | Active / see module details |
 
 ### Internal Structure Consistency
 
@@ -1152,4 +864,4 @@ ClassifiedAds.Modules.<Context>/
 
 ---
 
-> **Note:** This document is auto-generated from static analysis of `.csproj` references and `namespace` declarations. For dependency flow diagrams with PlantUML/Mermaid source, see [UML_PACKAGE_DIAGRAM_SOURCE.md](UML_PACKAGE_DIAGRAM_SOURCE.md).
+> **Note:** This document is auto-generated from static analysis of `.csproj` references and `namespace` declarations. For dependency flow diagrams with Mermaid/Mermaid source, see [UML_PACKAGE_DIAGRAM_SOURCE.md](UML_PACKAGE_DIAGRAM_SOURCE.md).
