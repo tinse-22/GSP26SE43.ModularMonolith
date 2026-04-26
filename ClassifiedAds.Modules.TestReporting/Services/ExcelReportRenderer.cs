@@ -73,7 +73,8 @@ public class ExcelReportRenderer : IReportRenderer
         sheet.Cell(row, 1).Style.Font.Underline = XLFontUnderlineValues.Single;
         row++;
 
-        AddSummaryRow(sheet, ref row, "Coverage Percent", $"{document.Coverage?.CoveragePercent:N2}%");
+        AddSummaryRow(sheet, ref row, "Coverage Percent", document.Coverage?.CoveragePercent / 100.0);
+        sheet.Cell(row - 1, 2).Style.NumberFormat.Format = "0.00%";
         AddSummaryRow(sheet, ref row, "Tested Endpoints", document.Coverage?.TestedEndpoints);
         AddSummaryRow(sheet, ref row, "Total Endpoints", document.Coverage?.TotalEndpoints);
 
