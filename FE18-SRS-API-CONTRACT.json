@@ -1,0 +1,1171 @@
+{
+  "_meta": {
+    "title": "FE-18: SRS Import + LLM Analysis + Requirement-Driven Test Generation — API Contract",
+    "version": "1.1.0",
+    "generatedAt": "2026-04-26",
+    "baseUrl": "http://localhost:5099",
+    "authHeader": "Authorization: Bearer <JWT>",
+    "notes": [
+      "Tất cả endpoint đều yêu cầu Bearer JWT trong header.",
+      "UUID dùng định dạng lowercase hyphen: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "Enum trả về dạng integer trừ khi ghi chú khác.",
+      "DateTimeOffset trả về ISO 8601 UTC: 2026-04-26T10:00:00Z",
+      "Luồng backend hiện tại: Project → Spec Upload → Test Suite → SRS Document → Analyze → Review → Refine → Order Proposal/Approve → Generate LLM Suggestions → Review/Materialize → Traceability",
+      "Generate preview hiện phụ thuộc approved API order đối với suite không phải Manual.",
+      "Không thấy public controller endpoint nào trong code đã inspect để FE attach SRS document vào suite bằng HTTP API."
+    ]
+  },
+
+  "enums": {
+    "SrsSourceType": {
+      "0": "TextInput — user nhập/dán text trực tiếp",
+      "1": "FileUpload — user upload file (PDF, DOCX, TXT, MD); cần StorageFileId",
+      "2": "Url — user cung cấp URL công khai (chưa triển khai đầy đủ)"
+    },
+    "SrsAnalysisStatus": {
+      "0": "Pending — document vừa tạo, chưa phân tích",
+      "1": "Processing — job đang chạy",
+      "2": "Completed — requirements đã được trích xuất thành công",
+      "3": "Failed — lỗi, xem SrsAnalysisJob.errorMessage"
+    },
+    "SrsAnalysisJobStatus": {
+      "0": "Queued — job đã được enqueue",
+      "1": "Triggering — đang gọi n8n webhook",
+      "2": "Processing — n8n đang xử lý",
+      "3": "Completed — hoàn thành",
+      "4": "Failed — lỗi"
+    },
+    "SrsAnalysisJobType": {
+      "0": "InitialAnalysis — Phase 1: phân tích tài liệu lần đầu",
+      "1": "ClarificationRefinement — Phase 1.5: tái phân tích sau khi user trả lời clarification"
+    },
+    "SrsRequirementType": {
+      "0": "Functional — logic nghiệp vụ, use-case",
+      "1": "NonFunctional — hiệu năng, khả năng mở rộng",
+      "2": "Security — xác thực, phân quyền, bảo mật dữ liệu",
+      "3": "Performance — thời gian phản hồi, throughput",
+      "4": "Constraint — ràng buộc cứng (format, business invariant)"
+    },
+    "GenerationType": {
+      "0": "Auto — AI tự chọn chiến lược sinh test",
+      "1": "Manual — user thao tác theo suite thủ công; gate order được bypass",
+      "2": "LLMAssisted — suite dùng luồng hỗ trợ LLM; gate order vẫn áp dụng"
+    },
+    "ProposalSource": {
+      "Ai": "Proposal do AI/LLM sinh ra",
+      "User": "Proposal do người dùng tự tạo",
+      "System": "Proposal do hệ thống sắp xếp mặc định",
+      "Imported": "Proposal import từ lần chạy trước"
+    },
+    "ProposalStatus": {
+      "Pending": "Chờ review",
+      "Approved": "Đã approve nguyên trạng",
+      "Rejected": "Đã reject",
+      "ModifiedAndApproved": "Đã reorder rồi approve",
+      "Superseded": "Bị proposal mới hơn thay thế",
+      "Applied": "Đã áp dụng vào suite",
+      "Expired": "Hết hạn chưa review"
+    }
+  },
+
+  "flow": {
+    "overview": "Luồng FE-18 cần đi đúng thứ tự để tránh lỗi 400/404/409. Điểm quan trọng: generate LLM suggestions không chạy trực tiếp từ requirement IDs; backend hiện yêu cầu approved API order trước, trừ suite kiểu Manual.",
+    "phases": [
+      {
+        "phase": "PHASE-0",
+        "name": "Prerequisite — Project + Spec đã tồn tại",
+        "description": "FE-18 yêu cầu projectId và (tùy chọn) apiSpecId. Nếu chưa có, tạo trước theo các bước dưới đây."
+      },
+      {
+        "phase": "PHASE-1",
+        "name": "Tạo SRS Document",
+        "description": "User nhập nội dung SRS (text hoặc file). Backend lưu document với AnalysisStatus=Pending."
+      },
+      {
+        "phase": "PHASE-2",
+        "name": "Trigger LLM Analysis (Phase 1)",
+        "description": "FE gọi /analyze, backend tạo SrsAnalysisJob và gọi n8n async. FE nhận 202 + jobId, sau đó poll cho đến Completed/Failed."
+      },
+      {
+        "phase": "PHASE-3",
+        "name": "Review Gate — Xem và chỉnh sửa Requirements",
+        "description": "Sau khi analysis Completed, FE lấy danh sách requirements đã trích xuất. User có thể sửa title, constraints, map endpoint, đánh dấu IsReviewed."
+      },
+      {
+        "phase": "PHASE-3.5",
+        "name": "Clarification Q&A (Phase 1.5) — Tùy chọn",
+        "description": "Nếu LLM sinh ra câu hỏi clarification (ambiguities), user trả lời từng câu. Sau đó trigger /refine để LLM tái phân tích. FE poll job status tương tự Phase 2."
+      },
+      {
+        "phase": "PHASE-4",
+        "name": "Order Proposal + Approve Gate",
+        "description": "Đối với suite không phải Manual, FE phải propose/review/approve API order trước khi gọi endpoint generate LLM suggestions. Nếu gate chưa pass, backend trả 409 Conflict."
+      },
+      {
+        "phase": "PHASE-5",
+        "name": "Generate LLM Suggestions",
+        "description": "FE gọi LlmSuggestions API bằng suiteId + specificationId. Backend generate dựa trên approved order, spec metadata và suite context. File request hiện không nhận requirementIds trực tiếp."
+      },
+      {
+        "phase": "PHASE-6",
+        "name": "Traceability Report",
+        "description": "FE gọi traceability endpoint để hiển thị ma trận requirement → test case coverage."
+      }
+    ]
+  },
+
+  "verifiedImplementationGaps": [
+    "Trong các controller đã inspect, chưa thấy public endpoint để set TestSuite.SrsDocumentId qua HTTP API.",
+    "Trigger SRS analysis chỉ đính kèm endpoint context cho n8n khi SrsDocument.TestSuiteId đã có giá trị; CreateSrsDocumentRequest hiện không có field này.",
+    "Generate LLM suggestion preview hiện yêu cầu approved order ở backend cho suite Auto/LLMAssisted và không nhận requirementIds trực tiếp trong request body."
+  ],
+
+  "steps": [
+    {
+      "stepId": "STEP-0A",
+      "phase": "PHASE-0",
+      "name": "Tạo Project",
+      "when": "Khi chưa có projectId",
+      "method": "POST",
+      "url": "/api/projects",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "string (required, max 200) — tên project",
+        "description": "string (optional, max 2000)",
+        "baseUrl": "string (optional, max 500) — base URL của API cần test, vd: https://petstore.swagger.io/v2"
+      },
+      "requestBodyExample": {
+        "name": "Petstore API Project",
+        "description": "Project kiểm thử hệ thống quản lý thú cưng",
+        "baseUrl": "https://petstore.swagger.io/v2"
+      },
+      "responseStatus": 201,
+      "responseBody": {
+        "id": "guid — projectId dùng cho tất cả bước tiếp theo",
+        "name": "string",
+        "description": "string | null",
+        "baseUrl": "string | null",
+        "status": "string — 'Active' | 'Archived'",
+        "activeSpecId": "guid | null",
+        "activeSpecName": "string | null",
+        "createdDateTime": "ISO8601",
+        "updatedDateTime": "ISO8601 | null"
+      },
+      "responseBodyExample": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "Petstore API Project",
+        "description": "Project kiểm thử hệ thống quản lý thú cưng",
+        "baseUrl": "https://petstore.swagger.io/v2",
+        "status": "Active",
+        "activeSpecId": null,
+        "activeSpecName": null,
+        "createdDateTime": "2026-04-26T10:00:00Z",
+        "updatedDateTime": null
+      },
+      "errorCodes": {
+        "400": "Validation failed — name trống hoặc vượt max length"
+      }
+    },
+
+    {
+      "stepId": "STEP-0B",
+      "phase": "PHASE-0",
+      "name": "Upload API Spec (OpenAPI)",
+      "when": "Tùy chọn — cần nếu muốn map requirement vào endpoint cụ thể",
+      "method": "POST",
+      "url": "/api/projects/{projectId}/specifications/upload",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "multipart/form-data"
+      },
+      "requestBody": {
+        "uploadMethod": "string — mặc định là 'StorageGatewayContract'",
+        "file": "File (swagger.json hoặc openapi.yaml)",
+        "name": "string (optional) — tên spec",
+        "sourceType": "string | integer — loại nguồn spec",
+        "version": "string (optional) — version của spec",
+        "autoActivate": "boolean (optional) — true để active spec ngay sau upload"
+      },
+      "requestBodyExample": {
+        "uploadMethod": "StorageGatewayContract",
+        "file": "<swagger.json>",
+        "name": "Petstore OpenAPI",
+        "sourceType": "OpenApi",
+        "version": "v1",
+        "autoActivate": true
+      },
+      "responseStatus": 201,
+      "responseBody": {
+        "id": "guid — apiSpecId dùng cho TestSuite",
+        "projectId": "guid",
+        "name": "string",
+        "sourceType": "string",
+        "version": "string | null",
+        "isActive": "boolean",
+        "parseStatus": "string",
+        "parsedAt": "ISO8601 | null",
+        "originalFileId": "guid | null",
+        "createdDateTime": "ISO8601",
+        "updatedDateTime": "ISO8601 | null",
+        "isDeleted": "boolean",
+        "deletedAt": "ISO8601 | null"
+      },
+      "notes": "Sau upload, spec được parse và endpoints được tạo tự động. Dùng apiSpecId này khi tạo TestSuite."
+    },
+
+    {
+      "stepId": "STEP-0C",
+      "phase": "PHASE-0",
+      "name": "Tạo Test Suite",
+      "when": "Cần có suiteId trước khi generate test từ requirements",
+      "method": "POST",
+      "url": "/api/projects/{projectId}/test-suites",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "string (required, max 200) — tên test suite",
+        "description": "string (optional, max 4000)",
+        "apiSpecId": "guid | null — ID của spec đã upload (STEP-0B)",
+        "generationType": "string | integer — Auto | Manual | LLMAssisted (request model dùng JsonStringEnumConverter)",
+        "selectedEndpointIds": "array<guid> — với suite Auto/LLMAssisted, backend hiện validate phải có ít nhất 1 endpoint; Manual thì gate order được bypass",
+        "endpointBusinessContexts": "object {guid: string} — business rule theo endpoint",
+        "globalBusinessRules": "string (optional, max 8000) — quy tắc nghiệp vụ toàn cục"
+      },
+      "requestBodyExample": {
+        "name": "Sprint 1 — Auth & Registration",
+        "description": "Test suite cho các endpoint đăng ký và đăng nhập",
+        "apiSpecId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "generationType": "Auto",
+        "selectedEndpointIds": [
+          "b2c3d4e5-0000-0000-0000-000000000001",
+          "b2c3d4e5-0000-0000-0000-000000000002"
+        ],
+        "endpointBusinessContexts": {},
+        "globalBusinessRules": "Hệ thống yêu cầu xác minh email trước khi đặt đơn hàng. Tuổi tối thiểu đăng ký là 17."
+      },
+      "responseStatus": 201,
+      "responseBody": {
+        "id": "guid — suiteId dùng cho LlmSuggestions và Traceability",
+        "projectId": "guid",
+        "apiSpecId": "guid | null",
+        "name": "string",
+        "description": "string | null",
+        "generationType": "integer (0=Auto, 1=Manual, 2=LLMAssisted)",
+        "status": "integer",
+        "approvalStatus": "integer",
+        "selectedEndpointIds": "array<guid>",
+        "endpointBusinessContexts": "object",
+        "globalBusinessRules": "string | null",
+        "selectedEndpointCount": "integer",
+        "testCaseCount": "integer",
+        "createdById": "guid",
+        "createdDateTime": "ISO8601",
+        "updatedDateTime": "ISO8601 | null",
+        "rowVersion": "string (base64) — dùng cho optimistic concurrency khi PUT/DELETE"
+      },
+      "validationNotes": [
+        "Suite Auto/LLMAssisted hiện cần apiSpecId hợp lệ.",
+        "Suite Auto/LLMAssisted hiện bị validate phải có ít nhất 1 selectedEndpointId.",
+        "Generate preview sau này còn yêu cầu approved order trừ khi suite là Manual."
+      ]
+    },
+
+    {
+      "stepId": "STEP-1",
+      "phase": "PHASE-1",
+      "name": "Tạo SRS Document",
+      "description": "Tạo document mới với nội dung SRS. Hỗ trợ 3 nguồn: TextInput, FileUpload, Url. AnalysisStatus sẽ là Pending (0) sau khi tạo.",
+      "method": "POST",
+      "url": "/api/projects/{projectId}/srs-documents",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "pathParams": {
+        "projectId": "guid — ID của project (từ STEP-0A)"
+      },
+      "requestBody": {
+        "title": "string (required) — tên tài liệu SRS, vd: 'SRS v1.0 — Module đăng ký người dùng'",
+        "sourceType": "integer (required) — 0=TextInput | 1=FileUpload | 2=Url",
+        "rawContent": "string | null — nội dung text nếu sourceType=0 (TextInput). Hỗ trợ plain text, Markdown, prose có cấu trúc.",
+        "storageFileId": "guid | null — ID file đã upload nếu sourceType=1 (FileUpload)"
+      },
+      "requestBodyExample_TextInput": {
+        "title": "SRS v1.0 — Module Đăng Ký Người Dùng",
+        "sourceType": 0,
+        "rawContent": "# Yêu cầu hệ thống — Module Đăng Ký\n\n## REQ-001: Đăng ký tài khoản\n- Người dùng phải đủ 17 tuổi trở lên.\n- Email phải hợp lệ và chưa tồn tại trong hệ thống.\n- Mật khẩu tối thiểu 8 ký tự, ít nhất 1 chữ hoa, 1 số, 1 ký tự đặc biệt.\n- Sau đăng ký thành công, hệ thống gửi email xác nhận.\n\n## REQ-002: Đăng nhập\n- Người dùng đăng nhập bằng email + mật khẩu.\n- Sau 5 lần sai, tài khoản bị khóa 15 phút.\n- JWT token có thời hạn 24 giờ.",
+        "storageFileId": null
+      },
+      "requestBodyExample_FileUpload": {
+        "title": "SRS v2.0 — Toàn bộ hệ thống",
+        "sourceType": 1,
+        "rawContent": null,
+        "storageFileId": "c3d4e5f6-a7b8-9012-cdef-012345678902"
+      },
+      "responseStatus": 201,
+      "responseHeaders": {
+        "Location": "/api/projects/{projectId}/srs-documents/{srsDocumentId}"
+      },
+      "responseBody": {
+        "id": "guid — srsDocumentId — LƯU LẠI cho các bước tiếp theo",
+        "projectId": "guid",
+        "testSuiteId": "guid | null — null cho đến khi liên kết với suite",
+        "title": "string",
+        "sourceType": "integer (0=TextInput, 1=FileUpload, 2=Url)",
+        "rawContent": "string | null",
+        "storageFileId": "guid | null",
+        "analysisStatus": "integer — luôn là 0 (Pending) khi mới tạo",
+        "analyzedAt": "null",
+        "createdById": "guid",
+        "createdDateTime": "ISO8601",
+        "updatedDateTime": "null",
+        "requirements": "[] — luôn rỗng khi mới tạo, chưa phân tích"
+      },
+      "responseBodyExample": {
+        "id": "d4e5f6a7-b8c9-0123-defa-123456789012",
+        "projectId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "testSuiteId": null,
+        "title": "SRS v1.0 — Module Đăng Ký Người Dùng",
+        "sourceType": 0,
+        "rawContent": "# Yêu cầu hệ thống...",
+        "storageFileId": null,
+        "analysisStatus": 0,
+        "analyzedAt": null,
+        "createdById": "user-guid-here",
+        "createdDateTime": "2026-04-26T10:05:00Z",
+        "updatedDateTime": null,
+        "requirements": []
+      },
+      "errorCodes": {
+        "400": "title trống | sourceType không hợp lệ | storageFileId null khi sourceType=FileUpload",
+        "404": "projectId không tồn tại hoặc không có quyền truy cập"
+      },
+      "feWarning": "KHÔNG gọi /analyze ngay lập tức nếu user chưa xác nhận nội dung. Cho phép user xem preview trước khi trigger."
+    },
+
+    {
+      "stepId": "STEP-1-LIST",
+      "phase": "PHASE-1",
+      "name": "Lấy danh sách SRS Documents",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/srs-documents",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 200,
+      "responseBody": "array<SrsDocumentModel> — danh sách documents, requirements[] = [] (chỉ summary)",
+      "responseBodyExample": [
+        {
+          "id": "d4e5f6a7-b8c9-0123-defa-123456789012",
+          "projectId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "testSuiteId": null,
+          "title": "SRS v1.0 — Module Đăng Ký",
+          "sourceType": 0,
+          "rawContent": null,
+          "storageFileId": null,
+          "analysisStatus": 2,
+          "analyzedAt": "2026-04-26T10:10:00Z",
+          "createdById": "user-guid",
+          "createdDateTime": "2026-04-26T10:05:00Z",
+          "updatedDateTime": "2026-04-26T10:10:00Z",
+          "requirements": []
+        }
+      ]
+    },
+
+    {
+      "stepId": "STEP-1-GET",
+      "phase": "PHASE-1",
+      "name": "Lấy chi tiết SRS Document (kèm requirements)",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 200,
+      "responseBody": "SrsDocumentModel với requirements[] đầy đủ",
+      "errorCodes": {
+        "404": "Document không tồn tại hoặc đã bị xóa (soft-delete)"
+      }
+    },
+
+    {
+      "stepId": "STEP-2",
+      "phase": "PHASE-2",
+      "name": "Trigger LLM Analysis (Phase 1)",
+      "description": "Kích hoạt phân tích LLM cho document. Backend tạo SrsAnalysisJob → gọi n8n async → trả về 202 ngay lập tức. FE PHẢI poll job status sau đó.",
+      "method": "POST",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analyze",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "pathParams": {
+        "projectId": "guid",
+        "srsDocumentId": "guid — từ STEP-1"
+      },
+      "requestBody": null,
+      "responseStatus": 202,
+      "responseBody": {
+        "jobId": "guid — LƯU LẠI để poll status",
+        "message": "string — 'Analysis job queued. Poll /analysis-jobs/{jobId} for status.'"
+      },
+      "responseBodyExample": {
+        "jobId": "e5f6a7b8-c9d0-1234-efab-234567890123",
+        "message": "Analysis job queued. Poll /analysis-jobs/{jobId} for status."
+      },
+      "errorCodes": {
+        "400": "Document đang có job đang chạy (Status=Processing) — không trigger duplicate",
+        "404": "srsDocumentId không tồn tại"
+      },
+      "feWarning": "Backend trả 202 = async. FE KHÔNG được assume requirements đã ready. Phải poll STEP-2-POLL cho đến status=3 (Completed) hoặc 4 (Failed)."
+    },
+
+    {
+      "stepId": "STEP-2-POLL",
+      "phase": "PHASE-2",
+      "name": "Poll Analysis Job Status",
+      "description": "FE poll định kỳ (khuyến nghị mỗi 3-5 giây) cho đến khi status=3 (Completed) hoặc 4 (Failed). Khi Completed, requirements đã sẵn sàng để review.",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analysis-jobs/{jobId}",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "pathParams": {
+        "projectId": "guid",
+        "srsDocumentId": "guid",
+        "jobId": "guid — từ STEP-2 response"
+      },
+      "responseStatus": 200,
+      "responseBody": {
+        "id": "guid — jobId",
+        "srsDocumentId": "guid",
+        "status": "integer — 0=Queued | 1=Triggering | 2=Processing | 3=Completed | 4=Failed",
+        "jobType": "integer — 0=InitialAnalysis | 1=ClarificationRefinement",
+        "triggeredById": "guid",
+        "queuedAt": "ISO8601",
+        "triggeredAt": "ISO8601 | null",
+        "completedAt": "ISO8601 | null",
+        "requirementsExtracted": "integer | null — số requirements trích xuất được (chỉ có khi Completed)",
+        "errorMessage": "string | null — chi tiết lỗi khi status=4"
+      },
+      "responseBodyExample_Processing": {
+        "id": "e5f6a7b8-c9d0-1234-efab-234567890123",
+        "srsDocumentId": "d4e5f6a7-b8c9-0123-defa-123456789012",
+        "status": 2,
+        "jobType": 0,
+        "triggeredById": "user-guid",
+        "queuedAt": "2026-04-26T10:06:00Z",
+        "triggeredAt": "2026-04-26T10:06:02Z",
+        "completedAt": null,
+        "requirementsExtracted": null,
+        "errorMessage": null
+      },
+      "responseBodyExample_Completed": {
+        "id": "e5f6a7b8-c9d0-1234-efab-234567890123",
+        "srsDocumentId": "d4e5f6a7-b8c9-0123-defa-123456789012",
+        "status": 3,
+        "jobType": 0,
+        "triggeredById": "user-guid",
+        "queuedAt": "2026-04-26T10:06:00Z",
+        "triggeredAt": "2026-04-26T10:06:02Z",
+        "completedAt": "2026-04-26T10:08:45Z",
+        "requirementsExtracted": 8,
+        "errorMessage": null
+      },
+      "fePollingStrategy": {
+        "interval": "3000ms",
+        "timeout": "300000ms (5 phút)",
+        "stopCondition": "status === 3 (Completed) hoặc status === 4 (Failed)",
+        "onCompleted": "Gọi STEP-3 để lấy requirements",
+        "onFailed": "Hiển thị errorMessage, cho phép user trigger lại STEP-2"
+      },
+      "errorCodes": {
+        "404": "jobId không tồn tại"
+      }
+    },
+
+    {
+      "stepId": "STEP-3",
+      "phase": "PHASE-3",
+      "name": "Lấy danh sách Requirements đã trích xuất",
+      "description": "Sau khi analysis Completed, lấy toàn bộ requirements. Hỗ trợ filter để FE có thể phân trang/lọc theo loại.",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "queryParams": {
+        "requirementType": "integer | null — filter theo type: 0=Functional, 1=NonFunctional, 2=Security, 3=Performance, 4=Constraint",
+        "isReviewed": "boolean | null — filter theo trạng thái review: true/false",
+        "endpointId": "guid | null — filter theo endpoint đã map"
+      },
+      "responseStatus": 200,
+      "responseBody": "array<SrsRequirementModel>",
+      "responseBodyExample": [
+        {
+          "id": "f6a7b8c9-d0e1-2345-fabc-345678901234",
+          "srsDocumentId": "d4e5f6a7-b8c9-0123-defa-123456789012",
+          "requirementCode": "REQ-001",
+          "title": "Đăng ký tài khoản — Kiểm tra tuổi tối thiểu",
+          "description": "Người dùng phải đủ 17 tuổi trở lên để đăng ký tài khoản.",
+          "requirementType": 0,
+          "testableConstraints": "[{\"constraint\":\"age >= 17 → HTTP 201 Created\",\"priority\":\"High\"},{\"constraint\":\"age < 17 → HTTP 400 Bad Request\",\"priority\":\"High\"},{\"constraint\":\"age = 17 (boundary) → HTTP 201 Created\",\"priority\":\"High\"}]",
+          "assumptions": "[\"Tuổi được tính theo năm sinh từ dateOfBirth field\"]",
+          "ambiguities": "[\"Không rõ: tuổi được validate client-side hay server-side?\",\"Không rõ: có cho phép user < 17 xem nội dung không?\"]",
+          "confidenceScore": 0.82,
+          "endpointId": null,
+          "mappedEndpointPath": null,
+          "displayOrder": 1,
+          "isReviewed": false,
+          "refinedConstraints": null,
+          "refinedConfidenceScore": null,
+          "refinementRound": 0
+        },
+        {
+          "id": "a7b8c9d0-e1f2-3456-abcd-456789012345",
+          "srsDocumentId": "d4e5f6a7-b8c9-0123-defa-123456789012",
+          "requirementCode": "REQ-002",
+          "title": "Đăng ký — Validation email",
+          "description": "Email phải hợp lệ và chưa tồn tại trong hệ thống.",
+          "requirementType": 0,
+          "testableConstraints": "[{\"constraint\":\"email hợp lệ + chưa tồn tại → 201\",\"priority\":\"High\"},{\"constraint\":\"email không hợp lệ → 400\",\"priority\":\"High\"},{\"constraint\":\"email đã tồn tại → 409 Conflict\",\"priority\":\"High\"}]",
+          "assumptions": "[\"Email không phân biệt hoa thường\"]",
+          "ambiguities": "[]",
+          "confidenceScore": 0.95,
+          "endpointId": "b2c3d4e5-0000-0000-0000-000000000001",
+          "mappedEndpointPath": "POST /api/users/register",
+          "displayOrder": 2,
+          "isReviewed": true,
+          "refinedConstraints": null,
+          "refinedConfidenceScore": null,
+          "refinementRound": 0
+        }
+      ],
+      "errorCodes": {
+        "404": "srsDocumentId không tồn tại"
+      }
+    },
+
+    {
+      "stepId": "STEP-3A",
+      "phase": "PHASE-3",
+      "name": "Cập nhật Requirement (Review Gate)",
+      "description": "User có thể sửa title, testableConstraints, map endpoint, đánh dấu IsReviewed. Tất cả field đều nullable — chỉ field nào có giá trị mới được update (PATCH).",
+      "method": "PATCH",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "pathParams": {
+        "projectId": "guid",
+        "srsDocumentId": "guid",
+        "requirementId": "guid — ID của requirement"
+      },
+      "requestBody": {
+        "title": "string | null — để null nếu không muốn thay đổi",
+        "testableConstraints": "string | null — JSON array string, vd: '[{\"constraint\":\"...\",\"priority\":\"High\"}]'",
+        "endpointId": "guid | null — map tới endpoint cụ thể trong spec",
+        "isReviewed": "boolean | null — true = user đã xác nhận requirement này"
+      },
+      "requestBodyExample_MarkReviewed": {
+        "title": null,
+        "testableConstraints": null,
+        "endpointId": "b2c3d4e5-0000-0000-0000-000000000001",
+        "isReviewed": true
+      },
+      "requestBodyExample_EditConstraints": {
+        "title": "Đăng ký — Kiểm tra tuổi (đã sửa)",
+        "testableConstraints": "[{\"constraint\":\"age >= 17 → 201\",\"priority\":\"High\"},{\"constraint\":\"age < 17 → 400 với message 'Tuổi phải >= 17'\",\"priority\":\"High\"},{\"constraint\":\"age = 16 (boundary) → 400\",\"priority\":\"High\"}]",
+        "endpointId": null,
+        "isReviewed": true
+      },
+      "responseStatus": 200,
+      "responseBody": "SrsRequirementModel đã cập nhật (giống cấu trúc STEP-3)",
+      "errorCodes": {
+        "400": "JSON malformed trong testableConstraints",
+        "404": "requirementId không tồn tại"
+      }
+    },
+
+    {
+      "stepId": "STEP-3B",
+      "phase": "PHASE-3.5",
+      "name": "Lấy Clarification Questions cho một Requirement",
+      "description": "Lấy danh sách câu hỏi LLM sinh ra từ ambiguities. IsCritical=true = BẮT BUỘC trả lời trước khi generate test.",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 200,
+      "responseBody": "array<SrsRequirementClarificationModel>",
+      "responseBodyExample": [
+        {
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123456",
+          "srsRequirementId": "f6a7b8c9-d0e1-2345-fabc-345678901234",
+          "ambiguitySource": "Không rõ: tuổi được validate client-side hay server-side?",
+          "question": "Validation tuổi (age >= 17) được thực hiện ở đâu: client-side trước khi submit, server-side khi nhận request, hay cả hai?",
+          "suggestedOptions": "[\"Chỉ server-side\",\"Chỉ client-side\",\"Cả hai: client-side và server-side\"]",
+          "userAnswer": null,
+          "isAnswered": false,
+          "isCritical": true,
+          "displayOrder": 1,
+          "answeredAt": null,
+          "answeredById": null
+        },
+        {
+          "id": "c9d0e1f2-a3b4-5678-cdef-678901234567",
+          "srsRequirementId": "f6a7b8c9-d0e1-2345-fabc-345678901234",
+          "ambiguitySource": "Không rõ: có cho phép user < 17 xem nội dung không?",
+          "question": "User dưới 17 tuổi có được phép xem nội dung của trang đăng ký không, hay bị chặn hoàn toàn?",
+          "suggestedOptions": "[\"Được phép xem nhưng không submit được\",\"Bị chặn hoàn toàn, redirect về trang lỗi\"]",
+          "userAnswer": null,
+          "isAnswered": false,
+          "isCritical": false,
+          "displayOrder": 2,
+          "answeredAt": null,
+          "answeredById": null
+        }
+      ],
+      "feNote": "FE nên hiển thị isCritical=true với badge/icon đặc biệt. Disable nút 'Generate Test Cases' nếu còn critical clarifications chưa được trả lời."
+    },
+
+    {
+      "stepId": "STEP-3C",
+      "phase": "PHASE-3.5",
+      "name": "Trả lời một Clarification Question",
+      "method": "PATCH",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications/{clarificationId}",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "pathParams": {
+        "projectId": "guid",
+        "srsDocumentId": "guid",
+        "requirementId": "guid",
+        "clarificationId": "guid"
+      },
+      "requestBody": {
+        "userAnswer": "string (required) — câu trả lời của user (free text hoặc chọn từ suggestedOptions)"
+      },
+      "requestBodyExample": {
+        "userAnswer": "Cả hai: client-side và server-side"
+      },
+      "responseStatus": 200,
+      "responseBody": {
+        "id": "guid",
+        "srsRequirementId": "guid",
+        "ambiguitySource": "string",
+        "question": "string",
+        "suggestedOptions": "string (JSON array) | null",
+        "userAnswer": "string — câu trả lời vừa lưu",
+        "isAnswered": true,
+        "isCritical": "boolean",
+        "displayOrder": "integer",
+        "answeredAt": "ISO8601",
+        "answeredById": "guid"
+      },
+      "errorCodes": {
+        "400": "userAnswer trống",
+        "404": "clarificationId không tồn tại"
+      }
+    },
+
+    {
+      "stepId": "STEP-3D",
+      "phase": "PHASE-3.5",
+      "name": "Trigger Refinement (Phase 1.5) — Sau khi trả lời critical clarifications",
+      "description": "Gọi sau khi user đã trả lời đủ các isCritical=true clarifications. Backend tạo SrsAnalysisJob (JobType=ClarificationRefinement) và gọi LLM tái phân tích. FE poll job status tương tự STEP-2-POLL.",
+      "method": "POST",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/refine",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "requestBody": null,
+      "responseStatus": 202,
+      "responseBody": {
+        "jobId": "guid — poll tương tự STEP-2-POLL",
+        "message": "string — 'Refinement job queued. Poll /analysis-jobs/{jobId} for status.'"
+      },
+      "responseBodyExample": {
+        "jobId": "d0e1f2a3-b4c5-6789-defa-789012345678",
+        "message": "Refinement job queued. Poll /analysis-jobs/{jobId} for status."
+      },
+      "afterRefinement": "Khi job Completed, lấy lại requirement (STEP-3A GET) — lúc này refinedConstraints và refinedConfidenceScore sẽ có giá trị mới.",
+      "errorCodes": {
+        "400": "Còn critical clarifications chưa được trả lời",
+        "404": "requirementId không tồn tại"
+      }
+    },
+
+    {
+      "stepId": "STEP-3E",
+      "phase": "PHASE-4",
+      "name": "Kiểm tra Order Gate Status trước khi generate",
+      "description": "Backend dùng gate này để chặn generate preview nếu suite chưa có active approved order. Với suite Manual, gate tự pass.",
+      "method": "GET",
+      "url": "/api/test-suites/{suiteId}/order-gate-status",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 200,
+      "responseBody": {
+        "testSuiteId": "guid",
+        "isGatePassed": "boolean",
+        "reasonCode": "string | null — ví dụ ORDER_CONFIRMATION_REQUIRED",
+        "activeProposalId": "guid | null",
+        "activeProposalStatus": "string | null — Approved | ModifiedAndApproved | Applied",
+        "orderSize": "integer",
+        "evaluatedAt": "ISO8601"
+      },
+      "responseBodyExample": {
+        "testSuiteId": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+        "isGatePassed": false,
+        "reasonCode": "ORDER_CONFIRMATION_REQUIRED",
+        "activeProposalId": null,
+        "activeProposalStatus": null,
+        "orderSize": 0,
+        "evaluatedAt": "2026-04-26T10:20:00Z"
+      }
+    },
+
+    {
+      "stepId": "STEP-3F",
+      "phase": "PHASE-4",
+      "name": "Tạo API Order Proposal",
+      "description": "Bắt buộc cho suite Auto/LLMAssisted trước khi generate preview. FE gửi specId và danh sách endpoints cần sắp thứ tự.",
+      "method": "POST",
+      "url": "/api/test-suites/{suiteId}/order-proposals",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "specificationId": "guid (required)",
+        "selectedEndpointIds": "array<guid>",
+        "source": "string — Ai | User | System | Imported (default: Ai)",
+        "llmModel": "string (optional, max 100)",
+        "reasoningNote": "string (optional, max 2000)"
+      },
+      "requestBodyExample": {
+        "specificationId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "selectedEndpointIds": [
+          "b2c3d4e5-0000-0000-0000-000000000001",
+          "b2c3d4e5-0000-0000-0000-000000000002"
+        ],
+        "source": "Ai",
+        "llmModel": "gpt-4.1",
+        "reasoningNote": "Ưu tiên login trước các endpoint cần auth."
+      },
+      "responseStatus": 201,
+      "responseBody": {
+        "proposalId": "guid",
+        "testSuiteId": "guid",
+        "proposalNumber": "integer",
+        "status": "string — Pending | Approved | Rejected | ModifiedAndApproved | Superseded | Applied | Expired",
+        "source": "string — Ai | User | System | Imported",
+        "proposedOrder": "array<ApiOrderItemModel>",
+        "userModifiedOrder": "array<ApiOrderItemModel> | null",
+        "appliedOrder": "array<ApiOrderItemModel> | null",
+        "aiReasoning": "string | null",
+        "consideredFactors": "object | null",
+        "reviewedById": "guid | null",
+        "reviewedAt": "ISO8601 | null",
+        "reviewNotes": "string | null",
+        "appliedAt": "ISO8601 | null",
+        "rowVersion": "string"
+      }
+    },
+
+    {
+      "stepId": "STEP-3G",
+      "phase": "PHASE-4",
+      "name": "Lấy latest API Order Proposal",
+      "method": "GET",
+      "url": "/api/test-suites/{suiteId}/order-proposals/latest",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 200,
+      "responseBody": "ApiTestOrderProposalModel — dùng để render danh sách endpoint và rowVersion hiện tại"
+    },
+
+    {
+      "stepId": "STEP-3H",
+      "phase": "PHASE-4",
+      "name": "Reorder proposal trước khi approve",
+      "method": "PUT",
+      "url": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "rowVersion": "string (required)",
+        "orderedEndpointIds": "array<guid> (required)",
+        "reviewNotes": "string (optional, max 4000)"
+      },
+      "responseStatus": 200,
+      "responseBody": "ApiTestOrderProposalModel — status thường chuyển thành ModifiedAndApproved sau bước approve kế tiếp",
+      "errorCodes": {
+        "409": "Concurrency conflict — rowVersion cũ"
+      }
+    },
+
+    {
+      "stepId": "STEP-3I",
+      "phase": "PHASE-4",
+      "name": "Approve proposal để pass gate",
+      "method": "POST",
+      "url": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "rowVersion": "string (required)",
+        "reviewNotes": "string (optional, max 4000)"
+      },
+      "responseStatus": 200,
+      "responseBody": "ApiTestOrderProposalModel — status sẽ là Approved hoặc ModifiedAndApproved",
+      "postCondition": "Sau bước này, GET /order-gate-status phải trả isGatePassed=true trước khi gọi STEP-4."
+    },
+
+    {
+      "stepId": "STEP-4",
+      "phase": "PHASE-5",
+      "name": "Generate LLM Suggestion Preview",
+      "description": "Endpoint này generate preview từ suite context + specification metadata + approved API order. Việc review requirements ở PHASE-3 là business prerequisite tốt, nhưng request body hiện không truyền requirementIds trực tiếp.",
+      "method": "POST",
+      "url": "/api/test-suites/{suiteId}/llm-suggestions/generate",
+      "headers": {
+        "Authorization": "Bearer <JWT>",
+        "Content-Type": "application/json"
+      },
+      "pathParams": {
+        "suiteId": "guid — từ STEP-0C"
+      },
+      "preconditions": [
+        "Nếu suite.GenerationType != Manual thì order gate phải pass trước khi gọi endpoint này.",
+        "SpecificationId là bắt buộc.",
+        "Nếu ForceRefresh=false thì không được còn pending suggestions cũ."
+      ],
+      "requestBody": {
+        "specificationId": "guid (required) — ID của spec đã upload (STEP-0B)",
+        "forceRefresh": "boolean (optional, default false) — true = xóa suggestions cũ và generate lại",
+        "algorithmProfile": {
+          "useObservationConfirmationPrompting": "boolean (default true)",
+          "useDependencyAwareOrdering": "boolean (default true)",
+          "useSchemaRelationshipAnalysis": "boolean (default true)",
+          "useSemanticTokenMatching": "boolean (default true)",
+          "useFeedbackLoopContext": "boolean (default true)"
+        }
+      },
+      "requestBodyExample": {
+        "specificationId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "forceRefresh": false,
+        "algorithmProfile": {
+          "useObservationConfirmationPrompting": true,
+          "useDependencyAwareOrdering": true,
+          "useSchemaRelationshipAnalysis": true,
+          "useSemanticTokenMatching": true,
+          "useFeedbackLoopContext": true
+        }
+      },
+      "responseStatus": 201,
+      "responseBody": {
+        "testSuiteId": "guid",
+        "totalSuggestions": "integer",
+        "endpointsCovered": "integer",
+        "llmModel": "string | null",
+        "llmTokensUsed": "integer | null",
+        "fromCache": "boolean",
+        "generatedAt": "ISO8601",
+        "suggestions": "array<LlmSuggestionModel>"
+      },
+      "errorCodes": {
+        "400": "specificationId không hợp lệ | algorithmProfile có giá trị không hợp lệ",
+        "404": "suiteId hoặc specificationId không tồn tại",
+        "409": "Chưa có approved order hoặc còn pending suggestions cũ khi ForceRefresh=false"
+      },
+      "feWarning": "Nếu FE gọi STEP-4 mà chưa pass order gate, backend sẽ chặn bằng ConflictException. Hãy gọi STEP-3E trước."
+    },
+
+    {
+      "stepId": "STEP-5",
+      "phase": "PHASE-6",
+      "name": "Traceability Matrix — Ma trận Requirements → Test Cases",
+      "description": "Sau khi test cases đã được generate và approve, FE hiển thị báo cáo coverage.",
+      "method": "GET",
+      "url": "/api/projects/{projectId}/test-suites/{suiteId}/traceability",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "pathParams": {
+        "projectId": "guid",
+        "suiteId": "guid"
+      },
+      "responseStatus": 200,
+      "responseBody": {
+        "testSuiteId": "guid",
+        "srsDocumentId": "guid | null",
+        "totalRequirements": "integer",
+        "coveredRequirements": "integer",
+        "uncoveredRequirements": "integer",
+        "coveragePercent": "float — 0.0 đến 100.0",
+        "requirements": "array<TraceabilityRequirementRow>"
+      },
+      "TraceabilityRequirementRow": {
+        "requirementId": "guid",
+        "requirementCode": "string — vd: REQ-001",
+        "title": "string",
+        "requirementType": "integer",
+        "confidenceScore": "float | null",
+        "isReviewed": "boolean",
+        "isCovered": "boolean — true nếu có ít nhất 1 test case linked",
+        "testCases": "array<TraceabilityTestCaseRef>"
+      },
+      "TraceabilityTestCaseRef": {
+        "testCaseId": "guid",
+        "testCaseName": "string",
+        "traceabilityScore": "float | null — mức độ liên quan 0.0–1.0",
+        "mappingRationale": "string | null — LLM giải thích vì sao test case này cover requirement"
+      },
+      "responseBodyExample": {
+        "testSuiteId": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+        "srsDocumentId": "d4e5f6a7-b8c9-0123-defa-123456789012",
+        "totalRequirements": 8,
+        "coveredRequirements": 6,
+        "uncoveredRequirements": 2,
+        "coveragePercent": 75.0,
+        "requirements": [
+          {
+            "requirementId": "f6a7b8c9-d0e1-2345-fabc-345678901234",
+            "requirementCode": "REQ-001",
+            "title": "Đăng ký tài khoản — Kiểm tra tuổi tối thiểu",
+            "requirementType": 0,
+            "confidenceScore": 0.92,
+            "isReviewed": true,
+            "isCovered": true,
+            "testCases": [
+              {
+                "testCaseId": "e1f2a3b4-c5d6-7890-efab-901234567890",
+                "testCaseName": "TC-001: Đăng ký với tuổi 17 (boundary)",
+                "traceabilityScore": 0.95,
+                "mappingRationale": "Test case trực tiếp kiểm tra boundary condition age=17 từ REQ-001"
+              }
+            ]
+          }
+        ]
+      }
+    },
+
+    {
+      "stepId": "STEP-DEL",
+      "phase": "PHASE-1",
+      "name": "Xóa SRS Document (Soft Delete)",
+      "description": "Soft-delete document. Tất cả requirements liên quan cũng bị đánh dấu deleted. Không thể khôi phục qua API.",
+      "method": "DELETE",
+      "url": "/api/projects/{projectId}/srs-documents/{srsDocumentId}",
+      "headers": {
+        "Authorization": "Bearer <JWT>"
+      },
+      "responseStatus": 204,
+      "responseBody": null,
+      "errorCodes": {
+        "404": "srsDocumentId không tồn tại hoặc đã bị xóa"
+      }
+    }
+  ],
+
+  "completeWorkflow": {
+    "description": "Thứ tự gọi API đúng để tránh lỗi luồng",
+    "steps": [
+      {
+        "order": 1,
+        "stepId": "STEP-0A",
+        "action": "POST /api/projects",
+        "saveTo": "projectId",
+        "required": true
+      },
+      {
+        "order": 2,
+        "stepId": "STEP-0B",
+        "action": "POST /api/projects/{projectId}/specifications/upload",
+        "saveTo": "apiSpecId",
+        "required": false,
+        "note": "Bỏ qua nếu không cần map requirement vào endpoint"
+      },
+      {
+        "order": 3,
+        "stepId": "STEP-0C",
+        "action": "POST /api/projects/{projectId}/test-suites",
+        "saveTo": "suiteId",
+        "required": true
+      },
+      {
+        "order": 4,
+        "stepId": "STEP-1",
+        "action": "POST /api/projects/{projectId}/srs-documents",
+        "saveTo": "srsDocumentId",
+        "required": true
+      },
+      {
+        "order": 5,
+        "stepId": "STEP-2",
+        "action": "POST /api/projects/{projectId}/srs-documents/{srsDocumentId}/analyze",
+        "saveTo": "jobId",
+        "required": true
+      },
+      {
+        "order": 6,
+        "stepId": "STEP-2-POLL",
+        "action": "GET /analysis-jobs/{jobId} — poll mỗi 3-5s",
+        "waitFor": "status === 3 (Completed)",
+        "required": true
+      },
+      {
+        "order": 7,
+        "stepId": "STEP-3",
+        "action": "GET /requirements",
+        "required": true
+      },
+      {
+        "order": "7A (optional)",
+        "stepId": "STEP-3A",
+        "action": "PATCH /requirements/{requirementId} — edit + mark isReviewed",
+        "required": false
+      },
+      {
+        "order": "7B (conditional)",
+        "stepId": "STEP-3B",
+        "action": "GET /requirements/{requirementId}/clarifications",
+        "required": "Nếu requirement có ambiguities"
+      },
+      {
+        "order": "7C (conditional)",
+        "stepId": "STEP-3C",
+        "action": "PATCH /clarifications/{clarificationId} — answer",
+        "required": "Nếu isCritical=true → BẮT BUỘC"
+      },
+      {
+        "order": "7D (conditional)",
+        "stepId": "STEP-3D",
+        "action": "POST /requirements/{requirementId}/refine → poll job",
+        "required": "Sau khi trả lời hết isCritical clarifications"
+      },
+      {
+        "order": 8,
+        "stepId": "STEP-3E",
+        "action": "GET /api/test-suites/{suiteId}/order-gate-status",
+        "required": true,
+        "note": "Nếu suite là Manual thì gate có thể pass ngay; nếu không, tiếp tục propose/approve order"
+      },
+      {
+        "order": "8A (conditional)",
+        "stepId": "STEP-3F",
+        "action": "POST /api/test-suites/{suiteId}/order-proposals",
+        "required": "Khi STEP-3E trả isGatePassed=false"
+      },
+      {
+        "order": "8B (conditional)",
+        "stepId": "STEP-3G",
+        "action": "GET /api/test-suites/{suiteId}/order-proposals/latest",
+        "required": "Khi cần render proposal + lấy rowVersion hiện tại"
+      },
+      {
+        "order": "8C (conditional)",
+        "stepId": "STEP-3H",
+        "action": "PUT /api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+        "required": "Khi user muốn đổi thứ tự endpoint trước khi approve"
+      },
+      {
+        "order": "8D (conditional)",
+        "stepId": "STEP-3I",
+        "action": "POST /api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+        "required": "Khi suite không phải Manual và gate chưa pass"
+      },
+      {
+        "order": 9,
+        "stepId": "STEP-4",
+        "action": "POST /api/test-suites/{suiteId}/llm-suggestions/generate",
+        "required": true
+      },
+      {
+        "order": 10,
+        "stepId": "STEP-5",
+        "action": "GET /test-suites/{suiteId}/traceability",
+        "required": false,
+        "note": "Dashboard coverage"
+      }
+    ]
+  },
+
+  "commonMistakes": [
+    {
+      "mistake": "Gọi /requirements trước khi job analysis Completed",
+      "result": "requirements[] trả về [] — FE tưởng không có data",
+      "fix": "Luôn poll job đến status=3 trước khi fetch requirements"
+    },
+    {
+      "mistake": "Không lưu jobId từ response STEP-2",
+      "result": "Không thể poll status, không biết khi nào xong",
+      "fix": "Lưu jobId từ response 202 vào state ngay lập tức"
+    },
+    {
+      "mistake": "Trigger /analyze nhiều lần khi chưa có job Completed/Failed",
+      "result": "400 Bad Request — backend chặn duplicate job",
+      "fix": "Disable nút Analyze khi analysisStatus=Processing (1)"
+    },
+    {
+      "mistake": "Gọi /refine khi còn isCritical clarifications chưa được trả lời",
+      "result": "400 Bad Request",
+      "fix": "Check tất cả clarifications có isCritical=true đều isAnswered=true trước khi gọi /refine"
+    },
+    {
+      "mistake": "Gọi STEP-4 mà chưa pass order gate",
+      "result": "409 Conflict với reason order confirmation required",
+      "fix": "Luôn gọi STEP-3E trước; nếu isGatePassed=false thì thực hiện STEP-3F đến STEP-3I"
+    },
+    {
+      "mistake": "Cho rằng selectedEndpointIds chỉ cần khi suite Manual",
+      "result": "POST /test-suites bị 400 do backend hiện validate Auto/LLMAssisted phải có ít nhất một endpoint",
+      "fix": "Khi tạo suite Auto/LLMAssisted, luôn gửi selectedEndpointIds không rỗng"
+    },
+    {
+      "mistake": "Cho rằng generate preview nhận requirementIds trực tiếp",
+      "result": "FE thiết kế form/request sai contract",
+      "fix": "Dùng suiteId + specificationId + approved order; coi requirement review là business context hiện có chứ không phải request field trực tiếp"
+    },
+    {
+      "mistake": "Bỏ qua fields thật của STEP-0B upload spec như autoActivate/sourceType/version",
+      "result": "FE form upload thiếu dữ liệu hoặc không phản ánh response thật",
+      "fix": "Dùng contract STEP-0B đã cập nhật theo UploadSpecificationModel và SpecificationModel"
+    },
+    {
+      "mistake": "Dùng testableConstraints như plain string thay vì JSON array string",
+      "result": "Display sai, LLM không parse được khi generate test",
+      "fix": "testableConstraints phải là valid JSON array string: '[{\"constraint\":\"...\",\"priority\":\"High\"}]'"
+    },
+    {
+      "mistake": "Không gửi Content-Type: application/json khi PATCH requirement",
+      "result": "415 Unsupported Media Type",
+      "fix": "Luôn set Content-Type: application/json cho mọi POST/PUT/PATCH"
+    }
+  ],
+
+  "statusFlowDiagram": {
+    "SrsDocument_analysisStatus": "Pending(0) → [trigger analyze] → Processing(1) → Completed(2) | Failed(3)",
+    "SrsAnalysisJob_status": "Queued(0) → Triggering(1) → Processing(2) → Completed(3) | Failed(4)",
+    "FE_shouldDisableAnalyzeButton_when": "analysisStatus === 1 (Processing)",
+    "FE_shouldShowReviewGate_when": "analysisStatus === 2 (Completed)",
+    "FE_shouldShowErrorRetry_when": "analysisStatus === 3 (Failed)"
+  }
+}

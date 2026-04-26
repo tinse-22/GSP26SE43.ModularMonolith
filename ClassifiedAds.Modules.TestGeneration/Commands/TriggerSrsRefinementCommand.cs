@@ -1,0 +1,229 @@
+using ClassifiedAds.Application;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace ClassifiedAds.Modules.TestGeneration.Commands;
+
+public class TriggerSrsRefinementCommand : ICommand
+{
+    public Guid ProjectId { get; set; }
+
+    public Guid SrsDocumentId { get; set; }
+
+    public Guid RequirementId { get; set; }
+
+    public Guid CurrentUserId { get; set; }
+
+    /// <summary>Output: the created refinement job ID.</summary>
+    public Guid JobId { get; set; }
+}
+
+public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefinementCommand>
+{
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _requirementRepository;
+    private readonly IRepository<SrsRequirementClarification, Guid> _clarificationRepository;
+    private readonly IRepository<SrsAnalysisJob, Guid> _jobRepository;
+    private readonly IN8nIntegrationService _n8nService;
+    private readonly N8nIntegrationOptions _n8nOptions;
+    private readonly ILogger<TriggerSrsRefinementCommandHandler> _logger;
+
+    private const string WebhookName = "refine-srs-requirements";
+
+    public TriggerSrsRefinementCommandHandler(
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> requirementRepository,
+        IRepository<SrsRequirementClarification, Guid> clarificationRepository,
+        IRepository<SrsAnalysisJob, Guid> jobRepository,
+        IN8nIntegrationService n8nService,
+        IOptions<N8nIntegrationOptions> n8nOptions,
+        ILogger<TriggerSrsRefinementCommandHandler> logger)
+    {
+        _srsDocumentRepository = srsDocumentRepository;
+        _requirementRepository = requirementRepository;
+        _clarificationRepository = clarificationRepository;
+        _jobRepository = jobRepository;
+        _n8nService = n8nService;
+        _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
+        _logger = logger;
+    }
+
+    public async Task HandleAsync(TriggerSrsRefinementCommand command, CancellationToken cancellationToken = default)
+    {
+        var doc = await _srsDocumentRepository.FirstOrDefaultAsync(
+            _srsDocumentRepository.GetQueryableSet()
+                .Where(x => x.Id == command.SrsDocumentId && x.ProjectId == command.ProjectId && !x.IsDeleted));
+
+        if (doc == null)
+        {
+            throw new NotFoundException($"SrsDocument {command.SrsDocumentId} khong tim thay.");
+        }
+
+        var req = await _requirementRepository.FirstOrDefaultAsync(
+            _requirementRepository.GetQueryableSet()
+                .Where(x => x.Id == command.RequirementId && x.SrsDocumentId == command.SrsDocumentId));
+
+        if (req == null)
+        {
+            throw new NotFoundException($"SrsRequirement {command.RequirementId} khong tim thay.");
+        }
+
+        // Validate: all critical clarifications must be answered
+        var clarifications = await _clarificationRepository.ToListAsync(
+            _clarificationRepository.GetQueryableSet()
+                .Where(x => x.SrsRequirementId == command.RequirementId));
+
+        var unansweredCritical = clarifications.Any(x => x.IsCritical && !x.IsAnswered);
+        if (unansweredCritical)
+        {
+            throw new ValidationException(
+                "Can phai tra loi tat ca cac cau hoi critical truoc khi refine requirement.");
+        }
+
+        // Create refinement job
+        var job = new SrsAnalysisJob
+        {
+            SrsDocumentId = command.SrsDocumentId,
+            Status = SrsAnalysisJobStatus.Queued,
+            JobType = SrsAnalysisJobType.ClarificationRefinement,
+            TriggeredById = command.CurrentUserId,
+            QueuedAt = DateTimeOffset.UtcNow,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+        };
+
+        await _jobRepository.AddAsync(job, cancellationToken);
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+        command.JobId = job.Id;
+
+        // Build payload
+        var userAnswers = clarifications
+            .Where(c => c.IsAnswered)
+            .Select(c => new N8nSrsUserAnswer
+            {
+                ClarificationId = c.Id,
+                Question = c.Question,
+                AmbiguitySource = c.AmbiguitySource,
+                UserAnswer = c.UserAnswer,
+            })
+            .ToList();
+
+        var requirementToRefine = new N8nSrsRequirementToRefine
+        {
+            RequirementId = req.Id,
+            RequirementCode = req.RequirementCode,
+            OriginalDescription = req.Description,
+            ExistingTestableConstraints = req.TestableConstraints,
+            ExistingAmbiguities = req.Ambiguities,
+            OriginalConfidenceScore = req.ConfidenceScore ?? 0,
+            UserAnswers = userAnswers,
+        };
+
+        var callbackUrl = $"{_n8nOptions.BeBaseUrl}/api/srs-refinement-callback/{job.Id}";
+
+        var payload = new N8nSrsRefinementPayload
+        {
+            SrsDocumentId = doc.Id,
+            JobId = job.Id,
+            RequirementsToRefine = new List<N8nSrsRequirementToRefine> { requirementToRefine },
+            CallbackUrl = callbackUrl,
+            CallbackApiKey = _n8nOptions.CallbackApiKey,
+        };
+
+        // Trigger n8n
+        job.Status = SrsAnalysisJobStatus.Triggering;
+        job.TriggeredAt = DateTimeOffset.UtcNow;
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+        var result = await _n8nService.TriggerWebhookWithResultAsync(WebhookName, payload, cancellationToken);
+
+        if (result.Success)
+        {
+            job.Status = SrsAnalysisJobStatus.Processing;
+            _logger.LogInformation(
+                "SRS refinement job triggered. JobId={JobId}, RequirementId={RequirementId}",
+                job.Id, command.RequirementId);
+        }
+        else
+        {
+            job.Status = SrsAnalysisJobStatus.Failed;
+            job.ErrorMessage = result.ErrorMessage;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            _logger.LogError(
+                "Failed to trigger SRS refinement via n8n. JobId={JobId}, Error={Error}",
+                job.Id, result.ErrorMessage);
+        }
+
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+    }
+}
+
+// n8n payload models for Phase 1.5
+public class N8nSrsRefinementPayload
+{
+    [JsonPropertyName("srsDocumentId")]
+    public Guid SrsDocumentId { get; set; }
+
+    [JsonPropertyName("jobId")]
+    public Guid JobId { get; set; }
+
+    [JsonPropertyName("requirementsToRefine")]
+    public List<N8nSrsRequirementToRefine> RequirementsToRefine { get; set; } = new();
+
+    [JsonPropertyName("callbackUrl")]
+    public string CallbackUrl { get; set; }
+
+    [JsonPropertyName("callbackApiKey")]
+    public string CallbackApiKey { get; set; }
+}
+
+public class N8nSrsRequirementToRefine
+{
+    [JsonPropertyName("requirementId")]
+    public Guid RequirementId { get; set; }
+
+    [JsonPropertyName("requirementCode")]
+    public string RequirementCode { get; set; }
+
+    [JsonPropertyName("originalDescription")]
+    public string OriginalDescription { get; set; }
+
+    [JsonPropertyName("existingTestableConstraints")]
+    public string ExistingTestableConstraints { get; set; }
+
+    [JsonPropertyName("existingAmbiguities")]
+    public string ExistingAmbiguities { get; set; }
+
+    [JsonPropertyName("originalConfidenceScore")]
+    public float OriginalConfidenceScore { get; set; }
+
+    [JsonPropertyName("userAnswers")]
+    public List<N8nSrsUserAnswer> UserAnswers { get; set; } = new();
+}
+
+public class N8nSrsUserAnswer
+{
+    [JsonPropertyName("clarificationId")]
+    public Guid ClarificationId { get; set; }
+
+    [JsonPropertyName("question")]
+    public string Question { get; set; }
+
+    [JsonPropertyName("ambiguitySource")]
+    public string AmbiguitySource { get; set; }
+
+    [JsonPropertyName("userAnswer")]
+    public string UserAnswer { get; set; }
+}

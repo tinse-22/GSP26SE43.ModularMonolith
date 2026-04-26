@@ -1,0 +1,427 @@
+{
+  "$schema": "ai-agent-requirement-spec",
+  "version": "1.0.0",
+  "documentId": "fe-18-requirement",
+  "requirement": {
+    "id": "FE-18",
+    "title": "SRS Import + LLM Requirement Analysis + Requirement-Driven Test Generation",
+    "goal": "Cho phep nguoi dung nhap hoac upload tai lieu SRS (Software Requirements Specification) vao he thong. LLM phan tich tai lieu, trich xuat requirements co cau truc, map requirements vao endpoints, sau do sinh test case bam sat requirement voi traceability day du.",
+    "priority": "P1",
+    "status": "planned",
+    "rationale": [
+      "Hien tai GlobalBusinessRules chi la text tu do, khong co cau truc — LLM khong the phan biet constraint vs assumption vs ambiguity.",
+      "Khong co traceability: khong biet test case X bam sat requirement Y nao.",
+      "Khong co coverage report: khong biet requirement nao da duoc cover, requirement nao con thieu test.",
+      "SRS import giup QA engineer tu lieu hoa yeu cau truoc khi sinh test, giam hallucination va tang precision.",
+      "Entity schema da duoc tao: SrsDocument, SrsRequirement, TestCaseRequirementLink, SrsAnalysisJob.",
+      "Migration: 20260425162938_AddSrsDocumentAndRequirementTraceability — da verified."
+    ]
+  },
+  "subRequirements": [
+    {
+      "id": "FE-18A",
+      "title": "SRS Import — nhap hoac upload tai lieu spec",
+      "priority": "P1",
+      "implementationOrder": 1,
+      "description": "API va UI cho phep nguoi dung tao SrsDocument bang text input (paste), upload file (PDF/DOCX/MD/TXT), hoac URL. He thong luu raw content va trigger analysis pipeline."
+    },
+    {
+      "id": "FE-18B",
+      "title": "LLM Requirement Analysis — trich xuat va phan tich requirement",
+      "priority": "P1",
+      "implementationOrder": 2,
+      "description": "SrsAnalysisJob duoc tao, n8n webhook 'analyze-srs' duoc goi. LLM tra ve cac SrsRequirement co cau truc voi: RequirementCode, Title, TestableConstraints (jsonb), Assumptions (jsonb), Ambiguities (jsonb), ConfidenceScore, EndpointId mapping."
+    },
+    {
+      "id": "FE-18C",
+      "title": "Requirement Review Gate + Clarification Q&A — nguoi dung review + lam ro truoc khi generate",
+      "priority": "P1",
+      "implementationOrder": 3,
+      "description": "Nguoi dung review danh sach SrsRequirements da extract. Voi requirement co ConfidenceScore < 0.7, LLM da tao SrsRequirementClarification questions tuong ung. Nguoi dung tra loi tung question. Sau khi tat ca critical questions duoc tra loi, he thong trigger Phase 1.5 (refinement webhook) de nang ConfidenceScore va cap nhat TestableConstraints. Sau do IsReviewed = true va co the generate."
+    },
+    {
+      "id": "FE-18D",
+      "title": "SRS-driven Test Generation — sinh test case bam requirement",
+      "priority": "P1",
+      "implementationOrder": 4,
+      "description": "Khi generate test case, EndpointPromptContextMapper inject SrsRequirements cua endpoint do vao prompt thay vi GlobalBusinessRules tu do. LLM sinh test case per constraint. Sau khi generate, he thong tao TestCaseRequirementLink cho tung test case."
+    },
+    {
+      "id": "FE-18E",
+      "title": "Traceability Report — requirement to test case coverage",
+      "priority": "P2",
+      "implementationOrder": 5,
+      "description": "API tra ve coverage matrix: requirement X -> [testCaseA, testCaseB]. Highlight requirement khong co test case. Hien thi TraceabilityScore va MappingRationale."
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "FE-18A: SrsDocument CRUD (text input + file upload).",
+      "FE-18A: File parsing pipeline (PDF/DOCX/MD → ParsedMarkdown via Storage module).",
+      "FE-18B: SrsAnalysisJob async pipeline qua n8n webhook 'analyze-srs'.",
+      "FE-18B: LLM Phase 1 prompt: extract requirements, split constraints, detect ambiguities, map endpoints.",
+      "FE-18C: Review UI: IsReviewed flag, constraint editing, endpoint re-mapping.",
+      "FE-18C: Clarification Q&A: Phase 1 output includes clarificationQuestions[] → SrsRequirementClarification records saved.",
+      "FE-18C: User answers clarification questions (free text hoac SuggestedOptions).",
+      "FE-18C: Phase 1.5 refinement webhook sau khi tat ca IsCritical questions da duoc tra loi.",
+      "FE-18D: Extend EndpointPromptContextMapper de inject structured SrsRequirements.",
+      "FE-18D: Post-generation: tao TestCaseRequirementLink + set TestCase.PrimaryRequirementId.",
+      "FE-18E: Coverage report API."
+    ],
+    "outOfScope": [
+      "UI components (frontend).",
+      "Tich hop voi external requirement management tools (Jira, Confluence).",
+      "Multi-version SRS diffing.",
+      "LLM ambiguity resolution UI (hoi nguoi dung ve unclear points) — da moved to IN SCOPE via Clarification Q&A flow.",
+      "Real-time streaming clarification (WebSocket).",
+      "Import tu URL (FE-18A chi TextInput + FileUpload trong luong nay)."
+    ]
+  },
+  "apiEndpoints": [
+    {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents",
+      "description": "Tao SrsDocument moi. Body: { title, sourceType: 'TextInput'|'FileUpload', rawContent?, storageFileId? }",
+      "responseCode": 201
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents",
+      "description": "List tat ca SrsDocuments (non-deleted) cua project.",
+      "responseCode": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}",
+      "description": "Chi tiet SrsDocument + danh sach Requirements.",
+      "responseCode": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analyze",
+      "description": "Trigger LLM analysis (tao SrsAnalysisJob, return 202 + jobId).",
+      "responseCode": 202
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analysis-jobs/{jobId}",
+      "description": "Poll job status: Queued | Processing | Completed | Failed.",
+      "responseCode": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements",
+      "description": "List extracted SrsRequirements voi filter by RequirementType, IsReviewed, EndpointId.",
+      "responseCode": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}",
+      "description": "Update requirement: chinh sua Title, TestableConstraints, EndpointId, danh dau IsReviewed.",
+      "responseCode": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}/traceability",
+      "description": "Coverage matrix: moi requirement → danh sach TestCase cover. Highlight uncovered requirements.",
+      "responseCode": 200
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}",
+      "description": "Soft-delete SrsDocument.",
+      "responseCode": 204
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications",
+      "description": "Lay danh sach clarification questions cho mot requirement. Response include: Question, AmbiguitySource, SuggestedOptions, IsAnswered, UserAnswer, IsCritical.",
+      "responseCode": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications/{clarificationId}",
+      "description": "User tra loi mot clarification question. Body: { userAnswer: string }. Sets IsAnswered=true, AnsweredAt, AnsweredById.",
+      "responseCode": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/refine",
+      "description": "Trigger Phase 1.5b refinement cho mot requirement sau khi tat ca IsCritical clarifications da duoc tra loi. Tao SrsAnalysisJob voi JobType=ClarificationRefinement, tra 202 + jobId.",
+      "responseCode": 202
+    }
+  ],
+  "clarificationApiNotes": {
+    "bulkAnswer": "De UX smooth, FE co the goi PATCH cho tung clarification sau khi user nhap answer, sau do goi POST /refine 1 lan.",
+    "pendingCheck": "FE nen check: Clarifications.filter(x => x.IsCritical && !x.IsAnswered).length === 0 truoc khi hien nut 'Refine & Confirm'.",
+    "nonCritical": "Non-critical clarifications co the duoc tra loi hoac skip — khong block refinement."
+  },
+  "llmIntegration": {
+    "phase1": {
+      "webhookName": "analyze-srs",
+      "trigger": "SrsAnalysisJob tao voi Status=Queued",
+      "inputSchema": {
+        "srsDocumentId": "uuid",
+        "rawContent": "string (text hoac ParsedMarkdown)",
+        "projectContext": "string (ten project, mo ta)",
+        "endpoints": [
+          {
+            "endpointId": "uuid",
+            "method": "POST",
+            "path": "/api/users/register",
+            "summary": "Register new user"
+          }
+        ]
+      },
+      "outputSchema": {
+        "requirements": [
+          {
+            "requirementCode": "REQ-001",
+            "title": "Minimum age restriction",
+            "description": "User must be at least 17 years old to register",
+            "type": "Functional",
+            "testableConstraints": [
+              { "constraint": "age < 17 → 400 Bad Request", "priority": "High" },
+              { "constraint": "age == 17 → 201 Created (boundary)", "priority": "High" }
+            ],
+            "assumptions": ["age is provided as integer in request body"],
+            "ambiguities": ["unclear: is age validated server-side or client-side?"],
+            "confidenceScore": 0.87,
+            "mappedEndpointPath": "POST /api/users/register"
+          }
+        ],
+        "clarificationQuestions": [
+          {
+            "requirementCode": "REQ-001",
+            "ambiguitySource": "unclear: is age validated server-side or client-side?",
+            "question": "Validation tuoi (age) duoc thuc hien o dau: server-side (API tra 400) hay chi client-side (frontend block)?",
+            "isCritical": true,
+            "suggestedOptions": [
+              "Server-side: API tra 400 Bad Request khi age < 17",
+              "Client-side only: API khong validate age",
+              "Ca hai: validate ca client va server"
+            ]
+          }
+        ]
+      },
+      "clarificationRules": [
+        "Neu ambiguities array co bat ky entry nao, LLM PHAI tao it nhat 1 clarificationQuestion cho requirement do.",
+        "isCritical = true neu ambiguity anh huong truc tiep den testable behavior (e.g., status code, validation logic).",
+        "SuggestedOptions phai la array string, moi option cu the va actionable, khong abstract.",
+        "Moi clarificationQuestion chi map ve 1 requirementCode duy nhat.",
+        "Return ONLY raw JSON, khong them markdown hoac prose."
+      ],
+      "callbackEndpoint": "POST /api/srs-analysis-callback/{jobId}",
+      "rules": [
+        "Moi requirement phai co RequirementCode unique (REQ-001, REQ-002...).",
+        "TestableConstraints phai la array, moi entry co 'constraint' (string) va 'priority' (High|Medium|Low).",
+        "confidenceScore trong khoang 0.0–1.0.",
+        "Neu requirement khong ro endpoint, de mappedEndpointPath = null.",
+        "Neu co ambiguity, bat buoc phai list vao ambiguities array.",
+        "Return ONLY raw JSON, khong them markdown hoac prose."
+      ]
+    },
+    "phase1_5": {
+      "webhookName": "refine-srs-requirements",
+      "trigger": "SrsAnalysisJob tao voi Status=Queued, JobType=ClarificationRefinement — sau khi tat ca IsCritical clarification questions duoc tra loi",
+      "inputSchema": {
+        "srsDocumentId": "uuid",
+        "jobId": "uuid",
+        "requirementsToRefine": [
+          {
+            "requirementId": "uuid",
+            "requirementCode": "REQ-001",
+            "originalDescription": "string",
+            "existingTestableConstraints": "jsonb array",
+            "existingAmbiguities": "jsonb array",
+            "originalConfidenceScore": 0.35,
+            "userAnswers": [
+              {
+                "clarificationId": "uuid",
+                "question": "Validation tuoi duoc thuc hien o dau?",
+                "ambiguitySource": "unclear: is age validated server-side or client-side?",
+                "userAnswer": "Server-side: API tra 400 Bad Request khi age < 17"
+              }
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "refinedRequirements": [
+          {
+            "requirementId": "uuid",
+            "requirementCode": "REQ-001",
+            "refinedConstraints": [
+              { "constraint": "age < 17 → 400 Bad Request (server-side validated)", "priority": "High" },
+              { "constraint": "age == 17 → 201 Created (boundary, server-side)", "priority": "High" }
+            ],
+            "refinedConfidenceScore": 0.92,
+            "refinementSummary": "Ambiguity resolved: age validated server-side via API. Constraints updated accordingly."
+          }
+        ]
+      },
+      "callbackEndpoint": "POST /api/srs-refinement-callback/{jobId}",
+      "onComplete": [
+        "Cap nhat SrsRequirement.RefinedConstraints voi refinedConstraints tu LLM.",
+        "Cap nhat SrsRequirement.RefinedConfidenceScore.",
+        "Tang SrsRequirement.RefinementRound += 1.",
+        "Danh dau SrsRequirement.IsReviewed = true.",
+        "SrsAnalysisJob.Status = Completed."
+      ]
+    },
+    "phase2": {
+      "description": "Extend EndpointPromptContextMapper.CombineBusinessContext() de inject SrsRequirements co cau truc khi TestSuite.SrsDocumentId != null.",
+      "promptInjectionBlock": "=== REQUIREMENT-DRIVEN CONSTRAINTS ===\n[REQ-001] Minimum age restriction\n  Constraints:\n    - age < 17 → 400 Bad Request (priority: High)\n    - age == 17 → 201 Created (priority: High)\n  Assumptions: age is integer in request body\n  Ambiguities: is age validated server-side?\nGenerate test cases that explicitly cover each constraint above.",
+      "postGenerationAction": "Sau khi LLM tra ve test cases, backend map tung test case vao requirement phu hop va tao TestCaseRequirementLink.",
+      "contextPriority": "Neu RefinedConstraints != null, inject RefinedConstraints thay vi TestableConstraints goc. Reflect da-refined information de test case generation chinh xac hon."
+    }
+  },
+  "clarificationFlow": {
+    "summary": "Giai quyet van de: nguoi dung chi nhap thong tin chung chung (e.g., 'tinvtse@gmail.com / Admin@123'), LLM khong du context de hieu rules. Thay vi hallucinate, LLM phai hoi lai co cau truc.",
+    "stages": [
+      {
+        "stage": "Phase 1",
+        "name": "Initial Extraction",
+        "actor": "LLM (n8n analyze-srs)",
+        "output": "requirements[] + clarificationQuestions[]",
+        "sideEffect": "SrsRequirementClarification records duoc tao tu clarificationQuestions"
+      },
+      {
+        "stage": "Phase 1.5a",
+        "name": "User Q&A",
+        "actor": "User (via FE Review UI)",
+        "output": "SrsRequirementClarification.UserAnswer + IsAnswered = true",
+        "trigger": "API PATCH /requirements/{reqId}/clarifications/{clarId}"
+      },
+      {
+        "stage": "Phase 1.5b",
+        "name": "LLM Refinement",
+        "actor": "LLM (n8n refine-srs-requirements)",
+        "trigger": "Tat ca IsCritical clarifications da IsAnswered = true → user goi POST /requirements/{reqId}/refine",
+        "output": "SrsRequirement.RefinedConstraints + RefinedConfidenceScore",
+        "sideEffect": "IsReviewed = true. RefinementRound += 1."
+      },
+      {
+        "stage": "Phase 2",
+        "name": "Test Generation",
+        "actor": "System (existing generation pipeline)",
+        "guard": "Yeu cau: IsReviewed = true hoac ConfidenceScore >= 0.7",
+        "output": "TestCase[] + TestCaseRequirementLink[]"
+      }
+    ],
+    "unblockLogic": {
+      "description": "Requirement bi block o Phase 1.5 khi: ConfidenceScore < 0.7 VA con IsCritical clarification chua duoc tra loi.",
+      "blockedWhen": "ConfidenceScore < 0.7 AND Clarifications.Any(x => x.IsCritical && !x.IsAnswered)",
+      "unblockedWhen": "IsReviewed = true OR ConfidenceScore >= 0.7 OR (RefinedConfidenceScore != null AND RefinedConfidenceScore >= 0.7)"
+    }
+  },
+
+  "dataModel": {
+    "newEntities": [
+      {
+        "name": "SrsDocument",
+        "schema": "testgen",
+        "table": "SrsDocuments",
+        "keyFields": ["Id", "ProjectId", "Title", "SourceType", "AnalysisStatus", "CreatedById"],
+        "status": "created",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability"
+      },
+      {
+        "name": "SrsRequirement",
+        "schema": "testgen",
+        "table": "SrsRequirements",
+        "keyFields": ["Id", "SrsDocumentId", "RequirementCode", "Title", "RequirementType", "TestableConstraints (jsonb)", "ConfidenceScore", "RefinedConstraints (jsonb)", "RefinedConfidenceScore", "RefinementRound"],
+        "status": "modified",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability",
+        "clarificationMigrationId": "AddSrsRequirementClarificationRound"
+      },
+      {
+        "name": "SrsRequirementClarification",
+        "schema": "testgen",
+        "table": "SrsRequirementClarifications",
+        "keyFields": ["Id", "SrsRequirementId", "AmbiguitySource", "Question", "SuggestedOptions (jsonb)", "UserAnswer", "IsAnswered", "IsCritical", "DisplayOrder"],
+        "status": "created",
+        "migrationId": "AddSrsRequirementClarificationRound",
+        "purpose": "Luu LLM-generated clarification questions va user answers cho tung ambiguity trong SrsRequirement. Enables Phase 1.5 guided Q&A loop."
+      },
+      {
+        "name": "SrsAnalysisJob",
+        "schema": "testgen",
+        "table": "SrsAnalysisJobs",
+        "keyFields": ["Id", "SrsDocumentId", "Status", "JobType (InitialAnalysis|ClarificationRefinement)", "TriggeredById"],
+        "status": "modified",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability",
+        "clarificationMigrationId": "AddSrsRequirementClarificationRound"
+      },
+      {
+        "name": "TestCaseRequirementLink",
+        "schema": "testgen",
+        "table": "TestCaseRequirementLinks",
+        "keyFields": ["Id", "TestCaseId", "SrsRequirementId", "TraceabilityScore"],
+        "status": "created",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability"
+      }
+    ],
+    "modifiedEntities": [
+      {
+        "name": "TestSuite",
+        "addedColumn": "SrsDocumentId (uuid nullable)",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability"
+      },
+      {
+        "name": "TestCase",
+        "addedColumn": "PrimaryRequirementId (uuid nullable)",
+        "migrationId": "20260425162938_AddSrsDocumentAndRequirementTraceability"
+      }
+    ]
+  },
+  "dependencies": {
+    "requiredFeatures": ["FE-02", "FE-04", "FE-05", "FE-06"],
+    "requiredModules": [
+      "ClassifiedAds.Modules.TestGeneration",
+      "ClassifiedAds.Modules.ApiDocumentation",
+      "ClassifiedAds.Modules.Storage",
+      "ClassifiedAds.Modules.LlmAssistant"
+    ],
+    "database": {
+      "schema": "testgen",
+      "migrations": [
+        {
+          "id": "20260425162938_AddSrsDocumentAndRequirementTraceability",
+          "description": "Creates SrsDocuments, SrsRequirements, SrsAnalysisJobs, TestCaseRequirementLinks. Alters TestSuites+TestCases."
+        },
+        {
+          "id": "AddSrsRequirementClarificationRound",
+          "description": "Creates SrsRequirementClarifications. Adds RefinedConstraints/RefinedConfidenceScore/RefinementRound to SrsRequirements. Adds JobType to SrsAnalysisJobs."
+        }
+      ],
+      "verificationStatus": "EF Core migration snapshots are up to date"
+    }
+  },
+  "nonFunctionalTargets": {
+    "asyncAnalysis": {
+      "required": true,
+      "description": "POST /analyze returns 202 immediately. Client polls job status. Timeout: 120s."
+    },
+    "confidenceThreshold": {
+      "lowConfidenceFlag": 0.7,
+      "description": "Requirements voi ConfidenceScore < 0.7 phai duoc danh dau va yeu cau human review truoc khi dung de generate."
+    },
+    "concurrency": {
+      "required": true,
+      "description": "SrsDocument va SrsRequirement dung RowVersion (optimistic concurrency) khi update."
+    },
+    "traceabilityIntegrity": {
+      "required": true,
+      "description": "TestCaseRequirementLink.UNIQUE(TestCaseId, SrsRequirementId) dam bao khong duplicate link."
+    }
+  },
+  "implementationNotes": [
+    "SrsAnalysisJobStatus.Triggering: tuong tu GenerationJobStatus.Triggering trong TestGenerationJob.",
+    "File parsing (PDF/DOCX): goi Storage module de lay file bytes, dung thu vien nhu DocumentFormat.OpenXml hoac PdfPig.",
+    "EndpointPromptContextMapper.CombineBusinessContext(): uu tien SRS constraints neu co, fall back GlobalBusinessRules.",
+    "LlmInteraction.InteractionType.DocumentationParsing da co trong LlmAssistant module — dung de log Phase 1 call.",
+    "Callback endpoint cho n8n: tuong tu TestGenerationCallbackController, tao SrsAnalysisCallbackController.",
+    "Docker: khong can update Dockerfiles vi khong co project reference moi — chi them code trong ClassifiedAds.Modules.TestGeneration da co san trong restore layer."
+  ]
+}

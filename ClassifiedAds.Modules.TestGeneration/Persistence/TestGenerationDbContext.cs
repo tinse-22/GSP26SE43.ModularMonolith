@@ -30,6 +30,11 @@ public class TestGenerationDbContext : DbContextUnitOfWork<TestGenerationDbConte
     public DbSet<AuditLogEntry> AuditLogEntries { get; set; }
     public DbSet<OutboxMessage> OutboxMessages { get; set; }
     public DbSet<TestGenerationJob> TestGenerationJobs { get; set; }
+    public DbSet<SrsDocument> SrsDocuments { get; set; }
+    public DbSet<SrsRequirement> SrsRequirements { get; set; }
+    public DbSet<SrsAnalysisJob> SrsAnalysisJobs { get; set; }
+    public DbSet<TestCaseRequirementLink> TestCaseRequirementLinks { get; set; }
+    public DbSet<SrsRequirementClarification> SrsRequirementClarifications { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

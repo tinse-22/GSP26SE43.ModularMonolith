@@ -14,4 +14,8 @@ public class TestRunResultModel
     public string ResolvedEnvironmentName { get; set; }
 
     public List<TestCaseRunResultModel> Cases { get; set; } = new();
+
+    public List<TestCaseExecutionAttemptModel> Attempts { get; set; } = new();
+
+    public Dictionary<Guid, List<Guid>> AttemptChildrenMap { get; set; } = new();
 }

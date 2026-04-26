@@ -28,6 +28,18 @@ public class StartTestRunCommand : ICommand
 
     public bool StrictValidation { get; set; }
 
+    public int MaxRetryAttempts { get; set; } = 0;
+
+    /// <summary>
+    /// Enables the retry mechanism for failed test cases whose only failures are expectation
+    /// mismatches.  When false, no retries are attempted regardless of MaxRetryAttempts.
+    /// </summary>
+    public bool EnableRetry { get; set; } = true;
+
+    public bool RerunSkippedCases { get; set; } = true;
+
+    public TestRunRetryPolicyModel RetryPolicy { get; set; }
+
     public IReadOnlyList<Guid> SelectedTestCaseIds { get; set; }
 
     public TestRunResultModel Result { get; set; }
@@ -194,12 +206,28 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             "Created test run. RunId={RunId}, SuiteId={SuiteId}, RunNumber={RunNumber}, EnvironmentId={EnvironmentId}",
             run.Id, command.TestSuiteId, run.RunNumber, environment.Id);
 
-        // 10. Execute via orchestrator (outside transaction)
+        // 10. Build effective retry policy.
+        //     Explicit RetryPolicy object takes precedence; scalar fields act as fallback.
+        //     MaxRetryAttempts is hard-capped at 3 regardless of input source.
+        const int maxAllowedRetries = 3;
+        var effectivePolicy = command.RetryPolicy != null
+            ? command.RetryPolicy.Clone()
+            : new TestRunRetryPolicyModel
+            {
+                MaxRetryAttempts = command.MaxRetryAttempts,
+                EnableRetry = command.EnableRetry,
+                RerunSkippedCases = command.RerunSkippedCases,
+            };
+
+        effectivePolicy.MaxRetryAttempts = Math.Min(effectivePolicy.MaxRetryAttempts, maxAllowedRetries);
+
+        // 11. Execute via orchestrator (outside transaction).
         command.Result = await _orchestrator.ExecuteAsync(
             run.Id,
             command.CurrentUserId,
             selectedIds.Count > 0 ? selectedIds : null,
             cancellationToken,
-            command.StrictValidation);
+            command.StrictValidation,
+            effectivePolicy);
     }
 }

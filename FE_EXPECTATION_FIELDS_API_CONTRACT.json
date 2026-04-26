@@ -1,0 +1,632 @@
+{
+  "title": "FE — Expectation Fields Full API Flow Contract",
+  "description": "Tài liệu kiểm tra toàn bộ luồng của các field expectation (BodyContains, BodyNotContains, ExpectedStatus, ResponseSchema, HeaderChecks, JsonPathChecks, MaxResponseTime) từ khi tạo đến khi validate kết quả test run. FE dùng file này để verify API đã nối đúng và param đúng format.",
+  "generatedAt": "2026-04-25",
+  "schemaVersion": "1.0.0",
+
+  "fieldFormats": {
+    "note": "TẤT CẢ expectation fields đều là string khi truyền vào API (application/json). Nội dung bên trong phải là JSON string đã serialize.",
+    "expectedStatus": {
+      "backendType": "string",
+      "internalFormat": "JSON array of integers",
+      "example": "[200, 201]",
+      "invalidExample": "200",
+      "note": "Nếu truyền string thô (không phải JSON array) sẽ bị validator đánh là INVALID_EXPECTATION_FORMAT."
+    },
+    "responseSchema": {
+      "backendType": "string",
+      "internalFormat": "JSON Schema object string (draft-07 compatible)",
+      "example": "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}",
+      "note": "Nếu null/empty thì schema check bị skip. Schema fallback từ ApiEndpointMetadata có thể được dùng nếu expected status là 2xx."
+    },
+    "headerChecks": {
+      "backendType": "string",
+      "internalFormat": "JSON object { headerName: expectedValue }",
+      "example": "{\"Content-Type\":\"application/json\",\"X-Request-Id\":\"abc\"}",
+      "note": "Key compare case-insensitive. Value compare exact after trim."
+    },
+    "bodyContains": {
+      "backendType": "string",
+      "internalFormat": "JSON array of strings — mỗi phần tử là một substring phải có trong response body",
+      "example": "[\"success\", \"\\\"id\\\"\"]",
+      "note": "So khớp bằng StringComparison.Ordinal (case-sensitive, exact substring). Nếu truyền array rỗng [] thì check bị skip."
+    },
+    "bodyNotContains": {
+      "backendType": "string",
+      "internalFormat": "JSON array of strings — mỗi phần tử là substring KHÔNG được có trong response body",
+      "example": "[\"error\", \"forbidden\"]",
+      "note": "So khớp bằng StringComparison.Ordinal. Nếu truyền array rỗng [] thì check bị skip."
+    },
+    "jsonPathChecks": {
+      "backendType": "string",
+      "internalFormat": "JSON object { jsonPath: expectedValue }",
+      "example": "{\"$.id\":\"not_null\",\"$.items[0].name\":\"Alice\"}",
+      "supportedSpecialValues": ["not_null", "null", "exists", "not_exists"],
+      "note": "JSONPath subset: $, $.prop, $.prop.nested, $.items[0]. Không dùng Newtonsoft."
+    },
+    "maxResponseTime": {
+      "backendType": "integer | null",
+      "unit": "milliseconds",
+      "example": 3000,
+      "note": "Nếu null thì response time check bị skip."
+    }
+  },
+
+  "flows": [
+    {
+      "id": "FLOW-A",
+      "name": "Manual TestCase Creation",
+      "description": "FE tự nhập và gửi test case thủ công qua API. Expectation fields phải là JSON string đã serialize đúng format.",
+      "steps": [
+        {
+          "step": 1,
+          "name": "POST CreateTestCase",
+          "method": "POST",
+          "url": "/api/test-suites/{suiteId}/test-cases",
+          "auth": true,
+          "permission": "Permission:AddTestCase",
+          "contentType": "application/json",
+          "requestBody": {
+            "endpointId": "guid | null",
+            "name": "string (required)",
+            "description": "string",
+            "testType": "HappyPath | Boundary | Negative | Performance | Security",
+            "priority": "Critical | High | Medium | Low",
+            "isEnabled": true,
+            "tags": ["string"],
+            "request": {
+              "httpMethod": "GET | POST | PUT | DELETE | PATCH",
+              "url": "string",
+              "headers": "JSON object string | null",
+              "pathParams": "JSON object string | null",
+              "queryParams": "JSON object string | null",
+              "bodyType": "None | Json | FormData | FormUrlEncoded | Raw",
+              "body": "string | null",
+              "timeout": 30000
+            },
+            "expectation": {
+              "expectedStatus": "[200, 201]",
+              "responseSchema": "{\"type\":\"object\"}",
+              "headerChecks": "{\"Content-Type\":\"application/json\"}",
+              "bodyContains": "[\"success\"]",
+              "bodyNotContains": "[\"error\"]",
+              "jsonPathChecks": "{\"$.id\":\"not_null\"}",
+              "maxResponseTime": 3000
+            },
+            "variables": [
+              {
+                "variableName": "access_token",
+                "extractFrom": "ResponseBody",
+                "jsonPath": "$.token",
+                "headerName": null,
+                "regex": null,
+                "defaultValue": null
+              }
+            ]
+          },
+          "responses": {
+            "201": {
+              "description": "Created. Body = TestCaseModel.",
+              "shape": "$ref: #/schemas/TestCaseModel"
+            },
+            "400": "Validation error — tên thiếu, format JSON sai, suiteId không tồn tại.",
+            "404": "Suite không tìm thấy."
+          },
+          "commonMistakes": [
+            "Truyền expectedStatus='200' (string thô) thay vì '[200]' (JSON array string) → lỗi INVALID_EXPECTATION_FORMAT khi chạy.",
+            "Truyền bodyContains='success' thay vì '[\"success\"]' → JSON parse fail → check bị coi là fail.",
+            "Bỏ trống expectation object (không gửi key) → tất cả checks bị skip khi chạy → pass không có gì đảm bảo."
+          ]
+        },
+        {
+          "step": 2,
+          "name": "GET VerifyCreated",
+          "method": "GET",
+          "url": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+          "auth": true,
+          "permission": "Permission:GetTestCases",
+          "description": "Đọc lại để confirm expectation fields đã lưu đúng.",
+          "responses": {
+            "200": {
+              "description": "TestCaseModel đầy đủ.",
+              "shape": "$ref: #/schemas/TestCaseModel"
+            },
+            "404": "Không tìm thấy hoặc không thuộc suite này."
+          },
+          "checkPoints": [
+            "response.expectation.bodyContains phải là '[\"success\"]' (JSON array string), không phải 'success'.",
+            "response.expectation.expectedStatus phải là '[200]' hoặc '[200, 201]'.",
+            "response.expectation.headerChecks phải là JSON object string hoặc null."
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "FLOW-B",
+      "name": "LLM Suggestion — Generate → Review → Accept",
+      "description": "LLM sinh suggestion, FE hiển thị để user review, user có thể modify trước khi accept. Khi accept, suggestion được vật chất hóa thành TestCase thật.",
+      "steps": [
+        {
+          "step": 1,
+          "name": "POST GenerateLlmSuggestionPreview",
+          "method": "POST",
+          "url": "/api/test-suites/{suiteId}/llm-suggestions/generate",
+          "auth": true,
+          "permission": "Permission:GenerateBoundaryNegativeTestCases",
+          "contentType": "application/json",
+          "requestBody": {
+            "specificationId": "guid | null",
+            "forceRefresh": false,
+            "algorithmProfile": {
+              "note": "Optional. Cấu hình thuật toán sinh suggestion."
+            }
+          },
+          "responses": {
+            "201": "GenerateLlmSuggestionPreviewResultModel — danh sách suggestion đã tạo.",
+            "400": "Validation error.",
+            "404": "Suite không tồn tại.",
+            "409": "Đã có job đang chạy."
+          }
+        },
+        {
+          "step": 2,
+          "name": "GET ListSuggestions",
+          "method": "GET",
+          "url": "/api/test-suites/{suiteId}/llm-suggestions",
+          "auth": true,
+          "permission": "Permission:GetTestCases",
+          "queryParams": {
+            "reviewStatus": "Pending | Approved | Rejected | null",
+            "testType": "HappyPath | Boundary | Negative | null",
+            "endpointId": "guid | null",
+            "includeDeleted": false
+          },
+          "responses": {
+            "200": "List<LlmSuggestionModel>"
+          },
+          "checkPoints": [
+            "suggestion.content.expectation.bodyContains — đây là List<string> ở dạng gốc từ LLM, không phải string.",
+            "FE cần convert sang JSON string trước khi gửi lên review nếu có modify."
+          ]
+        },
+        {
+          "step": 3,
+          "name": "PUT ReviewSuggestion (Approve / Reject / Modify+Approve)",
+          "method": "PUT",
+          "url": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review",
+          "auth": true,
+          "permission": "Permission:UpdateTestCase",
+          "contentType": "application/json",
+          "requestBody": {
+            "action": "Approve | Reject | Modify",
+            "rowVersion": "base64 string (required — lấy từ GET suggestion response)",
+            "reviewNotes": "string (required khi action=Reject)",
+            "modifiedContent": {
+              "note": "Required khi action=Modify. Nếu action=Approve thì để null.",
+              "name": "string",
+              "description": "string",
+              "testType": "HappyPath | Boundary | Negative | Performance | Security",
+              "priority": "Critical | High | Medium | Low",
+              "tags": ["string"],
+              "request": {
+                "httpMethod": "string",
+                "url": "string",
+                "headers": { "key": "value" },
+                "pathParams": { "key": "value" },
+                "queryParams": { "key": "value" },
+                "bodyType": "string",
+                "body": "string",
+                "timeout": 30000
+              },
+              "expectation": {
+                "expectedStatus": [200, 201],
+                "responseSchema": "JSON Schema string",
+                "headerChecks": { "Content-Type": "application/json" },
+                "bodyContains": ["success"],
+                "bodyNotContains": ["error"],
+                "jsonPathChecks": { "$.id": "not_null" },
+                "maxResponseTime": 3000
+              },
+              "variables": [
+                {
+                  "variableName": "string",
+                  "extractFrom": "string",
+                  "jsonPath": "string",
+                  "headerName": null,
+                  "regex": null,
+                  "defaultValue": null
+                }
+              ]
+            }
+          },
+          "importantNote": "Trong modifiedContent.expectation, các field (bodyContains, bodyNotContains, headerChecks, jsonPathChecks) là kiểu NATIVE (List<string>, Dict<string,string>) — KHÁC với AddTestCaseRequest dùng string JSON. BE tự serialize nội bộ khi materialize.",
+          "responses": {
+            "200": "LlmSuggestionModel — suggestion sau khi review.",
+            "400": "Validation error (rowVersion thiếu, action không hợp lệ, reviewNotes thiếu khi Reject).",
+            "404": "Suggestion không tồn tại.",
+            "409": "RowVersion conflict — suggestion đã bị sửa bởi request khác."
+          }
+        },
+        {
+          "step": 4,
+          "name": "POST BulkReview (FE-17)",
+          "method": "POST",
+          "url": "/api/test-suites/{suiteId}/llm-suggestions/bulk-review",
+          "auth": true,
+          "permission": "Permission:UpdateTestCase",
+          "contentType": "application/json",
+          "requestBody": {
+            "action": "Approve | Reject",
+            "reviewNotes": "string (required khi action=Reject)",
+            "filterBySuggestionType": "string | null",
+            "filterByTestType": "HappyPath | Boundary | Negative | null",
+            "filterByEndpointId": "guid | null"
+          },
+          "responses": {
+            "200": "BulkReviewLlmSuggestionsResultModel — { approved, rejected, skipped }",
+            "400": "Validation error.",
+            "404": "Suite không tồn tại.",
+            "409": "Concurrency conflict."
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "FLOW-C",
+      "name": "Update Existing TestCase",
+      "description": "FE edit test case đã tạo (kể cả expectation fields). Cùng format với AddTestCase.",
+      "steps": [
+        {
+          "step": 1,
+          "name": "PUT UpdateTestCase",
+          "method": "PUT",
+          "url": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+          "auth": true,
+          "permission": "Permission:UpdateTestCase",
+          "contentType": "application/json",
+          "requestBody": {
+            "note": "Cùng shape với AddTestCaseRequest. Expectation fields phải là JSON string serialize đúng format.",
+            "expectation": {
+              "expectedStatus": "[200]",
+              "responseSchema": null,
+              "headerChecks": null,
+              "bodyContains": "[\"success\"]",
+              "bodyNotContains": "[\"error\"]",
+              "jsonPathChecks": null,
+              "maxResponseTime": null
+            }
+          },
+          "responses": {
+            "200": "TestCaseModel updated.",
+            "400": "Validation error.",
+            "404": "TestCase không tồn tại."
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "FLOW-D",
+      "name": "Read TestCases",
+      "description": "FE đọc danh sách hoặc chi tiết test case để hiển thị / prefill form.",
+      "endpoints": [
+        {
+          "name": "GetAll",
+          "method": "GET",
+          "url": "/api/test-suites/{suiteId}/test-cases",
+          "auth": true,
+          "permission": "Permission:GetTestCases",
+          "queryParams": {
+            "testType": "HappyPath | Boundary | Negative | Performance | Security | null",
+            "includeDisabled": false,
+            "includeDeleted": false
+          },
+          "responses": {
+            "200": "List<TestCaseModel>",
+            "404": "Suite không tồn tại."
+          }
+        },
+        {
+          "name": "GetById",
+          "method": "GET",
+          "url": "/api/test-suites/{suiteId}/test-cases/{testCaseId}",
+          "auth": true,
+          "permission": "Permission:GetTestCases",
+          "responses": {
+            "200": "TestCaseModel",
+            "404": "Không tìm thấy."
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "FLOW-E",
+      "name": "Execute TestRun và đọc kết quả validation",
+      "description": "Sau khi test cases đã có expectation đúng, FE trigger run và đọc kết quả để biết từng check pass/fail như thế nào.",
+      "steps": [
+        {
+          "step": 1,
+          "name": "POST StartTestRun",
+          "method": "POST",
+          "url": "/api/test-suites/{suiteId}/test-runs",
+          "auth": true,
+          "permission": "Permission:StartTestRun",
+          "contentType": "application/json",
+          "requestBody": {
+            "environmentId": "guid | null",
+            "selectedTestCaseIds": ["guid"],
+            "strictValidation": false,
+            "retryPolicy": {
+              "maxRetryAttempts": 0,
+              "retryFailedDependencies": true,
+              "rerunSkippedCases": true
+            }
+          },
+          "responses": {
+            "201": "TestRunResultModel — kết quả đầy đủ sau khi run hoàn thành.",
+            "400": "Validation error.",
+            "404": "Suite/environment không tìm thấy.",
+            "409": "Concurrent run limit hoặc monthly quota."
+          },
+          "note": "Long-running. Response trả về SAU KHI toàn bộ run hoàn thành."
+        },
+        {
+          "step": 2,
+          "name": "GET TestRunResults",
+          "method": "GET",
+          "url": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+          "auth": true,
+          "permission": "Permission:GetTestRuns",
+          "responses": {
+            "200": "TestRunResultModel",
+            "404": "Run không tìm thấy.",
+            "409": "Run vẫn đang chạy."
+          }
+        }
+      ]
+    }
+  ],
+
+  "schemas": {
+    "TestCaseModel": {
+      "id": "guid",
+      "testSuiteId": "guid",
+      "endpointId": "guid | null",
+      "name": "string",
+      "description": "string",
+      "testType": "HappyPath | Boundary | Negative | Performance | Security",
+      "priority": "Critical | High | Medium | Low",
+      "isEnabled": true,
+      "dependsOnIds": ["guid"],
+      "orderIndex": 0,
+      "customOrderIndex": "integer | null",
+      "isOrderCustomized": false,
+      "tags": ["string"],
+      "version": 1,
+      "isDeleted": false,
+      "deletedAt": "datetime | null",
+      "deletedById": "guid | null",
+      "createdDateTime": "datetime",
+      "updatedDateTime": "datetime | null",
+      "rowVersion": "base64 string",
+      "request": {
+        "id": "guid",
+        "httpMethod": "GET | POST | PUT | DELETE | PATCH",
+        "url": "string",
+        "headers": "JSON object string | null",
+        "pathParams": "JSON object string | null",
+        "queryParams": "JSON object string | null",
+        "bodyType": "None | Json | FormData | FormUrlEncoded | Raw",
+        "body": "string | null",
+        "timeout": 30000
+      },
+      "expectation": {
+        "id": "guid",
+        "expectedStatus": "[200, 201] (JSON array string)",
+        "responseSchema": "JSON Schema string | null",
+        "headerChecks": "JSON object string | null",
+        "bodyContains": "JSON array string | null — e.g. [\"success\"]",
+        "bodyNotContains": "JSON array string | null — e.g. [\"error\"]",
+        "jsonPathChecks": "JSON object string | null — e.g. {\"$.id\":\"not_null\"}",
+        "maxResponseTime": "integer | null"
+      },
+      "variables": [
+        {
+          "id": "guid",
+          "variableName": "string",
+          "extractFrom": "ResponseBody | ResponseHeader | StatusCode",
+          "jsonPath": "string | null",
+          "headerName": "string | null",
+          "regex": "string | null",
+          "defaultValue": "string | null"
+        }
+      ]
+    },
+
+    "TestRunResultModel": {
+      "runId": "guid",
+      "testSuiteId": "guid",
+      "status": "Passed | Failed | PartiallyPassed | Skipped | Error",
+      "startedAt": "datetime",
+      "completedAt": "datetime",
+      "totalCases": 10,
+      "passedCases": 8,
+      "failedCases": 2,
+      "skippedCases": 0,
+      "cases": [
+        {
+          "testCaseId": "guid",
+          "name": "string",
+          "isPassed": true,
+          "statusCode": 200,
+          "latencyMs": 145,
+          "statusCodePassed": true,
+          "schemaMatched": true,
+          "headerChecksPassed": true,
+          "bodyContainsPassed": true,
+          "bodyNotContainsPassed": true,
+          "jsonPathChecksPassed": true,
+          "responseTimePassed": true,
+          "checksPerformed": 4,
+          "checksSkipped": 3,
+          "failures": [
+            {
+              "code": "BODY_CONTAINS_MISSING",
+              "message": "Response body không chứa chuỗi mong đợi: 'success'.",
+              "expected": "success",
+              "actual": null
+            }
+          ],
+          "warnings": []
+        }
+      ]
+    }
+  },
+
+  "validationBehavior": {
+    "description": "RuleBasedValidator chạy 7 check độc lập. Mỗi check có thể: performed (chạy và pass/fail) hoặc skipped (field trống/null). IsPassed = failures.length === 0.",
+    "checks": [
+      {
+        "id": 1,
+        "field": "expectedStatus",
+        "skipCondition": "null hoặc empty string",
+        "failCondition": "response.statusCode không nằm trong mảng",
+        "failureCode": "STATUS_CODE_MISMATCH",
+        "invalidFormatCode": "INVALID_EXPECTATION_FORMAT"
+      },
+      {
+        "id": 2,
+        "field": "responseSchema",
+        "skipCondition": "null hoặc empty. Schema fallback được dùng nếu expected status là 2xx và endpoint có ResponseSchemaPayloads",
+        "failCondition": "response body không conform JSON Schema",
+        "failureCode": "SCHEMA_MISMATCH | RESPONSE_NOT_JSON",
+        "strictModeNote": "strictValidation=true: schema mismatch → fail. strictValidation=false (default): schema mismatch → warning, không fail."
+      },
+      {
+        "id": 3,
+        "field": "headerChecks",
+        "skipCondition": "null hoặc empty string",
+        "failCondition": "header không có hoặc value không khớp",
+        "failureCode": "HEADER_VALUE_MISMATCH | HEADER_MISSING",
+        "invalidFormatCode": "INVALID_EXPECTATION_FORMAT"
+      },
+      {
+        "id": 4,
+        "field": "bodyContains",
+        "skipCondition": "null, empty string, hoặc JSON array rỗng []",
+        "failCondition": "response.body KHÔNG chứa một trong các substring (case-sensitive)",
+        "failureCode": "BODY_CONTAINS_MISSING",
+        "invalidFormatCode": "INVALID_EXPECTATION_FORMAT",
+        "note": "Mỗi pattern thiếu tạo ra một failure riêng."
+      },
+      {
+        "id": 5,
+        "field": "bodyNotContains",
+        "skipCondition": "null, empty string, hoặc JSON array rỗng []",
+        "failCondition": "response.body CÓ chứa một trong các substring (case-sensitive)",
+        "failureCode": "BODY_NOT_CONTAINS_PRESENT",
+        "invalidFormatCode": "INVALID_EXPECTATION_FORMAT"
+      },
+      {
+        "id": 6,
+        "field": "jsonPathChecks",
+        "skipCondition": "null hoặc empty string",
+        "failCondition": "JSONPath không tìm thấy hoặc value không khớp",
+        "failureCode": "JSONPATH_ASSERTION_FAILED | PATH_NOT_FOUND | RESPONSE_NOT_JSON",
+        "invalidFormatCode": "INVALID_EXPECTATION_FORMAT"
+      },
+      {
+        "id": 7,
+        "field": "maxResponseTime",
+        "skipCondition": "null",
+        "failCondition": "response.latencyMs > maxResponseTime",
+        "failureCode": "RESPONSE_TIME_EXCEEDED"
+      }
+    ],
+    "specialCodes": {
+      "ALL_CHECKS_SKIPPED": "Warning khi checksPerformed = 0 và checksSkipped > 0. IsPassed vẫn = true.",
+      "TRANSPORT_ERROR": "Fail ngay nếu có lỗi network/HTTP. Không chạy bất kỳ check nào."
+    }
+  },
+
+  "checklist": {
+    "description": "FE dùng danh sách này để verify từng điểm nối API.",
+    "items": [
+      {
+        "id": "CHK-01",
+        "area": "Create TestCase",
+        "check": "expectation.expectedStatus gửi lên là '[200]' (JSON array string), không phải 200 (number) hay '200' (plain string).",
+        "endpoint": "POST /api/test-suites/{suiteId}/test-cases"
+      },
+      {
+        "id": "CHK-02",
+        "area": "Create TestCase",
+        "check": "expectation.bodyContains gửi lên là '[\"success\"]' (JSON array string), không phải 'success'.",
+        "endpoint": "POST /api/test-suites/{suiteId}/test-cases"
+      },
+      {
+        "id": "CHK-03",
+        "area": "Create TestCase",
+        "check": "expectation.headerChecks gửi lên là '{\"Content-Type\":\"application/json\"}' (JSON object string), không phải object native.",
+        "endpoint": "POST /api/test-suites/{suiteId}/test-cases"
+      },
+      {
+        "id": "CHK-04",
+        "area": "Create TestCase",
+        "check": "expectation.jsonPathChecks gửi lên là '{\"$.id\":\"not_null\"}' (JSON object string).",
+        "endpoint": "POST /api/test-suites/{suiteId}/test-cases"
+      },
+      {
+        "id": "CHK-05",
+        "area": "Read TestCase",
+        "check": "response.expectation.bodyContains là '[\"success\"]' — nếu null/empty thì bodyContains check sẽ bị skip khi run.",
+        "endpoint": "GET /api/test-suites/{suiteId}/test-cases/{testCaseId}"
+      },
+      {
+        "id": "CHK-06",
+        "area": "LLM Review",
+        "check": "modifiedContent.expectation.bodyContains là ['success'] (native List<string>), KHÔNG phải '[\"success\"]' (JSON string). BE tự serialize khi materialize.",
+        "endpoint": "PUT /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review"
+      },
+      {
+        "id": "CHK-07",
+        "area": "LLM Review",
+        "check": "rowVersion phải lấy từ GET suggestion response (base64 string). Nếu thiếu sẽ bị 409 hoặc 400.",
+        "endpoint": "PUT /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review"
+      },
+      {
+        "id": "CHK-08",
+        "area": "LLM Review",
+        "check": "reviewNotes là required khi action = 'Reject'. Nếu thiếu sẽ bị 400.",
+        "endpoint": "PUT /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review"
+      },
+      {
+        "id": "CHK-09",
+        "area": "TestRun Result",
+        "check": "cases[].bodyContainsPassed = true/false. Nếu null thì check đã bị skip (field rỗng).",
+        "endpoint": "GET /api/test-suites/{suiteId}/test-runs/{runId}/results"
+      },
+      {
+        "id": "CHK-10",
+        "area": "TestRun Result",
+        "check": "cases[].failures — mỗi failure có code để biết check nào fail. BODY_CONTAINS_MISSING = bodyContains check fail.",
+        "endpoint": "GET /api/test-suites/{suiteId}/test-runs/{runId}/results"
+      },
+      {
+        "id": "CHK-11",
+        "area": "TestRun Result",
+        "check": "cases[].warnings — ALL_CHECKS_SKIPPED có nghĩa không có expectation nào được khai báo. TestCase này pass vô điều kiện.",
+        "endpoint": "GET /api/test-suites/{suiteId}/test-runs/{runId}/results"
+      },
+      {
+        "id": "CHK-12",
+        "area": "Bulk Review",
+        "check": "bulk-review chỉ hỗ trợ action = 'Approve' hoặc 'Reject', không hỗ trợ 'Modify'.",
+        "endpoint": "POST /api/test-suites/{suiteId}/llm-suggestions/bulk-review"
+      }
+    ]
+  }
+}

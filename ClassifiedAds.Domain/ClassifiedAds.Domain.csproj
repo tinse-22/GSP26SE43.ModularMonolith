@@ -17,4 +17,8 @@
 		<ProjectReference Include="..\ClassifiedAds.CrossCuttingConcerns\ClassifiedAds.CrossCuttingConcerns.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<Compile Remove="Infrastructure\Messaging\*Helper.cs" />
+	</ItemGroup>
+
 </Project>

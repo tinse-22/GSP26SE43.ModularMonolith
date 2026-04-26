@@ -54,6 +54,10 @@ public class TestRunsController : ControllerBase
             CurrentUserId = _currentUser.UserId,
             EnvironmentId = request?.EnvironmentId,
             StrictValidation = request?.StrictValidation ?? false,
+            MaxRetryAttempts = request?.MaxRetryAttempts ?? 0,
+            EnableRetry = request?.EnableRetry ?? true,
+            RerunSkippedCases = request?.RerunSkippedCases ?? true,
+            RetryPolicy = request?.RetryPolicy,
             SelectedTestCaseIds = request?.SelectedTestCaseIds?
                 .Where(id => id != Guid.Empty)
                 .Distinct()

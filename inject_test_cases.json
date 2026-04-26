@@ -1,0 +1,593 @@
+{
+  "testCases": [
+    {
+      "endpointId": "7a3a721e-bac0-4300-9a8e-9f49cf9c9e63",
+      "name": "Register - HappyPath - valid new user",
+      "description": "Register a brand-new user with unique email and valid password",
+      "testType": "HappyPath",
+      "priority": "Critical",
+      "orderIndex": 1,
+      "tags": "[\"auth\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/auth/register",
+        "headers": "{}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"email\":\"testuser_a3x7@example.com\",\"password\":\"Test@12345\",\"confirmPassword\":\"Test@12345\",\"displayName\":\"Test User A3X7\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,201]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": [
+        { "variableName": "registeredEmail", "extractFrom": "RequestBody", "jsonPath": "$.email", "headerName": null, "regex": null, "defaultValue": "testuser_a3x7@example.com" },
+        { "variableName": "registeredPassword", "extractFrom": "RequestBody", "jsonPath": "$.password", "headerName": null, "regex": null, "defaultValue": "Test@12345" }
+      ]
+    },
+    {
+      "endpointId": "7a3a721e-bac0-4300-9a8e-9f49cf9c9e63",
+      "name": "Register - Negative - duplicate email",
+      "description": "Attempt to register with an already-used email should fail",
+      "testType": "Negative",
+      "priority": "High",
+      "orderIndex": 2,
+      "tags": "[\"auth\",\"negative\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/auth/register",
+        "headers": "{}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"email\":\"testuser_a3x7@example.com\",\"password\":\"Test@12345\",\"confirmPassword\":\"Test@12345\",\"displayName\":\"Dup User\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,409,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "65db87e8-4277-41a1-a688-2056fcc1e4f5",
+      "name": "Login - HappyPath - valid credentials",
+      "description": "Login with registered credentials should return JWT token",
+      "testType": "HappyPath",
+      "priority": "Critical",
+      "orderIndex": 3,
+      "tags": "[\"auth\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/auth/login",
+        "headers": "{}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"email\":\"{{registeredEmail}}\",\"password\":\"{{registeredPassword}}\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[\"token\",\"accessToken\"]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": [
+        { "variableName": "authToken", "extractFrom": "ResponseBody", "jsonPath": "$.accessToken", "headerName": null, "regex": null, "defaultValue": "" }
+      ]
+    },
+    {
+      "endpointId": "65db87e8-4277-41a1-a688-2056fcc1e4f5",
+      "name": "Login - Negative - wrong password",
+      "description": "Login with invalid password should return 400 or 401",
+      "testType": "Negative",
+      "priority": "High",
+      "orderIndex": 4,
+      "tags": "[\"auth\",\"negative\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/auth/login",
+        "headers": "{}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"email\":\"testuser_a3x7@example.com\",\"password\":\"WrongPass999\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,401,403]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "1ba78c27-3e24-4eaf-b539-8183a9a7fa11",
+      "name": "Create Category - HappyPath - valid name",
+      "description": "Create a new category with a valid unique name",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 5,
+      "tags": "[\"categories\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/categories",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"Electronics_b7z3\",\"description\":\"Category for electronic items\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,201]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": [
+        { "variableName": "createdCategoryId", "extractFrom": "ResponseBody", "jsonPath": "$.id", "headerName": null, "regex": null, "defaultValue": "" }
+      ]
+    },
+    {
+      "endpointId": "1ba78c27-3e24-4eaf-b539-8183a9a7fa11",
+      "name": "Create Category - Negative - missing name",
+      "description": "Create category without required name field should fail",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 6,
+      "tags": "[\"categories\",\"negative\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/categories",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"description\":\"No name provided\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "2c78b212-bc25-4a56-8e22-6194e0b747e4",
+      "name": "Get Categories - HappyPath - list all",
+      "description": "Get all categories should return a list",
+      "testType": "HappyPath",
+      "priority": "Medium",
+      "orderIndex": 7,
+      "tags": "[\"categories\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "GET",
+        "url": "/api/categories",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "2c78b212-bc25-4a56-8e22-6194e0b747e4",
+      "name": "Get Categories - Negative - unauthorized",
+      "description": "Get categories without auth token should fail",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 8,
+      "tags": "[\"categories\",\"negative\"]",
+      "request": {
+        "httpMethod": "GET",
+        "url": "/api/categories",
+        "headers": "{}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,401,403]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "2779c782-1ead-4925-8486-59293235e52a",
+      "name": "Update Category - HappyPath - change name",
+      "description": "Update an existing category with new name",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 9,
+      "tags": "[\"categories\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "PUT",
+        "url": "/api/categories/{{createdCategoryId}}",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"{{createdCategoryId}}\"}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"Electronics_updated_b7z3\",\"description\":\"Updated description\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,204]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "2779c782-1ead-4925-8486-59293235e52a",
+      "name": "Update Category - Negative - non-existent ID",
+      "description": "Update a category that does not exist should return 404",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 10,
+      "tags": "[\"categories\",\"negative\"]",
+      "request": {
+        "httpMethod": "PUT",
+        "url": "/api/categories/00000000-0000-0000-0000-000000000000",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"00000000-0000-0000-0000-000000000000\"}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"DoesNotExist\",\"description\":\"N/A\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,404,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "8812669d-72f8-411f-8906-8115df4be355",
+      "name": "Create Product - HappyPath - valid product",
+      "description": "Create a new product with valid name and category",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 11,
+      "tags": "[\"products\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/products",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"Laptop_k9m2\",\"description\":\"High-performance laptop\",\"price\":999.99,\"categoryId\":\"{{createdCategoryId}}\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,201]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": [
+        { "variableName": "createdProductId", "extractFrom": "ResponseBody", "jsonPath": "$.id", "headerName": null, "regex": null, "defaultValue": "" }
+      ]
+    },
+    {
+      "endpointId": "8812669d-72f8-411f-8906-8115df4be355",
+      "name": "Create Product - Negative - missing name",
+      "description": "Create product without required name field should fail",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 12,
+      "tags": "[\"products\",\"negative\"]",
+      "request": {
+        "httpMethod": "POST",
+        "url": "/api/products",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"description\":\"No name\",\"price\":10.0}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "234b6251-7a15-46c0-84c9-f32cdb2aaf1a",
+      "name": "Get Products - HappyPath - list all",
+      "description": "Get all products should return a list",
+      "testType": "HappyPath",
+      "priority": "Medium",
+      "orderIndex": 13,
+      "tags": "[\"products\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "GET",
+        "url": "/api/products",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "234b6251-7a15-46c0-84c9-f32cdb2aaf1a",
+      "name": "Get Products - Boundary - empty list",
+      "description": "Get products with no items should return empty array, not error",
+      "testType": "Boundary",
+      "priority": "Low",
+      "orderIndex": 14,
+      "tags": "[\"products\",\"boundary\"]",
+      "request": {
+        "httpMethod": "GET",
+        "url": "/api/products",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "b64be9a9-5131-42eb-9d89-c5b02fed26b2",
+      "name": "Update Product - HappyPath - change price",
+      "description": "Update an existing product's name and price",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 15,
+      "tags": "[\"products\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "PUT",
+        "url": "/api/products/{{createdProductId}}",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"{{createdProductId}}\"}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"Laptop_k9m2_updated\",\"description\":\"Updated high-performance laptop\",\"price\":1099.99,\"categoryId\":\"{{createdCategoryId}}\"}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,204]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "b64be9a9-5131-42eb-9d89-c5b02fed26b2",
+      "name": "Update Product - Negative - non-existent product",
+      "description": "Update a product with non-existent ID should return 404",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 16,
+      "tags": "[\"products\",\"negative\"]",
+      "request": {
+        "httpMethod": "PUT",
+        "url": "/api/products/00000000-0000-0000-0000-000000000000",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"00000000-0000-0000-0000-000000000000\"}",
+        "queryParams": "{}",
+        "bodyType": "JSON",
+        "body": "{\"name\":\"Ghost\",\"description\":\"N/A\",\"price\":0}",
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,404,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "ffca9bfa-19ac-4266-a99c-d33eeec6ecd9",
+      "name": "Delete Category - HappyPath - delete created category",
+      "description": "Delete the category created in earlier steps",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 17,
+      "tags": "[\"categories\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "DELETE",
+        "url": "/api/categories/{{createdCategoryId}}",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"{{createdCategoryId}}\"}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,204]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "ffca9bfa-19ac-4266-a99c-d33eeec6ecd9",
+      "name": "Delete Category - Negative - non-existent ID",
+      "description": "Delete a category with non-existent ID should return 404",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 18,
+      "tags": "[\"categories\",\"negative\"]",
+      "request": {
+        "httpMethod": "DELETE",
+        "url": "/api/categories/00000000-0000-0000-0000-000000000000",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"00000000-0000-0000-0000-000000000000\"}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,404,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "347c6cb2-abbd-4501-9b9f-c584a3ce8769",
+      "name": "Delete Product - HappyPath - delete created product",
+      "description": "Delete the product created in earlier steps",
+      "testType": "HappyPath",
+      "priority": "High",
+      "orderIndex": 19,
+      "tags": "[\"products\",\"happy-path\"]",
+      "request": {
+        "httpMethod": "DELETE",
+        "url": "/api/products/{{createdProductId}}",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"{{createdProductId}}\"}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[200,204]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    },
+    {
+      "endpointId": "347c6cb2-abbd-4501-9b9f-c584a3ce8769",
+      "name": "Delete Product - Negative - non-existent ID",
+      "description": "Delete a product with non-existent ID should return 404",
+      "testType": "Negative",
+      "priority": "Medium",
+      "orderIndex": 20,
+      "tags": "[\"products\",\"negative\"]",
+      "request": {
+        "httpMethod": "DELETE",
+        "url": "/api/products/00000000-0000-0000-0000-000000000000",
+        "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+        "pathParams": "{\"id\":\"00000000-0000-0000-0000-000000000000\"}",
+        "queryParams": "{}",
+        "bodyType": "None",
+        "body": null,
+        "timeout": 30000
+      },
+      "expectation": {
+        "expectedStatus": "[400,404,422]",
+        "responseSchema": null,
+        "headerChecks": "{}",
+        "bodyContains": "[]",
+        "bodyNotContains": "[]",
+        "jsonPathChecks": "{}",
+        "maxResponseTime": null
+      },
+      "variables": []
+    }
+  ]
+}

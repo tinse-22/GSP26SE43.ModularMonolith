@@ -94,6 +94,12 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     /// </summary>
     public Guid? DeletedById { get; set; }
 
+    /// <summary>
+    /// Primary SRS requirement this test case was generated from (nullable).
+    /// Set when test case was generated via SRS-driven flow.
+    /// </summary>
+    public Guid? PrimaryRequirementId { get; set; }
+
     // Navigation properties
     public TestSuite TestSuite { get; set; }
     public TestCaseRequest Request { get; set; }
@@ -101,6 +107,7 @@ public class TestCase : Entity<Guid>, IAggregateRoot
     public ICollection<TestCaseVariable> Variables { get; set; } = new List<TestCaseVariable>();
     public ICollection<TestDataSet> DataSets { get; set; } = new List<TestDataSet>();
     public ICollection<TestCaseChangeLog> ChangeLogs { get; set; } = new List<TestCaseChangeLog>();
+    public ICollection<TestCaseRequirementLink> RequirementLinks { get; set; } = new List<TestCaseRequirementLink>();
 }
 
 public enum TestType

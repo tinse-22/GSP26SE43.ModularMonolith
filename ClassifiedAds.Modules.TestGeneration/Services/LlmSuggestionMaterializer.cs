@@ -14,7 +14,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -83,6 +83,11 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         {
             foreach (var v in scenario.Variables)
             {
+                if (string.IsNullOrWhiteSpace(v.VariableName))
+                {
+                    continue;
+                }
+
                 testCase.Variables.Add(new TestCaseVariable
                 {
                     Id = Guid.NewGuid(),
@@ -133,6 +138,11 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         {
             foreach (var v in variables)
             {
+                if (string.IsNullOrWhiteSpace(v.VariableName))
+                {
+                    continue;
+                }
+
                 testCase.Variables.Add(new TestCaseVariable
                 {
                     Id = Guid.NewGuid(),

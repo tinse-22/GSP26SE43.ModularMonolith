@@ -25,4 +25,12 @@ public static class Permissions
     public const string AddTestCase = "Permission:AddTestCase";
     public const string UpdateTestCase = "Permission:UpdateTestCase";
     public const string DeleteTestCase = "Permission:DeleteTestCase";
+
+    // SRS Documents (FE-18)
+    public const string GetSrsDocuments = "Permission:GetSrsDocuments";
+    public const string AddSrsDocument = "Permission:AddSrsDocument";
+    public const string DeleteSrsDocument = "Permission:DeleteSrsDocument";
+    public const string TriggerSrsAnalysis = "Permission:TriggerSrsAnalysis";
+    public const string ManageSrsRequirements = "Permission:ManageSrsRequirements";
+    public const string GetSrsTraceability = "Permission:GetSrsTraceability";
 }

@@ -17,6 +17,8 @@ public class TestCaseExecutionResult
 
     public string Status { get; set; }
 
+    public int ExecutionAttempt { get; set; } = 1;
+
     public int? HttpStatusCode { get; set; }
 
     public long DurationMs { get; set; }

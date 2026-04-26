@@ -490,7 +490,7 @@ Do not claim a non-docs code task is fully analyzed if GitNexus was available bu
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GSP26SE43.ModularMonolith** (2404 symbols, 2510 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GSP26SE43.ModularMonolith** (2435 symbols, 2526 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
