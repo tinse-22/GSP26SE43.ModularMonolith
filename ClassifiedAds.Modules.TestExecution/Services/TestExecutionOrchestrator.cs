@@ -221,7 +221,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         retryResult.ExecutionAttempt = retryAttemptNumber;
         var completedAt = DateTimeOffset.UtcNow;
 
-        const string reason = "Retry after expectation mismatch";
+        var reason = $"Retry after failure (attempt {retryAttemptNumber})";
         var attempt = BuildAttemptModel(
             retryAttemptId,
             parentAttemptId,
@@ -530,16 +530,17 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
     }
 
     /// <summary>
-    /// A case should be retried when it failed with an HTTP response and all failures are
-    /// expectation-only mismatches, indicating a transient failure that may self-heal.
+    /// A case should be retried when it failed with an HTTP response (any failure type),
+    /// indicating a potentially transient failure worth retrying up to MaxRetryAttempts times.
+    /// Cases that failed before sending an HTTP request (pre-validation, unresolved variables)
+    /// are NOT retried since they represent deterministic configuration errors.
     /// </summary>
     private static bool ShouldRetryCase(TestCaseExecutionResult result, TestRunRetryPolicyModel retryPolicy)
     {
         return retryPolicy != null
             && retryPolicy.MaxRetryAttempts > 0
             && string.Equals(result?.Status, "Failed", StringComparison.OrdinalIgnoreCase)
-            && result.HttpStatusCode.HasValue
-            && IsDependencyFailureOnlyExpectationMismatch(result.FailureReasons);
+            && result.HttpStatusCode.HasValue;
     }
 
     private static TestCaseExecutionResult BuildSkippedResult(
@@ -548,6 +549,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         IReadOnlyList<Guid> failedDeps,
         string rootCause)
     {
+        var skipMessage = $"Test case skipped because dependency failed. RootCause={rootCause}";
         return new TestCaseExecutionResult
         {
             TestCaseId = testCase.TestCaseId,
@@ -558,12 +560,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExecutionAttempt = attempt,
             DependencyIds = testCase.DependencyIds,
             SkippedBecauseDependencyIds = failedDeps.ToList(),
+            SkippedCause = skipMessage,
             FailureReasons = new List<ValidationFailureModel>
             {
                 new ValidationFailureModel
                 {
                     Code = "DEPENDENCY_FAILED",
-                    Message = $"Test case skipped because dependency failed. RootCause={rootCause}",
+                    Message = skipMessage,
                 },
             },
         };

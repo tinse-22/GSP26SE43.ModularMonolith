@@ -15,7 +15,7 @@ public class StartTestRunRequest
     public TestRunRetryPolicyModel RetryPolicy { get; set; }
 
     [Range(0, 3, ErrorMessage = "MaxRetryAttempts phải trong khoảng 0–3.")]
-    public int MaxRetryAttempts { get; set; } = 0;
+    public int MaxRetryAttempts { get; set; } = 3;
 
     /// <summary>
     /// Enables the retry mechanism for failed test cases.  JSON key kept as

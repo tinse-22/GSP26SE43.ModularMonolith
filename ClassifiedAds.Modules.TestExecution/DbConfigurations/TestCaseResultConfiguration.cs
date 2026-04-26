@@ -35,5 +35,7 @@ public class TestCaseResultConfiguration : IEntityTypeConfiguration<TestCaseResu
         // Composite index for efficient filtering
         builder.HasIndex(x => new { x.TestRunId, x.Status });
         builder.HasIndex(x => new { x.TestRunId, x.OrderIndex });
+
+        builder.Property(x => x.RowVersion).IsRowVersion();
     }
 }

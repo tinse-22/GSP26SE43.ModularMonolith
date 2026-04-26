@@ -59,6 +59,11 @@ public class TestCaseRunResultModel
 
     public List<Guid> SkippedBecauseDependencyIds { get; set; } = new();
 
+    /// <summary>
+    /// Human-readable explanation for why this test case was skipped (populated when Status = "Skipped").
+    /// </summary>
+    public string SkippedCause { get; set; }
+
     public bool StatusCodeMatched { get; set; }
 
     public bool? SchemaMatched { get; set; }
