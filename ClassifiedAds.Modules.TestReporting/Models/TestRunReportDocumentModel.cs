@@ -31,6 +31,8 @@ public class TestRunReportDocumentModel
     public IReadOnlyList<TestRunHistoryItemDto> RecentRuns { get; set; } = Array.Empty<TestRunHistoryItemDto>();
 
     public IReadOnlyList<TestRunReportCaseDocumentModel> Cases { get; set; } = Array.Empty<TestRunReportCaseDocumentModel>();
+
+    public IReadOnlyList<TestRunExecutionAttemptDto> Attempts { get; set; } = Array.Empty<TestRunExecutionAttemptDto>();
 }
 
 public class TestRunReportCaseDocumentModel
@@ -86,4 +88,6 @@ public class TestRunReportCaseDocumentModel
     public bool? JsonPathChecksPassed { get; set; }
 
     public bool? ResponseTimePassed { get; set; }
+
+    public int TotalAttempts { get; set; }
 }

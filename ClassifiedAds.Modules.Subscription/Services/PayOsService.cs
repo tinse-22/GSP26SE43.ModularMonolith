@@ -164,7 +164,7 @@ public class PayOsService : IPayOsService
             || string.IsNullOrWhiteSpace(_options.ApiKey)
             || string.IsNullOrWhiteSpace(_options.SecretKey))
         {
-            throw new ValidationException("PayOS chưa được cấu hình. Vui lòng thiết lập ClientId, ApiKey và SecretKey.");
+            throw new ValidationException("PayOS chưa được cấu hình. Vui lòng thiết lập ClientId, ApiKey và ChecksumKey (hoặc SecretKey cũ).");
         }
     }
 
