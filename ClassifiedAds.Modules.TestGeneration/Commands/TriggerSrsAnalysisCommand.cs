@@ -1,5 +1,6 @@
 using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
+using ClassifiedAds.Contracts.Storage.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
@@ -11,6 +12,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -38,6 +40,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IN8nIntegrationService _n8nService;
     private readonly N8nIntegrationOptions _n8nOptions;
+    private readonly IStorageFileGatewayService _storageFileGateway;
     private readonly Dispatcher _dispatcher;
     private readonly ILogger<TriggerSrsAnalysisCommandHandler> _logger;
 
@@ -50,6 +53,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         IApiEndpointMetadataService endpointMetadataService,
         IN8nIntegrationService n8nService,
         IOptions<N8nIntegrationOptions> n8nOptions,
+        IStorageFileGatewayService storageFileGateway,
         Dispatcher dispatcher,
         ILogger<TriggerSrsAnalysisCommandHandler> logger)
     {
@@ -59,6 +63,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         _endpointMetadataService = endpointMetadataService;
         _n8nService = n8nService;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
+        _storageFileGateway = storageFileGateway;
         _dispatcher = dispatcher;
         _logger = logger;
     }
@@ -72,6 +77,37 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         if (doc == null)
         {
             throw new NotFoundException($"SrsDocument {command.SrsDocumentId} khong tim thay.");
+        }
+
+        // Validate there is text content to analyze
+        var rawContent = doc.ParsedMarkdown ?? doc.RawContent ?? string.Empty;
+
+        // For FileUpload documents without extracted text, try reading from storage
+        if (string.IsNullOrWhiteSpace(rawContent) && doc.SourceType == SrsSourceType.FileUpload && doc.StorageFileId.HasValue)
+        {
+            try
+            {
+                var fileResult = await _storageFileGateway.DownloadAsync(doc.StorageFileId.Value, cancellationToken);
+                if (fileResult?.Content != null && fileResult.Content.Length > 0)
+                {
+                    rawContent = Encoding.UTF8.GetString(fileResult.Content).Trim();
+                    // Persist so we don't re-read next time
+                    doc.RawContent = rawContent;
+                    await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+                    await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read file content from storage for SrsDocument {Id}", doc.Id);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(rawContent))
+        {
+            throw new ValidationException(
+                "Khong the phan tich tai lieu: khong co noi dung van ban. " +
+                "Voi tai lieu FileUpload, vui long su dung sourceType=TextInput va dan truc tiep noi dung SRS.");
         }
 
         // Create the analysis job
@@ -95,10 +131,8 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
 
         command.JobId = job.Id;
 
-        // Build n8n payload
+        // Build n8n payload (no callbackUrl needed — synchronous response)
         var endpoints = await GetEndpointsAsync(doc, cancellationToken);
-        var rawContent = doc.ParsedMarkdown ?? doc.RawContent ?? string.Empty;
-        var callbackUrl = $"{_n8nOptions.BeBaseUrl}/api/srs-analysis-callback/{job.Id}";
 
         var payload = new N8nSrsAnalysisPayload
         {
@@ -107,43 +141,51 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
             RawContent = rawContent,
             ProjectContext = $"ProjectId: {doc.ProjectId}",
             Endpoints = endpoints,
-            CallbackUrl = callbackUrl,
-            CallbackApiKey = _n8nOptions.CallbackApiKey,
         };
 
-        // Trigger n8n (n8n accepts quickly then processes async and calls back)
+        // Call n8n synchronously — wait for full result (like LLM suggestion flow)
         job.Status = SrsAnalysisJobStatus.Triggering;
         job.TriggeredAt = DateTimeOffset.UtcNow;
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        var result = await _n8nService.TriggerWebhookWithResultAsync(WebhookName, payload, cancellationToken);
-
-        if (result.Success)
+        SrsAnalysisCallbackRequest callbackData;
+        try
         {
-            job.Status = SrsAnalysisJobStatus.Processing;
-            _logger.LogInformation(
-                "SRS analysis job triggered. JobId={JobId}, SrsDocumentId={SrsDocumentId}",
-                job.Id, command.SrsDocumentId);
+            callbackData = await _n8nService.TriggerWebhookAsync<N8nSrsAnalysisPayload, SrsAnalysisCallbackRequest>(
+                WebhookName, payload, cancellationToken);
         }
-        else if (ShouldUseLocalFallback(result))
+        catch (Exception ex)
         {
-            await ApplyLocalFallbackAsync(job, doc, rawContent, endpoints, cancellationToken);
-            return;
+            var result = new WebhookTriggerResult { ErrorMessage = ex.Message, ErrorDetails = ex.ToString() };
+            if (ShouldUseLocalFallback(result))
+            {
+                await ApplyLocalFallbackAsync(job, doc, rawContent, endpoints, cancellationToken);
+                return;
+            }
+            else
+            {
+                job.Status = SrsAnalysisJobStatus.Failed;
+                job.ErrorMessage = ex.Message;
+                job.CompletedAt = DateTimeOffset.UtcNow;
+                doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+                await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+                await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+                _logger.LogError(ex, "SRS analysis n8n call failed. JobId={JobId}", job.Id);
+                throw;
+            }
         }
-        else
+
+        // n8n returned results — process them via the callback handler
+        await _dispatcher.DispatchAsync(new ProcessSrsAnalysisCallbackCommand
         {
-            job.Status = SrsAnalysisJobStatus.Failed;
-            job.ErrorMessage = result.ErrorMessage;
-            job.CompletedAt = DateTimeOffset.UtcNow;
-            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
-            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+            JobId = job.Id,
+            Requirements = callbackData?.Requirements ?? new List<N8nSrsRequirementResult>(),
+            ClarificationQuestions = callbackData?.ClarificationQuestions ?? new List<N8nSrsClarificationQuestion>(),
+        }, cancellationToken);
 
-            _logger.LogError(
-                "Failed to trigger SRS analysis via n8n. JobId={JobId}, Error={Error}",
-                job.Id, result.ErrorMessage);
-        }
-
-        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation(
+            "SRS analysis completed synchronously. JobId={JobId}, SrsDocumentId={SrsDocumentId}",
+            job.Id, command.SrsDocumentId);
     }
 
     private async Task ApplyLocalFallbackAsync(

@@ -30,6 +30,7 @@ public class TestReport : Entity<Guid>, IAggregateRoot
 
     /// <summary>
     /// Report format: PDF, CSV, JSON, HTML, Excel.
+    /// Maps to <see cref="ReportFormat"/> enum values 0–4.
     /// </summary>
     public ReportFormat Format { get; set; }
 

@@ -70,6 +70,7 @@ public class SrsAnalysisCallbackController : ControllerBase
             JobId = jobId,
             Requirements = request.Requirements ?? new System.Collections.Generic.List<N8nSrsRequirementResult>(),
             ClarificationQuestions = request.ClarificationQuestions ?? new System.Collections.Generic.List<N8nSrsClarificationQuestion>(),
+            ErrorMessage = request.ErrorMessage,
         });
 
         _logger.LogInformation(
