@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5099'
 $renderUrl = 'https://test-llm-api-testing.onrender.com/'
-$specFile = 'D:\GSP26SE43.ModularMonolith\swagger.json'
-$srsFile = 'D:\GSP26SE43.ModularMonolith\test-srs.md'
+$specFile = 'C:\Users\ASUS\Desktop\DOAN\BE\GSP26SE43.ModularMonolith\swagger.json'
+$srsFile = 'C:\Users\ASUS\Desktop\DOAN\BE\GSP26SE43.ModularMonolith\test-srs.md'
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runTag = "full-flow-$timestamp"
 
@@ -40,15 +40,47 @@ Write-Host "[OK] Project created: $projectId"
 
 # STEP-0B: Upload Specification
 Write-Host "[STEP-0B] Uploading specification..."
-$uploadForm = @{
-  uploadMethod = '0'
-  file = Get-Item $specFile
-  name = "Spec $timestamp"
-  sourceType = '0'
-  version = '1.0.0'
-  autoActivate = 'true'
-}
-$spec = Invoke-RestMethod -Method Post -Uri "$base/api/projects/$projectId/specifications/upload" -Headers $auth -Form $uploadForm
+# PS 5.1 compatible multipart upload using .NET HttpClient
+$specBytes = [System.IO.File]::ReadAllBytes($specFile)
+$boundary = [System.Guid]::NewGuid().ToString()
+$LF = "`r`n"
+$bodyLines = @(
+  "--$boundary",
+  'Content-Disposition: form-data; name="uploadMethod"',
+  '',
+  '0',
+  "--$boundary",
+  'Content-Disposition: form-data; name="name"',
+  '',
+  "Spec $timestamp",
+  "--$boundary",
+  'Content-Disposition: form-data; name="sourceType"',
+  '',
+  '0',
+  "--$boundary",
+  'Content-Disposition: form-data; name="version"',
+  '',
+  '1.0.0',
+  "--$boundary",
+  'Content-Disposition: form-data; name="autoActivate"',
+  '',
+  'true'
+)
+$textPart = ($bodyLines -join $LF) + $LF
+$textBytes = [System.Text.Encoding]::UTF8.GetBytes($textPart)
+$fileHeader = "--$boundary$LF" +
+  "Content-Disposition: form-data; name=`"file`"; filename=`"swagger.json`"$LF" +
+  "Content-Type: application/json$LF$LF"
+$fileHeaderBytes = [System.Text.Encoding]::UTF8.GetBytes($fileHeader)
+$fileFooter = "$LF--$boundary--$LF"
+$fileFooterBytes = [System.Text.Encoding]::UTF8.GetBytes($fileFooter)
+$fullBody = New-Object System.Collections.Generic.List[byte]
+$fullBody.AddRange($textBytes)
+$fullBody.AddRange($fileHeaderBytes)
+$fullBody.AddRange($specBytes)
+$fullBody.AddRange($fileFooterBytes)
+$uploadHeaders = @{ Authorization = "Bearer $token"; 'Content-Type' = "multipart/form-data; boundary=$boundary" }
+$spec = Invoke-RestMethod -Method Post -Uri "$base/api/projects/$projectId/specifications/upload" -Headers $uploadHeaders -Body $fullBody.ToArray() -TimeoutSec 120
 $apiSpecId = $spec.id
 Write-Host "[OK] Specification uploaded: $apiSpecId"
 
