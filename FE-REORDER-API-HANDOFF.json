@@ -3,8 +3,9 @@
     "title": "FE Handoff: AI Order Proposal → Re-order → Approve → LLM Generate",
     "scope": "Order proposal re-order step và test-case re-order sau khi materialize",
     "date": "2026-04-27",
-    "version": "1.0.0",
-    "note": "Chỉ liệt kê params BE cần. Không gợi ý code FE."
+    "version": "1.1.0",
+    "note": "Chỉ liệt kê params BE cần. Không gợi ý code FE.",
+    "changelog_v1.1.0": "[BUG FIX] GetTestCasesByTestSuite query đã được fix: giờ ORDER BY CustomOrderIndex khi IsOrderCustomized=true, thay vì luôn dùng OrderIndex. Trước đây PATCH /reorder ghi DB thành công nhưng GET vẫn trả về thứ tự cũ — FE không thấy thay đổi gì. Fix đã merge."
   },
 
   "flow_overview": {
@@ -294,16 +295,26 @@
     "method": "PATCH",
     "url": "/api/test-suites/{suiteId}/test-cases/reorder",
     "auth": "Bearer JWT",
+    "required_permission": "Permission:UpdateTestCase",
     "path_params": {
       "suiteId": "guid"
     },
     "request_body": {
-      "testCaseIds": "guid[] [REQUIRED] — Danh sách testCaseId theo thứ tự MỚI. Phải chứa tất cả testCaseId của suite"
+      "testCaseIds": "guid[] [REQUIRED] — Danh sách testCaseId theo thứ tự MỚI muốn hiển thị. Phải chứa ĐỦ tất cả testCaseId active của suite (không thêm, không bớt)"
     },
     "response_200": "200 OK — No body",
     "error_codes": {
-      "400": "testCaseIds thiếu hoặc không khớp danh sách test cases của suite"
-    }
+      "400": "testCaseIds thiếu | không chứa đủ tất cả testCaseId của suite | có ID không thuộc suite này"
+    },
+    "behavior_after_call": [
+      "Mỗi TestCase trong list được set CustomOrderIndex = vị_trí_trong_mảng (0-based) và IsOrderCustomized = true",
+      "[v1.1.0 FIX] GET /api/test-suites/{suiteId}/test-cases sau đó sẽ trả về list đã được sort theo CustomOrderIndex",
+      "FE PHẢI gọi GET lại sau PATCH để lấy danh sách với thứ tự mới"
+    ],
+    "fe_notes": [
+      "Trước v1.1.0: PATCH ghi DB thành công (200 OK) nhưng GET vẫn trả về thứ tự cũ vì query dùng OrderIndex thay vì CustomOrderIndex — đây là bug đã fix",
+      "Sau v1.1.0: GET trả về list sort theo effective order: CustomOrderIndex khi IsOrderCustomized=true, OrderIndex khi IsOrderCustomized=false"
+    ]
   },
 
   "suggestion_model": {
@@ -365,5 +376,22 @@
       "Phải có ít nhất 1 order proposal ở trạng thái 'Approved' cho suiteId đó",
       "Đó là lý do STEP-3 phải chạy trước STEP-4"
     ]
+  },
+
+  "testcase_effective_order": {
+    "_title": "Cách FE đọc thứ tự test cases từ GET response (v1.1.0+)",
+    "rule": "BE đã sort response theo effective order. FE dùng thứ tự mảng trả về trực tiếp.",
+    "effective_order_logic": "effectiveOrderIndex = IsOrderCustomized ? CustomOrderIndex : OrderIndex",
+    "fields_per_item": {
+      "orderIndex": "int — Thứ tự gốc do AI hoặc system assign khi tạo TestCase. Không thay đổi sau reorder.",
+      "customOrderIndex": "int | null — Thứ tự do user tùy chỉnh. Chỉ có giá trị khi IsOrderCustomized=true.",
+      "isOrderCustomized": "bool — true nếu user đã reorder TestCase này ít nhất 1 lần."
+    },
+    "fe_display_hint": [
+      "Dùng mảng response để render list — thứ tự mảng = thứ tự hiển thị đúng",
+      "Có thể dùng isOrderCustomized để hiển thị icon 'đã tùy chỉnh' nếu muốn",
+      "Khi drag-drop xong: gửi PATCH /reorder với toàn bộ testCaseIds theo thứ tự mới, rồi GET lại"
+    ],
+    "invariant": "testCaseIds trong PATCH /reorder phải chứa TẤT CẢ test cases của suite (kể cả những cái không thay đổi vị trí)"
   }
 }

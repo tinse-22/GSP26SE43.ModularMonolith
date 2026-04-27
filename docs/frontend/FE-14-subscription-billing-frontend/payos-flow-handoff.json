@@ -10,13 +10,13 @@
     "baseApiRoute": "/api/payments"
   },
   "runtimeUrls": {
-    "backendPublicBaseUrl": "https://tnhkllmapi.com",
-    "frontendPublicBaseUrl": "https://llm-api-test-generator.vercel.app",
+    "backendPublicBaseUrl": "https://gsp26se43-modularmonolith.onrender.com",
+    "frontendPublicBaseUrl": "https://www.tnhkllmapi.com",
     "payOsMerchantApiBaseUrl": "https://api-merchant.payos.vn",
-    "payOsWebhookUrlToConfigureInPayOsDashboard": "https://tnhkllmapi.com/api/payments/payos/webhook",
-    "payOsReturnUrlConfiguredInBackend": "https://tnhkllmapi.com/api/payments/payos/return",
-    "frontendResultUrlBuiltByBackend": "https://llm-api-test-generator.vercel.app/payment/result",
-    "frontendCancelUrlConfiguredInBackend": "https://llm-api-test-generator.vercel.app/payment/cancel"
+    "payOsWebhookUrlToConfigureInPayOsDashboard": "https://gsp26se43-modularmonolith.onrender.com/api/payments/payos/webhook",
+    "payOsReturnUrlConfiguredInBackend": "https://gsp26se43-modularmonolith.onrender.com/api/payments/payos/return",
+    "frontendResultUrlBuiltByBackend": "https://www.tnhkllmapi.com/payment/result",
+    "frontendCancelUrlConfiguredInBackend": "https://www.tnhkllmapi.com/payment/cancel"
   },
   "authentication": {
     "scheme": "Bearer",
@@ -233,7 +233,7 @@
       "handledBy": "PayOS calls backend directly.",
       "callback": {
         "method": "POST",
-        "url": "https://tnhkllmapi.com/api/payments/payos/webhook",
+        "url": "https://gsp26se43-modularmonolith.onrender.com/api/payments/payos/webhook",
         "auth": "anonymous",
         "body": "Raw PayOS JSON payload"
       },
@@ -250,7 +250,7 @@
       "handledBy": "PayOS redirects browser to backend, then backend redirects browser to frontend.",
       "payOsRedirectToBackend": {
         "method": "GET",
-        "url": "https://tnhkllmapi.com/api/payments/payos/return",
+        "url": "https://gsp26se43-modularmonolith.onrender.com/api/payments/payos/return",
         "queryParams": [
           {
             "name": "status",
@@ -270,8 +270,8 @@
         ]
       },
       "backendRedirectToFrontend": {
-        "success": "https://llm-api-test-generator.vercel.app/payment/result?status=success&intentId=<paymentIntentId>",
-        "failed": "https://llm-api-test-generator.vercel.app/payment/result?status=failed"
+        "success": "https://www.tnhkllmapi.com/payment/result?status=success&intentId=<paymentIntentId>",
+        "failed": "https://www.tnhkllmapi.com/payment/result?status=failed"
       }
     },
     {
