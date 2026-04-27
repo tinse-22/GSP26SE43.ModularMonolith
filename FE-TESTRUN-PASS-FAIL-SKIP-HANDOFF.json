@@ -1,0 +1,547 @@
+{
+  "_meta": {
+    "title": "FE Handoff: Test Run Pass / Fail / Skipped + SRS Traceability — Full API Contract",
+    "question": "BE trả ra gì để FE biết test case nào Pass, Fail, Skipped, đã retry bao nhiêu lần và requirement SRS nào bị vi phạm?",
+    "scope": "POST /api/test-suites/{suiteId}/test-runs  +  GET /api/test-suites/{suiteId}/test-runs/{runId}/results  +  GET /api/projects/{projectId}/test-suites/{suiteId}/traceability",
+    "date": "2026-04-28",
+    "version": "2.0.0",
+    "changelog": {
+      "v2.0.0": "Thêm toàn bộ SRS traceability section: endpoint, response shape, cách JOIN với test run results, flow diagram, validation status enum.",
+      "v1.0.0": "Bản đầu tiên — chỉ có test run pass/fail/skip và retry."
+    },
+    "beChanges": [
+      "v1.0.0 — ADDED: cases[].totalAttempts — tổng số lần thực thi (kể cả retry). Field mới trong TestCaseRunResultModel."
+    ]
+  },
+
+  "critical_rules": [
+    "response.cases — mỗi testCaseId xuất hiện ĐÚNG MỘT LẦN. Đây là kết quả CUỐI (final attempt). KHÔNG cần de-duplicate.",
+    "response.attempts — chứa TOÀN BỘ attempt chain (attempt1 → retry1 → retry2). Mỗi node là 1 lần chạy.",
+    "cases[].executionAttempt = số thứ tự của attempt cuối (1-based). Nếu = 1 thì không có retry.",
+    "cases[].totalAttempts = tổng số lần đã chạy. Nếu totalAttempts > 1 thì test case đã được retry.",
+    "Status string là CASE-SENSITIVE: 'Passed' | 'Failed' | 'Skipped'.",
+    "run.status tổng hợp: 'Passed' khi tất cả Pass, 'Failed' khi có ít nhất 1 Fail, 'Running' khi đang chạy.",
+    "SRS traceability là CALL RIÊNG sau khi có runId: GET /api/projects/{projectId}/test-suites/{suiteId}/traceability?testRunId={runId}",
+    "traceability.requirements[] được JOIN với cases[] qua testCases[].testCaseId — KHÔNG JOIN qua endpointId.",
+    "Suite không có SRS document → traceability trả requirements=[] — FE ẩn section traceability, KHÔNG hiện lỗi."
+  ],
+
+  "endpoint_start_run": {
+    "method": "POST",
+    "url": "/api/test-suites/{suiteId}/test-runs",
+    "auth": "Bearer JWT",
+    "description": "Tạo và chạy test run. Response trả về SAU KHI toàn bộ run hoàn thành (synchronous). Long-running — FE nên show loading.",
+    "request_body": {
+      "environmentId": "uuid | null — environment cần chạy. null = default project env.",
+      "selectedTestCaseIds": "uuid[] | null — subset test cases cần chạy. null = chạy toàn bộ suite.",
+      "strictValidation": "boolean [default=false] — true: schema mismatch sẽ Fail. false: chỉ Warning.",
+      "retryPolicy": {
+        "_note": "Nếu có, ưu tiên hơn các field scalar bên dưới.",
+        "maxRetryAttempts": "integer [0..3, default=0] — số lần retry tối đa mỗi test case. 0 = không retry.",
+        "retryFailedDependencies": "boolean [default=true] — retry test case fail do dependency fail.",
+        "rerunSkippedCases": "boolean [default=true] — sau khi dependency retry pass, replay lại skipped cases."
+      },
+      "maxRetryAttempts": "integer [0..3, default=3] — scalar fallback nếu không dùng retryPolicy object.",
+      "retryFailedDependencies": "boolean [default=true] — scalar fallback.",
+      "rerunSkippedCases": "boolean [default=true] — scalar fallback."
+    },
+    "response_201": "TestRunResultModel — xem cấu trúc bên dưới."
+  },
+
+  "endpoint_get_results": {
+    "method": "GET",
+    "url": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+    "auth": "Bearer JWT",
+    "description": "Lấy lại kết quả của 1 run đã chạy (từ cache hoặc DB).",
+    "response_200": "TestRunResultModel — cùng shape với POST response."
+  },
+
+  "response_shape": {
+    "schema": "TestRunResultModel",
+    "fields": {
+      "run": {
+        "type": "TestRunModel",
+        "fields": {
+          "id": "uuid — test run ID",
+          "runNumber": "integer — số thứ tự run trong suite (1-based)",
+          "status": "string — 'Passed' | 'Failed' | 'Running'",
+          "startedAt": "ISO8601 | null",
+          "completedAt": "ISO8601 | null",
+          "durationMs": "integer — tổng thời gian chạy (ms)",
+          "totalTests": "integer",
+          "passedCount": "integer",
+          "failedCount": "integer",
+          "skippedCount": "integer",
+          "environmentId": "uuid"
+        }
+      },
+      "resolvedEnvironmentName": "string — tên env đã dùng",
+      "executedAt": "ISO8601 — thời điểm bắt đầu",
+      "resultsSource": "string — 'cache' | 'db' — nguồn data (FE không cần xử lý, chỉ debug)",
+      "cases": {
+        "type": "array<TestCaseRunResultModel>",
+        "description": "Mỗi testCaseId xuất hiện ĐÚNG 1 LẦN — kết quả cuối cùng.",
+        "item_fields": {
+          "testCaseId": "uuid",
+          "endpointId": "uuid | null",
+          "name": "string — tên test case",
+          "testType": "string — 'HappyPath' | 'BoundaryNegative' | 'Security' | ...",
+          "orderIndex": "integer — thứ tự chạy",
+          "status": "string — 'Passed' | 'Failed' | 'Skipped'",
+          "executionAttempt": "integer — số thứ tự của attempt cuối (1 nếu không retry)",
+          "totalAttempts": "integer — tổng số lần đã chạy kể cả retry (1 = không retry). [MỚI]",
+          "httpStatusCode": "integer | null — HTTP status code thực tế (null nếu không gọi được)",
+          "durationMs": "integer — thời gian chạy attempt cuối (ms)",
+          "resolvedUrl": "string — URL đã được resolve (có base URL + path params)",
+          "httpMethod": "string — GET | POST | PUT | DELETE | PATCH",
+          "requestBody": "string | null — request body đã gửi (truncated 64KB)",
+          "queryParams": "object<string,string> — query params đã gửi",
+          "requestHeaders": "object<string,string> — headers đã gửi",
+          "responseHeaders": "object<string,string> — headers nhận về",
+          "responseBodyPreview": "string | null — body nhận về (truncated 64KB)",
+          "expectedStatus": "string — expected status codes (VD: '200,201' hoặc '[200,201]')",
+          "statusCodeMatched": "boolean — status code có match expected không",
+          "schemaMatched": "boolean | null — schema có match không (null = không check)",
+          "headerChecksPassed": "boolean | null",
+          "bodyContainsPassed": "boolean | null",
+          "bodyNotContainsPassed": "boolean | null",
+          "jsonPathChecksPassed": "boolean | null",
+          "responseTimePassed": "boolean | null",
+          "checksPerformed": "integer — số checks đã thực hiện",
+          "checksSkipped": "integer — số checks bị bỏ qua",
+          "failureReasons": {
+            "type": "array<ValidationFailureModel>",
+            "description": "Rỗng khi Passed hoặc Skipped. Có data khi Failed.",
+            "item_fields": {
+              "code": "string — mã lỗi (xem bảng failure codes bên dưới)",
+              "message": "string — mô tả lỗi chi tiết",
+              "target": "string | null — field/header/path bị lỗi",
+              "expected": "string | null — giá trị kỳ vọng",
+              "actual": "string | null — giá trị thực tế"
+            }
+          },
+          "warnings": {
+            "type": "array<ValidationWarningModel>",
+            "description": "Cảnh báo không gây Fail. Có khi check bị skip hoặc adaptive match.",
+            "item_fields": {
+              "code": "string — mã warning",
+              "message": "string — mô tả warning",
+              "target": "string | null"
+            }
+          },
+          "extractedVariables": "object<string,string> — biến đã extract (token/secret được mask)",
+          "dependencyIds": "uuid[] — các testCaseId mà case này phụ thuộc",
+          "skippedBecauseDependencyIds": "uuid[] — ID của dependency đã fail/skip khiến case này bị Skip",
+          "skippedCause": "string | null — mô tả chi tiết TẠI SAO bị Skip (chỉ có khi status='Skipped')"
+        }
+      },
+      "attempts": {
+        "type": "array<TestCaseExecutionAttemptModel>",
+        "description": "Toàn bộ lịch sử attempt. Dùng để render retry tree. Correlate với cases[] qua testCaseId.",
+        "item_fields": {
+          "executionAttemptId": "uuid — unique ID của attempt này",
+          "testRunId": "uuid",
+          "testCaseId": "uuid — ID test case của attempt này",
+          "parentAttemptId": "uuid | null — attempt gốc nếu đây là retry. null = attempt đầu tiên",
+          "attemptNumber": "integer — số thứ tự attempt (1-based)",
+          "status": "string — 'Passed' | 'Failed' | 'Skipped'",
+          "retryReason": "string | null — lý do retry (VD: 'Retry after failure (attempt 2)', 'Dependency failed')",
+          "skippedCause": "string | null — lý do skip (chỉ có khi status='Skipped')",
+          "dependencyRootCause": "string | null — nguyên nhân gốc từ dependency",
+          "startedAt": "ISO8601",
+          "completedAt": "ISO8601 | null",
+          "durationMs": "integer",
+          "failureReasons": "array<ValidationFailureModel> — lỗi của attempt này (có thể khác attempt cuối)"
+        }
+      },
+      "attemptChildrenMap": {
+        "type": "object<uuid, uuid[]>",
+        "description": "Map từ attemptId → danh sách child attemptIds. Dùng để render tree retry mà không cần đệ quy tìm parentAttemptId."
+      }
+    }
+  },
+
+  "recommended_fe_flow": {
+    "description": "Flow chuẩn để hiển thị Test Run results + SRS validation. Gọi 2 endpoint song song hoặc tuần tự.",
+    "step1": {
+      "action": "POST /api/test-suites/{suiteId}/test-runs  (hoặc GET /results nếu xem lại)",
+      "result": "Nhận TestRunResultModel. Lấy run.id → dùng cho step2.",
+      "when": "Khi user nhấn 'Run' hoặc xem lại kết quả run."
+    },
+    "step2": {
+      "action": "GET /api/projects/{projectId}/test-suites/{suiteId}/traceability?testRunId={runId}",
+      "result": "Nhận TraceabilityMatrix. JOIN với cases[] để hiển thị SRS requirement nào được validate.",
+      "when": "Sau khi có runId từ step1. Có thể gọi parallel với step1 nếu runId đã có (xem lại).",
+      "note": "projectId lấy từ TestSuite metadata (suite.projectId). Nếu suite chưa có SRS → requirements=[] → ẩn SRS panel."
+    },
+    "step3": {
+      "action": "JOIN data: cho mỗi requirements[i], lookup cases bằng requirements[i].testCases[j].testCaseId",
+      "result": "Mỗi requirement hiển thị: [ValidationStatus badge] + danh sách test case Pass/Fail/Skip"
+    }
+  },
+
+  "endpoint_srs_traceability": {
+    "method": "GET",
+    "url": "/api/projects/{projectId}/test-suites/{suiteId}/traceability",
+    "auth": "Bearer JWT",
+    "permission": "GetSrsTraceability",
+    "description": "Lấy ma trận requirement-to-test-case coverage kèm execution evidence từ 1 test run cụ thể. Dùng để hiển thị 'requirement X đã được validate chưa'.",
+    "query_params": {
+      "testRunId": "uuid [OPTIONAL] — ID của test run cụ thể. null = dùng run mới nhất đã hoàn thành."
+    },
+    "path_params": {
+      "projectId": "uuid — ID của project (suite.projectId)",
+      "suiteId": "uuid — ID của test suite"
+    },
+    "response_200": {
+      "schema": "TraceabilityMatrix",
+      "fields": {
+        "testSuiteId": "uuid",
+        "srsDocumentId": "uuid | null — null nếu suite chưa có SRS document",
+        "evidenceRunId": "uuid | null — runId đã dùng để lấy execution evidence",
+        "totalRequirements": "integer",
+        "coveredRequirements": "integer — có ít nhất 1 test case link",
+        "uncoveredRequirements": "integer — chưa có test case nào link",
+        "coveragePercent": "float — coveredRequirements / totalRequirements * 100",
+        "validatedRequirements": "integer — requirements có ValidationStatus=Validated",
+        "violatedRequirements": "integer — requirements có ValidationStatus=Violated",
+        "partialRequirements": "integer",
+        "unverifiedRequirements": "integer",
+        "skippedOnlyRequirements": "integer",
+        "inconclusiveRequirements": "integer",
+        "validationPercent": "float — validatedRequirements / coveredRequirements * 100. -1 nếu không có evidence run.",
+        "requirements": {
+          "type": "array<TraceabilityRequirementRow>",
+          "description": "Danh sách tất cả requirements trong SRS document với execution evidence.",
+          "item_fields": {
+            "requirementId": "uuid — ID của SrsRequirement",
+            "requirementCode": "string — Mã hiển thị, VD: 'REQ-001', 'REQ-012'",
+            "title": "string — Tiêu đề ngắn của requirement",
+            "requirementType": "integer — enum SrsRequirementType (xem bảng enum bên dưới)",
+            "confidenceScore": "float | null — LLM confidence 0.0-1.0. null = chưa có",
+            "isReviewed": "boolean — human đã review requirement này chưa",
+            "isCovered": "boolean — có ít nhất 1 test case link không",
+            "validationStatus": "integer — enum RequirementValidationStatus (xem bảng enum bên dưới)",
+            "validationSummary": "string — mô tả human-readable, VD: '2 passed, 1 failed'",
+            "passedTestCaseCount": "integer",
+            "failedTestCaseCount": "integer",
+            "skippedTestCaseCount": "integer",
+            "unverifiedTestCaseCount": "integer",
+            "testCases": {
+              "type": "array<TraceabilityTestCaseRef>",
+              "description": "Test cases link đến requirement này. JOIN với cases[] trong TestRunResultModel bằng testCaseId.",
+              "item_fields": {
+                "testCaseId": "uuid — JOIN KEY với cases[i].testCaseId trong TestRunResultModel",
+                "testCaseName": "string — tên test case",
+                "traceabilityScore": "float | null — confidence LLM link (0.0-1.0)",
+                "mappingRationale": "string | null — giải thích tại sao test case này cover requirement",
+                "lastRunStatus": "string | null — 'Passed' | 'Failed' | 'Skipped' | null (chưa chạy)",
+                "lastRunId": "uuid | null",
+                "lastRunAt": "ISO8601 | null",
+                "httpStatusCode": "integer | null",
+                "failureCodes": "string[] — mã lỗi nếu Failed (VD: ['STATUS_CODE_MISMATCH'])",
+                "failureSummary": "string | null — mô tả lỗi ngắn",
+                "hasAdaptiveWarning": "boolean",
+                "warningCodes": "string[]"
+              }
+            }
+          }
+        }
+      }
+    },
+    "empty_response_when_no_srs": {
+      "srsDocumentId": null,
+      "requirements": [],
+      "totalRequirements": 0,
+      "coveragePercent": 0
+    }
+  },
+
+  "enums_srs": {
+    "SrsRequirementType": {
+      "0": "Functional — logic nghiệp vụ, use case",
+      "1": "NonFunctional — performance, reliability",
+      "2": "Security — authentication, authorization, data protection",
+      "3": "Performance — thời gian phản hồi, throughput",
+      "4": "Constraint — ràng buộc kỹ thuật hoặc kinh doanh"
+    },
+    "RequirementValidationStatus": {
+      "0": "Uncovered — chưa có test case nào link. Hiện badge 'Uncovered' (xám)",
+      "1": "Unverified — có test case link nhưng chưa chạy lần nào. Hiện badge 'Unverified' (xanh dương nhạt)",
+      "2": "Validated — tất cả test case linked đều Passed. Hiện badge 'Validated' (xanh lá)",
+      "3": "Violated — ít nhất 1 test case Fail. Hiện badge 'Violated' (đỏ) — ĐÂY LÀ SRS BỊ VI PHẠM",
+      "4": "Partial — mix Passed + Skipped/Unverified, không có Fail. Hiện badge 'Partial' (vàng nhạt)",
+      "5": "SkippedOnly — tất cả test case bị Skip. Hiện badge 'Skipped' (vàng)",
+      "6": "Inconclusive — không đủ thông tin. Hiện badge 'Inconclusive' (xám nhạt)"
+    }
+  },
+
+  "how_to_join_testrun_and_traceability": {
+    "description": "Pseudocode để FE merge 2 response. Làm ở FE layer — KHÔNG cần call BE thêm.",
+    "pseudocode": [
+      "// Sau khi có cả 2 response:",
+      "const caseMap = new Map(testRunResult.cases.map(c => [c.testCaseId, c]))",
+      "",
+      "for (const req of traceability.requirements) {",
+      "  req._enriched = req.testCases.map(ref => ({",
+      "    ...ref,",
+      "    // Merge live run result vào",
+      "    liveStatus:  caseMap.get(ref.testCaseId)?.status ?? ref.lastRunStatus,",
+      "    liveFailureReasons: caseMap.get(ref.testCaseId)?.failureReasons ?? [],",
+      "    liveTotalAttempts:  caseMap.get(ref.testCaseId)?.totalAttempts ?? 1,",
+      "    liveSkippedCause:   caseMap.get(ref.testCaseId)?.skippedCause ?? null,",
+      "  }))",
+      "}"
+    ],
+    "display_logic": {
+      "requirement_row": "Hiện [requirementCode] [title] | [validationStatus badge] | Passed: N | Failed: N | Skipped: N",
+      "expand_test_cases": "Click để expand danh sách test cases. Mỗi row = testCaseName + liveStatus badge + failureReasons",
+      "highlight_violated": "validationStatus === 3 (Violated) → highlight đỏ cả row requirement",
+      "show_mapping_rationale": "Tooltip trên tên test case: mappingRationale (VD: 'Validates that age >= 17 → 201 constraint')"
+    }
+  },
+
+  "how_to_determine_pass_fail_skip": {
+    "primary_field": "cases[i].status",
+    "values": {
+      "Passed": {
+        "meaning": "Test case chạy xong, tất cả validation checks đều pass",
+        "signals": [
+          "failureReasons là array rỗng []",
+          "statusCodeMatched = true",
+          "schemaMatched = true (nếu có check schema)",
+          "warnings có thể có data (warnings không gây Fail)"
+        ]
+      },
+      "Failed": {
+        "meaning": "Test case chạy xong nhưng ít nhất 1 validation check fail",
+        "signals": [
+          "failureReasons.length > 0",
+          "Xem code trong failureReasons để biết loại lỗi"
+        ],
+        "failure_codes_table": {
+          "STATUS_CODE_MISMATCH": "HTTP status trả về không khớp expected. Xem expected vs actual.",
+          "RESPONSE_SCHEMA_MISMATCH": "Response body không khớp OpenAPI schema. Xem target field.",
+          "SCHEMA_VALIDATION_ERROR": "Response body vi phạm JSON Schema rule.",
+          "SCHEMA_REF_UNRESOLVABLE": "Schema $ref không resolve được (OpenAPI spec issue).",
+          "RESPONSE_NOT_JSON": "Expected JSON body nhưng response không phải JSON.",
+          "HEADER_MISMATCH": "Response header không khớp expected. Xem target (tên header).",
+          "BODY_CONTAINS_MISSING": "Expected substring không có trong response body. Xem expected.",
+          "BODY_NOT_CONTAINS_PRESENT": "Chuỗi bị cấm lại xuất hiện trong response body. Xem expected.",
+          "JSONPATH_ASSERTION_FAILED": "JSONPath assertion thất bại. Xem target (path), expected, actual.",
+          "RESPONSE_TIME_EXCEEDED": "Thời gian response vượt threshold. Xem expected (limit ms) vs actual (thực tế ms).",
+          "HTTP_REQUEST_ERROR": "Không gọi được API (network error, timeout, DNS fail). message có detail.",
+          "NO_EXPECTATION": "Test case không có expectation nào được định nghĩa.",
+          "NO_EXPECTATION_DEFINED": "Không có expected status code nào được config.",
+          "ALL_CHECKS_SKIPPED": "Tất cả checks đều bị skip (không có rule nào áp dụng).",
+          "INVALID_EXPECTATION_FORMAT": "Format expectation bị lỗi (config issue)."
+        },
+        "adaptive_warning_codes_not_failure": {
+          "ADAPTIVE_PERMISSIVE_STATUS_MATCH": "API trả 2xx nhưng expected là 4xx — test type boundary/negative, API permissive. Không Fail.",
+          "ADAPTIVE_ERROR_PAYLOAD_MATCH": "Status mismatch nhưng body có error payload — treated as soft warning.",
+          "ADAPTIVE_SUCCESS_STATUS_MATCH": "Adaptive match thành công với success status.",
+          "ADAPTIVE_CLIENT_ERROR_STATUS_MATCH": "Adaptive match với client error status."
+        }
+      },
+      "Skipped": {
+        "meaning": "Test case không được thực thi vì dependency của nó đã Fail hoặc Skipped",
+        "signals": [
+          "skippedBecauseDependencyIds — list ID các dependency đã fail/skip",
+          "skippedCause — mô tả bằng tiếng Anh, VD: 'Dependency test case 'POST /api/users' failed with STATUS_CODE_MISMATCH'",
+          "failureReasons rỗng (không có failure — vì không chạy)",
+          "httpStatusCode = null (không gọi HTTP)",
+          "durationMs = 0"
+        ],
+        "note": "Sau khi dependency được retry và pass, skipped case sẽ được replay (nếu rerunSkippedCases=true). Kết quả cuối trong cases[] là kết quả của lần replay sau cùng."
+      }
+    }
+  },
+
+  "how_to_determine_retry": {
+    "simple_check": "cases[i].totalAttempts > 1  →  test case đã được retry",
+    "detail": "cases[i].executionAttempt = số thứ tự attempt cuối. Nếu = 3 thì đã chạy 3 lần.",
+    "full_history": "Lọc attempts[] theo testCaseId để xem từng lần retry: status, failureReasons, durationMs, retryReason của mỗi lần.",
+    "render_retry_tree": {
+      "step1": "Lấy root attempts: attempts.filter(a => a.parentAttemptId === null && a.testCaseId === targetId)",
+      "step2": "Lookup children: attemptChildrenMap[attemptId] → array of child attemptIds",
+      "step3": "Render tree: attempt1 (root) → attempt2 (retry1) → attempt3 (retry2)",
+      "retryReason_examples": [
+        "'Retry after failure (attempt 2)' — retry do test case fail",
+        "'Dependency failed' — bị skip do dependency fail",
+        "'Replayed skipped case after dependency recovery' — replay sau khi dependency được retry và pass"
+      ]
+    }
+  },
+
+  "fe_display_recommendations": {
+    "status_badge": {
+      "Passed": "màu xanh lá (#22c55e)",
+      "Failed": "màu đỏ (#ef4444)",
+      "Skipped": "màu vàng/amber (#f59e0b)"
+    },
+    "retry_indicator": "Hiện badge 'Retried ×N' khi cases[i].totalAttempts > 1, N = totalAttempts - 1",
+    "skip_tooltip": "Hover vào badge Skipped để hiện skippedCause + danh sách dependency IDs",
+    "failure_detail": {
+      "accordion": "Expand để hiện failureReasons list",
+      "each_row": "[code] [target] Expected: [expected] | Actual: [actual] | [message]",
+      "priority_display": "STATUS_CODE_MISMATCH và RESPONSE_SCHEMA_MISMATCH là 2 lỗi phổ biến nhất — show trước"
+    },
+    "warning_section": "Nếu warnings.length > 0: hiện icon ⚠ vàng. Không hiện màu đỏ (warning ≠ failure).",
+    "attempt_history": {
+      "trigger": "Click 'View retry history' button khi totalAttempts > 1",
+      "data_source": "attempts[] filtered by testCaseId, sorted by attemptNumber asc",
+      "each_row": "Attempt #N | [status badge] | [retryReason] | [durationMs]ms | [failureReasons summary]"
+    },
+    "srs_panel": {
+      "visibility": "Chỉ hiện SRS panel khi traceability.srsDocumentId !== null && traceability.requirements.length > 0",
+      "summary_bar": "Validated: N | Violated: N | Partial: N | Uncovered: N | Coverage: X%",
+      "requirement_table": {
+        "columns": ["Code", "Title", "Type", "Status", "Passed", "Failed", "Skipped"],
+        "row_highlight": "validationStatus === 3 (Violated) → row background đỏ nhạt",
+        "expand_row": "Click row để xem danh sách test cases với liveStatus và failureReasons",
+        "confidence_badge": "confidenceScore < 0.6 → hiện icon ⚠ 'Low confidence extraction'"
+      },
+      "validation_status_badges": {
+        "0 Uncovered": { "color": "#6b7280", "label": "Uncovered" },
+        "1 Unverified": { "color": "#93c5fd", "label": "Unverified" },
+        "2 Validated": { "color": "#22c55e", "label": "Validated" },
+        "3 Violated": { "color": "#ef4444", "label": "Violated" },
+        "4 Partial": { "color": "#fde68a", "label": "Partial" },
+        "5 SkippedOnly": { "color": "#f59e0b", "label": "Skipped" },
+        "6 Inconclusive": { "color": "#d1d5db", "label": "Inconclusive" }
+      }
+    }
+  },
+
+  "run_summary_display": {
+    "total": "run.totalTests",
+    "passed": "run.passedCount",
+    "failed": "run.failedCount",
+    "skipped": "run.skippedCount",
+    "duration": "run.durationMs (ms) — convert sang giây hoặc phút tuỳ ý",
+    "overall_status": "run.status — 'Passed' (tất cả pass) | 'Failed' (có ít nhất 1 fail)"
+  },
+
+  "common_mistakes_to_avoid": [
+    {
+      "mistake": "Dùng cases[i].executionAttempt để kiểm tra có retry không",
+      "correct": "Dùng cases[i].totalAttempts > 1. executionAttempt là số thứ tự attempt cuối, không phải tổng số."
+    },
+    {
+      "mistake": "Hiển thị failureReasons cho Skipped case",
+      "correct": "Skipped case không có failureReasons. Hiển thị skippedCause và skippedBecauseDependencyIds."
+    },
+    {
+      "mistake": "Treat warnings như failures",
+      "correct": "warnings (ADAPTIVE_*) không gây Fail. Hiện icon ⚠ nhưng không đổi badge thành Failed."
+    },
+    {
+      "mistake": "Expect cases[] có nhiều item cùng testCaseId",
+      "correct": "Mỗi testCaseId xuất hiện ĐÚNG 1 LẦN trong cases[]. Toàn bộ retry history chỉ có trong attempts[]."
+    },
+    {
+      "mistake": "Gọi API POST nhiều lần để poll kết quả",
+      "correct": "POST là synchronous — 1 call duy nhất, chờ đến khi nhận 201 là xong. Dùng GET /results nếu cần fetch lại."
+    }
+  ],
+
+  "example_response_failed_with_retry": {
+    "_comment": "Test case POST /api/orders fail lần 1, retry lần 2 vẫn fail",
+    "run": {
+      "id": "aaa-bbb-ccc",
+      "runNumber": 5,
+      "status": "Failed",
+      "totalTests": 3,
+      "passedCount": 1,
+      "failedCount": 1,
+      "skippedCount": 1,
+      "durationMs": 4200
+    },
+    "cases": [
+      {
+        "testCaseId": "tc-001",
+        "name": "POST /api/orders — Happy Path",
+        "status": "Failed",
+        "executionAttempt": 2,
+        "totalAttempts": 2,
+        "httpStatusCode": 500,
+        "expectedStatus": "201",
+        "statusCodeMatched": false,
+        "failureReasons": [
+          {
+            "code": "STATUS_CODE_MISMATCH",
+            "message": "Expected status 201 but received 500",
+            "target": "statusCode",
+            "expected": "201",
+            "actual": "500"
+          }
+        ],
+        "skippedCause": null,
+        "skippedBecauseDependencyIds": []
+      },
+      {
+        "testCaseId": "tc-002",
+        "name": "GET /api/orders/{id} — Get After Create",
+        "status": "Skipped",
+        "executionAttempt": 1,
+        "totalAttempts": 1,
+        "httpStatusCode": null,
+        "statusCodeMatched": false,
+        "failureReasons": [],
+        "skippedCause": "Dependency test case 'POST /api/orders — Happy Path' failed with STATUS_CODE_MISMATCH",
+        "skippedBecauseDependencyIds": ["tc-001"]
+      },
+      {
+        "testCaseId": "tc-003",
+        "name": "GET /api/orders — List All",
+        "status": "Passed",
+        "executionAttempt": 1,
+        "totalAttempts": 1,
+        "httpStatusCode": 200,
+        "statusCodeMatched": true,
+        "failureReasons": [],
+        "skippedCause": null
+      }
+    ],
+    "attempts": [
+      {
+        "executionAttemptId": "att-001",
+        "testCaseId": "tc-001",
+        "parentAttemptId": null,
+        "attemptNumber": 1,
+        "status": "Failed",
+        "retryReason": null,
+        "failureReasons": [{ "code": "STATUS_CODE_MISMATCH", "message": "Expected 201 but got 500", "expected": "201", "actual": "500" }]
+      },
+      {
+        "executionAttemptId": "att-002",
+        "testCaseId": "tc-001",
+        "parentAttemptId": "att-001",
+        "attemptNumber": 2,
+        "status": "Failed",
+        "retryReason": "Retry after failure (attempt 2)",
+        "failureReasons": [{ "code": "STATUS_CODE_MISMATCH", "message": "Expected 201 but got 500", "expected": "201", "actual": "500" }]
+      },
+      {
+        "executionAttemptId": "att-003",
+        "testCaseId": "tc-002",
+        "parentAttemptId": null,
+        "attemptNumber": 1,
+        "status": "Skipped",
+        "retryReason": "Dependency failed",
+        "skippedCause": "Dependency test case 'POST /api/orders — Happy Path' failed with STATUS_CODE_MISMATCH",
+        "failureReasons": []
+      }
+    ],
+    "attemptChildrenMap": {
+      "att-001": ["att-002"],
+      "att-002": [],
+      "att-003": []
+    }
+  },
+
+  "prompt_for_fe_developer": {
+    "_title": "Prompt để FE dev dùng khi implement màn hình Test Run Results + SRS Traceability",
+    "prompt": "Bạn là FE developer đang implement màn hình hiển thị kết quả Test Run cho ứng dụng API Testing. Màn hình cần hiển thị cả pass/fail/skip của từng test case VÀ trạng thái xác nhận từng SRS requirement.\n\n## 1. CÁC ENDPOINT CẦN GỌI\n\n### A. Lấy kết quả test run\nPOST /api/test-suites/{suiteId}/test-runs  — chạy mới (synchronous, chờ response)\nGET  /api/test-suites/{suiteId}/test-runs/{runId}/results  — xem lại run cũ\n\nRequest body (khi POST):\n```json\n{\n  \"environmentId\": \"uuid | null\",\n  \"selectedTestCaseIds\": \"uuid[] | null\",\n  \"strictValidation\": false,\n  \"retryPolicy\": {\n    \"maxRetryAttempts\": 0,\n    \"retryFailedDependencies\": true,\n    \"rerunSkippedCases\": true\n  }\n}\n```\n\nResponse 201 → TestRunResultModel\n\n### B. Lấy SRS traceability (gọi sau khi có runId)\nGET /api/projects/{projectId}/test-suites/{suiteId}/traceability?testRunId={runId}\n\nResponse 200 → TraceabilityMatrix\n\nNếu suite chưa có SRS → traceability.requirements === [] → ẩn SRS panel, không báo lỗi.\n\n---\n\n## 2. RESPONSE TestRunResultModel — TEST CASE PASS/FAIL/SKIP\n\n### run — tổng quan\n- run.status: 'Passed' | 'Failed' | 'Running'\n- run.passedCount / failedCount / skippedCount / totalTests\n- run.durationMs\n\n### cases[] — ĐÚNG 1 item/testCaseId — kết quả CUỐI\nMỗi case:\n- status: 'Passed' | 'Failed' | 'Skipped'\n- totalAttempts: tổng số lần chạy kể cả retry. >1 = đã retry\n- executionAttempt: số thứ tự attempt cuối\n- failureReasons[]: rỗng khi Pass/Skip. Có data khi Fail\n  - code: mã lỗi (STATUS_CODE_MISMATCH, RESPONSE_SCHEMA_MISMATCH, ...)\n  - message: mô tả lỗi chi tiết\n  - target: field bị lỗi\n  - expected / actual: giá trị mong đợi vs thực tế\n- warnings[]: cảnh báo KHÔNG gây fail (ADAPTIVE_*)\n- skippedCause: lý do skip (chỉ khi status='Skipped')\n- skippedBecauseDependencyIds: UUID các dependency đã fail\n\n### attempts[] — lịch sử từng lần chạy\n- parentAttemptId: null = attempt đầu, có value = retry\n- retryReason: mô tả lý do retry\n- attemptNumber: 1-based\n\n### attemptChildrenMap — map attemptId → [child IDs] để render retry tree\n\n---\n\n## 3. RESPONSE TraceabilityMatrix — SRS VALIDATION\n\n### Summary fields\n- srsDocumentId: null → ẩn SRS panel\n- validatedRequirements / violatedRequirements / partialRequirements / ...\n- validationPercent: % requirements được validate thành công\n\n### requirements[] — từng requirement SRS\n- requirementCode: 'REQ-001'\n- title: tên requirement\n- requirementType: 0=Functional, 1=NonFunctional, 2=Security, 3=Performance, 4=Constraint\n- validationStatus: 0-6 (xem enum bên dưới)\n- validationSummary: '2 passed, 1 failed'\n- testCases[]: test cases link đến requirement\n  - testCaseId: JOIN KEY với cases[].testCaseId của TestRunResultModel\n  - testCaseName: tên test case\n  - mappingRationale: lý do LLM link test case này với requirement\n  - lastRunStatus: 'Passed' | 'Failed' | 'Skipped' | null\n  - failureCodes: ['STATUS_CODE_MISMATCH']\n  - failureSummary: mô tả lỗi ngắn\n\n### RequirementValidationStatus enum\n0 = Uncovered (xám) — chưa có test case nào\n1 = Unverified (xanh dương nhạt) — có test case nhưng chưa chạy\n2 = Validated (xanh lá) — tất cả pass → SRS satisfied\n3 = Violated (đỏ) — có test case fail → SRS bị vi phạm\n4 = Partial (vàng nhạt) — mix pass/skip, không có fail\n5 = SkippedOnly (vàng) — tất cả bị skip\n6 = Inconclusive (xám nhạt)\n\n---\n\n## 4. LOGIC HIỂN THỊ\n\n### Pass/Fail/Skip badge\n```\ncases[i].status === 'Passed'  → xanh lá\ncases[i].status === 'Failed'  → đỏ\ncases[i].status === 'Skipped' → vàng\n```\n\n### Retry indicator\n```\nif (cases[i].totalAttempts > 1) show 'Retried ×' + (totalAttempts - 1)\n```\n\n### Failure detail\n```\nfor each item in cases[i].failureReasons:\n  show: [code] | [target] | Expected: [expected] | Actual: [actual]\n```\n\n### Skip detail\n```\nif (status === 'Skipped') show: skippedCause + skippedBecauseDependencyIds\n```\n\n### JOIN test run với traceability\n```javascript\nconst caseMap = new Map(testRunResult.cases.map(c => [c.testCaseId, c]))\n\nfor (const req of traceability.requirements) {\n  req.testCases = req.testCases.map(ref => ({\n    ...ref,\n    liveStatus:         caseMap.get(ref.testCaseId)?.status ?? ref.lastRunStatus,\n    liveFailureReasons: caseMap.get(ref.testCaseId)?.failureReasons ?? [],\n    liveTotalAttempts:  caseMap.get(ref.testCaseId)?.totalAttempts ?? 1,\n    liveSkippedCause:   caseMap.get(ref.testCaseId)?.skippedCause ?? null,\n  }))\n}\n```\n\n### SRS requirement table\nColumns: Code | Title | Type | Status | Passed | Failed | Skipped\nHighlight đỏ khi validationStatus === 3 (Violated)\nExpand row để xem test cases: testCaseName + liveStatus + failureReasons\n\n---\n\n## 5. FAILURE CODES\n| Code | Ý nghĩa |\n|------|---------|\n| STATUS_CODE_MISMATCH | HTTP status không khớp expected |\n| RESPONSE_SCHEMA_MISMATCH | Body không khớp OpenAPI schema |\n| SCHEMA_VALIDATION_ERROR | Body vi phạm JSON Schema rule |\n| HEADER_MISMATCH | Response header không đúng |\n| BODY_CONTAINS_MISSING | Thiếu chuỗi expected trong body |\n| BODY_NOT_CONTAINS_PRESENT | Chuỗi bị cấm xuất hiện trong body |\n| JSONPATH_ASSERTION_FAILED | JSONPath assertion fail |\n| RESPONSE_TIME_EXCEEDED | Response quá chậm |\n| HTTP_REQUEST_ERROR | Không gọi được API (network/timeout) |\n| RESPONSE_NOT_JSON | API không trả JSON |\n\n---\n\n## 6. NHỮNG LỖI THƯỜNG GẶP\n- warnings[] KHÔNG phải failure. Hiện ⚠ vàng, KHÔNG đổi badge đỏ.\n- Skipped case KHÔNG có failureReasons — chỉ có skippedCause.\n- cases[] mỗi testCaseId ĐÚNG 1 lần. Không de-duplicate.\n- POST test run là synchronous — 1 call duy nhất, không poll.\n- Traceability JOIN bằng testCaseId, KHÔNG bằng endpointId.\n- Suite không có SRS → requirements=[] → ẩn panel, không show lỗi.\n- validationPercent=-1 khi không có evidence run → hiện '--' thay vì 0%.\n\nHãy implement theo đúng spec này."
+  }
+}

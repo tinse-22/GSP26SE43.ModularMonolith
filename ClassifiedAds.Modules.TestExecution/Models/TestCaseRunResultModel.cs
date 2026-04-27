@@ -77,4 +77,10 @@ public class TestCaseRunResultModel
     public bool? JsonPathChecksPassed { get; set; }
 
     public bool? ResponseTimePassed { get; set; }
+
+    /// <summary>
+    /// Total number of execution attempts made for this test case across the entire run
+    /// (including retries). This equals 1 when no retry was needed.
+    /// </summary>
+    public int TotalAttempts { get; set; } = 1;
 }
