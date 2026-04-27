@@ -53,6 +53,11 @@ public class TestResultCollector : ITestResultCollector
         var skippedCount = caseResults.Count(r => r.Status == "Skipped");
         var totalDurationMs = caseResults.Sum(r => r.DurationMs);
 
+        // ── Pre-compute attempt counts per test case ─────────────────────────
+        var attemptCountByCase = (attempts ?? Array.Empty<TestCaseExecutionAttemptModel>())
+            .GroupBy(a => a.TestCaseId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         // ── Case models ──────────────────────────────────────────────────────
         var caseModels = caseResults.Select(r => new TestCaseRunResultModel
         {
@@ -90,6 +95,7 @@ public class TestResultCollector : ITestResultCollector
             BodyNotContainsPassed = r.BodyNotContainsPassed,
             JsonPathChecksPassed = r.JsonPathChecksPassed,
             ResponseTimePassed = r.ResponseTimePassed,
+            TotalAttempts = attemptCountByCase.TryGetValue(r.TestCaseId, out var cnt) ? cnt : 1,
         }).ToList();
 
         // ── Attempt models ───────────────────────────────────────────────────

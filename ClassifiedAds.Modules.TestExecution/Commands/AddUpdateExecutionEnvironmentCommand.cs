@@ -137,7 +137,14 @@ public class AddUpdateExecutionEnvironmentCommandHandler : ICommandHandler<AddUp
             throw new ConflictException("DEFAULT_ENVIRONMENT_CONFLICT", "Không thể đặt default environment do xung đột đồng thời. Vui lòng thử lại.", ex);
         }
 
-        command.Result = ExecutionEnvironmentModel.FromEntity(env, _authConfigService);
+        // Reload from DB to pick up database-generated values (e.g. RowVersion / xmin).
+        // With PostgreSQL the in-memory entity RowVersion is null right after SaveChanges
+        // because EF Core / Npgsql does not automatically back-fill the bytea column.
+        // AsNoTracking forces a fresh SELECT and bypasses the change-tracker cache.
+        var savedEnv = await _envRepository.FirstOrDefaultAsync(
+            _envRepository.GetQueryableSet().AsNoTracking().Where(x => x.Id == env.Id));
+
+        command.Result = ExecutionEnvironmentModel.FromEntity(savedEnv ?? env, _authConfigService);
 
         _logger.LogInformation(
             "Created execution environment. EnvironmentId={EnvironmentId}, ProjectId={ProjectId}, IsDefault={IsDefault}, ActorUserId={ActorUserId}",
@@ -155,18 +162,24 @@ public class AddUpdateExecutionEnvironmentCommandHandler : ICommandHandler<AddUp
             throw new NotFoundException($"Không tìm thấy execution environment với mã '{command.EnvironmentId}'.");
         }
 
-        if (string.IsNullOrEmpty(command.RowVersion))
+        // Only enforce concurrency check when the DB row actually has a RowVersion.
+        // Rows created before the RowVersion column was populated have null — skip the check.
+        bool dbRowHasVersion = env.RowVersion != null && env.RowVersion.Length > 0;
+        if (dbRowHasVersion)
         {
-            throw new ValidationException("RowVersion là bắt buộc khi cập nhật.");
-        }
+            if (string.IsNullOrEmpty(command.RowVersion))
+            {
+                throw new ValidationException("RowVersion là bắt buộc khi cập nhật.");
+            }
 
-        try
-        {
-            _envRepository.SetRowVersion(env, Convert.FromBase64String(command.RowVersion));
-        }
-        catch (FormatException)
-        {
-            throw new ValidationException("RowVersion không hợp lệ.");
+            try
+            {
+                _envRepository.SetRowVersion(env, Convert.FromBase64String(command.RowVersion));
+            }
+            catch (FormatException)
+            {
+                throw new ValidationException("RowVersion không hợp lệ.");
+            }
         }
 
         env.Name = command.Name.Trim();
