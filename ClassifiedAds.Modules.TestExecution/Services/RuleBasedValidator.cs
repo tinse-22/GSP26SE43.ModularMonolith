@@ -26,8 +26,9 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
         ApiEndpointMetadataDto endpointMetadata = null,
-        bool strictMode = false)
+        ValidationProfile profile = ValidationProfile.Default)
     {
+        var strictMode = profile != ValidationProfile.Default;
         var result = new TestCaseValidationResult
         {
             IsPassed = true,
@@ -86,7 +87,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         var checksSkipped = 0;
 
         // 1. Status code check
-        TrackCheck(ValidateStatusCode(response, testCase, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateStatusCode(response, testCase, expectation, result, profile != ValidationProfile.SrsStrict), ref checksPerformed, ref checksSkipped);
 
         // 2. Response schema validation
         TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result, strictMode), ref checksPerformed, ref checksSkipped);
@@ -130,7 +131,8 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
         ExecutionTestCaseExpectationDto expectation,
-        TestCaseValidationResult result)
+        TestCaseValidationResult result,
+        bool allowAdaptive = true)
     {
         if (string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
         {
@@ -153,7 +155,7 @@ public class RuleBasedValidator : IRuleBasedValidator
 
             if (!response.StatusCode.HasValue || !expectedStatuses.Contains(response.StatusCode.Value))
             {
-                if (TryApplyAdaptiveStatusMatch(response, expectedStatuses, testCase, result))
+                if (allowAdaptive && TryApplyAdaptiveStatusMatch(response, expectedStatuses, testCase, result))
                 {
                     result.StatusCodeMatched = true;
                 }
@@ -180,7 +182,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                 if (response.StatusCode != singleStatus)
                 {
                     var singleExpectedList = new List<int> { singleStatus };
-                    if (TryApplyAdaptiveStatusMatch(response, singleExpectedList, testCase, result))
+                    if (allowAdaptive && TryApplyAdaptiveStatusMatch(response, singleExpectedList, testCase, result))
                     {
                         result.StatusCodeMatched = true;
                     }

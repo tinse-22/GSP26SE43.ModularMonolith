@@ -86,6 +86,13 @@ services:
       Modules__Subscription__PayOS__FrontendBaseUrl: "${Modules__Subscription__PayOS__FrontendBaseUrl:-}"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
+      Modules__LlmAssistant__FailureExplanation__Provider: "${Modules__LlmAssistant__FailureExplanation__Provider:-N8n}"
+      Modules__LlmAssistant__FailureExplanation__Model: "${Modules__LlmAssistant__FailureExplanation__Model:-gpt-4.1-mini}"
+      Modules__LlmAssistant__FailureExplanation__TimeoutSeconds: "${Modules__LlmAssistant__FailureExplanation__TimeoutSeconds:-300}"
+      Modules__LlmAssistant__FailureExplanation__CacheTtlHours: "${Modules__LlmAssistant__FailureExplanation__CacheTtlHours:-24}"
+      Modules__LlmAssistant__FailureExplanation__BaseUrl: "${Modules__LlmAssistant__FailureExplanation__BaseUrl:-https://tinem225.app.n8n.cloud/webhook/}"
+      Modules__LlmAssistant__FailureExplanation__ApiKey: "${Modules__LlmAssistant__FailureExplanation__ApiKey:-}"
+      Modules__LlmAssistant__FailureExplanation__WebhookPath: "${Modules__LlmAssistant__FailureExplanation__WebhookPath:-explain-failure}"
 
   background:
     image: classifiedads.modularmonolith.background
@@ -138,6 +145,13 @@ services:
       Modules__Subscription__PayOS__FrontendBaseUrl: "${Modules__Subscription__PayOS__FrontendBaseUrl:-}"
       Modules__Storage__Provider: "Local"
       Modules__Storage__Local__Path: "/files"
+      Modules__LlmAssistant__FailureExplanation__Provider: "${Modules__LlmAssistant__FailureExplanation__Provider:-N8n}"
+      Modules__LlmAssistant__FailureExplanation__Model: "${Modules__LlmAssistant__FailureExplanation__Model:-gpt-4.1-mini}"
+      Modules__LlmAssistant__FailureExplanation__TimeoutSeconds: "${Modules__LlmAssistant__FailureExplanation__TimeoutSeconds:-300}"
+      Modules__LlmAssistant__FailureExplanation__CacheTtlHours: "${Modules__LlmAssistant__FailureExplanation__CacheTtlHours:-24}"
+      Modules__LlmAssistant__FailureExplanation__BaseUrl: "${Modules__LlmAssistant__FailureExplanation__BaseUrl:-https://tinem225.app.n8n.cloud/webhook/}"
+      Modules__LlmAssistant__FailureExplanation__ApiKey: "${Modules__LlmAssistant__FailureExplanation__ApiKey:-}"
+      Modules__LlmAssistant__FailureExplanation__WebhookPath: "${Modules__LlmAssistant__FailureExplanation__WebhookPath:-explain-failure}"
 
 volumes:
   redis_data:

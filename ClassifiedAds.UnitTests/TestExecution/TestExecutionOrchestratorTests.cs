@@ -126,8 +126,8 @@ public class TestExecutionOrchestratorTests
 
         TestRunResultModel? capturedResult = null;
         _resultCollectorMock
-            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<TestCaseExecutionAttemptModel>>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken, IReadOnlyList<TestCaseExecutionAttemptModel>>((_, results, _, _, _, _) =>
             {
                 capturedResult = new TestRunResultModel
                 {
@@ -214,8 +214,8 @@ public class TestExecutionOrchestratorTests
 
         TestRunResultModel? capturedResult = null;
         _resultCollectorMock
-            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<TestCaseExecutionAttemptModel>>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken, IReadOnlyList<TestCaseExecutionAttemptModel>>((_, results, _, _, _, _) =>
             {
                 capturedResult = new TestRunResultModel
                 {
@@ -1899,8 +1899,8 @@ public class TestExecutionOrchestratorTests
 
         TestCaseExecutionResult? capturedFailedCase = null;
         _resultCollectorMock
-            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<TestCaseExecutionAttemptModel>>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken, IReadOnlyList<TestCaseExecutionAttemptModel>>((_, results, _, _, _, _) =>
             {
                 capturedFailedCase = results.FirstOrDefault();
             })
@@ -1979,8 +1979,8 @@ public class TestExecutionOrchestratorTests
 
         TestCaseExecutionResult? capturedCase = null;
         _resultCollectorMock
-            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken>((_, results, _, _, _) =>
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<TestCaseExecutionAttemptModel>>()))
+            .Callback<TestRun, IReadOnlyList<TestCaseExecutionResult>, int, string, CancellationToken, IReadOnlyList<TestCaseExecutionAttemptModel>>((_, results, _, _, _, _) =>
             {
                 capturedCase = results.FirstOrDefault();
             })
@@ -2106,7 +2106,7 @@ public class TestExecutionOrchestratorTests
     private void SetupResultCollector()
     {
         _resultCollectorMock
-            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CollectAsync(It.IsAny<TestRun>(), It.IsAny<IReadOnlyList<TestCaseExecutionResult>>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<TestCaseExecutionAttemptModel>>()))
             .ReturnsAsync(new TestRunResultModel
             {
                 Run = new TestRunModel(),

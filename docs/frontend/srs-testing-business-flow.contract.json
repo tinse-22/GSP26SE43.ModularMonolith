@@ -1,0 +1,1129 @@
+{
+  "schemaVersion": "3.0.0",
+  "documentId": "srs-testing-business-flow",
+  "module": "SRS-driven testing API handoff",
+  "validatedAgainstCodebaseOn": "2026-04-27",
+  "baseUrl": "http://localhost:5099",
+  "auth": {
+    "scheme": "Bearer",
+    "header": "Authorization: Bearer <JWT>",
+    "requiredForFrontendEndpoints": true,
+    "anonymousCallbacks": [
+      "POST /api/test-suites/{suiteId}/test-cases/from-ai",
+      "POST /api/srs-analysis-callback/{jobId}",
+      "POST /api/srs-refinement-callback/{jobId}"
+    ]
+  },
+  "sourceOfTruth": {
+    "controllers": [
+      "ClassifiedAds.Modules.TestGeneration/Controllers/TestSuitesController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Controllers/SrsDocumentsController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Controllers/TestOrderController.cs",
+      "ClassifiedAds.Modules.TestGeneration/Controllers/SrsTraceabilityController.cs",
+      "ClassifiedAds.Modules.TestExecution/Controllers/TestRunsController.cs"
+    ],
+    "requestModels": [
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/CreateTestSuiteScopeRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/UpdateTestSuiteScopeRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/SrsDocumentRequests.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/Requests/UpdateSrsDocumentRequest.cs",
+      "ClassifiedAds.Modules.TestGeneration/Commands/SaveAiGeneratedTestCasesCommand.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/Requests/StartTestRunRequest.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/TestRunRetryPolicyModel.cs"
+    ],
+    "responseModels": [
+      "ClassifiedAds.Modules.TestGeneration/Models/TestSuiteScopeModel.cs",
+      "ClassifiedAds.Modules.TestGeneration/Models/SrsDocumentModel.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/TestRunResultModel.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/TestRunModel.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/TestCaseRunResultModel.cs",
+      "ClassifiedAds.Modules.TestExecution/Models/TestCaseExecutionAttemptModel.cs"
+    ],
+    "verificationCommands": [
+      "rg -n \"Route|Http(Post|Get|Patch|Put|Delete)|FromBody|FromQuery\" ClassifiedAds.Modules.TestGeneration/Controllers ClassifiedAds.Modules.TestExecution/Controllers",
+      "rg -n \"public class|JsonPropertyName|public enum\" ClassifiedAds.Modules.TestGeneration ClassifiedAds.Modules.TestExecution -g \"*.cs\"",
+      "PowerShell ConvertFrom-Json on this file"
+    ]
+  },
+  "strictRulesForFrontend": [
+    "Do not send srsDocumentId in POST /api/projects/{projectId}/test-suites. The backend request model does not have that field.",
+    "Link an SRS document to a suite by sending testSuiteId in POST /api/projects/{projectId}/srs-documents, or by PATCH /api/projects/{projectId}/srs-documents/{srsDocumentId}.",
+    "Do not call /api/projects/{projectId}/test-suites/{suiteId}/test-generation-jobs. That route does not exist.",
+    "Trigger unified AI test generation with POST /api/test-suites/{suiteId}/generate-tests.",
+    "Poll unified AI test generation with GET /api/test-suites/{suiteId}/generation-status?jobId={jobId}.",
+    "Do not call /api/projects/{projectId}/test-suites/{suiteId}/test-runs. Test run routes do not include projectId.",
+    "Start test runs with POST /api/test-suites/{suiteId}/test-runs.",
+    "Do not send validationProfile in StartTestRunRequest. Current BE does not expose this field in the request model; use strictValidation=true for SRS strict behavior.",
+    "Use retryFailedDependencies as the JSON key, not enableRetry. The BE maps retryFailedDependencies to EnableRetry via JsonPropertyName.",
+    "StartTestRun returns HTTP 201 with TestRunResultModel directly. There is no data wrapper.",
+    "Frontend should not call n8n callback endpoints directly. They are included here only so mock/n8n payloads stay correct.",
+    "For n8n AI callback, headers, pathParams, queryParams, expectedStatus, bodyContains, bodyNotContains, headerChecks, jsonPathChecks are strings containing JSON, not nested JSON objects or arrays."
+  ],
+  "enumSerialization": {
+    "requestGuideline": "Use the listed request format per field. If no JsonStringEnumConverter exists on the request property, send enum integers.",
+    "responseGuideline": "Response enum properties are numeric unless the response model property itself is string.",
+    "GenerationType": {
+      "requestFormat": "string or integer",
+      "values": {
+        "Auto": 0,
+        "Manual": 1,
+        "LLMAssisted": 2
+      }
+    },
+    "TestSuiteStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "Draft": 0,
+        "Ready": 1,
+        "Archived": 2
+      }
+    },
+    "ApprovalStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "NotApplicable": 0,
+        "PendingReview": 1,
+        "Approved": 2,
+        "Rejected": 3,
+        "ModifiedAndApproved": 4
+      }
+    },
+    "SrsSourceType": {
+      "requestFormat": "integer",
+      "values": {
+        "TextInput": 0,
+        "FileUpload": 1,
+        "Url": 2
+      }
+    },
+    "SrsAnalysisStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "Pending": 0,
+        "Processing": 1,
+        "Completed": 2,
+        "Failed": 3
+      }
+    },
+    "SrsAnalysisJobStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "Queued": 0,
+        "Triggering": 1,
+        "Processing": 2,
+        "Completed": 3,
+        "Failed": 4
+      }
+    },
+    "SrsAnalysisJobType": {
+      "responseFormat": "integer",
+      "values": {
+        "InitialAnalysis": 0,
+        "ClarificationRefinement": 1
+      }
+    },
+    "GenerationJobStatus": {
+      "responseStringValues": [
+        "Queued",
+        "Triggering",
+        "WaitingForCallback",
+        "Completed",
+        "Failed",
+        "Cancelled"
+      ]
+    },
+    "ProposalSource": {
+      "requestFormat": "string or integer",
+      "values": {
+        "Ai": 0,
+        "User": 1,
+        "System": 2,
+        "Imported": 3
+      }
+    },
+    "ProposalStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "Pending": 0,
+        "Approved": 1,
+        "Rejected": 2,
+        "ModifiedAndApproved": 3,
+        "Superseded": 4,
+        "Applied": 5,
+        "Expired": 6
+      }
+    },
+    "SrsRequirementType": {
+      "queryFormat": "integer or enum name",
+      "responseFormat": "integer",
+      "values": {
+        "Functional": 0,
+        "NonFunctional": 1,
+        "Security": 2,
+        "Performance": 3,
+        "Constraint": 4
+      }
+    },
+    "RequirementValidationStatus": {
+      "responseFormat": "integer",
+      "values": {
+        "Uncovered": 0,
+        "Unverified": 1,
+        "Validated": 2,
+        "Violated": 3,
+        "Partial": 4,
+        "SkippedOnly": 5,
+        "Inconclusive": 6
+      }
+    },
+    "TestRunStatus": {
+      "queryFormat": "string",
+      "responseFormat": "string",
+      "values": [
+        "Pending",
+        "Running",
+        "Completed",
+        "Failed",
+        "Cancelled"
+      ]
+    },
+    "ValidationProfile": {
+      "exposedInStartRunRequest": false,
+      "internalValues": {
+        "Default": 0,
+        "DemoAdaptive": 1,
+        "SrsStrict": 2
+      },
+      "frontendInstruction": "Do not send validationProfile. Send strictValidation=true to make the command use SrsStrict internally."
+    }
+  },
+  "businessRules": {
+    "passFailSource": [
+      "LLM generates test case request and expectation data only.",
+      "PASS, FAIL, and SKIPPED are determined by TestExecution RuleBasedValidator and orchestration code.",
+      "SRS traceability status is derived from test case links and execution evidence."
+    ],
+    "retryPolicy": {
+      "retryableOnlyWhen": [
+        "failureReasons contains HTTP_REQUEST_ERROR",
+        "httpStatusCode is 408",
+        "httpStatusCode is 429",
+        "httpStatusCode is 5xx"
+      ],
+      "notRetryableByCurrentBE": [
+        "STATUS_CODE_MISMATCH without transient HTTP status",
+        "RESPONSE_SCHEMA_MISMATCH without transient HTTP status",
+        "BODY_CONTAINS_MISSING",
+        "BODY_NOT_CONTAINS_PRESENT",
+        "NO_EXPECTATION",
+        "INVALID_EXPECTATION_FORMAT",
+        "UNRESOLVED_VARIABLE",
+        "MISSING_REQUEST",
+        "MISSING_BASE_URL",
+        "MISSING_REQUIRED_BODY",
+        "DEPENDENCY_FAILED"
+      ]
+    },
+    "dependencySatisfaction": [
+      "A dependency is satisfied when status is Passed.",
+      "A dependency is also satisfied when httpStatusCode is 2xx and all failureReasons are only STATUS_CODE_MISMATCH or RESPONSE_SCHEMA_MISMATCH.",
+      "Any transport error, unresolved variable, pre-execution validation failure, 4xx, 5xx, or null result blocks downstream cases."
+    ],
+    "traceabilityStatusFormula": [
+      "No linked test cases -> Uncovered.",
+      "Linked test cases exist but none has lastRunStatus -> Unverified.",
+      "Any linked test case Failed -> Violated.",
+      "All linked test cases Skipped and none Unverified -> SkippedOnly.",
+      "All linked test cases Passed and none Skipped/Unverified -> Validated.",
+      "Passed plus Skipped or Unverified, with no Failed -> Partial.",
+      "Any other mix -> Inconclusive."
+    ]
+  },
+  "businessFlow": [
+    {
+      "step": 1,
+      "name": "Create test suite scope",
+      "frontendCall": "POST /api/projects/{projectId}/test-suites",
+      "save": [
+        "suiteId = response.id",
+        "suiteRowVersion = response.rowVersion"
+      ],
+      "notes": [
+        "Do not send srsDocumentId here.",
+        "For non-Manual suites, backend requires apiSpecId and at least one selectedEndpointIds item."
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Create and link SRS document",
+      "frontendCall": "POST /api/projects/{projectId}/srs-documents",
+      "save": [
+        "srsDocumentId = response.id"
+      ],
+      "notes": [
+        "Send testSuiteId in the SRS document body to link the document to the suite.",
+        "Backend also sets TestSuite.SrsDocumentId when testSuiteId is valid."
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Trigger SRS analysis",
+      "frontendCall": "POST /api/projects/{projectId}/srs-documents/{srsDocumentId}/analyze",
+      "save": [
+        "srsAnalysisJobId = response.jobId"
+      ]
+    },
+    {
+      "step": 4,
+      "name": "Poll SRS analysis job",
+      "frontendCall": "GET /api/projects/{projectId}/srs-documents/{srsDocumentId}/analysis-jobs/{jobId}",
+      "stopWhen": [
+        "status == 3 (Completed)",
+        "status == 4 (Failed)"
+      ]
+    },
+    {
+      "step": 5,
+      "name": "Review requirements and clarifications",
+      "frontendCalls": [
+        "GET /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements",
+        "PATCH /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}",
+        "GET /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications",
+        "PATCH /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications/{clarificationId}",
+        "POST /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/refine"
+      ]
+    },
+    {
+      "step": 6,
+      "name": "Approve API test order",
+      "frontendCalls": [
+        "POST /api/test-suites/{suiteId}/order-proposals",
+        "GET /api/test-suites/{suiteId}/order-proposals/latest",
+        "PUT /api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+        "POST /api/test-suites/{suiteId}/order-proposals/{proposalId}/approve"
+      ],
+      "notes": [
+        "Unified generation requires an approved or modified-and-approved order proposal."
+      ]
+    },
+    {
+      "step": 7,
+      "name": "Trigger AI test generation",
+      "frontendCall": "POST /api/test-suites/{suiteId}/generate-tests",
+      "save": [
+        "generationJobId = response.jobId"
+      ]
+    },
+    {
+      "step": 8,
+      "name": "Poll AI test generation job",
+      "frontendCall": "GET /api/test-suites/{suiteId}/generation-status?jobId={generationJobId}",
+      "stopWhen": [
+        "status == Completed",
+        "status == Failed",
+        "status == Cancelled"
+      ]
+    },
+    {
+      "step": 9,
+      "name": "Start deterministic test run",
+      "frontendCall": "POST /api/test-suites/{suiteId}/test-runs",
+      "notes": [
+        "For SRS compliance behavior, send strictValidation=true.",
+        "Response is returned after the run finishes."
+      ]
+    },
+    {
+      "step": 10,
+      "name": "View traceability matrix",
+      "frontendCall": "GET /api/projects/{projectId}/test-suites/{suiteId}/traceability?testRunId={optionalRunId}",
+      "notes": [
+        "If testRunId is omitted, backend uses latest finished run for that suite.",
+        "validationStatus is numeric RequirementValidationStatus."
+      ]
+    }
+  ],
+  "apiContracts": {
+    "testSuiteCreate": {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/test-suites",
+      "auth": true,
+      "pathParams": {
+        "projectId": "guid required"
+      },
+      "requestBody": {
+        "name": "string required maxLength 200",
+        "description": "string optional maxLength 4000",
+        "apiSpecId": "guid optional by DTO, required by handler unless generationType is Manual",
+        "generationType": "GenerationType string or integer, default Auto",
+        "selectedEndpointIds": "guid[] optional by DTO, required by handler unless generationType is Manual",
+        "endpointBusinessContexts": "{ [endpointId: guid]: string } optional",
+        "globalBusinessRules": "string optional maxLength 8000"
+      },
+      "doNotSend": [
+        "srsDocumentId"
+      ],
+      "requestExample": {
+        "name": "SRS Requirement Suite",
+        "description": "Requirement-driven API test suite",
+        "apiSpecId": "22222222-2222-2222-2222-222222222222",
+        "generationType": "LLMAssisted",
+        "selectedEndpointIds": [
+          "33333333-3333-3333-3333-333333333333"
+        ],
+        "endpointBusinessContexts": {
+          "33333333-3333-3333-3333-333333333333": "User must be authenticated."
+        },
+        "globalBusinessRules": "All error responses must use the standard envelope."
+      },
+      "responses": {
+        "201": "TestSuiteScopeModel",
+        "400": "ValidationProblemDetails or ProblemDetails"
+      }
+    },
+    "testSuiteGet": {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "auth": true,
+      "pathParams": {
+        "projectId": "guid required",
+        "suiteId": "guid required"
+      },
+      "responses": {
+        "200": "TestSuiteScopeModel",
+        "404": "ProblemDetails"
+      }
+    },
+    "testSuiteUpdate": {
+      "method": "PUT",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}",
+      "auth": true,
+      "pathParams": {
+        "projectId": "guid required",
+        "suiteId": "guid required"
+      },
+      "requestBody": {
+        "rowVersion": "base64 string required",
+        "name": "string required maxLength 200",
+        "description": "string optional maxLength 4000",
+        "apiSpecId": "guid optional by DTO, required by handler unless generationType is Manual",
+        "generationType": "GenerationType string or integer, default Auto",
+        "selectedEndpointIds": "guid[] optional by DTO, required by handler unless generationType is Manual",
+        "endpointBusinessContexts": "{ [endpointId: guid]: string } optional",
+        "globalBusinessRules": "string optional maxLength 8000"
+      },
+      "responses": {
+        "200": "TestSuiteScopeModel",
+        "400": "ValidationProblemDetails or ProblemDetails",
+        "404": "ProblemDetails",
+        "409": "ProblemDetails for concurrency conflict"
+      }
+    },
+    "srsDocumentCreate": {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents",
+      "auth": true,
+      "pathParams": {
+        "projectId": "guid required"
+      },
+      "requestBody": {
+        "title": "string required by handler",
+        "testSuiteId": "guid nullable; when provided, must be a suite in the same project",
+        "sourceType": "integer SrsSourceType; 0 TextInput, 1 FileUpload, 2 Url",
+        "rawContent": "string required when sourceType=0",
+        "storageFileId": "guid nullable; required when sourceType=1"
+      },
+      "requestExample": {
+        "title": "Checkout SRS",
+        "testSuiteId": "11111111-1111-1111-1111-111111111111",
+        "sourceType": 0,
+        "rawContent": "The system shall allow authenticated users to place orders.",
+        "storageFileId": null
+      },
+      "responses": {
+        "201": "SrsDocumentModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails when testSuiteId is invalid"
+      },
+      "sideEffects": [
+        "Creates SrsDocument.",
+        "If testSuiteId is valid, sets SrsDocument.TestSuiteId and TestSuite.SrsDocumentId."
+      ]
+    },
+    "srsDocumentPatchLink": {
+      "method": "PATCH",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}",
+      "auth": true,
+      "requestBody": {
+        "testSuiteId": "guid nullable",
+        "clearTestSuiteId": "boolean default false"
+      },
+      "responses": {
+        "200": "SrsDocumentModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsAnalysisTrigger": {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analyze",
+      "auth": true,
+      "requestBody": null,
+      "responses": {
+        "202": {
+          "jobId": "guid",
+          "message": "string"
+        },
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsAnalysisJobGet": {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/analysis-jobs/{jobId}",
+      "auth": true,
+      "responses": {
+        "200": "SrsAnalysisJobModel",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsRequirementsList": {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements",
+      "auth": true,
+      "queryParams": {
+        "requirementType": "integer or enum name optional",
+        "isReviewed": "boolean optional",
+        "endpointId": "guid optional"
+      },
+      "responses": {
+        "200": "SrsRequirementModel[]",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsRequirementUpdate": {
+      "method": "PATCH",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}",
+      "auth": true,
+      "requestBody": {
+        "title": "string nullable",
+        "testableConstraints": "string nullable",
+        "endpointId": "guid nullable",
+        "isReviewed": "boolean nullable"
+      },
+      "responses": {
+        "200": "SrsRequirementModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsClarificationsList": {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications",
+      "auth": true,
+      "responses": {
+        "200": "SrsRequirementClarificationModel[]",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsClarificationAnswer": {
+      "method": "PATCH",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/clarifications/{clarificationId}",
+      "auth": true,
+      "requestBody": {
+        "userAnswer": "string nullable by DTO; should be non-empty in UI"
+      },
+      "responses": {
+        "200": "SrsRequirementClarificationModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "srsRequirementRefine": {
+      "method": "POST",
+      "path": "/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId}/refine",
+      "auth": true,
+      "requestBody": null,
+      "responses": {
+        "202": {
+          "jobId": "guid",
+          "message": "string"
+        },
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "testOrderProposalCreate": {
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/order-proposals",
+      "auth": true,
+      "requestBody": {
+        "specificationId": "guid required",
+        "selectedEndpointIds": "guid[] optional",
+        "source": "ProposalSource string optional",
+        "llmModel": "string optional",
+        "reasoningNote": "string optional"
+      },
+      "responses": {
+        "201": "ApiTestOrderProposalModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "testOrderProposalApprove": {
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+      "auth": true,
+      "requestBody": {
+        "rowVersion": "base64 string required",
+        "reviewNotes": "string optional"
+      },
+      "responses": {
+        "200": "ApiTestOrderProposalModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails",
+        "409": "ProblemDetails"
+      }
+    },
+    "testGenerationTrigger": {
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/generate-tests",
+      "auth": true,
+      "requestBody": null,
+      "responses": {
+        "202": "GenerateTestsAcceptedResponse",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails"
+      }
+    },
+    "testGenerationStatus": {
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/generation-status",
+      "auth": true,
+      "queryParams": {
+        "jobId": "guid optional; if omitted backend uses Guid.Empty and resolves by suite behavior in query handler"
+      },
+      "responses": {
+        "200": "GenerationJobStatusDto",
+        "404": "ProblemDetails"
+      }
+    },
+    "aiGeneratedTestCasesCallback": {
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-cases/from-ai",
+      "auth": false,
+      "headers": {
+        "x-callback-api-key": "required shared secret"
+      },
+      "frontendShouldCall": false,
+      "requestBody": {
+        "testCases": "AiGeneratedTestCaseDto[] required non-empty"
+      },
+      "responses": {
+        "204": "empty",
+        "400": "string error",
+        "401": "empty"
+      }
+    },
+    "testRunStart": {
+      "method": "POST",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "auth": true,
+      "requestBody": {
+        "environmentId": "guid nullable; default environment is used when null",
+        "selectedTestCaseIds": "guid[] nullable; null or empty runs all enabled suite cases",
+        "strictValidation": "boolean default false; true maps to internal SrsStrict",
+        "retryPolicy": "TestRunRetryPolicyModel nullable; when provided, overrides scalar maxRetryAttempts/retryFailedDependencies/rerunSkippedCases",
+        "maxRetryAttempts": "integer 0..3 default 3 when body object is supplied",
+        "retryFailedDependencies": "boolean default true; JSON key maps to EnableRetry",
+        "rerunSkippedCases": "boolean default true"
+      },
+      "doNotSend": [
+        "validationProfile",
+        "enableRetry"
+      ],
+      "requestExample": {
+        "environmentId": null,
+        "selectedTestCaseIds": null,
+        "strictValidation": true,
+        "retryPolicy": {
+          "maxRetryAttempts": 2,
+          "retryFailedDependencies": true,
+          "rerunSkippedCases": true
+        }
+      },
+      "responses": {
+        "201": "TestRunResultModel",
+        "400": "ProblemDetails",
+        "404": "ProblemDetails",
+        "409": "ProblemDetails"
+      }
+    },
+    "testRunsList": {
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs",
+      "auth": true,
+      "queryParams": {
+        "pageNumber": "integer default 1",
+        "pageSize": "integer default 20",
+        "status": "string optional; Pending, Running, Completed, Failed, Cancelled"
+      },
+      "responses": {
+        "200": "Paged<TestRunModel>"
+      }
+    },
+    "testRunResultsGet": {
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/test-runs/{runId}/results",
+      "auth": true,
+      "responses": {
+        "200": "TestRunResultModel",
+        "404": "ProblemDetails",
+        "409": "ProblemDetails when run is not ready for detailed results"
+      }
+    },
+    "traceabilityGet": {
+      "method": "GET",
+      "path": "/api/projects/{projectId}/test-suites/{suiteId}/traceability",
+      "auth": true,
+      "queryParams": {
+        "testRunId": "guid optional; when omitted, latest Completed or Failed run is used"
+      },
+      "responses": {
+        "200": "TraceabilityMatrix",
+        "404": "ProblemDetails"
+      }
+    }
+  },
+  "schemas": {
+    "TestSuiteScopeModel": {
+      "id": "guid",
+      "projectId": "guid",
+      "apiSpecId": "guid | null",
+      "name": "string",
+      "description": "string | null",
+      "generationType": "integer GenerationType",
+      "status": "integer TestSuiteStatus",
+      "approvalStatus": "integer ApprovalStatus",
+      "selectedEndpointIds": "guid[]",
+      "endpointBusinessContexts": "{ [endpointId: guid]: string }",
+      "globalBusinessRules": "string | null",
+      "selectedEndpointCount": "integer",
+      "testCaseCount": "integer",
+      "createdById": "guid",
+      "createdDateTime": "ISO8601",
+      "updatedDateTime": "ISO8601 | null",
+      "rowVersion": "base64 string | null"
+    },
+    "SrsDocumentModel": {
+      "id": "guid",
+      "projectId": "guid",
+      "testSuiteId": "guid | null",
+      "title": "string",
+      "sourceType": "integer SrsSourceType",
+      "rawContent": "string | null",
+      "storageFileId": "guid | null",
+      "analysisStatus": "integer SrsAnalysisStatus",
+      "analyzedAt": "ISO8601 | null",
+      "createdById": "guid",
+      "createdDateTime": "ISO8601",
+      "updatedDateTime": "ISO8601 | null",
+      "requirements": "SrsRequirementModel[]",
+      "latestJobId": "guid | null"
+    },
+    "SrsRequirementModel": {
+      "id": "guid",
+      "srsDocumentId": "guid",
+      "requirementCode": "string",
+      "title": "string",
+      "description": "string | null",
+      "requirementType": "integer SrsRequirementType",
+      "testableConstraints": "string | null",
+      "assumptions": "string | null",
+      "ambiguities": "string | null",
+      "confidenceScore": "number | null",
+      "endpointId": "guid | null",
+      "mappedEndpointPath": "string | null",
+      "displayOrder": "integer",
+      "isReviewed": "boolean",
+      "refinedConstraints": "string | null",
+      "refinedConfidenceScore": "number | null",
+      "refinementRound": "integer"
+    },
+    "SrsAnalysisJobModel": {
+      "id": "guid",
+      "srsDocumentId": "guid",
+      "status": "integer SrsAnalysisJobStatus",
+      "jobType": "integer SrsAnalysisJobType",
+      "triggeredById": "guid",
+      "queuedAt": "ISO8601",
+      "triggeredAt": "ISO8601 | null",
+      "completedAt": "ISO8601 | null",
+      "requirementsExtracted": "integer | null",
+      "errorMessage": "string | null"
+    },
+    "SrsRequirementClarificationModel": {
+      "id": "guid",
+      "srsRequirementId": "guid",
+      "ambiguitySource": "string | null",
+      "question": "string",
+      "suggestedOptions": "string | null",
+      "userAnswer": "string | null",
+      "isAnswered": "boolean",
+      "isCritical": "boolean",
+      "displayOrder": "integer",
+      "answeredAt": "ISO8601 | null",
+      "answeredById": "guid | null"
+    },
+    "GenerateTestsAcceptedResponse": {
+      "jobId": "guid",
+      "testSuiteId": "guid",
+      "mode": "string",
+      "message": "string"
+    },
+    "GenerationJobStatusDto": {
+      "jobId": "guid",
+      "testSuiteId": "guid",
+      "status": "string GenerationJobStatus",
+      "queuedAt": "ISO8601",
+      "triggeredAt": "ISO8601 | null",
+      "completedAt": "ISO8601 | null",
+      "testCasesGenerated": "integer | null",
+      "errorMessage": "string | null",
+      "webhookName": "string | null"
+    },
+    "AiGeneratedTestCaseDto": {
+      "endpointId": "guid | null",
+      "name": "string | null",
+      "description": "string | null",
+      "testType": "string default HappyPath; accepted values HappyPath, Boundary, Negative, Performance, Security",
+      "priority": "string default Medium; accepted values Critical, High, Medium, Low",
+      "orderIndex": "integer",
+      "tags": "string | null; JSON array string or comma-separated string",
+      "request": "AiTestCaseRequestDto | null",
+      "expectation": "AiTestCaseExpectationDto | null",
+      "variables": "AiTestCaseVariableDto[]",
+      "coveredRequirementIds": "guid[]",
+      "traceabilityScore": "number | null",
+      "mappingRationale": "string | null"
+    },
+    "AiTestCaseRequestDto": {
+      "httpMethod": "string default GET; GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS",
+      "url": "string | null",
+      "headers": "string | null; JSON object string, e.g. \"{}\"",
+      "pathParams": "string | null; JSON object string, e.g. \"{}\"",
+      "queryParams": "string | null; JSON object string, e.g. \"{}\"",
+      "bodyType": "string default None; None, json, formData, urlEncoded, raw",
+      "body": "string | null",
+      "timeout": "integer default 30000"
+    },
+    "AiTestCaseExpectationDto": {
+      "expectedStatus": "string default \"[200]\"; JSON array string, e.g. \"[200,201]\"",
+      "responseSchema": "string | null; JSON schema string",
+      "headerChecks": "string | null; JSON object string",
+      "bodyContains": "string | null; JSON array string, e.g. \"[\\\"ok\\\"]\"",
+      "bodyNotContains": "string | null; JSON array string, e.g. \"[\\\"error\\\"]\"",
+      "jsonPathChecks": "string | null; JSON object string, e.g. \"{\\\"$.data.id\\\":\\\"123\\\"}\"",
+      "maxResponseTime": "integer | null"
+    },
+    "AiTestCaseVariableDto": {
+      "variableName": "string | null",
+      "extractFrom": "string | null; responsebody, response_body, body, requestbody, request_body, responseheader, response_header, header, status",
+      "jsonPath": "string | null",
+      "headerName": "string | null",
+      "regex": "string | null",
+      "defaultValue": "string | null"
+    },
+    "TestRunRetryPolicyModel": {
+      "maxRetryAttempts": "integer default 0, server clamp max 3",
+      "retryFailedDependencies": "boolean default true; maps to EnableRetry",
+      "rerunSkippedCases": "boolean default true"
+    },
+    "TestRunResultModel": {
+      "run": "TestRunModel",
+      "resultsSource": "string default cache",
+      "executedAt": "ISO8601",
+      "resolvedEnvironmentName": "string | null",
+      "cases": "TestCaseRunResultModel[]",
+      "attempts": "TestCaseExecutionAttemptModel[]",
+      "attemptChildrenMap": "{ [executionAttemptId: guid]: guid[] }"
+    },
+    "TestRunModel": {
+      "id": "guid",
+      "testSuiteId": "guid",
+      "environmentId": "guid",
+      "runNumber": "integer",
+      "status": "string TestRunStatus",
+      "startedAt": "ISO8601 | null",
+      "completedAt": "ISO8601 | null",
+      "totalTests": "integer",
+      "passedCount": "integer",
+      "failedCount": "integer",
+      "skippedCount": "integer",
+      "durationMs": "integer",
+      "resultsExpireAt": "ISO8601 | null",
+      "hasDetailedResults": "boolean",
+      "createdDateTime": "ISO8601",
+      "updatedDateTime": "ISO8601 | null"
+    },
+    "TestCaseRunResultModel": {
+      "testCaseId": "guid",
+      "endpointId": "guid | null",
+      "name": "string | null",
+      "testType": "string | null",
+      "orderIndex": "integer",
+      "status": "string; Passed, Failed, Skipped",
+      "executionAttempt": "integer",
+      "httpStatusCode": "integer | null",
+      "durationMs": "integer",
+      "resolvedUrl": "string | null",
+      "httpMethod": "string | null",
+      "bodyType": "string | null",
+      "requestBody": "string | null",
+      "queryParams": "{ [key: string]: string }",
+      "timeoutMs": "integer",
+      "expectedStatus": "string | null",
+      "requestHeaders": "{ [key: string]: string }",
+      "responseHeaders": "{ [key: string]: string }",
+      "responseBodyPreview": "string | null",
+      "failureReasons": "ValidationFailureModel[]",
+      "warnings": "ValidationWarningModel[]",
+      "hasWarnings": "boolean computed from warnings count",
+      "checksPerformed": "integer",
+      "checksSkipped": "integer",
+      "extractedVariables": "{ [key: string]: string }",
+      "dependencyIds": "guid[]",
+      "skippedBecauseDependencyIds": "guid[]",
+      "skippedCause": "string | null",
+      "statusCodeMatched": "boolean",
+      "schemaMatched": "boolean | null",
+      "headerChecksPassed": "boolean | null",
+      "bodyContainsPassed": "boolean | null",
+      "bodyNotContainsPassed": "boolean | null",
+      "jsonPathChecksPassed": "boolean | null",
+      "responseTimePassed": "boolean | null"
+    },
+    "TestCaseExecutionAttemptModel": {
+      "executionAttemptId": "guid",
+      "testRunId": "guid",
+      "testCaseId": "guid",
+      "parentAttemptId": "guid | null",
+      "attemptNumber": "integer",
+      "retryReason": "string | null",
+      "replayedSkippedCaseIds": "guid[]",
+      "dependencyRootCauseIds": "guid[]",
+      "retryPolicy": "TestRunRetryPolicyModel",
+      "status": "string | null",
+      "skippedCause": "string | null",
+      "dependencyRootCause": "string | null",
+      "startedAt": "ISO8601",
+      "completedAt": "ISO8601 | null",
+      "durationMs": "integer",
+      "failureReasons": "ValidationFailureModel[]",
+      "isReplay": "boolean computed from retryReason containing Replay"
+    },
+    "ValidationFailureModel": {
+      "code": "string | null",
+      "message": "string | null",
+      "target": "string | null",
+      "expected": "string | null",
+      "actual": "string | null"
+    },
+    "ValidationWarningModel": {
+      "code": "string | null",
+      "message": "string | null",
+      "target": "string | null"
+    },
+    "PagedTestRunModel": {
+      "totalItems": "integer",
+      "items": "TestRunModel[]",
+      "page": "integer",
+      "pageSize": "integer",
+      "totalPages": "integer",
+      "hasPreviousPage": "boolean",
+      "hasNextPage": "boolean"
+    },
+    "TraceabilityMatrix": {
+      "testSuiteId": "guid",
+      "srsDocumentId": "guid | null",
+      "requirements": "TraceabilityRequirementRow[]",
+      "totalRequirements": "integer",
+      "coveredRequirements": "integer",
+      "uncoveredRequirements": "integer",
+      "coveragePercent": "number",
+      "evidenceRunId": "guid | null",
+      "validatedRequirements": "integer",
+      "violatedRequirements": "integer",
+      "partialRequirements": "integer",
+      "unverifiedRequirements": "integer",
+      "skippedOnlyRequirements": "integer",
+      "inconclusiveRequirements": "integer",
+      "validationPercent": "number; -1 when no evidence run or no covered requirements"
+    },
+    "TraceabilityRequirementRow": {
+      "requirementId": "guid",
+      "requirementCode": "string",
+      "title": "string",
+      "requirementType": "integer SrsRequirementType",
+      "confidenceScore": "number | null",
+      "isReviewed": "boolean",
+      "isCovered": "boolean",
+      "testCases": "TraceabilityTestCaseRef[]",
+      "validationStatus": "integer RequirementValidationStatus",
+      "validationSummary": "string | null",
+      "passedTestCaseCount": "integer",
+      "failedTestCaseCount": "integer",
+      "skippedTestCaseCount": "integer",
+      "unverifiedTestCaseCount": "integer"
+    },
+    "TraceabilityTestCaseRef": {
+      "testCaseId": "guid",
+      "testCaseName": "string",
+      "traceabilityScore": "number | null",
+      "mappingRationale": "string | null",
+      "lastRunStatus": "string | null; Passed, Failed, Skipped",
+      "lastRunId": "guid | null",
+      "lastRunAt": "ISO8601 | null",
+      "httpStatusCode": "integer | null",
+      "failureCodes": "string[] | null",
+      "failureSummary": "string | null",
+      "hasAdaptiveWarning": "boolean",
+      "warningCodes": "string[] | null"
+    }
+  },
+  "examples": {
+    "createSuiteThenSrs": {
+      "createSuiteRequest": {
+        "name": "Checkout SRS Suite",
+        "description": "Suite generated from SRS",
+        "apiSpecId": "22222222-2222-2222-2222-222222222222",
+        "generationType": "LLMAssisted",
+        "selectedEndpointIds": [
+          "33333333-3333-3333-3333-333333333333"
+        ],
+        "endpointBusinessContexts": {},
+        "globalBusinessRules": "Use SRS constraints as expected behavior."
+      },
+      "createSrsRequest": {
+        "title": "Checkout SRS",
+        "testSuiteId": "11111111-1111-1111-1111-111111111111",
+        "sourceType": 0,
+        "rawContent": "The system shall allow authenticated users to place orders.",
+        "storageFileId": null
+      }
+    },
+    "triggerGeneration": {
+      "request": {
+        "method": "POST",
+        "path": "/api/test-suites/11111111-1111-1111-1111-111111111111/generate-tests",
+        "body": null
+      },
+      "response202": {
+        "jobId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "testSuiteId": "11111111-1111-1111-1111-111111111111",
+        "mode": "callback",
+        "message": "Da tao job va dua yeu cau trigger n8n vao hang doi. Su dung GET /generation-status de kiem tra trang thai."
+      }
+    },
+    "n8nAiCallbackPayload": {
+      "method": "POST",
+      "path": "/api/test-suites/11111111-1111-1111-1111-111111111111/test-cases/from-ai",
+      "headers": {
+        "x-callback-api-key": "<secret>"
+      },
+      "body": {
+        "testCases": [
+          {
+            "endpointId": "33333333-3333-3333-3333-333333333333",
+            "name": "POST /api/orders creates order for authenticated user",
+            "description": "Covers checkout creation requirement",
+            "testType": "HappyPath",
+            "priority": "High",
+            "orderIndex": 1,
+            "tags": "[\"srs\",\"checkout\"]",
+            "request": {
+              "httpMethod": "POST",
+              "url": "/api/orders",
+              "headers": "{\"Authorization\":\"Bearer {{authToken}}\"}",
+              "pathParams": "{}",
+              "queryParams": "{}",
+              "bodyType": "json",
+              "body": "{\"productId\":\"{{productId}}\",\"quantity\":1}",
+              "timeout": 30000
+            },
+            "expectation": {
+              "expectedStatus": "[201]",
+              "responseSchema": null,
+              "headerChecks": "{}",
+              "bodyContains": "[\"order\"]",
+              "bodyNotContains": "[\"error\"]",
+              "jsonPathChecks": "{}",
+              "maxResponseTime": null
+            },
+            "variables": [
+              {
+                "variableName": "orderId",
+                "extractFrom": "ResponseBody",
+                "jsonPath": "$.data.id",
+                "headerName": null,
+                "regex": null,
+                "defaultValue": null
+              }
+            ],
+            "coveredRequirementIds": [
+              "44444444-4444-4444-4444-444444444444"
+            ],
+            "traceabilityScore": 0.95,
+            "mappingRationale": "Directly validates checkout order creation from the SRS."
+          }
+        ]
+      }
+    },
+    "startStrictRun": {
+      "request": {
+        "method": "POST",
+        "path": "/api/test-suites/11111111-1111-1111-1111-111111111111/test-runs",
+        "body": {
+          "environmentId": null,
+          "selectedTestCaseIds": null,
+          "strictValidation": true,
+          "retryPolicy": {
+            "maxRetryAttempts": 2,
+            "retryFailedDependencies": true,
+            "rerunSkippedCases": true
+          }
+        }
+      },
+      "responseStatus": 201,
+      "responseBody": "TestRunResultModel"
+    },
+    "traceability": {
+      "request": {
+        "method": "GET",
+        "path": "/api/projects/99999999-9999-9999-9999-999999999999/test-suites/11111111-1111-1111-1111-111111111111/traceability?testRunId=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      },
+      "importantFields": [
+        "requirements[].requirementCode",
+        "requirements[].title",
+        "requirements[].validationStatus",
+        "requirements[].testCases[].testCaseName",
+        "requirements[].testCases[].lastRunStatus"
+      ]
+    }
+  },
+  "antiMismatchChecklist": [
+    "Create suite body has apiSpecId and selectedEndpointIds; no srsDocumentId.",
+    "Create SRS document body has testSuiteId to attach to suite.",
+    "Generate tests route is /api/test-suites/{suiteId}/generate-tests.",
+    "Generation status route is /api/test-suites/{suiteId}/generation-status.",
+    "Start run route is /api/test-suites/{suiteId}/test-runs.",
+    "Start run returns 201, not 200.",
+    "Start run response is TestRunResultModel directly, not { data: ... }.",
+    "Start run uses strictValidation, not validationProfile.",
+    "Start run uses retryFailedDependencies, not enableRetry.",
+    "Traceability response uses requirementCode/title/testCaseName, not requirementKey/description/name.",
+    "Traceability validationStatus is numeric by current serializer.",
+    "AI callback body has no testSuiteId because suiteId is in the route.",
+    "AI callback JSON-shaped fields are strings containing JSON."
+  ]
+}
