@@ -75,18 +75,26 @@ public class DeleteExecutionEnvironmentCommandHandler : ICommandHandler<DeleteEx
             throw new NotFoundException($"Không tìm thấy execution environment với mã '{command.EnvironmentId}'.");
         }
 
-        if (string.IsNullOrEmpty(command.RowVersion))
-        {
-            throw new ValidationException("RowVersion là bắt buộc khi xóa.");
-        }
+        // RowVersion is required ONLY when the DB row already has a rowVersion (optimistic concurrency).
+        // If the DB row has null rowVersion (rows created before rowVersion column was populated),
+        // skip concurrency check and allow unconditional delete.
+        bool dbRowHasVersion = env.RowVersion != null && env.RowVersion.Length > 0;
 
-        try
+        if (dbRowHasVersion)
         {
-            _envRepository.SetRowVersion(env, Convert.FromBase64String(command.RowVersion));
-        }
-        catch (FormatException)
-        {
-            throw new ValidationException("RowVersion không hợp lệ.");
+            if (string.IsNullOrEmpty(command.RowVersion))
+            {
+                throw new ValidationException("RowVersion là bắt buộc khi xóa.");
+            }
+
+            try
+            {
+                _envRepository.SetRowVersion(env, Convert.FromBase64String(command.RowVersion));
+            }
+            catch (FormatException)
+            {
+                throw new ValidationException("RowVersion không hợp lệ.");
+            }
         }
 
         try
