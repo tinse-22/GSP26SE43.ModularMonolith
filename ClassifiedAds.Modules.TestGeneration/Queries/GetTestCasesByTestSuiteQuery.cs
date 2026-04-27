@@ -77,7 +77,7 @@ public class GetTestCasesByTestSuiteQueryHandler : IQueryHandler<GetTestCasesByT
             .Include(x => x.Expectation)
             .Include(x => x.Variables)
             .Include(x => x.Dependencies)
-            .OrderBy(x => x.OrderIndex);
+            .OrderBy(x => x.IsOrderCustomized ? x.CustomOrderIndex ?? x.OrderIndex : x.OrderIndex);
 
         var testCases = await _testCaseRepository.ToListAsync(queryable);
 
