@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.TestExecution.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -19,6 +20,12 @@ public class GetSrsTraceabilityQuery : IQuery<TraceabilityMatrix>
     public Guid TestSuiteId { get; set; }
 
     public Guid CurrentUserId { get; set; }
+
+    /// <summary>
+    /// Optional: specify a particular test run to use for execution evidence.
+    /// When null, the latest finished run for the suite is used.
+    /// </summary>
+    public Guid? TestRunId { get; set; }
 }
 
 public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQuery, TraceabilityMatrix>
@@ -28,19 +35,22 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
     private readonly IRepository<SrsRequirement, Guid> _requirementRepository;
     private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
+    private readonly ITestCaseExecutionEvidenceReadGatewayService _evidenceGateway;
 
     public GetSrsTraceabilityQueryHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<SrsDocument, Guid> srsDocumentRepository,
         IRepository<SrsRequirement, Guid> requirementRepository,
         IRepository<TestCaseRequirementLink, Guid> linkRepository,
-        IRepository<TestCase, Guid> testCaseRepository)
+        IRepository<TestCase, Guid> testCaseRepository,
+        ITestCaseExecutionEvidenceReadGatewayService evidenceGateway)
     {
         _suiteRepository = suiteRepository;
         _srsDocumentRepository = srsDocumentRepository;
         _requirementRepository = requirementRepository;
         _linkRepository = linkRepository;
         _testCaseRepository = testCaseRepository;
+        _evidenceGateway = evidenceGateway;
     }
 
     public async Task<TraceabilityMatrix> HandleAsync(GetSrsTraceabilityQuery query, CancellationToken cancellationToken = default)
@@ -108,19 +118,44 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
         var linksByReq = links.GroupBy(l => l.SrsRequirementId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        // Fetch execution evidence via contract gateway (never touches TestExecution DbContext directly).
+        var evidence = await _evidenceGateway.GetLatestEvidenceByTestSuiteAsync(
+            query.TestSuiteId, query.TestRunId, cancellationToken);
+
+        var evidenceByTestCase = evidence
+            .GroupBy(e => e.TestCaseId)
+            .ToDictionary(g => g.Key, g => g.First()); // latest evidence per test case
+
+        var evidenceRunId = evidence.FirstOrDefault()?.TestRunId;
+
         var rows = requirements.Select(req =>
         {
             var reqLinks = linksByReq.GetValueOrDefault(req.Id, new List<TestCaseRequirementLink>());
             var testCaseRefs = reqLinks
                 .Where(l => testCaseDict.ContainsKey(l.TestCaseId))
-                .Select(l => new TraceabilityTestCaseRef
+                .Select(l =>
                 {
-                    TestCaseId = l.TestCaseId,
-                    TestCaseName = testCaseDict[l.TestCaseId].Name,
-                    TraceabilityScore = l.TraceabilityScore,
-                    MappingRationale = l.MappingRationale,
+                    evidenceByTestCase.TryGetValue(l.TestCaseId, out var ev);
+                    return new TraceabilityTestCaseRef
+                    {
+                        TestCaseId = l.TestCaseId,
+                        TestCaseName = testCaseDict[l.TestCaseId].Name,
+                        TraceabilityScore = l.TraceabilityScore,
+                        MappingRationale = l.MappingRationale,
+                        LastRunStatus = ev?.Status,
+                        LastRunId = ev?.TestRunId,
+                        LastRunAt = ev?.CompletedAt,
+                        HttpStatusCode = ev?.HttpStatusCode,
+                        FailureCodes = ev?.FailureCodes?.ToList(),
+                        FailureSummary = ev?.FailureSummary,
+                        HasAdaptiveWarning = ev?.HasAdaptiveWarning ?? false,
+                        WarningCodes = ev?.WarningCodes?.ToList(),
+                    };
                 })
                 .ToList();
+
+            var validationStatus = ComputeValidationStatus(testCaseRefs);
+            var (passed, failed, skipped, unverified) = CountByStatus(testCaseRefs);
 
             return new TraceabilityRequirementRow
             {
@@ -132,11 +167,28 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
                 IsReviewed = req.IsReviewed,
                 IsCovered = testCaseRefs.Any(),
                 TestCases = testCaseRefs,
+                ValidationStatus = validationStatus,
+                ValidationSummary = BuildValidationSummary(validationStatus, passed, failed, skipped, unverified),
+                PassedTestCaseCount = passed,
+                FailedTestCaseCount = failed,
+                SkippedTestCaseCount = skipped,
+                UnverifiedTestCaseCount = unverified,
             };
         }).ToList();
 
         var covered = rows.Count(r => r.IsCovered);
         var total = rows.Count;
+
+        var validatedCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.Validated);
+        var violatedCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.Violated);
+        var partialCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.Partial);
+        var unverifiedCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.Unverified);
+        var skippedOnlyCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.SkippedOnly);
+        var inconclusiveCount = rows.Count(r => r.ValidationStatus == RequirementValidationStatus.Inconclusive);
+
+        var validationPercent = evidenceRunId.HasValue && covered > 0
+            ? Math.Round((double)validatedCount / covered * 100, 1)
+            : -1;
 
         return new TraceabilityMatrix
         {
@@ -147,6 +199,102 @@ public class GetSrsTraceabilityQueryHandler : IQueryHandler<GetSrsTraceabilityQu
             CoveredRequirements = covered,
             UncoveredRequirements = total - covered,
             CoveragePercent = total > 0 ? Math.Round((double)covered / total * 100, 1) : 0,
+            EvidenceRunId = evidenceRunId,
+            ValidatedRequirements = validatedCount,
+            ViolatedRequirements = violatedCount,
+            PartialRequirements = partialCount,
+            UnverifiedRequirements = unverifiedCount,
+            SkippedOnlyRequirements = skippedOnlyCount,
+            InconclusiveRequirements = inconclusiveCount,
+            ValidationPercent = validationPercent,
+        };
+    }
+
+    // ── Deterministic RequirementValidationStatus formula ───────────────────
+
+    private static RequirementValidationStatus ComputeValidationStatus(
+        IReadOnlyList<TraceabilityTestCaseRef> testCaseRefs)
+    {
+        if (testCaseRefs == null || testCaseRefs.Count == 0)
+        {
+            return RequirementValidationStatus.Uncovered;
+        }
+
+        var hasAnyResult = testCaseRefs.Any(r => r.LastRunStatus != null);
+        if (!hasAnyResult)
+        {
+            return RequirementValidationStatus.Unverified;
+        }
+
+        var passedCount = testCaseRefs.Count(r =>
+            string.Equals(r.LastRunStatus, "Passed", StringComparison.OrdinalIgnoreCase));
+        var failedCount = testCaseRefs.Count(r =>
+            string.Equals(r.LastRunStatus, "Failed", StringComparison.OrdinalIgnoreCase));
+        var skippedCount = testCaseRefs.Count(r =>
+            string.Equals(r.LastRunStatus, "Skipped", StringComparison.OrdinalIgnoreCase));
+        var unverifiedCount = testCaseRefs.Count(r => r.LastRunStatus == null);
+
+        // Any failure → VIOLATED
+        if (failedCount > 0)
+        {
+            return RequirementValidationStatus.Violated;
+        }
+
+        // All skipped, no passes
+        if (passedCount == 0 && skippedCount > 0 && unverifiedCount == 0)
+        {
+            return RequirementValidationStatus.SkippedOnly;
+        }
+
+        // All passed (none skipped or unverified)
+        if (passedCount > 0 && skippedCount == 0 && unverifiedCount == 0)
+        {
+            return RequirementValidationStatus.Validated;
+        }
+
+        // Mix of passed and skipped/unverified
+        if (passedCount > 0 && (skippedCount > 0 || unverifiedCount > 0))
+        {
+            return RequirementValidationStatus.Partial;
+        }
+
+        return RequirementValidationStatus.Inconclusive;
+    }
+
+    private static (int passed, int failed, int skipped, int unverified) CountByStatus(
+        IReadOnlyList<TraceabilityTestCaseRef> testCaseRefs)
+    {
+        int passed = 0, failed = 0, skipped = 0, unverified = 0;
+        foreach (var r in testCaseRefs ?? Array.Empty<TraceabilityTestCaseRef>())
+        {
+            if (r.LastRunStatus == null) { unverified++; continue; }
+            if (string.Equals(r.LastRunStatus, "Passed", StringComparison.OrdinalIgnoreCase)) { passed++; continue; }
+            if (string.Equals(r.LastRunStatus, "Failed", StringComparison.OrdinalIgnoreCase)) { failed++; continue; }
+            if (string.Equals(r.LastRunStatus, "Skipped", StringComparison.OrdinalIgnoreCase)) { skipped++; continue; }
+            unverified++;
+        }
+
+        return (passed, failed, skipped, unverified);
+    }
+
+    private static string BuildValidationSummary(
+        RequirementValidationStatus status,
+        int passed,
+        int failed,
+        int skipped,
+        int unverified)
+    {
+        return status switch
+        {
+            RequirementValidationStatus.Uncovered => "No test cases linked.",
+            RequirementValidationStatus.Unverified => "Linked but not yet executed.",
+            RequirementValidationStatus.Validated => $"All {passed} test case(s) passed.",
+            RequirementValidationStatus.Violated => $"{failed} test case(s) failed.",
+            RequirementValidationStatus.Partial => $"{passed} passed, {skipped + unverified} skipped/unverified.",
+            RequirementValidationStatus.SkippedOnly => $"All {skipped} test case(s) skipped.",
+            RequirementValidationStatus.Inconclusive => "Insufficient execution data.",
+            _ => string.Empty,
         };
     }
 }
+

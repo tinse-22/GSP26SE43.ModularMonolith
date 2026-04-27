@@ -25,7 +25,10 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
     private readonly Mock<IRepository<TestSuiteVersion, Guid>> _versionRepoMock;
     private readonly Mock<IRepository<TestGenerationJob, Guid>> _jobRepoMock;
+    private readonly Mock<IRepository<TestCaseRequirementLink, Guid>> _linkRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsRequirementRepoMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
+    private readonly Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>> _loggerMock;
     private readonly SaveAiGeneratedTestCasesCommandHandler _handler;
 
     public SaveAiGeneratedTestCasesCommandHandlerTests()
@@ -37,7 +40,10 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
         _versionRepoMock = new Mock<IRepository<TestSuiteVersion, Guid>>();
         _jobRepoMock = new Mock<IRepository<TestGenerationJob, Guid>>();
+        _linkRepoMock = new Mock<IRepository<TestCaseRequirementLink, Guid>>();
+        _srsRequirementRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
+        _loggerMock = new Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>>();
 
         _testCaseRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
         _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
@@ -55,6 +61,21 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _jobRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestGenerationJob>().AsQueryable());
         _jobRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestGenerationJob>>()))
             .ReturnsAsync((TestGenerationJob)null);
+        _linkRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequirementLink>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _linkRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<TestCaseRequirementLink>().AsQueryable());
+        _linkRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseRequirementLink>>()))
+            .ReturnsAsync(new List<TestCaseRequirementLink>());
+        _linkRepoMock.Setup(x => x.BulkDeleteAsync(It.IsAny<IReadOnlyCollection<TestCaseRequirementLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // Default: no SRS requirements (suite has no SrsDocumentId)
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>().AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
+            .ReturnsAsync(new List<Guid>());
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -77,7 +98,9 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             _variableRepoMock.Object,
             _versionRepoMock.Object,
             _jobRepoMock.Object,
-            new Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>>().Object);
+            _linkRepoMock.Object,
+            _srsRequirementRepoMock.Object,
+            _loggerMock.Object);
     }
 
     [Fact]
@@ -377,6 +400,132 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
 
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*At least one*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_SetPrimaryRequirementId_WhenValidCoveredRequirementIds()
+    {
+        var srsDocId = Guid.NewGuid();
+        var reqId1 = Guid.NewGuid();
+        var reqId2 = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        // Requirement repo returns both valid IDs for this SRS document
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>
+            {
+                new() { Id = reqId1, SrsDocumentId = srsDocId },
+                new() { Id = reqId2, SrsDocumentId = srsDocId },
+            }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
+            .ReturnsAsync(new List<Guid> { reqId1, reqId2 });
+
+        TestCase capturedTestCase = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((tc, _) => capturedTestCase = tc)
+            .Returns(Task.CompletedTask);
+        _testCaseRepoMock.Setup(x => x.UpdateAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { reqId1, reqId2 };
+        command.TestCases[0].TraceabilityScore = 0.95f;
+        command.TestCases[0].MappingRationale = "LLM confirmed strong match.";
+
+        await _handler.HandleAsync(command);
+
+        // Two links created — one per valid requirement
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == reqId1
+                && l.TraceabilityScore == 0.95f
+                && l.MappingRationale == "LLM confirmed strong match."),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == reqId2),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // PrimaryRequirementId set on the test case update
+        _testCaseRepoMock.Verify(x => x.UpdateAsync(
+            It.Is<TestCase>(tc => tc.PrimaryRequirementId == reqId1),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_SkipInvalidRequirementIds_AndNotCreateLinks()
+    {
+        var srsDocId = Guid.NewGuid();
+        var validReqId = Guid.NewGuid();
+        var invalidReqId = Guid.NewGuid(); // does not belong to srsDocId
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>
+            {
+                new() { Id = validReqId, SrsDocumentId = srsDocId },
+            }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
+            .ReturnsAsync(new List<Guid> { validReqId });
+
+        _testCaseRepoMock.Setup(x => x.UpdateAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { validReqId, invalidReqId };
+
+        await _handler.HandleAsync(command);
+
+        // Only the valid requirement gets a link
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == validReqId),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == invalidReqId),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_LogWarning_WhenNoCoveredRequirementIds_ButSuiteHasSrsDoc()
+    {
+        var srsDocId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>().AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
+            .ReturnsAsync(new List<Guid>());
+
+        var command = CreateValidCommand(); // no coveredRequirementIds
+
+        await _handler.HandleAsync(command);
+
+        // No links created
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.IsAny<TestCaseRequirementLink>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        // Warning was logged
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString().Contains("coveredRequirementIds")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+            Times.AtLeastOnce);
     }
 
     private static TestSuite CreateSuite()

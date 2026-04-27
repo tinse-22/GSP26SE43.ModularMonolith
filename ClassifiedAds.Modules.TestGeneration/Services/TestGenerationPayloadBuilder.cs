@@ -61,7 +61,12 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "7. expectation.expectedStatus must be an array of integers.\n" +
         "8. HappyPath expectedStatus should prefer 2xx. Boundary/Negative should prefer 4xx (or 401/403/404 where appropriate).\n" +
         "9. Return complete request/expectation objects for each test case.\n" +
-        "10. If srsRequirements are provided in the input, populate coveredRequirementIds for each test case with the UUIDs of the requirements that the test case validates. Use an empty array if none apply.";
+        "10. If srsRequirements are provided in the input, populate coveredRequirementIds for each test case with the UUIDs of the requirements that the test case validates. Use an empty array if none apply.\n" +
+        "11. SRS CONSTRAINT RULE: When srsRequirements are provided, the expectation (expectedStatus, responseSchema, bodyContains, jsonPathChecks) MUST be derived from the requirement's effectiveConstraints field. " +
+        "Do NOT fabricate expectations that contradict effectiveConstraints.\n" +
+        "12. CONFIDENCE + AMBIGUITY RULE: If a requirement has confidenceScore < 0.6 or a non-empty ambiguities array, include a mappingRationale on the test case explaining what assumptions were made. " +
+        "Set traceabilityScore to the requirement's confidenceScore (or 0.5 if null).\n" +
+        "13. TRACABILITY SCORE RULE: For well-specified requirements (confidenceScore >= 0.6, no unresolved ambiguities), set traceabilityScore = 0.9 or higher.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -96,7 +101,9 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "        \"maxResponseTime\": null\n" +
         "      },\n" +
         "      \"variables\": [],\n" +
-        "      \"coveredRequirementIds\": [\"<requirement-uuid-1>\", \"<requirement-uuid-2>\"]\n" +
+        "      \"coveredRequirementIds\": [\"<requirement-uuid-1>\", \"<requirement-uuid-2>\"],\n" +
+        "      \"traceabilityScore\": 0.95,\n" +
+        "      \"mappingRationale\": \"<one-sentence explanation of why this test validates the linked requirements>\"\n" +
         "    }\n" +
         "  ],\n" +
         "  \"model\": \"<model name>\",\n" +
@@ -274,6 +281,13 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     Code = r.RequirementCode,
                     Title = r.Title,
                     Description = r.Description,
+                    RequirementType = r.RequirementType.ToString(),
+                    EffectiveConstraints = !string.IsNullOrWhiteSpace(r.RefinedConstraints)
+                        ? r.RefinedConstraints
+                        : r.TestableConstraints,
+                    Assumptions = r.Assumptions,
+                    Ambiguities = r.Ambiguities,
+                    ConfidenceScore = r.RefinedConfidenceScore ?? r.ConfidenceScore,
                 })
                 .ToList();
 

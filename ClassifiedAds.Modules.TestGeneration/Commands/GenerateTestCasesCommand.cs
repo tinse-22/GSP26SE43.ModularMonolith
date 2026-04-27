@@ -192,6 +192,35 @@ public class N8nSrsRequirement
     public string Code { get; set; }
     public string Title { get; set; }
     public string Description { get; set; }
+
+    /// <summary>
+    /// Requirement category: Functional | NonFunctional | Security | Performance | Constraint.
+    /// LLM should use this to select appropriate test types.
+    /// </summary>
+    public string RequirementType { get; set; }
+
+    /// <summary>
+    /// Effective testable constraints — RefinedConstraints if available, else TestableConstraints.
+    /// LLM must derive Expectation (expectedStatus, responseSchema, bodyChecks) from this field.
+    /// </summary>
+    public string EffectiveConstraints { get; set; }
+
+    /// <summary>
+    /// Explicit assumptions the LLM identified (JSON array string).
+    /// </summary>
+    public string Assumptions { get; set; }
+
+    /// <summary>
+    /// Ambiguities or unclear points flagged by LLM (JSON array string).
+    /// When present and unresolved, LLM should include a rationale/warning on generated test cases.
+    /// </summary>
+    public string Ambiguities { get; set; }
+
+    /// <summary>
+    /// Effective confidence score — RefinedConfidenceScore if available, else ConfidenceScore.
+    /// Low values (&lt; 0.6) indicate the generated expectation may need human review.
+    /// </summary>
+    public float? ConfidenceScore { get; set; }
 }
 
 public class N8nOrderedEndpoint

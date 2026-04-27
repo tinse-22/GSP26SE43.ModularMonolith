@@ -201,6 +201,30 @@ public class SrsRequirementClarificationModel
     }
 }
 
+public enum RequirementValidationStatus
+{
+    /// <summary>No test cases linked to this requirement.</summary>
+    Uncovered = 0,
+
+    /// <summary>Test cases linked but none have a finished execution result.</summary>
+    Unverified = 1,
+
+    /// <summary>All linked test cases Passed (no critical adaptive warnings).</summary>
+    Validated = 2,
+
+    /// <summary>At least one linked test case Failed.</summary>
+    Violated = 3,
+
+    /// <summary>Mix of Passed and (Skipped or Unverified) — no failures.</summary>
+    Partial = 4,
+
+    /// <summary>All linked test cases were Skipped.</summary>
+    SkippedOnly = 5,
+
+    /// <summary>Not enough information to determine a conclusive status.</summary>
+    Inconclusive = 6,
+}
+
 public class TraceabilityMatrix
 {
     public Guid TestSuiteId { get; set; }
@@ -216,6 +240,26 @@ public class TraceabilityMatrix
     public int UncoveredRequirements { get; set; }
 
     public double CoveragePercent { get; set; }
+
+    // ── Execution evidence summary fields ────────────────────────────────────
+
+    /// <summary>ID of the test run used to populate execution evidence (null when not available).</summary>
+    public Guid? EvidenceRunId { get; set; }
+
+    public int ValidatedRequirements { get; set; }
+
+    public int ViolatedRequirements { get; set; }
+
+    public int PartialRequirements { get; set; }
+
+    public int UnverifiedRequirements { get; set; }
+
+    public int SkippedOnlyRequirements { get; set; }
+
+    public int InconclusiveRequirements { get; set; }
+
+    /// <summary>Percentage of covered requirements that are Validated (0–100, -1 when no evidence run).</summary>
+    public double ValidationPercent { get; set; }
 }
 
 public class TraceabilityRequirementRow
@@ -235,6 +279,20 @@ public class TraceabilityRequirementRow
     public bool IsCovered { get; set; }
 
     public List<TraceabilityTestCaseRef> TestCases { get; set; } = new();
+
+    // ── Execution evidence summary fields ────────────────────────────────────
+
+    public RequirementValidationStatus ValidationStatus { get; set; } = RequirementValidationStatus.Uncovered;
+
+    public string ValidationSummary { get; set; }
+
+    public int PassedTestCaseCount { get; set; }
+
+    public int FailedTestCaseCount { get; set; }
+
+    public int SkippedTestCaseCount { get; set; }
+
+    public int UnverifiedTestCaseCount { get; set; }
 }
 
 public class TraceabilityTestCaseRef
@@ -246,4 +304,23 @@ public class TraceabilityTestCaseRef
     public float? TraceabilityScore { get; set; }
 
     public string MappingRationale { get; set; }
+
+    // ── Execution evidence fields ─────────────────────────────────────────────
+
+    /// <summary>Passed / Failed / Skipped / null when never executed.</summary>
+    public string LastRunStatus { get; set; }
+
+    public Guid? LastRunId { get; set; }
+
+    public DateTimeOffset? LastRunAt { get; set; }
+
+    public int? HttpStatusCode { get; set; }
+
+    public List<string> FailureCodes { get; set; }
+
+    public string FailureSummary { get; set; }
+
+    public bool HasAdaptiveWarning { get; set; }
+
+    public List<string> WarningCodes { get; set; }
 }

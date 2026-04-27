@@ -10,5 +10,5 @@ public interface IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
         ApiEndpointMetadataDto endpointMetadata = null,
-        bool strictMode = false);
+        ValidationProfile profile = ValidationProfile.Default);
 }

@@ -69,6 +69,18 @@ public class AiGeneratedTestCaseDto
     /// Populated by the LLM when the generation payload includes SRS requirements context.
     /// </summary>
     public List<Guid> CoveredRequirementIds { get; set; } = new();
+
+    /// <summary>
+    /// LLM-provided traceability score (0.0–1.0) for the primary covered requirement.
+    /// If null, defaults to 1.0 when saving.
+    /// </summary>
+    public float? TraceabilityScore { get; set; }
+
+    /// <summary>
+    /// LLM-generated rationale explaining why this test case covers the linked requirements.
+    /// If null, a default rationale is used.
+    /// </summary>
+    public string MappingRationale { get; set; }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -98,6 +110,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
     private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
@@ -109,6 +122,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestSuiteVersion, Guid> versionRepository,
         IRepository<TestGenerationJob, Guid> jobRepository,
         IRepository<TestCaseRequirementLink, Guid> linkRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
@@ -119,6 +133,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         _versionRepository = versionRepository;
         _jobRepository = jobRepository;
         _linkRepository = linkRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _logger = logger;
     }
 
@@ -150,6 +165,19 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
+            // Build a set of valid SRS requirement IDs for this suite (pre-load to avoid FK violations).
+            var validRequirementIds = new HashSet<Guid>();
+            if (suite.SrsDocumentId.HasValue)
+            {
+                var requirements = await _srsRequirementRepository.ToListAsync(
+                    _srsRequirementRepository.GetQueryableSet()
+                        .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
+                        .Select(x => x.Id));
+                foreach (var id in requirements)
+                {
+                    validRequirementIds.Add(id);
+                }
+            }
             // Replace any previously AI-generated test cases for this suite.
             var existing = await _testCaseRepository.ToListAsync(
                 _testCaseRepository.GetQueryableSet()
@@ -263,27 +291,57 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             }
 
             // Insert traceability links for test cases that reported coveredRequirementIds.
-            // Build a lookup: (dto index → persisted TestCase) using parallel list.
+            // Validate all IDs against the suite's SRS document to prevent FK violations.
             var dtoList = command.TestCases;
             for (var i = 0; i < dtoList.Count && i < persistedTestCases.Count; i++)
             {
                 var dto = dtoList[i];
-                if (dto.CoveredRequirementIds == null || dto.CoveredRequirementIds.Count == 0)
-                    continue;
-
                 var tc = persistedTestCases[i];
+
+                if (dto.CoveredRequirementIds == null || dto.CoveredRequirementIds.Count == 0)
+                {
+                    if (suite.SrsDocumentId.HasValue)
+                    {
+                        _logger.LogWarning(
+                            "TestCase '{Name}' (index {Index}) generated without coveredRequirementIds but suite has SrsDocumentId={SrsDocumentId}. Traceability will be incomplete.",
+                            tc.Name, i, suite.SrsDocumentId);
+                    }
+
+                    continue;
+                }
+
+                Guid? primaryReqId = null;
                 foreach (var reqId in dto.CoveredRequirementIds.Distinct())
                 {
                     if (reqId == Guid.Empty) continue;
+
+                    if (validRequirementIds.Count > 0 && !validRequirementIds.Contains(reqId))
+                    {
+                        _logger.LogWarning(
+                            "coveredRequirementId {ReqId} for TestCase '{Name}' does not belong to SrsDocumentId={SrsDocumentId}. Skipping link.",
+                            reqId, tc.Name, suite.SrsDocumentId);
+                        continue;
+                    }
+
                     var link = new TestCaseRequirementLink
                     {
                         Id = Guid.NewGuid(),
                         TestCaseId = tc.Id,
                         SrsRequirementId = reqId,
-                        TraceabilityScore = 1.0f,
-                        MappingRationale = "Auto-linked by LLM during test case generation.",
+                        TraceabilityScore = dto.TraceabilityScore ?? 1.0f,
+                        MappingRationale = !string.IsNullOrWhiteSpace(dto.MappingRationale)
+                            ? dto.MappingRationale
+                            : "Auto-linked by LLM during test case generation.",
                     };
                     await _linkRepository.AddAsync(link, ct);
+
+                    primaryReqId ??= reqId;
+                }
+
+                if (primaryReqId.HasValue && tc.PrimaryRequirementId == null)
+                {
+                    tc.PrimaryRequirementId = primaryReqId;
+                    await _testCaseRepository.UpdateAsync(tc, ct);
                 }
             }
 

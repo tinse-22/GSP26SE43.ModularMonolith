@@ -28,6 +28,13 @@ public class StartTestRunCommand : ICommand
 
     public bool StrictValidation { get; set; }
 
+    /// <summary>
+    /// Validation profile for this run. When set, takes precedence over <see cref="StrictValidation"/>.
+    /// Defaults to <see cref="ValidationProfile.Default"/> which preserves existing adaptive behaviour.
+    /// Use <see cref="ValidationProfile.SrsStrict"/> for SRS-driven test suites.
+    /// </summary>
+    public ValidationProfile ValidationProfile { get; set; } = ValidationProfile.Default;
+
     public int MaxRetryAttempts { get; set; } = 3;
 
     /// <summary>
@@ -222,12 +229,19 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         effectivePolicy.MaxRetryAttempts = Math.Min(effectivePolicy.MaxRetryAttempts, maxAllowedRetries);
 
         // 11. Execute via orchestrator (outside transaction).
+        // ValidationProfile takes precedence: if explicitly set beyond Default, use it;
+        // otherwise fall back to legacy StrictValidation bool for backward compatibility.
+        var effectiveProfile = command.ValidationProfile != ValidationProfile.Default
+            ? command.ValidationProfile
+            : command.StrictValidation ? ValidationProfile.SrsStrict : ValidationProfile.Default;
+
         command.Result = await _orchestrator.ExecuteAsync(
             run.Id,
             command.CurrentUserId,
             selectedIds.Count > 0 ? selectedIds : null,
             cancellationToken,
             command.StrictValidation,
-            effectivePolicy);
+            effectivePolicy,
+            effectiveProfile);
     }
 }

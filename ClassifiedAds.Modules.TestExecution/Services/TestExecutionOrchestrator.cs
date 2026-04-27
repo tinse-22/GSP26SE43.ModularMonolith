@@ -70,7 +70,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default,
         bool strictValidation = false,
-        TestRunRetryPolicyModel retryPolicy = null)
+        TestRunRetryPolicyModel retryPolicy = null,
+        ValidationProfile validationProfile = ValidationProfile.Default)
     {
         var run = await _runRepository.FirstOrDefaultAsync(
             _runRepository.GetQueryableSet().Where(x => x.Id == testRunId));
@@ -107,7 +108,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var effectivePolicy = retryPolicy ?? new TestRunRetryPolicyModel();
         var variableBag = new Dictionary<string, string>(resolvedEnv.Variables, StringComparer.OrdinalIgnoreCase);
         var context = new ExecutionContextState(
-            run.Id, effectivePolicy, strictValidation, resolvedEnv, variableBag, endpointMetadataMap);
+            run.Id, effectivePolicy, strictValidation, validationProfile, resolvedEnv, variableBag, endpointMetadataMap);
 
         _logger.LogInformation(
             "Test run started. RunId={RunId}, TotalCases={TotalCases}, Policy={Policy}",
@@ -440,7 +441,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
-        var validation = _validator.Validate(response, testCase, endpointMetadata, context.StrictValidation);
+        var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile);
 
         return new TestCaseExecutionResult
         {
@@ -484,63 +485,54 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         return (testCase.DependencyIds ?? Array.Empty<Guid>())
             .Where(depId =>
                 context.CaseResultMap.TryGetValue(depId, out var depResult)
-                && !IsDependencySatisfied(depResult))
+                && !DependencySatisfactionPolicy.IsSatisfied(depResult))
             .ToList();
     }
 
-    private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
+    /// <summary>
+    /// A case should be retried ONLY when it failed with a transient HTTP error:
+    /// <list type="bullet">
+    ///   <item>HTTP 408 (Request Timeout) or HTTP 429 (Too Many Requests)</item>
+    ///   <item>HTTP 5xx (server-side errors)</item>
+    ///   <item><c>HTTP_REQUEST_ERROR</c> — transport failure before any response was received</item>
+    /// </list>
+    /// Deterministic failures (4xx assertion mismatches, schema mismatches, pre-validation errors,
+    /// unresolved variables) are NOT retried — they will produce the same result on every attempt.
+    /// </summary>
+    private static bool ShouldRetryCase(TestCaseExecutionResult result, TestRunRetryPolicyModel retryPolicy)
     {
-        if (dependencyResult == null)
+        if (retryPolicy == null || retryPolicy.MaxRetryAttempts <= 0)
         {
             return false;
         }
 
-        if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(result?.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Transport error (no HTTP response at all) — always transient
+        var hasTransportError = result.FailureReasons?.Any(f =>
+            string.Equals(f?.Code, "HTTP_REQUEST_ERROR", StringComparison.OrdinalIgnoreCase)) == true;
+
+        if (hasTransportError)
         {
             return true;
         }
 
-        // A dependency is also considered satisfied when it received a 2xx HTTP status and any
-        // failures are only expectation mismatches — the data was still created and is available.
-        return dependencyResult.HttpStatusCode is >= 200 and < 300
-            && IsDependencyFailureOnlyExpectationMismatch(dependencyResult.FailureReasons);
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when every failure code is a pure expectation mismatch (the HTTP call
-    /// succeeded and data was likely written, so dependent cases can still proceed).
-    /// </summary>
-    private static bool IsDependencyFailureOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
-    {
-        if (failures == null || failures.Count == 0)
+        // HTTP 408 / 429 — timeout or rate limit
+        if (result.HttpStatusCode is 408 or 429)
         {
             return true;
         }
 
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        // HTTP 5xx — server-side error
+        if (result.HttpStatusCode is >= 500 and < 600)
         {
-            "STATUS_CODE_MISMATCH",
-            "RESPONSE_SCHEMA_MISMATCH",
-        };
+            return true;
+        }
 
-        return failures
-            .Select(x => x?.Code)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .All(x => allowed.Contains(x.Trim()));
-    }
-
-    /// <summary>
-    /// A case should be retried when it failed with an HTTP response (any failure type),
-    /// indicating a potentially transient failure worth retrying up to MaxRetryAttempts times.
-    /// Cases that failed before sending an HTTP request (pre-validation, unresolved variables)
-    /// are NOT retried since they represent deterministic configuration errors.
-    /// </summary>
-    private static bool ShouldRetryCase(TestCaseExecutionResult result, TestRunRetryPolicyModel retryPolicy)
-    {
-        return retryPolicy != null
-            && retryPolicy.MaxRetryAttempts > 0
-            && string.Equals(result?.Status, "Failed", StringComparison.OrdinalIgnoreCase)
-            && result.HttpStatusCode.HasValue;
+        return false;
     }
 
     private static TestCaseExecutionResult BuildSkippedResult(
@@ -678,44 +670,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
     private sealed class ExecutionContextState
     {
         private static bool IsDependencySatisfied(TestCaseExecutionResult dependencyResult)
-        {
-            if (dependencyResult == null)
-            {
-                return false;
-            }
-
-            if (string.Equals(dependencyResult.Status, "Passed", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return dependencyResult.HttpStatusCode is >= 200 and < 300
-                && IsOnlyExpectationMismatch(dependencyResult.FailureReasons);
-        }
-
-        private static bool IsOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)
-        {
-            if (failures == null || failures.Count == 0)
-            {
-                return true;
-            }
-
-            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "STATUS_CODE_MISMATCH",
-                "RESPONSE_SCHEMA_MISMATCH",
-            };
-
-            return failures
-                .Select(x => x?.Code)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .All(x => allowed.Contains(x.Trim()));
-        }
+            => DependencySatisfactionPolicy.IsSatisfied(dependencyResult);
 
         public ExecutionContextState(
             Guid runId,
             TestRunRetryPolicyModel retryPolicy,
             bool strictValidation,
+            ValidationProfile validationProfile,
             ResolvedExecutionEnvironment resolvedEnv,
             Dictionary<string, string> variableBag,
             Dictionary<Guid, ApiEndpointMetadataDto> endpointMetadataMap)
@@ -723,6 +684,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             RunId = runId;
             RetryPolicy = retryPolicy ?? new TestRunRetryPolicyModel();
             StrictValidation = strictValidation;
+            ValidationProfile = validationProfile;
             ResolvedEnv = resolvedEnv;
             VariableBag = variableBag;
             EndpointMetadataMap = endpointMetadataMap;
@@ -733,6 +695,8 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         public TestRunRetryPolicyModel RetryPolicy { get; }
 
         public bool StrictValidation { get; }
+
+        public ValidationProfile ValidationProfile { get; }
 
         public ResolvedExecutionEnvironment ResolvedEnv { get; }
 

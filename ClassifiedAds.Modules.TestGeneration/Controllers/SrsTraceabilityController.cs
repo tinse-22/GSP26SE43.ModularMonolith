@@ -40,13 +40,17 @@ public class SrsTraceabilityController : ControllerBase
     [HttpGet("traceability")]
     [ProducesResponseType(typeof(TraceabilityMatrix), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<TraceabilityMatrix>> GetTraceability(Guid projectId, Guid suiteId)
+    public async Task<ActionResult<TraceabilityMatrix>> GetTraceability(
+        Guid projectId,
+        Guid suiteId,
+        [FromQuery] Guid? testRunId = null)
     {
         var result = await _dispatcher.DispatchAsync(new GetSrsTraceabilityQuery
         {
             ProjectId = projectId,
             TestSuiteId = suiteId,
             CurrentUserId = _currentUser.UserId,
+            TestRunId = testRunId,
         });
 
         return Ok(result);

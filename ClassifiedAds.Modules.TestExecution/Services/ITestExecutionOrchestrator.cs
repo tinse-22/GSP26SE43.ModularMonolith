@@ -14,5 +14,6 @@ public interface ITestExecutionOrchestrator
         IReadOnlyCollection<Guid> selectedTestCaseIds,
         CancellationToken ct = default,
         bool strictValidation = false,
-        TestRunRetryPolicyModel retryPolicy = null);
+        TestRunRetryPolicyModel retryPolicy = null,
+        ValidationProfile validationProfile = ValidationProfile.Default);
 }
