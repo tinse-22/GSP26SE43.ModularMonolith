@@ -166,8 +166,10 @@ public class StartTestRunCommandHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<IReadOnlyCollection<Guid>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()))
-            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool>((_, _, ids, _, _) =>
+                It.IsAny<bool>(),
+                It.IsAny<TestRunRetryPolicyModel>(),
+                It.IsAny<ValidationProfile>()))
+            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool, TestRunRetryPolicyModel, ValidationProfile>((_, _, ids, _, _, _, _) =>
                 capturedSelectedIds = ids)
             .ReturnsAsync(new TestRunResultModel
             {
@@ -211,8 +213,10 @@ public class StartTestRunCommandHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<IReadOnlyCollection<Guid>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()))
-            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool>((_, _, _, _, strict) =>
+                It.IsAny<bool>(),
+                It.IsAny<TestRunRetryPolicyModel>(),
+                It.IsAny<ValidationProfile>()))
+            .Callback<Guid, Guid, IReadOnlyCollection<Guid>, CancellationToken, bool, TestRunRetryPolicyModel, ValidationProfile>((_, _, _, _, strict, _, _) =>
                 capturedStrictValidation = strict)
             .ReturnsAsync(new TestRunResultModel
             {
@@ -260,7 +264,9 @@ public class StartTestRunCommandHandlerTests
                 _userId,
                 It.IsAny<IReadOnlyCollection<Guid>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()),
+                It.IsAny<bool>(),
+                It.IsAny<TestRunRetryPolicyModel>(),
+                It.IsAny<ValidationProfile>()),
             Times.Once);
     }
 
@@ -472,7 +478,9 @@ public class StartTestRunCommandHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<IReadOnlyCollection<Guid>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<bool>()))
+                It.IsAny<bool>(),
+                It.IsAny<TestRunRetryPolicyModel>(),
+                It.IsAny<ValidationProfile>()))
             .ReturnsAsync(new TestRunResultModel
             {
                 Run = new TestRunModel(),

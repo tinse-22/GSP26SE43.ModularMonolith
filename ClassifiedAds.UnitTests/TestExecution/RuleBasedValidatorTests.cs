@@ -326,7 +326,7 @@ public class RuleBasedValidatorTests
         var testCase = CreateTestCase(responseSchema: "not-json-schema");
 
         // Act
-        var result = _validator.Validate(response, testCase, strictMode: false);
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
 
         // Assert
         result.IsPassed.Should().BeTrue();
@@ -345,7 +345,7 @@ public class RuleBasedValidatorTests
         var testCase = CreateTestCase(responseSchema: "not-json-schema");
 
         // Act
-        var result = _validator.Validate(response, testCase, strictMode: true);
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.SrsStrict);
 
         // Assert
         result.IsPassed.Should().BeFalse();
@@ -627,7 +627,7 @@ public class RuleBasedValidatorTests
         };
 
         // Act
-        var result = _validator.Validate(response, testCase, strictMode: true);
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.SrsStrict);
 
         // Assert
         result.IsPassed.Should().BeFalse();

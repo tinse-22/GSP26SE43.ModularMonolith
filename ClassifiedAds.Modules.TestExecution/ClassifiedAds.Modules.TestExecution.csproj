@@ -5,6 +5,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="ClassifiedAds.UnitTests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
         <PackageReference Include="FluentValidation" Version="11.11.0" />
         <PackageReference Include="JsonSchema.Net" Version="*" />
