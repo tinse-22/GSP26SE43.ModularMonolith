@@ -1,24 +1,11 @@
 # ERD Analysis - API Testing Automation System
 
-> **Đối chiếu chuẩn theo codebase** — Tài liệu này được sinh 100% từ DbContext model snapshots, entity configurations, và seed data trong code.
+> **Đối chiếu theo codebase hiện tại** — Tài liệu này được cập nhật lại từ `DbContext` model snapshots và entity configurations trong project.
 >
-> - **Target DB**: `ClassifiedAds` (từ `ConnectionStrings__Default` trong `.env`)
+> - **Target DB**: `ClassifiedAds` (theo `ConnectionStrings__Default` trong `.env`)
 > - **Schemas đã kiểm tra**: `identity`, `apidoc`, `testgen`, `testexecution`, `testreporting`, `subscription`, `storage`, `notification`, `configuration`, `auditlog`, `llmassistant`
-> - **Latest migration IDs** (theo code, không xác nhận runtime):
->   | Module | Latest Migration |
->   |--------|-----------------|
->   | Identity | `20260216012247_IdentitySeedHashSync` |
->   | ApiDocumentation | `20260214004925_InitialApiDocumentation` |
->   | TestGeneration | `20260219061423_AddTestSuiteSelectedEndpointIds` |
->   | TestExecution | `20260406130000_AddTestCaseResults` |
->   | TestReporting | `20260201104246_InitialTestReporting` |
->   | Subscription | `20260217103000_ReseedAdminEnterpriseSubscriptionForDev` |
->   | Storage | `20260201101114_InitialStorage` |
->   | Notification | `20260201104436_InitialNotification` |
->   | Configuration | `20260201104426_InitialConfiguration` |
->   | AuditLog | `20260201102457_InitialAuditLog` |
->   | LlmAssistant | *(chưa có migration folder — chỉ có DbContext + entity config)* |
-> - **Preflight SQL** (`current_database`, `current_schema`, `__EFMigrationsHistory`): không thực hiện — tài liệu chỉ audit tĩnh từ source code.
+> - **Lưu ý quan trọng**: nhiều module có **infra tables riêng** như `AuditLogEntries`, `OutboxMessages`, `ArchivedOutboxMessages`; các bảng này được nhân bản theo schema chứ không share vật lý giữa modules.
+> - **Preflight SQL** (`current_database`, `current_schema`, `__EFMigrationsHistory`): không thực hiện — tài liệu này là audit tĩnh từ source code.
 
 ---
 
@@ -49,26 +36,27 @@
 │                                                                              │
 │  ┌────────────────┐                                                         │
 │  │  LlmAssistant  │                                                         │
-│  │ (llmassistant) │  ← chưa có migration                                   │
+│  │ (llmassistant) │                                                         │
 │  └────────────────┘                                                         │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Storage Strategy
+### 1.2 Cross-Module Reference Pattern
 
-| Data Type | Storage | Retention | Lý do |
-|-----------|---------|-----------|-------|
-| **User, Project, ApiSpec** | PostgreSQL | Permanent | Core business data |
-| **TestCase, TestSuite** | PostgreSQL | Permanent | Reusable test definitions |
-| **TestRun Summary** | PostgreSQL | Permanent | Run metadata, counts, timing |
-| **TestCaseResults (Detailed)** | Redis (hot) + PostgreSQL (cold) | Redis: 7 days, PostgreSQL: Permanent | Dual-write: fast access + fallback |
-| **TestExecution Logs** | Redis | 5-10 days | Temporary, high-frequency writes |
-| **Reports (generated)** | File Storage + PostgreSQL metadata | Permanent | User-requested exports |
+> **Quan trọng**: các module **không có FK liên module ở DB level**. Các quan hệ như `ProjectId`, `ApiSpecId`, `TestSuiteId`, `UserId`, `FileId`… trong các schema khác nhau thường chỉ là **Guid column + index**, không có foreign key thật sang schema khác.
+>
+> Boundary giữa modules được enforce ở application layer theo mô hình **Modular Monolith**.
 
-### 1.3 Cross-Module Reference Pattern
+### 1.3 Storage Strategy
 
-> **Quan trọng**: Các module KHÔNG có FK liên module ở DB level. Thay vào đó, dùng **Guid column + index** (ví dụ `ProjectId`, `ApiSpecId`, `EndpointId` trong `testgen` schema chỉ là Guid column có index, không có FK constraint sang `apidoc` schema). Đây là pattern chuẩn của Modular Monolith — module boundary được enforce ở application layer, không ở DB layer.
+| Data Type | Storage | Retention | Ghi chú |
+|-----------|---------|-----------|--------|
+| Core business data | PostgreSQL | Permanent | `Users`, `Projects`, `TestSuites`, `SubscriptionPlans`... |
+| Test execution summary | PostgreSQL | Permanent | `TestRuns` lưu tổng hợp run |
+| Test execution detail | PostgreSQL + Redis | Redis có TTL, PostgreSQL permanent | `TestCaseResults` đã được persist xuống DB |
+| Logs / hot execution data | Redis | 5-10 ngày | Dữ liệu nóng, truy xuất nhanh |
+| Reports / exported files | File storage + PostgreSQL metadata | Permanent | Bản ghi metadata lưu trong DB |
 
 ---
 
@@ -79,145 +67,137 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    IDENTITY MODULE — Schema: identity                       │
-│                    (Custom Identity, NOT default AspNet* tables)            │
+│                    Custom Identity model, NOT AspNet* tables                │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│              Users                       │  ← Custom, NOT AspNetUsers
+│                Users                    │
 ├─────────────────────────────────────────┤
-│ PK  Id                    : UUID        │  default gen_random_uuid()
-│     UserName              : text        │
-│     NormalizedUserName    : text        │
-│     Email                 : text        │
-│     NormalizedEmail       : text        │
-│     EmailConfirmed        : boolean     │
-│     PasswordHash          : text        │
-│     SecurityStamp         : text        │
-│     ConcurrencyStamp      : text        │
-│     PhoneNumber           : text        │
-│     PhoneNumberConfirmed  : boolean     │
-│     TwoFactorEnabled      : boolean     │
-│     LockoutEnd            : timestamptz │
-│     LockoutEnabled        : boolean     │
-│     AccessFailedCount     : integer     │
-│     Auth0UserId           : text        │
-│     AzureAdB2CUserId      : text        │
-│     CreatedDateTime       : timestamptz │
-│     UpdatedDateTime       : timestamptz │
-│     RowVersion            : bytea       │  ConcurrencyToken
+│ PK  Id                  : UUID         │  default gen_random_uuid()
+│     UserName            : text         │
+│     NormalizedUserName  : text         │
+│     Email               : text         │
+│     NormalizedEmail     : text         │
+│     EmailConfirmed      : boolean      │
+│     PasswordHash        : text         │
+│     SecurityStamp       : text         │
+│     ConcurrencyStamp    : text         │
+│     PhoneNumber         : text         │
+│     PhoneNumberConfirmed: boolean      │
+│     TwoFactorEnabled    : boolean      │
+│     LockoutEnd          : timestamptz  │
+│     LockoutEnabled      : boolean      │
+│     AccessFailedCount   : integer      │
+│     Auth0UserId         : text         │
+│     AzureAdB2CUserId    : text         │
+│     CreatedDateTime     : timestamptz  │
+│     UpdatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Seed: 2 rows — tinvtse@gmail.com (admin), user@example.com (user)
-           │
-           │ 1:N
-           ▼
-┌─────────────────────────────────────────┐
-│             UserRoles                    │
-├─────────────────────────────────────────┤
-│ PK  Id                : UUID            │  default gen_random_uuid()
-│ FK  UserId            : UUID → Users    │  Cascade
-│ FK  RoleId            : UUID → Roles    │  Cascade
-│     CreatedDateTime   : timestamptz     │
-│     UpdatedDateTime   : timestamptz     │
-│     RowVersion        : bytea           │
-└─────────────────────────────────────────┘
-    Index: RoleId, UserId
-    Seed: 2 rows — Admin↔User1, User↔User2
-           │
-           │ N:1
-           ▼
-┌─────────────────────────────────────────┐
-│              Roles                       │
-├─────────────────────────────────────────┤
-│ PK  Id                    : UUID        │  default gen_random_uuid()
-│     Name                  : text        │
-│     NormalizedName        : text        │
-│     ConcurrencyStamp      : text        │
-│     CreatedDateTime       : timestamptz │
-│     UpdatedDateTime       : timestamptz │
-│     RowVersion            : bytea       │
-└─────────────────────────────────────────┘
-    Seed: 2 rows — Admin, User
 
 ┌─────────────────────────────────────────┐
-│            RoleClaims                    │
+│                Roles                    │
 ├─────────────────────────────────────────┤
-│ PK  Id                : UUID            │  default gen_random_uuid()
-│ FK  RoleId            : UUID → Roles    │  Cascade
-│     Type              : text            │
-│     Value             : text            │
-│     CreatedDateTime   : timestamptz     │
-│     UpdatedDateTime   : timestamptz     │
-│     RowVersion        : bytea           │
+│ PK  Id                  : UUID         │
+│     Name                : text         │
+│     NormalizedName      : text         │
+│     ConcurrencyStamp    : text         │
+│     CreatedDateTime     : timestamptz  │
+│     UpdatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Index: RoleId
-    Seed: 17 rows — Permission claims for Admin role
 
 ┌─────────────────────────────────────────┐
-│            UserClaims                    │
+│              UserRoles                  │
 ├─────────────────────────────────────────┤
-│ PK  Id                : UUID            │  default gen_random_uuid()
-│ FK  UserId            : UUID → Users    │  Cascade
-│     Type              : text            │
-│     Value             : text            │
-│     CreatedDateTime   : timestamptz     │
-│     UpdatedDateTime   : timestamptz     │
-│     RowVersion        : bytea           │
+│ PK  Id                  : UUID         │
+│ FK  UserId              : UUID → Users │  Cascade
+│ FK  RoleId              : UUID → Roles │  Cascade
+│     CreatedDateTime     : timestamptz  │
+│     UpdatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Index: UserId
+    Index: UserId, RoleId
 
 ┌─────────────────────────────────────────┐
-│            UserLogins                    │
+│             RoleClaims                  │
 ├─────────────────────────────────────────┤
-│ PK  Id                    : UUID        │  default gen_random_uuid()
-│ FK  UserId                : UUID → Users│  Cascade
-│     LoginProvider         : text        │
-│     ProviderKey           : text        │
-│     ProviderDisplayName   : text        │
-│     CreatedDateTime       : timestamptz │
-│     UpdatedDateTime       : timestamptz │
-│     RowVersion            : bytea       │
+│ PK  Id                  : UUID         │
+│ FK  RoleId              : UUID → Roles │  Cascade
+│     Type                : text         │
+│     Value               : text         │
+│     CreatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Index: UserId
 
 ┌─────────────────────────────────────────┐
-│            UserTokens                    │
+│             UserClaims                  │
 ├─────────────────────────────────────────┤
-│ PK  Id                : UUID            │  default gen_random_uuid()
-│ FK  UserId            : UUID → Users    │  Cascade
-│     LoginProvider     : text            │
-│     TokenName         : text            │
-│     TokenValue        : text            │
-│     CreatedDateTime   : timestamptz     │
-│     UpdatedDateTime   : timestamptz     │
-│     RowVersion        : bytea           │
+│ PK  Id                  : UUID         │
+│ FK  UserId              : UUID → Users │  Cascade
+│     Type                : text         │
+│     Value               : text         │
+│     CreatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Index: UserId
 
 ┌─────────────────────────────────────────┐
-│           UserProfiles                   │  ← 1:1 with Users
+│             UserLogins                  │
 ├─────────────────────────────────────────┤
-│ PK  Id                : UUID            │  default gen_random_uuid()
-│ FK  UserId            : UUID → Users    │  Cascade, UNIQUE
-│     DisplayName       : varchar(200)    │
-│     AvatarUrl         : varchar(500)    │
-│     Timezone          : varchar(50)     │
-│     CreatedDateTime   : timestamptz     │
-│     UpdatedDateTime   : timestamptz     │
-│     RowVersion        : bytea           │
+│ PK  Id                  : UUID         │
+│ FK  UserId              : UUID → Users │  Cascade
+│     LoginProvider       : text         │
+│     ProviderKey         : text         │
+│     ProviderDisplayName  : text         │
+│     CreatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
-    Index: UserId (UNIQUE)
-    Seed: 1 row — "System Administrator", "Asia/Ho_Chi_Minh"
 
 ┌─────────────────────────────────────────┐
-│        DataProtectionKeys                │
+│             UserTokens                  │
 ├─────────────────────────────────────────┤
-│ PK  Id              : integer           │  auto-increment
-│     FriendlyName    : text              │
-│     Xml             : text              │
+│ PK  Id                  : UUID         │
+│ FK  UserId              : UUID → Users │  Cascade
+│     LoginProvider       : text         │
+│     TokenName           : text         │
+│     TokenValue          : text         │
+│     CreatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│            UserProfiles                 │
+├─────────────────────────────────────────┤
+│ PK  Id                  : UUID         │
+│ FK  UserId              : UUID → Users │  Cascade, UNIQUE
+│     DisplayName         : varchar(200) │
+│     AvatarUrl           : varchar(500) │
+│     Timezone            : varchar(50)  │
+│     CreatedDateTime     : timestamptz  │
+│     UpdatedDateTime     : timestamptz  │
+│     RowVersion          : bytea        │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│           DataProtectionKeys            │
+├─────────────────────────────────────────┤
+│ PK  Id                  : integer      │
+│     FriendlyName        : text         │
+│     Xml                 : text         │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│           PasswordHistories             │
+├─────────────────────────────────────────┤
+│ PK  Id                  : UUID         │
+│     UserId              : UUID         │
+│     PasswordHash        : text         │
+│     ChangedAt           : timestamptz  │
+│     RowVersion          : bytea        │
 └─────────────────────────────────────────┘
 ```
 
-**9 bảng**: Users, Roles, UserRoles, RoleClaims, UserClaims, UserLogins, UserTokens, UserProfiles, DataProtectionKeys
+**10 bảng**: Users, Roles, UserRoles, RoleClaims, UserClaims, UserLogins, UserTokens, UserProfiles, DataProtectionKeys, PasswordHistories
 
 ---
 
@@ -225,108 +205,101 @@
 
 ```
 ┌─────────────────────────────────────────┐
-│             Projects                     │
+│             Projects                    │
 ├─────────────────────────────────────────┤
-│ PK  Id              : UUID              │  default gen_random_uuid()
-│ FK  ActiveSpecId    : UUID → ApiSpecs   │  SetNull
-│     OwnerId         : UUID              │  (cross-module ref, no FK)
-│     Name            : varchar(200)      │  Required
+│ PK  Id              : UUID              │
+│ FK  ActiveSpecId    : UUID → ApiSpecifications │ SetNull
+│     OwnerId         : UUID              │  cross-module Guid, no FK
+│     Name            : varchar(200)      │
 │     Description     : text              │
 │     BaseUrl         : varchar(500)      │
-│     Status          : varchar(20)       │  Required
+│     Status          : varchar(20)       │
 │     CreatedDateTime : timestamptz       │
 │     UpdatedDateTime : timestamptz       │
 │     RowVersion      : bytea             │
 └─────────────────────────────────────────┘
-    Index: ActiveSpecId, OwnerId, Status
-           │
-           │ 1:N
-           ▼
+
 ┌─────────────────────────────────────────┐
-│         ApiSpecifications                │
+│         ApiSpecifications               │
 ├─────────────────────────────────────────┤
-│ PK  Id              : UUID              │  default gen_random_uuid()
+│ PK  Id              : UUID              │
 │ FK  ProjectId       : UUID → Projects   │  Cascade
-│     OriginalFileId  : UUID              │  (cross-module ref, no FK)
-│     Name            : varchar(200)      │  Required
-│     SourceType      : varchar(20)       │  Required
+│     OriginalFileId  : UUID              │  cross-module Guid, no FK
+│     Name            : varchar(200)      │
+│     SourceType      : varchar(20)       │
 │     Version         : varchar(50)       │
 │     IsActive        : boolean           │
+│     IsDeleted       : boolean           │
 │     ParsedAt        : timestamptz       │
-│     ParseStatus     : varchar(20)       │  Required
+│     DeletedAt       : timestamptz       │
+│     ParseStatus     : varchar(20)       │
 │     ParseErrors     : jsonb             │
 │     CreatedDateTime : timestamptz       │
 │     UpdatedDateTime : timestamptz       │
 │     RowVersion      : bytea             │
 └─────────────────────────────────────────┘
-    Index: IsActive, ProjectId
-           │
-           │ 1:N
-           ├──────────────────────────────────┐
-           ▼                                  ▼
-┌──────────────────────────────┐  ┌──────────────────────────────┐
-│       ApiEndpoints           │  │      SecuritySchemes          │
-├──────────────────────────────┤  ├──────────────────────────────┤
-│ PK Id          : UUID        │  │ PK Id          : UUID        │
-│ FK ApiSpecId   : UUID        │  │ FK ApiSpecId   : UUID        │
-│    HttpMethod  : varchar(10) │  │    Name        : varchar(100)│
-│    Path        : varchar(500)│  │    Type        : varchar(20) │
-│    OperationId : varchar(200)│  │    Scheme      : varchar(50) │
-│    Summary     : varchar(500)│  │    BearerFormat: varchar(50) │
-│    Description : text        │  │    In          : varchar(20) │
-│    Tags        : jsonb       │  │    ParameterName: varchar(100)│
-│    IsDeprecated: boolean     │  │    Configuration: jsonb      │
-│    CreatedDateTime: ts       │  │    CreatedDateTime: ts       │
-│    UpdatedDateTime: ts       │  │    UpdatedDateTime: ts       │
-│    RowVersion  : bytea       │  │    RowVersion  : bytea       │
-└──────────────────────────────┘  └──────────────────────────────┘
-    Index: ApiSpecId,                Index: ApiSpecId
-           (ApiSpecId, HttpMethod, Path)
-           │
-           │ 1:N (3 child tables)
-           ├───────────────────────────────┬──────────────────────────┐
-           ▼                               ▼                          ▼
-┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
-│  EndpointParameters    │  │   EndpointResponses    │  │ EndpointSecurityReqs   │
-├────────────────────────┤  ├────────────────────────┤  ├────────────────────────┤
-│ PK Id       : UUID     │  │ PK Id       : UUID     │  │ PK Id       : UUID     │
-│ FK EndpointId: UUID    │  │ FK EndpointId: UUID    │  │ FK EndpointId: UUID    │
-│    Name    : v(100)    │  │    StatusCode: integer │  │    SecurityType: v(20) │
-│    Location: v(20)     │  │    Description: text   │  │    SchemeName: v(100)  │
-│    DataType: v(50)     │  │    Schema   : jsonb    │  │    Scopes   : jsonb    │
-│    Format  : v(50)     │  │    Examples : jsonb    │  │    CreatedDateTime: ts │
-│    IsRequired: bool    │  │    Headers  : jsonb    │  │    UpdatedDateTime: ts │
-│    DefaultValue: text  │  │    CreatedDateTime: ts │  │    RowVersion: bytea   │
-│    Schema  : jsonb     │  │    UpdatedDateTime: ts │  └────────────────────────┘
-│    Examples: jsonb     │  │    RowVersion: bytea   │      Index: EndpointId
-│    CreatedDateTime: ts │  └────────────────────────┘
-│    UpdatedDateTime: ts │      Index: EndpointId,
-│    RowVersion: bytea   │             (EndpointId, StatusCode)
-└────────────────────────┘
-    Index: EndpointId
 
-┌──────────────────────────┐  ┌──────────────────────────┐
-│  AuditLogEntries (apidoc)│  │  OutboxMessages (apidoc) │
-├──────────────────────────┤  ├──────────────────────────┤
-│ PK Id      : UUID        │  │ PK Id         : UUID     │
-│    UserId  : UUID        │  │    EventType  : text     │
-│    Action  : text        │  │    TriggeredById: UUID   │
-│    ObjectId: text        │  │    ObjectId   : text     │
-│    Log     : text        │  │    Payload    : text     │
-│    CreatedDateTime: ts   │  │    Published  : boolean  │
-│    UpdatedDateTime: ts   │  │    ActivityId : text     │
-│    RowVersion: bytea     │  │    CreatedDateTime: ts   │
-└──────────────────────────┘  │    UpdatedDateTime: ts   │
-                              │    RowVersion: bytea     │
-                              └──────────────────────────┘
-                                  Index: CreatedDateTime,
-                                         (Published, CreatedDateTime)
+┌─────────────────────────────────────────┐   ┌─────────────────────────────────────────┐
+│            ApiEndpoints                │   │         SecuritySchemes                │
+├─────────────────────────────────────────┤   ├─────────────────────────────────────────┤
+│ PK  Id              : UUID             │   │ PK  Id              : UUID             │
+│ FK  ApiSpecId       : UUID → ApiSpecifications │ Cascade
+│     HttpMethod      : varchar(10)      │   │ FK  ApiSpecId       : UUID → ApiSpecifications │ Cascade
+│     Path            : varchar(500)     │   │     Name            : varchar(100)     │
+│     OperationId     : varchar(200)     │   │     Type            : varchar(20)      │
+│     Summary         : varchar(500)     │   │     Scheme          : varchar(50)      │
+│     Description     : text             │   │     BearerFormat    : varchar(50)      │
+│     Tags            : jsonb            │   │     In              : varchar(20)      │
+│     IsDeprecated    : boolean          │   │     ParameterName   : varchar(100)     │
+│     CreatedDateTime : timestamptz       │   │     Configuration   : jsonb            │
+│     UpdatedDateTime : timestamptz       │   │     CreatedDateTime : timestamptz       │
+│     RowVersion      : bytea            │   │     UpdatedDateTime : timestamptz       │
+└─────────────────────────────────────────┘   │     RowVersion      : bytea             │
+    Index: ApiSpecId, (ApiSpecId, HttpMethod, Path) └─────────────────────────────────────────┘
 
-┌────────────────────────────────┐
-│ ArchivedOutboxMessages (apidoc)│  ← same columns, no gen_random_uuid()
-├────────────────────────────────┤
-│    Index: CreatedDateTime      │
-└────────────────────────────────┘
+    ├───────────────────────────────────────────────┬───────────────────────────────┬───────────────────────────────┐
+    ▼                                               ▼                               ▼
+┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ EndpointParameters           │   │ EndpointResponses            │   │ EndpointSecurityReqs         │
+├──────────────────────────────┤   ├──────────────────────────────┤   ├──────────────────────────────┤
+│ PK Id       : UUID          │   │ PK Id       : UUID          │   │ PK Id       : UUID          │
+│ FK EndpointId: UUID → ApiEndpoints │ Cascade
+│ Name        : varchar(100)   │   │ FK EndpointId: UUID → ApiEndpoints │ Cascade
+│ Location    : varchar(20)    │   │ StatusCode  : integer       │   │ FK EndpointId: UUID → ApiEndpoints │ Cascade
+│ DataType    : varchar(50)    │   │ Description : text          │   │ SecurityType: varchar(20)   │
+│ Format      : varchar(50)    │   │ Schema      : jsonb         │   │ SchemeName  : varchar(100)  │
+│ IsRequired  : boolean        │   │ Examples    : jsonb         │   │ Scopes      : jsonb         │
+│ DefaultValue: text           │   │ Headers     : jsonb         │   │ CreatedDateTime : timestamptz│
+│ Schema      : jsonb          │   │ CreatedDateTime : timestamptz│   │ UpdatedDateTime : timestamptz│
+│ Examples    : jsonb          │   │ UpdatedDateTime : timestamptz│   │ RowVersion   : bytea        │
+│ CreatedDateTime : timestamptz │   │ RowVersion   : bytea         │   └──────────────────────────────┘
+│ UpdatedDateTime : timestamptz │   └──────────────────────────────┘
+│ RowVersion   : bytea         │
+└──────────────────────────────┘
+
+┌─────────────────────────────────────────┐   ┌─────────────────────────────────────────┐
+│            AuditLogEntries              │   │            OutboxMessages               │
+├─────────────────────────────────────────┤   ├─────────────────────────────────────────┤
+│ PK  Id              : UUID             │   │ PK  Id              : UUID             │
+│     UserId          : UUID             │   │     EventType       : text             │
+│     Action          : text             │   │     TriggeredById   : UUID             │
+│     ObjectId        : text             │   │     ObjectId        : text             │
+│     Log             : text             │   │     Payload         : text             │
+│     CreatedDateTime : timestamptz      │   │     Published       : boolean          │
+│     UpdatedDateTime : timestamptz      │   │     ActivityId      : text             │
+│     RowVersion      : bytea            │   │     CreatedDateTime : timestamptz       │
+└─────────────────────────────────────────┘   │     UpdatedDateTime : timestamptz       │
+                                              │     RowVersion      : bytea             │
+                                              └─────────────────────────────────────────┘
+                                                   Index: CreatedDateTime,
+                                                          (Published, CreatedDateTime) filtered
+
+┌─────────────────────────────────────────┐
+│       ArchivedOutboxMessages            │
+├─────────────────────────────────────────┤
+│ same columns as OutboxMessages          │
+│ Index: CreatedDateTime                  │
+└─────────────────────────────────────────┘
 ```
 
 **10 bảng**: Projects, ApiSpecifications, ApiEndpoints, EndpointParameters, EndpointResponses, EndpointSecurityReqs, SecuritySchemes, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -335,212 +308,307 @@
 
 ### 2.3 TestGeneration Module — Schema: `testgen`
 
+> Đây là module có thay đổi lớn nhất so với file cũ. Hiện tại snapshot cho thấy ngoài các bảng test generation core, module còn có thêm nhóm bảng SRS và nhóm bảng LLM.
+
 ```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TEST GENERATION MODULE — Schema: testgen                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
 ┌──────────────────────────────────────────────┐
-│                TestSuites                     │
+│                TestSuites                    │
 ├──────────────────────────────────────────────┤
-│ PK  Id                : UUID                 │  default gen_random_uuid()
-│     ProjectId         : UUID                 │  (cross-module, no FK)
-│     ApiSpecId         : UUID (nullable)      │  (cross-module, no FK)
-│     Name              : varchar(200)         │  Required
+│ PK  Id                : UUID                 │
+│     ProjectId         : UUID                 │  cross-module Guid, no FK
+│     ApiSpecId         : UUID (nullable)      │  cross-module Guid, no FK
+│     Name              : varchar(200)         │
 │     Description       : text                 │
-│     GenerationType    : varchar(20)          │  Required
-│     Status            : varchar(20)          │  Required
-│     ApprovalStatus    : varchar(30)          │  Required
+│     GenerationType    : varchar(20)          │
+│     Status            : varchar(20)          │
+│     ApprovalStatus    : varchar(30)          │
 │     ApprovedAt        : timestamptz          │
 │     ApprovedById      : UUID (nullable)      │
-│     CreatedById       : UUID                 │  (cross-module, no FK)
+│     CreatedById       : UUID                 │  cross-module Guid, no FK
 │     LastModifiedById  : UUID (nullable)      │
-│     SelectedEndpointIds : jsonb              │  PrimitiveCollection
-│     Version           : integer              │  Default 1
+│     SelectedEndpointIds : jsonb              │
+│     Version           : integer              │
 │     CreatedDateTime   : timestamptz          │
 │     UpdatedDateTime   : timestamptz          │
 │     RowVersion        : bytea                │
 └──────────────────────────────────────────────┘
-    Index: ApiSpecId, ApprovalStatus, ApprovedById,
-           CreatedById, LastModifiedById, ProjectId, Status
-           │
-           │ 1:N
-           ├──────────────────────┬──────────────────┐
-           ▼                      ▼                  ▼
-┌────────────────────┐ ┌────────────────────┐ ┌────────────────────┐
-│    TestCases       │ │ TestOrderProposals │ │ TestSuiteVersions  │
-└────────────────────┘ └────────────────────┘ └────────────────────┘
+    Index: ApiSpecId, ApprovalStatus, ApprovedById, CreatedById,
+           LastModifiedById, ProjectId, Status
 
 ┌──────────────────────────────────────────────┐
-│                TestCases                      │
+│                  TestCases                   │
 ├──────────────────────────────────────────────┤
-│ PK  Id                : UUID                 │  default gen_random_uuid()
+│ PK  Id                : UUID                 │
 │ FK  TestSuiteId       : UUID → TestSuites    │  Cascade
 │ FK  DependsOnId       : UUID → TestCases     │  SetNull (self-ref)
-│     EndpointId        : UUID (nullable)      │  (cross-module, no FK)
-│     Name              : varchar(200)         │  Required
+│     EndpointId        : UUID (nullable)      │  cross-module Guid, no FK
+│     Name              : varchar(200)         │
 │     Description       : text                 │
-│     TestType          : varchar(20)          │  Required
-│     Priority          : varchar(20)          │  Required
+│     TestType          : varchar(20)          │
+│     Priority          : varchar(20)          │
 │     IsEnabled         : boolean              │
 │     OrderIndex        : integer              │
 │     IsOrderCustomized : boolean              │
 │     CustomOrderIndex  : integer (nullable)   │
 │     LastModifiedById  : UUID (nullable)      │
 │     Tags              : jsonb                │
-│     Version           : integer              │  Default 1
+│     Version           : integer              │
 │     CreatedDateTime   : timestamptz          │
 │     UpdatedDateTime   : timestamptz          │
 │     RowVersion        : bytea                │
 └──────────────────────────────────────────────┘
-    Index: DependsOnId, EndpointId, LastModifiedById,
-           TestSuiteId, (TestSuiteId, CustomOrderIndex),
-           (TestSuiteId, OrderIndex)
-           │
-           │ 1:1 and 1:N children
-           ├──────────────┬──────────────┬──────────────┬──────────────┐
-           ▼              ▼              ▼              ▼              ▼
-  TestCaseRequests  TestCaseExpect.  TestCaseVars  TestDataSets  TestCaseChangeLogs
-       (1:1)           (1:1)          (1:N)         (1:N)           (1:N)
+    Index: DependsOnId, EndpointId, LastModifiedById, TestSuiteId,
+           (TestSuiteId, CustomOrderIndex), (TestSuiteId, OrderIndex)
+
+    ├───────────────────────────────┬───────────────────────────────┬───────────────────────────────┐
+    ▼                               ▼                               ▼
+┌──────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────────────┐
+│ TestCaseRequests             │ │ TestCaseExpectations         │ │ TestCaseVariables            │
+├──────────────────────────────┤ ├──────────────────────────────┤ ├──────────────────────────────┤
+│ PK Id       : UUID          │ │ PK Id       : UUID          │ │ PK Id       : UUID          │
+│ FK TestCaseId: UUID → TestCases │ Cascade, UNIQUE
+│ HttpMethod  : varchar(10)    │ │ FK TestCaseId: UUID → TestCases │ Cascade, UNIQUE
+│ Url         : varchar(1000)   │ │ ExpectedStatus : jsonb      │ │ FK TestCaseId: UUID → TestCases │ Cascade
+│ Headers     : jsonb          │ │ ResponseSchema : jsonb      │ │ VariableName: varchar(100)   │
+│ PathParams  : jsonb          │ │ HeaderChecks   : jsonb      │ │ ExtractFrom : varchar(20)    │
+│ QueryParams : jsonb          │ │ BodyContains   : jsonb      │ │ JsonPath    : varchar(500)   │
+│ BodyType    : varchar(20)    │ │ BodyNotContains: jsonb      │ │ HeaderName  : varchar(100)   │
+│ Body        : text           │ │ JsonPathChecks : jsonb      │ │ Regex       : varchar(500)   │
+│ Timeout     : integer        │ │ MaxResponseTime: integer    │ │ DefaultValue: text           │
+│ CreatedDateTime : timestamptz │ │ CreatedDateTime : timestamptz│ │ CreatedDateTime : timestamptz│
+│ UpdatedDateTime : timestamptz │ │ UpdatedDateTime : timestamptz│ │ UpdatedDateTime : timestamptz│
+│ RowVersion   : bytea         │ │ RowVersion   : bytea         │ │ RowVersion   : bytea         │
+└──────────────────────────────┘ └──────────────────────────────┘ └──────────────────────────────┘
+
+┌──────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────────────┐
+│ TestDataSets                 │ │ TestCaseChangeLogs           │ │ TestOrderProposals           │
+├──────────────────────────────┤ ├──────────────────────────────┤ ├──────────────────────────────┤
+│ PK Id       : UUID          │ │ PK Id       : UUID          │ │ PK Id       : UUID          │
+│ FK TestCaseId: UUID → TestCases │ Cascade
+│ Name        : varchar(100)   │ │ FK TestCaseId: UUID → TestCases │ Cascade
+│ Data        : jsonb         │ │ ChangedById : UUID          │ │ FK TestSuiteId: UUID → TestSuites │ Cascade
+│ IsEnabled   : boolean       │ │ ChangeType  : varchar(30)   │ │ ProposalNumber : integer     │
+│ CreatedDateTime : timestamptz │ │ FieldName   : varchar(100)  │ │ Source        : varchar(20)  │
+│ UpdatedDateTime : timestamptz │ │ OldValue    : text          │ │ Status        : varchar(30)  │
+│ RowVersion   : bytea        │ │ NewValue    : text          │ │ ProposedOrder : jsonb         │
+└──────────────────────────────┘ │ ChangeReason: text          │ │ AppliedOrder  : jsonb         │
+                                 │ VersionAfterChange : integer │ │ UserModifiedOrder : jsonb      │
+                                 │ IpAddress   : varchar(45)   │ │ AiReasoning   : text          │
+                                 │ UserAgent   : varchar(500)  │ │ ConsideredFactors : jsonb     │
+                                 │ CreatedDateTime : timestamptz │ │ LlmModel      : varchar(100)  │
+                                 │ UpdatedDateTime : timestamptz │ │ TokensUsed    : integer       │
+                                 │ RowVersion   : bytea         │ │ ReviewedById   : UUID         │
+                                 └──────────────────────────────┘ │ ReviewedAt     : timestamptz  │
+                                                                      │ ReviewNotes    : text         │
+                                                                      │ AppliedAt      : timestamptz  │
+                                                                      │ CreatedDateTime: timestamptz  │
+                                                                      │ UpdatedDateTime: timestamptz  │
+                                                                      │ RowVersion     : bytea        │
+                                                                      └──────────────────────────────┘
 
 ┌──────────────────────────────────────────────┐
-│           TestCaseRequests                    │  ← 1:1 with TestCases
-├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │
-│ FK  TestCaseId      : UUID → TestCases       │  Cascade, UNIQUE
-│     HttpMethod      : varchar(10)            │  Required
-│     Url             : varchar(1000)          │  Required
-│     Headers         : jsonb                  │
-│     PathParams      : jsonb                  │
-│     QueryParams     : jsonb                  │
-│     BodyType        : varchar(20)            │  Required
-│     Body            : text                   │
-│     Timeout         : integer                │
-│     CreatedDateTime : timestamptz            │
-│     UpdatedDateTime : timestamptz            │
-│     RowVersion      : bytea                  │
-└──────────────────────────────────────────────┘
-    Index: TestCaseId (UNIQUE)
-
-┌──────────────────────────────────────────────┐
-│         TestCaseExpectations                  │  ← 1:1 with TestCases
-├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │
-│ FK  TestCaseId      : UUID → TestCases       │  Cascade, UNIQUE
-│     ExpectedStatus  : jsonb                  │
-│     ResponseSchema  : jsonb                  │
-│     HeaderChecks    : jsonb                  │
-│     BodyContains    : jsonb                  │
-│     BodyNotContains : jsonb                  │
-│     JsonPathChecks  : jsonb                  │
-│     MaxResponseTime : integer (nullable)     │
-│     CreatedDateTime : timestamptz            │
-│     UpdatedDateTime : timestamptz            │
-│     RowVersion      : bytea                  │
-└──────────────────────────────────────────────┘
-    Index: TestCaseId (UNIQUE)
-
-┌──────────────────────────────────────────────┐
-│           TestCaseVariables                   │
-├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │
-│ FK  TestCaseId      : UUID → TestCases       │  Cascade
-│     VariableName    : varchar(100)           │  Required
-│     ExtractFrom     : varchar(20)            │  Required
-│     JsonPath        : varchar(500)           │
-│     HeaderName      : varchar(100)           │
-│     Regex           : varchar(500)           │
-│     DefaultValue    : text                   │
-│     CreatedDateTime : timestamptz            │
-│     UpdatedDateTime : timestamptz            │
-│     RowVersion      : bytea                  │
-└──────────────────────────────────────────────┘
-    Index: TestCaseId
-
-┌──────────────────────────────────────────────┐
-│              TestDataSets                     │
-├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │
-│ FK  TestCaseId      : UUID → TestCases       │  Cascade
-│     Name            : varchar(100)           │  Required
-│     Data            : jsonb                  │  Required
-│     IsEnabled       : boolean                │
-│     CreatedDateTime : timestamptz            │
-│     UpdatedDateTime : timestamptz            │
-│     RowVersion      : bytea                  │
-└──────────────────────────────────────────────┘
-    Index: TestCaseId
-
-┌──────────────────────────────────────────────┐
-│          TestCaseChangeLogs                   │
-├──────────────────────────────────────────────┤
-│ PK  Id                  : UUID               │
-│ FK  TestCaseId          : UUID → TestCases   │  Cascade
-│     ChangedById         : UUID               │  (cross-module, no FK)
-│     ChangeType          : varchar(30)        │  Required
-│     FieldName           : varchar(100)       │
-│     OldValue            : text               │
-│     NewValue            : text               │
-│     ChangeReason        : text               │
-│     VersionAfterChange  : integer            │
-│     IpAddress           : varchar(45)        │
-│     UserAgent           : varchar(500)       │
-│     CreatedDateTime     : timestamptz        │
-│     UpdatedDateTime     : timestamptz        │
-│     RowVersion          : bytea              │
-└──────────────────────────────────────────────┘
-    Index: ChangeType, ChangedById, CreatedDateTime, TestCaseId
-
-┌──────────────────────────────────────────────┐
-│          TestOrderProposals                   │
+│              TestSuiteVersions                │
 ├──────────────────────────────────────────────┤
 │ PK  Id                : UUID                 │
 │ FK  TestSuiteId       : UUID → TestSuites    │  Cascade
-│     ProposalNumber    : integer              │
-│     Source            : varchar(20)          │  Required
-│     Status            : varchar(30)          │  Required
-│     ProposedOrder     : jsonb                │  Required
-│     AppliedOrder      : jsonb                │
-│     UserModifiedOrder : jsonb                │
-│     AiReasoning       : text                 │
-│     ConsideredFactors : jsonb                │
-│     LlmModel          : varchar(100)        │
-│     TokensUsed        : integer (nullable)   │
-│     ReviewedById      : UUID (nullable)      │
-│     ReviewedAt        : timestamptz          │
-│     ReviewNotes       : text                 │
-│     AppliedAt         : timestamptz          │
+│     VersionNumber     : integer              │
+│     ChangeType        : varchar(30)          │
+│     ChangeDescription : text                 │
+│     ChangedById       : UUID                 │
+│     PreviousState     : jsonb                │
+│     NewState          : jsonb                │
+│     TestCaseOrderSnapshot : jsonb            │
+│     ApprovalStatusSnapshot : varchar(30)     │
 │     CreatedDateTime   : timestamptz          │
 │     UpdatedDateTime   : timestamptz          │
 │     RowVersion        : bytea                │
 └──────────────────────────────────────────────┘
-    Index: ReviewedById, Source, Status, TestSuiteId,
-           (TestSuiteId, ProposalNumber)
+    Index: ChangeType, ChangedById, TestSuiteId, (TestSuiteId, VersionNumber)
 
 ┌──────────────────────────────────────────────┐
-│          TestSuiteVersions                    │
+│               TestGenerationJobs              │
 ├──────────────────────────────────────────────┤
-│ PK  Id                      : UUID           │
-│ FK  TestSuiteId             : UUID → Suites  │  Cascade
-│     VersionNumber           : integer        │
-│     ChangeType              : varchar(30)    │  Required
-│     ChangeDescription       : text           │
-│     ChangedById             : UUID           │  (cross-module, no FK)
-│     PreviousState           : jsonb          │
-│     NewState                : jsonb          │
-│     TestCaseOrderSnapshot   : jsonb          │
-│     ApprovalStatusSnapshot  : varchar(30)    │  Required
-│     CreatedDateTime         : timestamptz    │
-│     UpdatedDateTime         : timestamptz    │
-│     RowVersion              : bytea          │
+│ PK  Id                : UUID                 │
+│     TestSuiteId       : UUID                 │
+│     Status            : varchar(30)          │
+│     SourceType        : varchar(20)          │
+│     RequestedById     : UUID                 │
+│     RequestedAt       : timestamptz          │
+│     CompletedAt       : timestamptz          │
+│     ErrorMessage      : text                 │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
 └──────────────────────────────────────────────┘
-    Index: ChangeType, ChangedById, TestSuiteId,
-           (TestSuiteId, VersionNumber)
 
-┌─────────────────────────────┐  ┌─────────────────────────────┐
-│ AuditLogEntries (testgen)   │  │ OutboxMessages (testgen)    │
-├─────────────────────────────┤  ├─────────────────────────────┤
-│ Standard audit table        │  │ Standard outbox table       │
-└─────────────────────────────┘  └─────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│                SrsDocuments                  │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     ProjectId         : UUID                 │
+│     FileEntryId       : UUID                 │
+│     Name              : varchar(200)         │
+│     Content           : text                 │
+│     ParsedAt          : timestamptz          │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│                SrsAnalysisJobs                │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     SrsDocumentId     : UUID                 │
+│     Status            : varchar(30)          │
+│     Result            : jsonb                │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│              SrsRequirements                 │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     SrsDocumentId     : UUID                 │
+│     Code              : varchar(100)         │
+│     Title             : varchar(500)         │
+│     Description       : text                 │
+│     Priority          : varchar(20)          │
+│     Category          : varchar(100)         │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│           SrsRequirementClarifications        │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     SrsRequirementId  : UUID                 │
+│     Question          : text                 │
+│     Answer            : text                 │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│           TestCaseRequirementLinks            │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     TestCaseId        : UUID                 │
+│     SrsRequirementId   : UUID                 │
+│     MatchType          : varchar(30)         │
+│     ConfidenceScore    : numeric(5,2)        │
+│     CreatedDateTime    : timestamptz         │
+│     UpdatedDateTime    : timestamptz         │
+│     RowVersion         : bytea               │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│           TestCaseDependencies                │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     TestCaseId        : UUID                 │
+│     DependsOnTestCaseId: UUID                │
+│     DependencyType    : varchar(30)          │
+│     CreatedDateTime   : timestamptz          │
+│     UpdatedDateTime   : timestamptz          │
+│     RowVersion        : bytea                │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│           LlmSuggestions                     │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     AppliedTestCaseId : UUID (nullable)      │
+│     CacheKey          : varchar(100)         │
+│     CreatedDateTime   : timestamptz          │
+│     DeletedAt         : timestamptz          │
+│     DeletedById       : UUID (nullable)      │
+│     DisplayOrder      : integer              │
+│     EndpointId        : UUID (nullable)      │
+│     IsDeleted         : boolean              │
+│     LlmModel          : varchar(100)         │
+│     ModifiedContent   : jsonb                │
+│     Priority          : varchar(20)          │
+│     ReviewNotes       : text                 │
+│     ReviewStatus      : varchar(30)          │
+│     ReviewedAt        : timestamptz          │
+│     ReviewedById      : UUID (nullable)      │
+│     RowVersion        : bytea                │
+│     SuggestedDescription : text              │
+│     SuggestedExpectation  : jsonb            │
+│     SuggestedName     : varchar(200)         │
+│     SuggestedRequest  : jsonb                │
+│     SuggestedTags     : jsonb                │
+│     SuggestedVariables: jsonb                │
+│     SuggestionType    : varchar(30)          │
+│     TestSuiteId       : UUID                 │
+│     TestType          : varchar(20)          │
+│     TokensUsed        : integer (nullable)   │
+│     UpdatedDateTime   : timestamptz          │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│          LlmSuggestionFeedbacks              │
+├──────────────────────────────────────────────┤
+│ PK  Id                : UUID                 │
+│     CreatedDateTime   : timestamptz          │
+│     EndpointId        : UUID (nullable)      │
+│     FeedbackSignal    : varchar(20)          │
+│     Notes            : text                 │
+│     RowVersion       : bytea                │
+│     SuggestionId     : UUID                 │
+│     TestSuiteId      : UUID                 │
+│     UpdatedDateTime  : timestamptz          │
+│     UserId           : UUID                 │
+└──────────────────────────────────────────────┘
+    Index: FeedbackSignal, (SuggestionId, UserId) UNIQUE, (TestSuiteId, EndpointId)
+
+┌──────────────────────────────────────────────┐
+│            AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ PK  Id              : UUID                   │
+│     UserId          : UUID                   │
+│     Action          : text                   │
+│     ObjectId        : text                   │
+│     Log             : text                   │
+│     CreatedDateTime : timestamptz            │
+│     UpdatedDateTime : timestamptz            │
+│     RowVersion      : bytea                  │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ PK  Id              : UUID                   │
+│     EventType       : text                   │
+│     TriggeredById   : UUID                   │
+│     ObjectId        : text                   │
+│     Payload         : text                   │
+│     Published       : boolean                │
+│     ActivityId      : text                   │
+│     CreatedDateTime : timestamptz            │
+│     UpdatedDateTime : timestamptz            │
+│     RowVersion      : bytea                  │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+├──────────────────────────────────────────────┤
+│ same columns as OutboxMessages               │
+│ Index: CreatedDateTime                       │
+└──────────────────────────────────────────────┘
 ```
 
-**11 bảng**: TestSuites, TestCases, TestCaseRequests, TestCaseExpectations, TestCaseVariables, TestDataSets, TestCaseChangeLogs, TestOrderProposals, TestSuiteVersions, AuditLogEntries, OutboxMessages
+**20 bảng**: AuditLogEntries, LlmSuggestionFeedbacks, LlmSuggestions, OutboxMessages, SrsAnalysisJobs, SrsDocuments, SrsRequirementClarifications, SrsRequirements, TestCaseChangeLogs, TestCaseDependencies, TestCaseExpectations, TestCaseRequests, TestCaseRequirementLinks, TestCases, TestCaseVariables, TestDataSets, TestGenerationJobs, TestOrderProposals, TestSuites, TestSuiteVersions
 
 ---
 
@@ -548,12 +616,12 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│          ExecutionEnvironments                │
+│          ExecutionEnvironments               │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     ProjectId       : UUID                   │  (cross-module, no FK)
-│     Name            : varchar(100)           │  Required
-│     BaseUrl         : varchar(500)           │  Required
+│     ProjectId       : UUID                   │  cross-module Guid, no FK
+│     Name            : varchar(100)           │
+│     BaseUrl         : varchar(500)           │
 │     Variables       : jsonb                  │
 │     Headers         : jsonb                  │
 │     AuthConfig      : jsonb                  │
@@ -562,17 +630,16 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: ProjectId, (ProjectId, IsDefault)
 
 ┌──────────────────────────────────────────────┐
-│               TestRuns                        │
+│               TestRuns                       │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     TestSuiteId     : UUID                   │  (cross-module, no FK)
-│     EnvironmentId   : UUID                   │  (cross-module, no FK)
-│     TriggeredById   : UUID                   │  (cross-module, no FK)
+│     TestSuiteId     : UUID                   │  cross-module Guid, no FK
+│     EnvironmentId   : UUID                   │  cross-module Guid, no FK
+│     TriggeredById   : UUID                   │  cross-module Guid, no FK
 │     RunNumber       : integer                │
-│     Status          : varchar(20)            │  Pending|Running|Completed|Failed|Cancelled
+│     Status          : varchar(20)            │
 │     StartedAt       : timestamptz            │
 │     CompletedAt     : timestamptz            │
 │     TotalTests      : integer                │
@@ -586,54 +653,59 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: EnvironmentId, Status, TestSuiteId, TriggeredById,
-           (TestSuiteId, RunNumber) UNIQUE
+    Index: EnvironmentId, Status, TestSuiteId, TriggeredById, (TestSuiteId, RunNumber) UNIQUE
 
 ┌──────────────────────────────────────────────┐
-│            TestCaseResults                    │  ← NEW: Cold storage for test results
+│             TestCaseResults                  │
 ├──────────────────────────────────────────────┤
-│ PK  Id                       : UUID          │  gen_random_uuid()
-│     TestRunId                : UUID          │  (references TestRuns)
-│     TestCaseId               : UUID          │  (cross-module, no FK)
-│     EndpointId               : UUID?         │  (cross-module, no FK)
-│     Name                     : varchar(500)  │  Required
-│     OrderIndex               : integer       │
-│     Status                   : varchar(20)   │  Passed|Failed|Skipped
-│     HttpStatusCode           : integer?      │
-│     DurationMs               : bigint        │
-│     ResolvedUrl              : varchar(2000) │
-│     RequestHeaders           : jsonb         │
-│     ResponseHeaders          : jsonb         │
-│     ResponseBodyPreview      : varchar(65536)│
-│     FailureReasons           : jsonb         │  Array of ValidationFailure
-│     ExtractedVariables       : jsonb         │  Masked sensitive values
-│     DependencyIds            : jsonb         │  Array of Guid
-│     SkippedBecauseDependencyIds : jsonb      │  Array of Guid
-│     StatusCodeMatched        : boolean       │
-│     SchemaMatched            : boolean?      │
-│     HeaderChecksPassed       : boolean?      │
-│     BodyContainsPassed       : boolean?      │
-│     BodyNotContainsPassed    : boolean?      │
-│     JsonPathChecksPassed     : boolean?      │
-│     ResponseTimePassed       : boolean?      │
-│     CreatedDateTime          : timestamptz   │
-│     UpdatedDateTime          : timestamptz   │
-│     RowVersion               : bytea         │
+│ PK  Id                        : UUID         │
+│ FK  TestRunId                 : UUID → TestRuns
+│     TestCaseId                : UUID         │  cross-module Guid, no FK
+│     EndpointId                : UUID?        │  cross-module Guid, no FK
+│     Name                      : varchar(500)
+│     OrderIndex                : integer      │
+│     Status                    : varchar(20)  │
+│     HttpStatusCode            : integer?     │
+│     DurationMs                : bigint       │
+│     ResolvedUrl               : varchar(2000)
+│     RequestHeaders            : jsonb        │
+│     ResponseHeaders           : jsonb        │
+│     ResponseBodyPreview       : varchar(65536)
+│     FailureReasons            : jsonb        │
+│     ExtractedVariables        : jsonb        │
+│     DependencyIds             : jsonb        │
+│     SkippedBecauseDependencyIds: jsonb       │
+│     StatusCodeMatched         : boolean      │
+│     SchemaMatched             : boolean?     │
+│     HeaderChecksPassed        : boolean?     │
+│     BodyContainsPassed        : boolean?     │
+│     BodyNotContainsPassed     : boolean?     │
+│     JsonPathChecksPassed      : boolean?     │
+│     ResponseTimePassed        : boolean?     │
+│     CreatedDateTime           : timestamptz  │
+│     UpdatedDateTime           : timestamptz  │
+│     RowVersion                : bytea        │
 └──────────────────────────────────────────────┘
-    Index: TestRunId, TestCaseId, Status,
-           (TestRunId, Status), (TestRunId, OrderIndex)
+    Index: TestRunId, TestCaseId, Status, (TestRunId, Status), (TestRunId, OrderIndex)
 
-┌─────────────────────────────────────┐  ┌─────────────────────────────────────────┐
-│ AuditLogEntries (testexecution)     │  │ OutboxMessages (testexecution)          │
-├─────────────────────────────────────┤  ├─────────────────────────────────────────┤
-│ Standard audit table                │  │ Standard outbox                         │
-└─────────────────────────────────────┘  │ Index: CreatedDateTime,                 │
-                                         │        (Published, CreatedDateTime)      │
-┌─────────────────────────────────────┐  └─────────────────────────────────────────┘
-│ ArchivedOutboxMessages (testexec.)  │
-├─────────────────────────────────────┤
-│ Index: CreatedDateTime              │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│            AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ Standard audit table                         │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ Standard outbox table                        │
+│ Index: CreatedDateTime, (Published, CreatedDateTime) filtered
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+├──────────────────────────────────────────────┤
+│ Index: CreatedDateTime                       │
+└──────────────────────────────────────────────┘
 ```
 
 **6 bảng**: ExecutionEnvironments, TestRuns, TestCaseResults, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -644,30 +716,29 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│            CoverageMetrics                    │
-├──────────────────────────────────────────────┤
-│ PK  Id                : UUID                 │
-│     TestRunId         : UUID                 │  (cross-module, no FK)
-│     TotalEndpoints    : integer              │
-│     TestedEndpoints   : integer              │
-│     CoveragePercent   : numeric(5,2)         │
-│     ByMethod          : jsonb                │
-│     ByTag             : jsonb                │
-│     UncoveredPaths    : jsonb                │
-│     CalculatedAt      : timestamptz          │
-│     CreatedDateTime   : timestamptz          │
-│     UpdatedDateTime   : timestamptz          │
-│     RowVersion        : bytea                │
-└──────────────────────────────────────────────┘
-    Index: TestRunId
-
-┌──────────────────────────────────────────────┐
-│              TestReports                      │
+│            CoverageMetrics                   │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     TestRunId       : UUID                   │  (cross-module, no FK)
-│     GeneratedById   : UUID                   │  (cross-module, no FK)
-│     FileId          : UUID                   │  (cross-module, no FK)
+│     TestRunId       : UUID                   │  cross-module Guid, no FK
+│     TotalEndpoints  : integer                │
+│     TestedEndpoints : integer                │
+│     CoveragePercent  : numeric(5,2)          │
+│     ByMethod        : jsonb                  │
+│     ByTag           : jsonb                  │
+│     UncoveredPaths  : jsonb                  │
+│     CalculatedAt    : timestamptz            │
+│     CreatedDateTime : timestamptz            │
+│     UpdatedDateTime : timestamptz            │
+│     RowVersion      : bytea                  │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│              TestReports                     │
+├──────────────────────────────────────────────┤
+│ PK  Id              : UUID                   │
+│     TestRunId       : UUID                   │  cross-module Guid, no FK
+│     GeneratedById   : UUID                   │  cross-module Guid, no FK
+│     FileId          : UUID                   │  cross-module Guid, no FK
 │     ReportType      : integer                │
 │     Format          : integer                │
 │     GeneratedAt     : timestamptz            │
@@ -676,19 +747,24 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: FileId, GeneratedById, TestRunId
 
-┌─────────────────────────────────────┐  ┌─────────────────────────────────────────┐
-│ AuditLogEntries (testreporting)     │  │ OutboxMessages (testreporting)          │
-├─────────────────────────────────────┤  ├─────────────────────────────────────────┤
-│ Standard audit table                │  │ Index: CreatedDateTime,                 │
-└─────────────────────────────────────┘  │        (Published, CreatedDateTime)      │
-                                         └─────────────────────────────────────────┘
-┌──────────────────────────────────────────┐
-│ ArchivedOutboxMessages (testreporting)   │
-├──────────────────────────────────────────┤
-│ Index: CreatedDateTime                   │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│            AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ Standard audit table                         │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ Index: CreatedDateTime, (Published, CreatedDateTime) filtered
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+├──────────────────────────────────────────────┤
+│ Index: CreatedDateTime                       │
+└──────────────────────────────────────────────┘
 ```
 
 **5 bảng**: CoverageMetrics, TestReports, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -699,10 +775,10 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│           SubscriptionPlans                   │
+│           SubscriptionPlans                  │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     Name            : varchar(100)           │  Required, UNIQUE index
+│     Name            : varchar(100)           │
 │     DisplayName     : varchar(200)           │
 │     Description     : text                   │
 │     PriceMonthly    : numeric(10,2)          │
@@ -714,17 +790,13 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: Name (UNIQUE)
-    Seed: 3 rows → Free (0 VND), Pro (299000/mo), Enterprise (999000/mo)
-           │
-           │ 1:N
-           ▼
+
 ┌──────────────────────────────────────────────┐
-│              PlanLimits                       │
+│               PlanLimits                     │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│ FK  PlanId          : UUID → SubPlans        │  Cascade
-│     LimitType       : integer                │  enum (0-7)
+│ FK  PlanId          : UUID → SubscriptionPlans│ Cascade
+│     LimitType       : integer                │
 │     LimitValue      : integer (nullable)     │
 │     IsUnlimited     : boolean                │
 │     CreatedDateTime : timestamptz            │
@@ -732,51 +804,45 @@
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
     Index: PlanId, (PlanId, LimitType) UNIQUE
-    Seed: 24 rows → 8 limits × 3 plans
-      LimitType: 0=Projects, 1=ApiSpecs, 2=TestSuites, 3=TestCases,
-                 4=Environments, 5=ReportRetentionDays, 6=TestRuns, 7=TestCaseVariables
-      Free:       1, 10, 20, 50, 1, 7, 10, 100
-      Pro:       10, 50, 100, 500, 3, 30, 100, 1000
-      Enterprise: ∞, ∞, ∞, ∞, 10, 365, ∞, ∞
 
 ┌──────────────────────────────────────────────┐
-│          UserSubscriptions                    │
+│             UserSubscriptions                │
 ├──────────────────────────────────────────────┤
-│ PK  Id                : UUID                 │
-│ FK  PlanId            : UUID → SubPlans      │  Restrict
-│     UserId            : UUID                 │  (cross-module, no FK)
-│     Status            : integer              │
-│     BillingCycle      : integer (nullable)   │
-│     StartDate         : date                 │
-│     EndDate           : date (nullable)      │
-│     NextBillingDate   : date (nullable)      │
-│     TrialEndsAt       : timestamptz          │
-│     CancelledAt       : timestamptz          │
-│     AutoRenew         : boolean              │
-│     ExternalSubId     : varchar(200)         │
-│     ExternalCustId    : varchar(200)         │
-│     SnapshotPlanName  : varchar(200)         │
+│ PK  Id              : UUID                   │
+│ FK  PlanId          : UUID → SubscriptionPlans│ Restrict
+│     UserId          : UUID                   │  cross-module Guid, no FK
+│     Status          : integer                │
+│     BillingCycle    : integer (nullable)     │
+│     StartDate       : date                   │
+│     EndDate         : date (nullable)        │
+│     NextBillingDate : date (nullable)        │
+│     TrialEndsAt     : timestamptz            │
+│     CancelledAt     : timestamptz            │
+│     AutoRenew       : boolean                │
+│     ExternalSubId   : varchar(200)           │
+│     ExternalCustId  : varchar(200)           │
+│     SnapshotPlanName: varchar(200)           │
 │     SnapshotPriceMonthly : numeric(10,2)     │
 │     SnapshotPriceYearly  : numeric(10,2)     │
-│     SnapshotCurrency  : varchar(3)           │
-│     CreatedDateTime   : timestamptz          │
-│     UpdatedDateTime   : timestamptz          │
-│     RowVersion        : bytea                │
+│     SnapshotCurrency : varchar(3)            │
+│     CreatedDateTime : timestamptz            │
+│     UpdatedDateTime : timestamptz            │
+│     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
     Index: PlanId, Status, UserId
 
 ┌──────────────────────────────────────────────┐
-│           PaymentIntents                      │
+│              PaymentIntents                 │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│ FK  PlanId          : UUID → SubPlans        │  Restrict
-│ FK  SubscriptionId  : UUID → UserSubs        │  SetNull (nullable)
-│     UserId          : UUID                   │  (cross-module, no FK)
+│ FK  PlanId          : UUID → SubscriptionPlans│ Restrict
+│ FK  SubscriptionId  : UUID → UserSubscriptions│ SetNull
+│     UserId          : UUID                   │  cross-module Guid, no FK
 │     Amount          : numeric(18,2)          │
-│     Currency        : varchar(3)             │  Required
-│     BillingCycle    : varchar(10)            │  Required
-│     Purpose         : varchar(30)            │  Required
-│     Status          : varchar(20)            │  Required
+│     Currency        : varchar(3)             │
+│     BillingCycle    : varchar(10)            │
+│     Purpose         : varchar(30)            │
+│     Status          : varchar(20)            │
 │     OrderCode       : bigint (nullable)      │
 │     CheckoutUrl     : varchar(500)           │
 │     ExpiresAt       : timestamptz            │
@@ -784,17 +850,15 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: OrderCode (UNIQUE, filtered NOT NULL),
-           PlanId, Status, SubscriptionId, UserId,
-           (Status, CreatedDateTime), (Status, Purpose)
+    Index: OrderCode (UNIQUE filtered), PlanId, Status, SubscriptionId, UserId, (Status, CreatedDateTime), (Status, Purpose)
 
 ┌──────────────────────────────────────────────┐
-│         PaymentTransactions                   │
+│            PaymentTransactions              │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│ FK  PaymentIntentId : UUID → PayIntents      │  SetNull (nullable)
-│ FK  SubscriptionId  : UUID → UserSubs        │  Restrict
-│     UserId          : UUID                   │  (cross-module, no FK)
+│ FK  PaymentIntentId : UUID → PaymentIntents  │ SetNull
+│ FK  SubscriptionId  : UUID → UserSubscriptions│ Restrict
+│     UserId          : UUID                   │  cross-module Guid, no FK
 │     Amount          : numeric(18,2)          │
 │     Currency        : varchar(3)             │
 │     Status          : integer                │
@@ -808,16 +872,15 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: PaymentIntentId, Status, SubscriptionId, UserId,
-           (Provider, ProviderRef) UNIQUE filtered NOT NULL
+    Index: PaymentIntentId, Status, SubscriptionId, UserId, (Provider, ProviderRef) UNIQUE filtered
 
 ┌──────────────────────────────────────────────┐
-│        SubscriptionHistories                  │
+│           SubscriptionHistories              │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│ FK  SubscriptionId  : UUID → UserSubs        │  Cascade
-│ FK  NewPlanId       : UUID → SubPlans        │  Restrict
-│ FK  OldPlanId       : UUID → SubPlans        │  Restrict (nullable)
+│ FK  SubscriptionId  : UUID → UserSubscriptions│ Cascade
+│ FK  NewPlanId       : UUID → SubscriptionPlans│ Restrict
+│ FK  OldPlanId       : UUID → SubscriptionPlans│ Restrict, nullable
 │     ChangeType      : integer                │
 │     ChangeReason    : text                   │
 │     EffectiveDate   : date                   │
@@ -825,13 +888,12 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: NewPlanId, OldPlanId, SubscriptionId
 
 ┌──────────────────────────────────────────────┐
-│           UsageTrackings                      │  ← LƯU Ý: plural "Trackings"
+│             UsageTrackings                  │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     UserId          : UUID                   │  (cross-module, no FK)
+│     UserId          : UUID                   │  cross-module Guid, no FK
 │     PeriodStart     : date                   │
 │     PeriodEnd       : date                   │
 │     ProjectCount    : integer                │
@@ -845,17 +907,22 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: UserId, (UserId, PeriodStart, PeriodEnd) UNIQUE
 
-┌─────────────────────────────────────┐  ┌─────────────────────────────────────────┐
-│ AuditLogEntries (subscription)      │  │ OutboxMessages (subscription)           │
-├─────────────────────────────────────┤  ├─────────────────────────────────────────┤
-│ Standard audit table                │  │ Standard outbox                         │
-└─────────────────────────────────────┘  └─────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│            AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ Standard audit table                         │
+└──────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────┐
-│ ArchivedOutboxMessages (subscription)    │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ Standard outbox table                        │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+└──────────────────────────────────────────────┘
 ```
 
 **10 bảng**: SubscriptionPlans, PlanLimits, UserSubscriptions, PaymentIntents, PaymentTransactions, SubscriptionHistories, UsageTrackings, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -866,17 +933,17 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│             FileEntries                       │  ← KHÔNG phải StorageFiles
+│              FileEntries                    │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     OwnerId         : UUID (nullable)        │  (cross-module, no FK)
+│     OwnerId         : UUID (nullable)        │  cross-module Guid, no FK
 │     FileName        : text                   │
 │     Name            : text                   │
 │     ContentType     : varchar(100)           │
 │     Size            : bigint                 │
 │     FileLocation    : text                   │
 │     Description     : text                   │
-│     FileCategory    : integer                │  Default 3
+│     FileCategory    : integer                │
 │     Deleted         : boolean                │
 │     DeletedDate     : timestamptz            │
 │     Archived        : boolean                │
@@ -890,10 +957,9 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: Deleted, FileCategory, OwnerId
 
 ┌──────────────────────────────────────────────┐
-│          DeletedFileEntries                   │
+│            DeletedFileEntries               │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
 │     FileEntryId     : UUID                   │
@@ -902,15 +968,21 @@
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
 
-┌─────────────────────────────────────┐  ┌──────────────────────────────────┐
-│ AuditLogEntries (storage)           │  │ OutboxMessages (storage)         │
-├─────────────────────────────────────┤  ├──────────────────────────────────┤
-│ Standard audit table                │  │ Standard outbox                  │
-└─────────────────────────────────────┘  └──────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│            AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ Standard audit table                         │
+└──────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────┐
-│ ArchivedOutboxMessages (storage)         │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ Standard outbox table                        │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+└──────────────────────────────────────────────┘
 ```
 
 **5 bảng**: FileEntries, DeletedFileEntries, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -921,7 +993,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│            EmailMessages                      │
+│               EmailMessages                 │
 ├──────────────────────────────────────────────┤
 │ PK  Id                  : UUID               │
 │     From                : text               │
@@ -942,26 +1014,22 @@
 │     RowVersion          : bytea              │
 └──────────────────────────────────────────────┘
     Index: CreatedDateTime,
-           SentDateTime (INCLUDE: ExpiredDateTime, AttemptCount,
-                         MaxAttemptCount, NextAttemptDateTime)
-           │
-           │ 1:N
-           ▼
+           SentDateTime (INCLUDE: ExpiredDateTime, AttemptCount, MaxAttemptCount, NextAttemptDateTime)
+
 ┌──────────────────────────────────────────────┐
-│       EmailMessageAttachments                 │
+│         EmailMessageAttachments             │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│ FK  EmailMessageId  : UUID → EmailMessages   │  Cascade
-│     FileEntryId     : UUID                   │  (cross-module ref)
+│ FK  EmailMessageId  : UUID → EmailMessages   │ Cascade
+│     FileEntryId     : UUID                   │  cross-module Guid
 │     Name            : text                   │
 │     CreatedDateTime : timestamptz            │
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Index: EmailMessageId
 
 ┌──────────────────────────────────────────────┐
-│             SmsMessages                       │
+│               SmsMessages                   │
 ├──────────────────────────────────────────────┤
 │ PK  Id                  : UUID               │
 │     PhoneNumber         : text               │
@@ -978,19 +1046,18 @@
 │     RowVersion          : bytea              │
 └──────────────────────────────────────────────┘
     Index: CreatedDateTime,
-           SentDateTime (INCLUDE: ExpiredDateTime, AttemptCount,
-                         MaxAttemptCount, NextAttemptDateTime)
+           SentDateTime (INCLUDE: ExpiredDateTime, AttemptCount, MaxAttemptCount, NextAttemptDateTime)
 
 ┌──────────────────────────────────────────────┐
-│        ArchivedEmailMessages                  │  ← same columns, no defaults
+│         ArchivedEmailMessages               │
 ├──────────────────────────────────────────────┤
-│    Index: CreatedDateTime                    │
+│ same columns, no defaults                   │
 └──────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────┐
-│         ArchivedSmsMessages                   │  ← same columns, no defaults
+│          ArchivedSmsMessages                │
 ├──────────────────────────────────────────────┤
-│    Index: CreatedDateTime                    │
+│ same columns, no defaults                   │
 └──────────────────────────────────────────────┘
 ```
 
@@ -1002,7 +1069,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│         ConfigurationEntries                  │
+│         ConfigurationEntries                │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
 │     Key             : text                   │
@@ -1013,10 +1080,9 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Seed: 1 row → "SecurityHeaders:Test-Read-From-SqlServer"
 
 ┌──────────────────────────────────────────────┐
-│         LocalizationEntries                   │
+│         LocalizationEntries                 │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
 │     Name            : text                   │
@@ -1027,7 +1093,6 @@
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
 └──────────────────────────────────────────────┘
-    Seed: 2 rows → "Test"/en-US, "Test"/vi-VN
 ```
 
 **2 bảng**: ConfigurationEntries, LocalizationEntries
@@ -1038,7 +1103,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│       AuditLogEntries (auditlog)              │  ← central audit log
+│           AuditLogEntries                   │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
 │     UserId          : UUID                   │
@@ -1051,11 +1116,11 @@
 └──────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────┐
-│         IdempotentRequests                    │
+│         IdempotentRequests                  │
 ├──────────────────────────────────────────────┤
 │ PK  Id              : UUID                   │
-│     RequestType     : text                   │  Required
-│     RequestId       : text                   │  Required
+│     RequestType     : text                   │
+│     RequestId       : text                   │
 │     CreatedDateTime : timestamptz            │
 │     UpdatedDateTime : timestamptz            │
 │     RowVersion      : bytea                  │
@@ -1069,21 +1134,17 @@
 
 ### 2.11 LlmAssistant Module — Schema: `llmassistant`
 
-> **Lưu ý**: Module này có DbContext riêng (`LlmAssistantDbContext`) với schema `llmassistant`, nhưng **chưa có migration folder** trong `ClassifiedAds.Migrator`. Cấu trúc bảng dưới đây lấy từ entity configurations.
-
 ```
 ┌──────────────────────────────────────────────┐
-│           LlmInteractions                     │
+│           LlmInteractions                   │
 ├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │  default gen_random_uuid()
-│     UserId          : UUID                   │  (cross-module, no FK)
-│     InteractionType : integer                │  enum: 0=ScenarioSuggestion,
-│                                               │        1=FailureExplanation,
-│                                               │        2=DocumentationParsing
+│ PK  Id              : UUID                   │
+│     UserId          : UUID                   │  cross-module Guid, no FK
+│     InteractionType : integer                │
 │     InputContext    : text                   │
 │     LlmResponse    : text                   │
 │     ModelUsed       : varchar(100)           │
-│     TokensUsed      : integer               │
+│     TokensUsed      : integer                │
 │     LatencyMs       : integer                │
 │     CreatedDateTime : timestamptz            │
 │     UpdatedDateTime : timestamptz            │
@@ -1092,14 +1153,11 @@
     Index: UserId, InteractionType, CreatedDateTime
 
 ┌──────────────────────────────────────────────┐
-│         LlmSuggestionCaches                   │  ← LƯU Ý: plural "Caches"
+│         LlmSuggestionCaches                 │
 ├──────────────────────────────────────────────┤
-│ PK  Id              : UUID                   │  default gen_random_uuid()
-│     EndpointId      : UUID                   │  (cross-module, no FK)
-│     SuggestionType  : integer                │  enum: 0=BoundaryCase,
-│                                               │        1=NegativeCase,
-│                                               │        2=HappyPath,
-│                                               │        3=SecurityCase
+│ PK  Id              : UUID                   │
+│     EndpointId      : UUID                   │  cross-module Guid, no FK
+│     SuggestionType  : integer                │
 │     CacheKey        : varchar(500)           │
 │     Suggestions     : jsonb                  │
 │     ExpiresAt       : timestamptz            │
@@ -1109,17 +1167,21 @@
 └──────────────────────────────────────────────┘
     Index: EndpointId, CacheKey, ExpiresAt
 
-┌─────────────────────────────────────┐  ┌──────────────────────────────────┐
-│ AuditLogEntries (llmassistant)      │  │ OutboxMessages (llmassistant)    │
-├─────────────────────────────────────┤  ├──────────────────────────────────┤
-│ Standard audit table                │  │ Index: CreatedDateTime,          │
-└─────────────────────────────────────┘  │        (Published, CreatedDateTime)│
-                                         └──────────────────────────────────┘
-┌──────────────────────────────────────────┐
-│ ArchivedOutboxMessages (llmassistant)    │
-├──────────────────────────────────────────┤
-│ Index: CreatedDateTime                   │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│           AuditLogEntries                   │
+├──────────────────────────────────────────────┤
+│ Standard audit table                         │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│             OutboxMessages                   │
+├──────────────────────────────────────────────┤
+│ Standard outbox table                        │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│         ArchivedOutboxMessages               │
+└──────────────────────────────────────────────┘
 ```
 
 **5 bảng**: LlmInteractions, LlmSuggestionCaches, AuditLogEntries, OutboxMessages, ArchivedOutboxMessages
@@ -1128,15 +1190,15 @@
 
 ## 3. Infrastructure Tables Pattern
 
-Hầu hết các module đều có bộ infrastructure tables giống nhau:
+Hầu hết các module đều có các bảng hạ tầng giống nhau:
 
 | Table | Có trong modules | Mục đích |
-|-------|-----------------|----------|
-| `AuditLogEntries` | apidoc, testgen, testexecution, testreporting, subscription, storage, llmassistant | Per-module audit log |
-| `OutboxMessages` | apidoc, testgen, testexecution, testreporting, subscription, storage, llmassistant | Transactional outbox pattern |
-| `ArchivedOutboxMessages` | apidoc, testexecution, testreporting, subscription, storage, llmassistant | Archived outbox messages |
+|-------|------------------|----------|
+| `AuditLogEntries` | apidoc, testgen, testexecution, testreporting, subscription, storage, llmassistant | Audit log theo module |
+| `OutboxMessages` | apidoc, testgen, testexecution, testreporting, subscription, storage, llmassistant | Transactional outbox |
+| `ArchivedOutboxMessages` | apidoc, testexecution, testreporting, subscription, storage, llmassistant | Lưu outbox đã archive |
 
-> Mỗi schema có bảng riêng — KHÔNG share AuditLogEntries/OutboxMessages giữa các schema. Module `auditlog` (schema `auditlog`) là central audit log cho cross-module queries.
+> Module `auditlog` (`auditlog`) là central audit log riêng, không phải infrastructure table copy như các schema khác.
 
 ---
 
@@ -1146,11 +1208,6 @@ Hầu hết các module đều có bộ infrastructure tables giống nhau:
 
 ```mermaid
 erDiagram
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 1: IDENTITY — Schema: identity
-    %% 9 tables (custom Identity, NOT AspNet* prefix)
-    %% ═══════════════════════════════════════════════════════════════════════
-
     identity_Users {
         UUID Id PK "gen_random_uuid()"
         text UserName
@@ -1171,7 +1228,7 @@ erDiagram
         text AzureAdB2CUserId
         timestamptz CreatedDateTime
         timestamptz UpdatedDateTime
-        bytea RowVersion "ConcurrencyToken"
+        bytea RowVersion
     }
 
     identity_Roles {
@@ -1188,768 +1245,120 @@ erDiagram
         UUID Id PK "gen_random_uuid()"
         UUID UserId FK "Users"
         UUID RoleId FK "Roles"
-        timestamptz CreatedDateTime
-        timestamptz UpdatedDateTime
-        bytea RowVersion
     }
-
-    identity_RoleClaims {
-        UUID Id PK "gen_random_uuid()"
-        UUID RoleId FK "Roles"
-        text Type
-        text Value
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    identity_UserClaims {
-        UUID Id PK "gen_random_uuid()"
-        UUID UserId FK "Users"
-        text Type
-        text Value
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    identity_UserLogins {
-        UUID Id PK "gen_random_uuid()"
-        UUID UserId FK "Users"
-        text LoginProvider
-        text ProviderKey
-        text ProviderDisplayName
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    identity_UserTokens {
-        UUID Id PK "gen_random_uuid()"
-        UUID UserId FK "Users"
-        text LoginProvider
-        text TokenName
-        text TokenValue
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    identity_UserProfiles {
-        UUID Id PK "gen_random_uuid()"
-        UUID UserId FK_UK "Users 1:1 UNIQUE"
-        varchar_200 DisplayName
-        varchar_500 AvatarUrl
-        varchar_50 Timezone
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    identity_DataProtectionKeys {
-        integer Id PK "auto-increment"
-        text FriendlyName
-        text Xml
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 2: API DOCUMENTATION — Schema: apidoc
-    %% 10 tables
-    %% ═══════════════════════════════════════════════════════════════════════
 
     apidoc_Projects {
         UUID Id PK "gen_random_uuid()"
         UUID ActiveSpecId FK "ApiSpecifications SetNull"
-        UUID OwnerId "cross-module Guid"
-        varchar_200 Name "Required"
-        text Description
-        varchar_500 BaseUrl
-        varchar_20 Status "Required"
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID OwnerId "cross-module"
     }
 
     apidoc_ApiSpecifications {
         UUID Id PK "gen_random_uuid()"
         UUID ProjectId FK "Projects Cascade"
-        UUID OriginalFileId "cross-module Guid"
-        varchar_200 Name "Required"
-        varchar_20 SourceType "Required"
-        varchar_50 Version
-        boolean IsActive
-        timestamptz ParsedAt
-        varchar_20 ParseStatus "Required"
-        jsonb ParseErrors
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID OriginalFileId "cross-module"
     }
-
-    apidoc_ApiEndpoints {
-        UUID Id PK "gen_random_uuid()"
-        UUID ApiSpecId FK "ApiSpecifications Cascade"
-        varchar_10 HttpMethod "Required"
-        varchar_500 Path "Required"
-        varchar_200 OperationId
-        varchar_500 Summary
-        text Description
-        jsonb Tags
-        boolean IsDeprecated
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    apidoc_EndpointParameters {
-        UUID Id PK "gen_random_uuid()"
-        UUID EndpointId FK "ApiEndpoints Cascade"
-        varchar_100 Name "Required"
-        varchar_20 Location "Required"
-        varchar_50 DataType
-        varchar_50 Format
-        boolean IsRequired
-        text DefaultValue
-        jsonb Schema
-        jsonb Examples
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    apidoc_EndpointResponses {
-        UUID Id PK "gen_random_uuid()"
-        UUID EndpointId FK "ApiEndpoints Cascade"
-        integer StatusCode
-        text Description
-        jsonb Schema
-        jsonb Examples
-        jsonb Headers
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    apidoc_EndpointSecurityReqs {
-        UUID Id PK "gen_random_uuid()"
-        UUID EndpointId FK "ApiEndpoints Cascade"
-        varchar_20 SecurityType "Required"
-        varchar_100 SchemeName
-        jsonb Scopes
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    apidoc_SecuritySchemes {
-        UUID Id PK "gen_random_uuid()"
-        UUID ApiSpecId FK "ApiSpecifications Cascade"
-        varchar_100 Name "Required"
-        varchar_20 Type "Required"
-        varchar_50 Scheme
-        varchar_50 BearerFormat
-        varchar_20 In
-        varchar_100 ParameterName
-        jsonb Configuration
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 3: TEST GENERATION — Schema: testgen
-    %% 11 tables
-    %% ═══════════════════════════════════════════════════════════════════════
 
     testgen_TestSuites {
         UUID Id PK "gen_random_uuid()"
-        UUID ProjectId "cross-module Guid"
-        UUID ApiSpecId "cross-module Guid nullable"
-        varchar_200 Name "Required"
-        text Description
-        varchar_20 GenerationType "Required"
-        varchar_20 Status "Required"
-        varchar_30 ApprovalStatus "Required"
-        timestamptz ApprovedAt
-        UUID ApprovedById "nullable"
-        UUID CreatedById "cross-module Guid"
-        UUID LastModifiedById "nullable"
-        jsonb SelectedEndpointIds "PrimitiveCollection"
-        integer Version "Default 1"
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID ProjectId "cross-module"
+        UUID ApiSpecId "cross-module"
     }
 
     testgen_TestCases {
         UUID Id PK "gen_random_uuid()"
         UUID TestSuiteId FK "TestSuites Cascade"
-        UUID DependsOnId FK "TestCases SetNull self-ref"
-        UUID EndpointId "cross-module Guid nullable"
-        varchar_200 Name "Required"
-        text Description
-        varchar_20 TestType "Required"
-        varchar_20 Priority "Required"
-        boolean IsEnabled
-        integer OrderIndex
-        boolean IsOrderCustomized
-        integer CustomOrderIndex "nullable"
-        UUID LastModifiedById "nullable"
-        jsonb Tags
-        integer Version "Default 1"
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID DependsOnId FK "TestCases SetNull"
     }
 
-    testgen_TestCaseRequests {
+    testgen_LlmSuggestions {
         UUID Id PK "gen_random_uuid()"
-        UUID TestCaseId FK_UK "TestCases 1:1 UNIQUE"
-        varchar_10 HttpMethod "Required"
-        varchar_1000 Url "Required"
-        jsonb Headers
-        jsonb PathParams
-        jsonb QueryParams
-        varchar_20 BodyType "Required"
-        text Body
-        integer Timeout
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestCaseExpectations {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestCaseId FK_UK "TestCases 1:1 UNIQUE"
-        jsonb ExpectedStatus
-        jsonb ResponseSchema
-        jsonb HeaderChecks
-        jsonb BodyContains
-        jsonb BodyNotContains
-        jsonb JsonPathChecks
-        integer MaxResponseTime "nullable"
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestCaseVariables {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestCaseId FK "TestCases Cascade"
-        varchar_100 VariableName "Required"
-        varchar_20 ExtractFrom "Required"
-        varchar_500 JsonPath
-        varchar_100 HeaderName
-        varchar_500 Regex
-        text DefaultValue
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestDataSets {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestCaseId FK "TestCases Cascade"
-        varchar_100 Name "Required"
-        jsonb Data "Required"
-        boolean IsEnabled
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestCaseChangeLogs {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestCaseId FK "TestCases Cascade"
-        UUID ChangedById "cross-module Guid"
-        varchar_30 ChangeType "Required"
-        varchar_100 FieldName
-        text OldValue
-        text NewValue
-        text ChangeReason
-        integer VersionAfterChange
-        varchar_45 IpAddress
-        varchar_500 UserAgent
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestOrderProposals {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestSuiteId FK "TestSuites Cascade"
-        integer ProposalNumber
-        varchar_20 Source "Required"
-        varchar_30 Status "Required"
-        jsonb ProposedOrder "Required"
-        jsonb AppliedOrder
-        jsonb UserModifiedOrder
-        text AiReasoning
-        jsonb ConsideredFactors
-        varchar_100 LlmModel
-        integer TokensUsed "nullable"
-        UUID ReviewedById "nullable"
-        timestamptz ReviewedAt
-        text ReviewNotes
-        timestamptz AppliedAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    testgen_TestSuiteVersions {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestSuiteId FK "TestSuites Cascade"
-        integer VersionNumber
-        varchar_30 ChangeType "Required"
-        text ChangeDescription
-        UUID ChangedById "cross-module Guid"
-        jsonb PreviousState
-        jsonb NewState
-        jsonb TestCaseOrderSnapshot
-        varchar_30 ApprovalStatusSnapshot "Required"
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 4: TEST EXECUTION — Schema: testexecution
-    %% 6 tables
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    testexec_ExecutionEnvironments {
-        UUID Id PK "gen_random_uuid()"
-        UUID ProjectId "cross-module Guid"
-        varchar_100 Name "Required"
-        varchar_500 BaseUrl "Required"
-        jsonb Variables
-        jsonb Headers
-        jsonb AuthConfig
-        boolean IsDefault
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID TestSuiteId "cross-module"
+        UUID EndpointId "cross-module"
     }
 
     testexec_TestRuns {
         UUID Id PK "gen_random_uuid()"
-        UUID TestSuiteId "cross-module Guid"
-        UUID EnvironmentId "cross-module Guid"
-        UUID TriggeredById "cross-module Guid"
-        integer RunNumber
-        varchar_20 Status "Pending|Running|Completed|Failed|Cancelled"
-        timestamptz StartedAt
-        timestamptz CompletedAt
-        integer TotalTests
-        integer PassedCount
-        integer FailedCount
-        integer SkippedCount
-        bigint DurationMs
-        varchar_200 RedisKey
-        timestamptz ResultsExpireAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID TestSuiteId "cross-module"
+        UUID EnvironmentId "cross-module"
+        UUID TriggeredById "cross-module"
     }
 
     testexec_TestCaseResults {
         UUID Id PK "gen_random_uuid()"
-        UUID TestRunId FK "references TestRuns"
-        UUID TestCaseId "cross-module Guid"
-        UUID EndpointId "nullable, cross-module"
-        varchar_500 Name "Required"
-        integer OrderIndex
-        varchar_20 Status "Passed|Failed|Skipped"
-        integer HttpStatusCode "nullable"
-        bigint DurationMs
-        varchar_2000 ResolvedUrl
-        jsonb RequestHeaders
-        jsonb ResponseHeaders
-        varchar_65536 ResponseBodyPreview
-        jsonb FailureReasons
-        jsonb ExtractedVariables
-        jsonb DependencyIds
-        jsonb SkippedBecauseDependencyIds
-        boolean StatusCodeMatched
-        boolean SchemaMatched "nullable"
-        boolean HeaderChecksPassed "nullable"
-        boolean BodyContainsPassed "nullable"
-        boolean BodyNotContainsPassed "nullable"
-        boolean JsonPathChecksPassed "nullable"
-        boolean ResponseTimePassed "nullable"
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID TestRunId FK "TestRuns"
+        UUID TestCaseId "cross-module"
     }
 
-    testexec_TestRuns ||--o{ testexec_TestCaseResults : "1:N"
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 5: TEST REPORTING — Schema: testreporting
-    %% 5 tables
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    testreport_CoverageMetrics {
+    subscription_SubscriptionPlans {
         UUID Id PK "gen_random_uuid()"
-        UUID TestRunId "cross-module Guid"
-        integer TotalEndpoints
-        integer TestedEndpoints
-        numeric_5_2 CoveragePercent
-        jsonb ByMethod
-        jsonb ByTag
-        jsonb UncoveredPaths
-        timestamptz CalculatedAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        varchar Name
     }
 
-    testreport_TestReports {
-        UUID Id PK "gen_random_uuid()"
-        UUID TestRunId "cross-module Guid"
-        UUID GeneratedById "cross-module Guid"
-        UUID FileId "cross-module Guid"
-        integer ReportType
-        integer Format
-        timestamptz GeneratedAt
-        timestamptz ExpiresAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 6: SUBSCRIPTION — Schema: subscription
-    %% 10 tables
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    sub_SubscriptionPlans {
-        UUID Id PK "gen_random_uuid()"
-        varchar_100 Name "Required UNIQUE"
-        varchar_200 DisplayName
-        text Description
-        numeric_10_2 PriceMonthly
-        numeric_10_2 PriceYearly
-        varchar_3 Currency
-        boolean IsActive
-        integer SortOrder
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    sub_PlanLimits {
+    subscription_PlanLimits {
         UUID Id PK "gen_random_uuid()"
         UUID PlanId FK "SubscriptionPlans Cascade"
-        integer LimitType "enum 0-7"
-        integer LimitValue "nullable"
-        boolean IsUnlimited
-        timestamptz CreatedDateTime
-        bytea RowVersion
     }
-
-    sub_UserSubscriptions {
-        UUID Id PK "gen_random_uuid()"
-        UUID PlanId FK "SubscriptionPlans Restrict"
-        UUID UserId "cross-module Guid"
-        integer Status
-        integer BillingCycle "nullable"
-        date StartDate
-        date EndDate "nullable"
-        date NextBillingDate "nullable"
-        timestamptz TrialEndsAt
-        timestamptz CancelledAt
-        boolean AutoRenew
-        varchar_200 ExternalSubId
-        varchar_200 ExternalCustId
-        varchar_200 SnapshotPlanName
-        numeric_10_2 SnapshotPriceMonthly
-        numeric_10_2 SnapshotPriceYearly
-        varchar_3 SnapshotCurrency
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    sub_PaymentIntents {
-        UUID Id PK "gen_random_uuid()"
-        UUID PlanId FK "SubscriptionPlans Restrict"
-        UUID SubscriptionId FK "UserSubscriptions SetNull"
-        UUID UserId "cross-module Guid"
-        numeric_18_2 Amount
-        varchar_3 Currency "Required"
-        varchar_10 BillingCycle "Required"
-        varchar_30 Purpose "Required"
-        varchar_20 Status "Required"
-        bigint OrderCode "UNIQUE filtered"
-        varchar_500 CheckoutUrl
-        timestamptz ExpiresAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    sub_PaymentTransactions {
-        UUID Id PK "gen_random_uuid()"
-        UUID PaymentIntentId FK "PaymentIntents SetNull"
-        UUID SubscriptionId FK "UserSubscriptions Restrict"
-        UUID UserId "cross-module Guid"
-        numeric_18_2 Amount
-        varchar_3 Currency
-        integer Status
-        varchar_50 PaymentMethod
-        varchar_20 Provider
-        varchar_200 ProviderRef
-        varchar_200 ExternalTxnId
-        varchar_500 InvoiceUrl
-        text FailureReason
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    sub_SubscriptionHistories {
-        UUID Id PK "gen_random_uuid()"
-        UUID SubscriptionId FK "UserSubscriptions Cascade"
-        UUID NewPlanId FK "SubscriptionPlans Restrict"
-        UUID OldPlanId FK "SubscriptionPlans Restrict nullable"
-        integer ChangeType
-        text ChangeReason
-        date EffectiveDate
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    sub_UsageTrackings {
-        UUID Id PK "gen_random_uuid()"
-        UUID UserId "cross-module Guid"
-        date PeriodStart
-        date PeriodEnd
-        integer ProjectCount
-        integer EndpointCount
-        integer TestSuiteCount
-        integer TestCaseCount
-        integer TestRunCount
-        integer LlmCallCount
-        numeric_10_2 StorageUsedMB
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 7: STORAGE — Schema: storage
-    %% 5 tables (FileEntries NOT StorageFiles)
-    %% ═══════════════════════════════════════════════════════════════════════
 
     storage_FileEntries {
         UUID Id PK "gen_random_uuid()"
-        UUID OwnerId "cross-module Guid nullable"
-        text FileName
-        text Name
-        varchar_100 ContentType
-        bigint Size
-        text FileLocation
-        text Description
-        integer FileCategory "Default 3"
-        boolean Deleted
-        timestamptz DeletedDate
-        boolean Archived
-        timestamptz ArchivedDate
-        boolean Encrypted
-        text EncryptionKey
-        text EncryptionIV
-        timestamptz ExpiresAt
-        timestamptz UploadedTime
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID OwnerId "cross-module"
     }
 
-    storage_DeletedFileEntries {
+    notification_EmailMessages {
         UUID Id PK "gen_random_uuid()"
-        UUID FileEntryId
-        timestamptz CreatedDateTime
-        bytea RowVersion
     }
 
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 8: NOTIFICATION — Schema: notification
-    %% 5 tables
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    notif_EmailMessages {
-        UUID Id PK "gen_random_uuid()"
-        text From
-        text Tos
-        text CCs
-        text BCCs
-        text Subject
-        text Body
-        integer AttemptCount
-        integer MaxAttemptCount
-        timestamptz SentDateTime
-        timestamptz ExpiredDateTime
-        timestamptz NextAttemptDateTime
-        UUID CopyFromId "nullable"
-        text Log
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    notif_EmailMessageAttachments {
+    notification_EmailMessageAttachments {
         UUID Id PK "gen_random_uuid()"
         UUID EmailMessageId FK "EmailMessages Cascade"
-        UUID FileEntryId "cross-module Guid"
-        text Name
-        timestamptz CreatedDateTime
-        bytea RowVersion
+        UUID FileEntryId "cross-module"
     }
 
-    notif_SmsMessages {
+    configuration_ConfigurationEntries {
         UUID Id PK "gen_random_uuid()"
-        text PhoneNumber
-        text Message
-        integer AttemptCount
-        integer MaxAttemptCount
-        timestamptz SentDateTime
-        timestamptz ExpiredDateTime
-        timestamptz NextAttemptDateTime
-        UUID CopyFromId "nullable"
-        text Log
-        timestamptz CreatedDateTime
-        bytea RowVersion
     }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 9: CONFIGURATION — Schema: configuration
-    %% 2 tables
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    config_ConfigurationEntries {
-        UUID Id PK "gen_random_uuid()"
-        text Key
-        text Value
-        text Description
-        boolean IsSensitive
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    config_LocalizationEntries {
-        UUID Id PK "gen_random_uuid()"
-        text Name
-        text Value
-        text Culture
-        text Description
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 10: AUDIT LOG — Schema: auditlog
-    %% 2 tables
-    %% ═══════════════════════════════════════════════════════════════════════
 
     auditlog_AuditLogEntries {
         UUID Id PK "gen_random_uuid()"
-        UUID UserId
-        text Action
-        text ObjectId
-        text Log
-        timestamptz CreatedDateTime
-        bytea RowVersion
     }
-
-    auditlog_IdempotentRequests {
-        UUID Id PK "gen_random_uuid()"
-        text RequestType "Required"
-        text RequestId "Required"
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% MODULE 11: LLM ASSISTANT — Schema: llmassistant
-    %% 5 tables (chưa có migration)
-    %% ═══════════════════════════════════════════════════════════════════════
 
     llm_LlmInteractions {
         UUID Id PK "gen_random_uuid()"
-        UUID UserId "cross-module Guid"
-        integer InteractionType "enum 0-2"
-        text InputContext
-        text LlmResponse
-        varchar_100 ModelUsed
-        integer TokensUsed
-        integer LatencyMs
-        timestamptz CreatedDateTime
-        bytea RowVersion
     }
 
-    llm_LlmSuggestionCaches {
-        UUID Id PK "gen_random_uuid()"
-        UUID EndpointId "cross-module Guid"
-        integer SuggestionType "enum 0-3"
-        varchar_500 CacheKey
-        jsonb Suggestions
-        timestamptz ExpiresAt
-        timestamptz CreatedDateTime
-        bytea RowVersion
-    }
-
-    %% ═══════════════════════════════════════════════════════════════════════
-    %% INTRA-MODULE RELATIONSHIPS (actual FK constraints in DB)
-    %% Cross-module references are Guid columns with indexes, NO FK
-    %% ═══════════════════════════════════════════════════════════════════════
-
-    %% Identity (intra-module FK)
-    identity_Users ||--o{ identity_UserRoles : "has"
-    identity_Roles ||--o{ identity_UserRoles : "assigned_to"
-    identity_Users ||--o{ identity_UserClaims : "has"
-    identity_Users ||--o{ identity_UserLogins : "has"
-    identity_Users ||--o{ identity_UserTokens : "has"
-    identity_Roles ||--o{ identity_RoleClaims : "has"
-    identity_Users ||--o| identity_UserProfiles : "has 1:1"
-
-    %% ApiDocumentation (intra-module FK)
-    apidoc_Projects ||--o{ apidoc_ApiSpecifications : "contains"
-    apidoc_Projects ||--o| apidoc_ApiSpecifications : "active_spec"
-    apidoc_ApiSpecifications ||--o{ apidoc_ApiEndpoints : "defines"
-    apidoc_ApiSpecifications ||--o{ apidoc_SecuritySchemes : "includes"
-    apidoc_ApiEndpoints ||--o{ apidoc_EndpointParameters : "has"
-    apidoc_ApiEndpoints ||--o{ apidoc_EndpointResponses : "returns"
-    apidoc_ApiEndpoints ||--o{ apidoc_EndpointSecurityReqs : "requires"
-
-    %% TestGeneration (intra-module FK)
-    testgen_TestSuites ||--o{ testgen_TestCases : "contains"
-    testgen_TestSuites ||--o{ testgen_TestOrderProposals : "has"
-    testgen_TestSuites ||--o{ testgen_TestSuiteVersions : "versions"
-    testgen_TestCases ||--o| testgen_TestCases : "depends_on self"
-    testgen_TestCases ||--|| testgen_TestCaseRequests : "request 1:1"
-    testgen_TestCases ||--|| testgen_TestCaseExpectations : "expectations 1:1"
-    testgen_TestCases ||--o{ testgen_TestCaseVariables : "extracts"
-    testgen_TestCases ||--o{ testgen_TestDataSets : "uses"
-    testgen_TestCases ||--o{ testgen_TestCaseChangeLogs : "tracks"
-
-    %% Subscription (intra-module FK)
-    sub_SubscriptionPlans ||--o{ sub_PlanLimits : "defines"
-    sub_SubscriptionPlans ||--o{ sub_UserSubscriptions : "subscribed_to"
-    sub_UserSubscriptions ||--o{ sub_SubscriptionHistories : "tracks"
-    sub_SubscriptionPlans ||--o{ sub_SubscriptionHistories : "new_plan"
-    sub_SubscriptionPlans ||--o{ sub_SubscriptionHistories : "old_plan"
-    sub_SubscriptionPlans ||--o{ sub_PaymentIntents : "for_plan"
-    sub_UserSubscriptions ||--o{ sub_PaymentIntents : "for_sub"
-    sub_PaymentIntents ||--o{ sub_PaymentTransactions : "fulfills"
-    sub_UserSubscriptions ||--o{ sub_PaymentTransactions : "for_sub"
-
-    %% Notification (intra-module FK)
-    notif_EmailMessages ||--o{ notif_EmailMessageAttachments : "has"
+    %% Selected actual FK relationships
+    identity_Users ||--o{ identity_UserRoles : has
+    identity_Roles ||--o{ identity_UserRoles : assigned_to
+    apidoc_Projects ||--o{ apidoc_ApiSpecifications : contains
+    testgen_TestSuites ||--o{ testgen_TestCases : contains
+    testexec_TestRuns ||--o{ testexec_TestCaseResults : has
+    subscription_SubscriptionPlans ||--o{ subscription_PlanLimits : defines
+    notification_EmailMessages ||--o{ notification_EmailMessageAttachments : has
 ```
 
-### 4.2 Table Naming Convention
+### 4.2 Table Count Summary
 
-| Convention | Example | Rule |
-|------------|---------|------|
-| **Identity Tables** | `Users`, `Roles`, `UserRoles` | PascalCase, Plural — **KHÔNG dùng prefix AspNet** |
-| **Business Tables** | `Projects`, `TestSuites` | PascalCase, Plural |
-| **1:1 Detail Tables** | `TestCaseRequests`, `TestCaseExpectations` | Parent + Detail name |
-| **History/Audit Tables** | `SubscriptionHistories`, `TestCaseChangeLogs` | Suffix Histories/ChangeLogs |
-| **Tracking Tables** | `UsageTrackings`, `CoverageMetrics` | Descriptive name, plural |
-| **Infrastructure** | `OutboxMessages`, `AuditLogEntries` | Shared pattern per module |
-| **Archived** | `ArchivedOutboxMessages`, `ArchivedEmailMessages` | Prefix `Archived` |
+| # | Module | Schema | Tables |
+|---|--------|--------|--------|
+| 1 | Identity | `identity` | 10 |
+| 2 | ApiDocumentation | `apidoc` | 10 |
+| 3 | TestGeneration | `testgen` | 20 |
+| 4 | TestExecution | `testexecution` | 6 |
+| 5 | TestReporting | `testreporting` | 5 |
+| 6 | Subscription | `subscription` | 10 |
+| 7 | Storage | `storage` | 5 |
+| 8 | Notification | `notification` | 5 |
+| 9 | Configuration | `configuration` | 2 |
+| 10 | AuditLog | `auditlog` | 2 |
+| 11 | LlmAssistant | `llmassistant` | 5 |
+| | **TOTAL** | **11 schemas** | **80** |
 
-### 4.3 Table Count Summary (chính xác theo snapshot + config)
-
-| # | Module | Schema | Business Tables | Infra Tables | Total |
-|---|--------|--------|----------------|--------------|-------|
-| 1 | Identity | `identity` | 9 | 0 | **9** |
-| 2 | ApiDocumentation | `apidoc` | 7 | 3 | **10** |
-| 3 | TestGeneration | `testgen` | 9 | 2 | **11** |
-| 4 | TestExecution | `testexecution` | 3 | 3 | **6** |
-| 5 | TestReporting | `testreporting` | 2 | 3 | **5** |
-| 6 | Subscription | `subscription` | 7 | 3 | **10** |
-| 7 | Storage | `storage` | 2 | 3 | **5** |
-| 8 | Notification | `notification` | 5 | 0 | **5** |
-| 9 | Configuration | `configuration` | 2 | 0 | **2** |
-| 10 | AuditLog | `auditlog` | 2 | 0 | **2** |
-| 11 | LlmAssistant | `llmassistant` | 2 | 3 | **5** |
-| | **TOTAL** | **11 schemas** | **50** | **20** | **70** |
-
-> **Ghi chú**: Infra tables (AuditLogEntries, OutboxMessages, ArchivedOutboxMessages) được tính riêng vì mỗi schema có bản copy riêng. Con số 70 là tổng bảng thực tế nếu tính cả infra tables lặp lại. Nếu tính unique business entities: **50 bảng**.
+> Lưu ý: tổng 80 là số bảng thực tế theo snapshot hiện tại, bao gồm cả infra tables lặp theo schema.
 
 ---
 
-## 5. Redis Schema cho Test Results (Hot Storage)
+## 5. Redis Schema cho Test Results
 
 ### 5.1 Key Patterns
 
@@ -1959,60 +1368,19 @@ erDiagram
 | `testrun:{id}:execution:{testId}` | HASH | 5-10 days | Individual test execution detail |
 | `testrun:{id}:logs` | LIST | 5-10 days | Execution logs |
 | `testrun:{id}:variables` | HASH | 5-10 days | Runtime extracted variables |
-| `user:{id}:recent_runs` | SORTED SET | 5-10 days | Quick access to recent runs |
+| `user:{id}:recent_runs` | SORTED SET | 5-10 days | Recent runs |
 
-### 5.2 TTL Configuration & Dual-Write Strategy
+### 5.2 Dual-Write Strategy
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    DUAL-WRITE STORAGE STRATEGY                              │
-│             (Updated: TestCaseResults now persisted to PostgreSQL)          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   Test execution completes                                                   │
-│          │                                                                   │
-│          ├───────────────────────┬──────────────────────────┐               │
-│          ▼                       ▼                          ▼               │
-│   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐      │
-│   │     REDIS       │     │   PostgreSQL    │     │   PostgreSQL    │      │
-│   │  (Hot Storage)  │     │    TestRuns     │     │ TestCaseResults │      │
-│   │                 │     │ (Summary Only)  │     │  (Full Detail)  │      │
-│   │ • Full results  │     │                 │     │                 │      │
-│   │ • Fast access   │     │ • Counts        │     │ • Request/Resp  │      │
-│   │ • TTL: 7 days   │     │ • Timing        │     │ • FailureReasons│      │
-│   │                 │     │ • RedisKey ref  │     │ • ValidationFlag│      │
-│   └─────────────────┘     └─────────────────┘     └─────────────────┘      │
-│          │                       │                          │               │
-│          │ expires               │ permanent                │ permanent     │
-│          ▼                       │                          │               │
-│   ┌─────────────────┐           │                          │               │
-│   │ resultsSource=  │           │                          │               │
-│   │ "unavailable"   │◄──────────┼──────────────────────────┤               │
-│   │ (OLD behavior)  │           │                          │               │
-│   └─────────────────┘           │                          │               │
-│          │                       │                          │               │
-│          ▼ (NEW: Fallback)       │                          │               │
-│   ┌─────────────────┐           │                          │               │
-│   │ resultsSource=  │◄──────────┴──────────────────────────┘               │
-│   │ "database"      │                                                       │
-│   │ (NEW behavior)  │  Failure Explanation now works after Redis expires!   │
-│   └─────────────────┘                                                       │
-│                                                                              │
-│   TTL is controlled per subscription tier:                                   │
-│   • Free:       ReportRetentionDays = 7                                      │
-│   • Pro:        ReportRetentionDays = 30                                     │
-│   • Enterprise: ReportRetentionDays = 365                                    │
-│                                                                              │
-│   NOTE: PostgreSQL TestCaseResults are PERMANENT. Only Redis expires.        │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+- `TestRuns` lưu metadata tổng hợp của lần chạy.
+- `TestCaseResults` lưu chi tiết đầy đủ ở PostgreSQL.
+- Redis tiếp tục là hot storage để phục vụ truy xuất nhanh, còn PostgreSQL là nguồn dữ liệu bền vững.
 
 ---
 
 ## 6. Subscription Tiers & Seed Data
 
-### 6.1 Plan Configuration (từ seed data trong SubscriptionDbContextModelSnapshot)
+### 6.1 Plan Configuration
 
 | Plan | PriceMonthly | PriceYearly | Currency |
 |------|-------------|-------------|----------|
@@ -2020,7 +1388,7 @@ erDiagram
 | Pro | 299,000 | — | VND |
 | Enterprise | 999,000 | — | VND |
 
-### 6.2 PlanLimits Seed (LimitType enum → integer)
+### 6.2 PlanLimits Seed
 
 | LimitType | Free | Pro | Enterprise |
 |-----------|------|-----|------------|
@@ -2033,53 +1401,19 @@ erDiagram
 | 6 = TestRuns | 10 | 100 | ∞ |
 | 7 = TestCaseVariables | 100 | 1000 | ∞ |
 
-### 6.3 User Registration Flow
-
-```
-   User clicks "Sign Up"
-           │
-           ▼
-   ┌───────────────────────────────────────────────────────────┐
-   │  STEP 1: Create User in identity.Users                    │
-   │  + UserProfile + assign Role "User"                       │
-   └───────────────────────────────────────────────────────────┘
-           │
-           ▼
-   ┌───────────────────────────────────────────────────────────┐
-   │  STEP 2: Auto-assign Free Plan                            │
-   │  → subscription.UserSubscriptions (Status=Active)         │
-   └───────────────────────────────────────────────────────────┘
-           │
-           ▼
-   ┌───────────────────────────────────────────────────────────┐
-   │  STEP 3: Initialize Usage Tracking                        │
-   │  → subscription.UsageTrackings (all counts = 0)           │
-   └───────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## 7. Comparison: Old ERD vs Actual Codebase
 
-| Issue | ERD cũ (v1) | Codebase thực tế |
-|-------|-------------|-----------------|
-| Identity table names | `AspNetUsers`, `AspNetRoles`, ... | `Users`, `Roles`, ... (schema `identity`) |
-| Identity PK types | `INT IDENTITY` cho Claims | `UUID gen_random_uuid()` cho tất cả |
+| Issue | ERD cũ | Codebase thực tế |
+|-------|--------|-----------------|
+| Identity tables | `AspNetUsers`, `AspNetRoles`, ... | `Users`, `Roles`, `UserProfiles`, `PasswordHistories`, ... |
+| TestGeneration scope | Chỉ core test tables | Thêm `Srs*`, `LlmSuggestions`, `LlmSuggestionFeedbacks`, `TestGenerationJobs`, `TestCaseDependencies`, `TestCaseRequirementLinks` |
+| LlmAssistant | Gộp hoặc thiếu | Schema riêng `llmassistant` |
 | Storage table | `StorageFiles` | `FileEntries` + `DeletedFileEntries` |
-| Usage tracking | `UsageTracking` (singular) | `UsageTrackings` (plural) |
-| LLM cache | `LlmSuggestionCache` (singular) | `LlmSuggestionCaches` (plural) |
-| Thiếu `PaymentIntents` | ✗ | ✓ — subscription schema |
-| Thiếu `TestSuiteVersions` | ✗ (chỉ có trong section 6.1) | ✓ — testgen schema |
-| Thiếu `TestOrderProposals` | ✗ | ✓ — testgen schema |
-| Thiếu `TestCaseChangeLogs` | ✗ | ✓ — testgen schema |
-| Thiếu module Notification | ✗ | ✓ — 5 bảng (notification schema) |
-| Thiếu module Configuration | ✗ | ✓ — 2 bảng (configuration schema) |
-| Thiếu module AuditLog | ✗ | ✓ — 2 bảng (auditlog schema) |
-| Thiếu module LlmAssistant (separate) | Gộp chung section | ✓ — schema riêng `llmassistant` |
-| Thiếu infra tables | ✗ | AuditLogEntries, OutboxMessages, ArchivedOutboxMessages per schema |
-| Cross-module FK | Vẽ FK liên module | Chỉ Guid + index, **không có FK** liên module |
-| Data types | NVARCHAR, BIT, DATETIMEOFFSET (SQL Server) | text, boolean, timestamptz (PostgreSQL) |
-| Table count | 34 | 69 (49 business + 20 infra) |
+| Usage tracking | Singular | `UsageTrackings` |
+| Cross-module FK | Vẽ FK xuyên schema | Chỉ Guid + index, **không FK** liên module |
+| Data types | SQL Server types | PostgreSQL types (`uuid`, `text`, `jsonb`, `timestamptz`) |
 
 ---
 
@@ -2087,9 +1421,9 @@ erDiagram
 
 | Requirement | Status |
 |-------------|--------|
-| Target DB identified | ✓ `ClassifiedAds` from `ConnectionStrings__Default` in `.env` |
-| Schemas checked | ✓ 11 schemas: identity, apidoc, testgen, testexecution, testreporting, subscription, storage, notification, configuration, auditlog, llmassistant |
-| Migration IDs listed | ✓ 10 modules have latest migration IDs; LlmAssistant has no migration folder |
-| Preflight SQL executed | ✗ Not executed — static audit only, no DB runtime access |
-| Post-change verification | ✗ Not applicable — no migration/seed was run |
-| Runtime mode confirmed | N/A — document generation only |
+| Target DB identified | ✓ `ClassifiedAds` |
+| Schemas checked | ✓ 11 schemas |
+| Latest ERD source artifacts found | ✓ `DbContext` snapshots + entity configurations |
+| Preflight SQL executed | ✗ Not executed |
+| Runtime DB verification | ✗ Not executed |
+| Post-change verification | ✓ Documentation updated from source snapshots |
