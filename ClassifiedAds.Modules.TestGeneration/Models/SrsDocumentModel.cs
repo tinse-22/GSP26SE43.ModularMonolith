@@ -32,7 +32,10 @@ public class SrsDocumentModel
 
     public List<SrsRequirementModel> Requirements { get; set; } = new();
 
-    public static SrsDocumentModel FromEntity(SrsDocument doc, IEnumerable<SrsRequirementModel> requirements = null)
+    /// <summary>ID of the most recent analysis job for this document. Used by FE to resume polling after page refresh.</summary>
+    public Guid? LatestJobId { get; set; }
+
+    public static SrsDocumentModel FromEntity(SrsDocument doc, IEnumerable<SrsRequirementModel> requirements = null, Guid? latestJobId = null)
     {
         return new SrsDocumentModel
         {
@@ -49,6 +52,7 @@ public class SrsDocumentModel
             CreatedDateTime = doc.CreatedDateTime,
             UpdatedDateTime = doc.UpdatedDateTime,
             Requirements = requirements != null ? new List<SrsRequirementModel>(requirements) : new(),
+            LatestJobId = latestJobId,
         };
     }
 }

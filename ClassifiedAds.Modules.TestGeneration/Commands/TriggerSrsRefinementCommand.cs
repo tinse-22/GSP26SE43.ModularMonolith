@@ -135,47 +135,53 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
             UserAnswers = userAnswers,
         };
 
-        var callbackUrl = $"{_n8nOptions.BeBaseUrl}/api/srs-refinement-callback/{job.Id}";
-
         var payload = new N8nSrsRefinementPayload
         {
             SrsDocumentId = doc.Id,
             JobId = job.Id,
             RequirementsToRefine = new List<N8nSrsRequirementToRefine> { requirementToRefine },
-            CallbackUrl = callbackUrl,
-            CallbackApiKey = _n8nOptions.CallbackApiKey,
         };
 
-        // Trigger n8n
+        // Call n8n synchronously — wait for full result (like LLM suggestion / analyze-srs flow)
         job.Status = SrsAnalysisJobStatus.Triggering;
         job.TriggeredAt = DateTimeOffset.UtcNow;
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        var result = await _n8nService.TriggerWebhookWithResultAsync(WebhookName, payload, cancellationToken);
+        SrsRefinementCallbackRequest callbackData;
+        try
+        {
+            callbackData = await _n8nService.TriggerWebhookAsync<N8nSrsRefinementPayload, SrsRefinementCallbackRequest>(
+                WebhookName, payload, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            var result = new WebhookTriggerResult { ErrorMessage = ex.Message, ErrorDetails = ex.ToString() };
+            if (ShouldUseLocalFallback(result))
+            {
+                await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
+                return;
+            }
+            else
+            {
+                job.Status = SrsAnalysisJobStatus.Failed;
+                job.ErrorMessage = ex.Message;
+                job.CompletedAt = DateTimeOffset.UtcNow;
+                await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+                _logger.LogError(ex, "SRS refinement n8n call failed. JobId={JobId}", job.Id);
+                throw;
+            }
+        }
 
-        if (result.Success)
+        // n8n returned results — process them via the callback handler
+        await _dispatcher.DispatchAsync(new ProcessSrsRefinementCallbackCommand
         {
-            job.Status = SrsAnalysisJobStatus.Processing;
-            _logger.LogInformation(
-                "SRS refinement job triggered. JobId={JobId}, RequirementId={RequirementId}",
-                job.Id, command.RequirementId);
-        }
-        else if (ShouldUseLocalFallback(result))
-        {
-            await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
-            return;
-        }
-        else
-        {
-            job.Status = SrsAnalysisJobStatus.Failed;
-            job.ErrorMessage = result.ErrorMessage;
-            job.CompletedAt = DateTimeOffset.UtcNow;
-            _logger.LogError(
-                "Failed to trigger SRS refinement via n8n. JobId={JobId}, Error={Error}",
-                job.Id, result.ErrorMessage);
-        }
+            JobId = job.Id,
+            RefinedRequirements = callbackData?.RefinedRequirements ?? new List<N8nSrsRefinedRequirement>(),
+        }, cancellationToken);
 
-        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation(
+            "SRS refinement completed synchronously. JobId={JobId}, RequirementId={RequirementId}",
+            job.Id, command.RequirementId);
     }
 
     private async Task ApplyLocalFallbackAsync(
@@ -282,11 +288,6 @@ public class N8nSrsRefinementPayload
     [JsonPropertyName("requirementsToRefine")]
     public List<N8nSrsRequirementToRefine> RequirementsToRefine { get; set; } = new();
 
-    [JsonPropertyName("callbackUrl")]
-    public string CallbackUrl { get; set; }
-
-    [JsonPropertyName("callbackApiKey")]
-    public string CallbackApiKey { get; set; }
 }
 
 public class N8nSrsRequirementToRefine

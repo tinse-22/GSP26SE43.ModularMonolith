@@ -168,9 +168,9 @@ public class N8nGenerateTestsPayload
     public Guid TestSuiteId { get; set; }
     public string TestSuiteName { get; set; } = string.Empty;
     public Guid SpecificationId { get; set; }
-    public N8nUnifiedPromptConfig PromptConfig { get; set; } = new ();
-    public List<N8nOrderedEndpoint> Endpoints { get; set; } = new ();
-    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new ();
+    public N8nUnifiedPromptConfig PromptConfig { get; set; } = new();
+    public List<N8nOrderedEndpoint> Endpoints { get; set; } = new();
+    public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
     public string GlobalBusinessRules { get; set; }
 
     /// <summary>BE endpoint n8n should POST generated test cases back to.</summary>
@@ -178,6 +178,20 @@ public class N8nGenerateTestsPayload
 
     /// <summary>Sent back by n8n in the x-callback-api-key header so BE can validate it.</summary>
     public string CallbackApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SRS requirements linked to this test suite. Present when the suite has a linked SRS document.
+    /// LLM should use these to populate coveredRequirementIds per test case.
+    /// </summary>
+    public List<N8nSrsRequirement> SrsRequirements { get; set; } = new();
+}
+
+public class N8nSrsRequirement
+{
+    public Guid Id { get; set; }
+    public string Code { get; set; }
+    public string Title { get; set; }
+    public string Description { get; set; }
 }
 
 public class N8nOrderedEndpoint
@@ -187,13 +201,13 @@ public class N8nOrderedEndpoint
     public string Path { get; set; }
     public string OperationId { get; set; }
     public int OrderIndex { get; set; }
-    public List<Guid> DependsOnEndpointIds { get; set; } = new ();
-    public List<string> ReasonCodes { get; set; } = new ();
+    public List<Guid> DependsOnEndpointIds { get; set; } = new();
+    public List<string> ReasonCodes { get; set; } = new();
     public bool IsAuthRelated { get; set; }
     public string BusinessContext { get; set; }
     public Models.N8nPromptPayload Prompt { get; set; }
-    public List<string> ParameterSchemaPayloads { get; set; } = new ();
-    public List<string> ResponseSchemaPayloads { get; set; } = new ();
+    public List<string> ParameterSchemaPayloads { get; set; } = new();
+    public List<string> ResponseSchemaPayloads { get; set; } = new();
 }
 
 public class N8nUnifiedPromptConfig

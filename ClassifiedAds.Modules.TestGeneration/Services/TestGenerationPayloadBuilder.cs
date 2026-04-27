@@ -60,7 +60,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "6. request.body must be stringified JSON or null.\n" +
         "7. expectation.expectedStatus must be an array of integers.\n" +
         "8. HappyPath expectedStatus should prefer 2xx. Boundary/Negative should prefer 4xx (or 401/403/404 where appropriate).\n" +
-        "9. Return complete request/expectation objects for each test case.";
+        "9. Return complete request/expectation objects for each test case.\n" +
+        "10. If srsRequirements are provided in the input, populate coveredRequirementIds for each test case with the UUIDs of the requirements that the test case validates. Use an empty array if none apply.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -94,7 +95,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "        \"jsonPathChecks\": {},\n" +
         "        \"maxResponseTime\": null\n" +
         "      },\n" +
-        "      \"variables\": []\n" +
+        "      \"variables\": [],\n" +
+        "      \"coveredRequirementIds\": [\"<requirement-uuid-1>\", \"<requirement-uuid-2>\"]\n" +
         "    }\n" +
         "  ],\n" +
         "  \"model\": \"<model name>\",\n" +
@@ -104,6 +106,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestOrderProposal, Guid> _proposalRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IObservationConfirmationPromptBuilder _promptBuilder;
     private readonly IApiTestOrderService _apiTestOrderService;
@@ -115,6 +118,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
     public TestGenerationPayloadBuilder(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<TestOrderProposal, Guid> proposalRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         IApiEndpointMetadataService endpointMetadataService,
         IObservationConfirmationPromptBuilder promptBuilder,
         IApiTestOrderService apiTestOrderService,
@@ -123,6 +127,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
     {
         _suiteRepository = suiteRepository;
         _proposalRepository = proposalRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _endpointMetadataService = endpointMetadataService;
         _promptBuilder = promptBuilder;
         _apiTestOrderService = apiTestOrderService;
@@ -253,6 +258,29 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             CallbackUrl = callbackUrl,
             CallbackApiKey = callbackApiKey,
         };
+
+        // Include SRS requirements so LLM can populate coveredRequirementIds.
+        if (suite.SrsDocumentId.HasValue)
+        {
+            var requirements = await _srsRequirementRepository.ToListAsync(
+                _srsRequirementRepository.GetQueryableSet()
+                    .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
+                    .OrderBy(x => x.DisplayOrder));
+
+            payload.SrsRequirements = requirements
+                .Select(r => new N8nSrsRequirement
+                {
+                    Id = r.Id,
+                    Code = r.RequirementCode,
+                    Title = r.Title,
+                    Description = r.Description,
+                })
+                .ToList();
+
+            _logger.LogInformation(
+                "Included {Count} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
+                payload.SrsRequirements.Count, suite.Id, suite.SrsDocumentId);
+        }
 
         _logger.LogInformation(
             "Built test generation payload. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, CallbackUrl={CallbackUrl}",

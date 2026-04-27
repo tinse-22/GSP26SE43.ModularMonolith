@@ -23,6 +23,9 @@ public class ProcessSrsAnalysisCallbackCommand : ICommand
     public List<N8nSrsRequirementResult> Requirements { get; set; } = new();
 
     public List<N8nSrsClarificationQuestion> ClarificationQuestions { get; set; } = new();
+
+    /// <summary>Non-null when n8n reports an internal workflow error.</summary>
+    public string ErrorMessage { get; set; }
 }
 
 public class ProcessSrsAnalysisCallbackCommandHandler : ICommandHandler<ProcessSrsAnalysisCallbackCommand>
@@ -70,6 +73,24 @@ public class ProcessSrsAnalysisCallbackCommandHandler : ICommandHandler<ProcessS
         if (doc == null)
         {
             throw new NotFoundException($"SrsDocument {job.SrsDocumentId} khong tim thay.");
+        }
+
+        // If n8n reports an error, mark job as Failed immediately
+        if (!string.IsNullOrWhiteSpace(command.ErrorMessage))
+        {
+            job.Status = SrsAnalysisJobStatus.Failed;
+            job.ErrorMessage = command.ErrorMessage;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+            await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogWarning(
+                "SRS analysis reported n8n error. JobId={JobId}, Error={Error}",
+                job.Id, command.ErrorMessage);
+            return;
         }
 
         // Map clarification questions by requirementCode for lookup
@@ -168,6 +189,9 @@ public class SrsAnalysisCallbackRequest
 
     [JsonPropertyName("clarificationQuestions")]
     public List<N8nSrsClarificationQuestion> ClarificationQuestions { get; set; } = new();
+
+    [JsonPropertyName("errorMessage")]
+    public string ErrorMessage { get; set; }
 }
 
 public class N8nSrsRequirementResult
