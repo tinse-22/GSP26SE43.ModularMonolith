@@ -5,7 +5,6 @@ namespace ClassifiedAds.Modules.TestExecution.Models.Requests;
 
 public class UpdateExecutionEnvironmentRequest
 {
-    [Required]
     public string RowVersion { get; set; }
 
     [Required]
