@@ -160,6 +160,7 @@ public class TestReportGenerator : ITestReportGenerator
         {
             TestSuiteId = context.TestSuiteId,
             ProjectId = context.ProjectId,
+            ProjectName = context.ProjectName,
             ApiSpecId = context.ApiSpecId,
             SuiteName = context.SuiteName,
             ReportType = reportType,
