@@ -95,6 +95,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "        \"bodyContains\": null,\n" +
         "        \"bodyNotContains\": null\n" +
         "      },\n" +
+        "      \"coveredRequirementCodes\": [\"REQ-001\"],\n" +
         "      \"variables\": []\n" +
         "    }\n" +
         "  ],\n" +
@@ -102,7 +103,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"tokensUsed\": 0\n" +
         "}";
 
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -255,7 +256,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
 
         // Step 6: Parse response into domain models
-        var scenarios = ParseScenarios(n8nResponse, endpointContracts);
+        var scenarios = ParseScenarios(n8nResponse, endpointContracts, context.SrsRequirements);
         scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap, endpointContracts);
 
         // Step 7: Cache results
@@ -380,9 +381,41 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             TestSuiteId = context.TestSuiteId,
             TestSuiteName = context.Suite.Name,
             GlobalBusinessRules = TruncateForPayload(context.Suite.GlobalBusinessRules, MaxBusinessContextLength),
+            SrsContext = BuildSrsContext(context),
             AlgorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap),
             Endpoints = endpointPayloads,
+        };
+    }
+
+    private static N8nSrsContext BuildSrsContext(LlmScenarioSuggestionContext context)
+    {
+        if (context.SrsDocument == null)
+            return null;
+
+        var content = !string.IsNullOrWhiteSpace(context.SrsDocument.ParsedMarkdown)
+            ? context.SrsDocument.ParsedMarkdown
+            : context.SrsDocument.RawContent;
+
+        // Truncate to avoid token overflow (~12 000 chars ≈ ~3 000 tokens)
+        const int MaxSrsContentLength = 12_000;
+        if (content?.Length > MaxSrsContentLength)
+            content = content.Substring(0, MaxSrsContentLength) + "\n...[truncated]";
+
+        var requirements = context.SrsRequirements
+            .Select(r => new N8nSrsRequirementBrief
+            {
+                Code = r.RequirementCode,
+                Title = r.Title,
+                Description = TruncateForPayload(r.Description, 500),
+            })
+            .ToList();
+
+        return new N8nSrsContext
+        {
+            DocumentTitle = context.SrsDocument.Title,
+            Content = content,
+            Requirements = requirements,
         };
     }
 
@@ -530,12 +563,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(
         N8nBoundaryNegativeResponse response,
-        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts)
+        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
+        IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
         if (response?.Scenarios == null || response.Scenarios.Count == 0)
         {
             return Array.Empty<LlmSuggestedScenario>();
         }
+
+        // Build code → GUID lookup so LLM-returned codes ("REQ-001") can be resolved to DB IDs.
+        var codeToId = srsRequirements != null
+            ? srsRequirements
+                .Where(r => !string.IsNullOrWhiteSpace(r.RequirementCode))
+                .ToDictionary(r => r.RequirementCode.Trim(), r => r.Id, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
         var scenarios = new List<LlmSuggestedScenario>(response.Scenarios.Count);
 
@@ -543,6 +584,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             var parsedType = ParseTestType(s.TestType);
             var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus, s.Request?.HttpMethod);
+
+            // Map requirement codes returned by LLM → GUIDs from our DB.
+            var coveredIds = s.CoveredRequirementCodes
+                ?.Where(c => !string.IsNullOrWhiteSpace(c) && codeToId.ContainsKey(c.Trim()))
+                .Select(c => codeToId[c.Trim()])
+                .Distinct()
+                .ToList()
+                ?? new List<Guid>();
 
             var parsedScenario = new LlmSuggestedScenario
             {
@@ -561,6 +610,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
+                CoveredRequirementIds = coveredIds,
             };
 
             if (endpointContracts != null &&

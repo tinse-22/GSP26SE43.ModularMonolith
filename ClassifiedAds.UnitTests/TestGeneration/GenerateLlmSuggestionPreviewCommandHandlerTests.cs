@@ -29,6 +29,8 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
 {
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<LlmSuggestion, Guid>> _suggestionRepoMock;
+    private readonly Mock<IRepository<SrsDocument, Guid>> _srsDocRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsReqRepoMock;
     private readonly Mock<IApiTestOrderGateService> _gateServiceMock;
     private readonly Mock<IApiEndpointMetadataService> _endpointMetadataServiceMock;
     private readonly Mock<IApiEndpointParameterDetailService> _endpointParameterDetailServiceMock;
@@ -41,6 +43,8 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     {
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _suggestionRepoMock = new Mock<IRepository<LlmSuggestion, Guid>>();
+        _srsDocRepoMock = new Mock<IRepository<SrsDocument, Guid>>();
+        _srsReqRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
         _gateServiceMock = new Mock<IApiTestOrderGateService>();
         _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
         _endpointParameterDetailServiceMock = new Mock<IApiEndpointParameterDetailService>();
@@ -50,9 +54,16 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
 
         _suggestionRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
 
+        // Default: no SRS document found
+        _srsDocRepoMock
+            .Setup(x => x.FirstOrDefaultAsync(It.IsAny<System.Linq.IQueryable<SrsDocument>>()))
+            .ReturnsAsync((SrsDocument)null);
+
         _handler = new GenerateLlmSuggestionPreviewCommandHandler(
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
+            _srsDocRepoMock.Object,
+            _srsReqRepoMock.Object,
             _gateServiceMock.Object,
             _endpointMetadataServiceMock.Object,
             _endpointParameterDetailServiceMock.Object,

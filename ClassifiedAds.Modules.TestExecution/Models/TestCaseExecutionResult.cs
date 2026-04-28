@@ -75,4 +75,20 @@ public class TestCaseExecutionResult
     public bool? JsonPathChecksPassed { get; set; }
 
     public bool? ResponseTimePassed { get; set; }
+
+    // ── Expectation snapshots (for FE Evidence panel) ────────────────────
+    /// <summary>JSON array of strings the response body should contain (from test case expectation).</summary>
+    public string ExpectedBodyContains { get; set; }
+
+    /// <summary>JSON array of strings the response body must NOT contain.</summary>
+    public string ExpectedBodyNotContains { get; set; }
+
+    /// <summary>JSON object of header key→expected-value pairs.</summary>
+    public string ExpectedHeaderChecks { get; set; }
+
+    /// <summary>JSON object of JSONPath→expected-value pairs.</summary>
+    public string ExpectedJsonPathChecks { get; set; }
+
+    /// <summary>Maximum allowed response time in milliseconds.</summary>
+    public int? ExpectedMaxResponseTime { get; set; }
 }

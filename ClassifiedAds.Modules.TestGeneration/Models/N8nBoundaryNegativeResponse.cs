@@ -8,7 +8,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Models;
 /// </summary>
 public class N8nBoundaryNegativeResponse
 {
-    public List<N8nSuggestedScenario> Scenarios { get; set; } = new ();
+    public List<N8nSuggestedScenario> Scenarios { get; set; } = new();
 
     public string Model { get; set; }
 
@@ -28,7 +28,7 @@ public class N8nSuggestedScenario
 
     public string Priority { get; set; }
 
-    public List<string> Tags { get; set; } = new ();
+    public List<string> Tags { get; set; } = new();
 
     /// <summary>Reuse existing N8nTestCaseRequest model from happy-path.</summary>
     public N8nTestCaseRequest Request { get; set; }
@@ -36,5 +36,11 @@ public class N8nSuggestedScenario
     /// <summary>Reuse existing N8nTestCaseExpectation model from happy-path.</summary>
     public N8nTestCaseExpectation Expectation { get; set; }
 
-    public List<N8nTestCaseVariable> Variables { get; set; } = new ();
+    public List<N8nTestCaseVariable> Variables { get; set; } = new();
+
+    /// <summary>
+    /// SRS requirement codes (e.g. "REQ-001") this scenario covers, as output by the LLM.
+    /// Mapped to GUIDs by BE during parsing.
+    /// </summary>
+    public List<string> CoveredRequirementCodes { get; set; } = new();
 }

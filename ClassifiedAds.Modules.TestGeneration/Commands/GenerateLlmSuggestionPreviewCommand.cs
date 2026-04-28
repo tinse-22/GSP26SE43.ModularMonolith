@@ -37,6 +37,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly IApiTestOrderGateService _gateService;
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
@@ -47,6 +49,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     public GenerateLlmSuggestionPreviewCommandHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         IApiTestOrderGateService gateService,
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
@@ -56,6 +60,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _gateService = gateService;
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
@@ -131,6 +137,24 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             endpointIds,
             cancellationToken);
 
+        // 6a) Load SRS document + requirements when available so LLM can generate traceable scenarios
+        SrsDocument srsDocument = null;
+        List<SrsRequirement> srsRequirements = new();
+
+        if (suite.SrsDocumentId.HasValue)
+        {
+            srsDocument = await _srsDocumentRepository.FirstOrDefaultAsync(
+                _srsDocumentRepository.GetQueryableSet()
+                    .Where(x => x.Id == suite.SrsDocumentId.Value));
+
+            if (srsDocument != null)
+            {
+                srsRequirements = await _srsRequirementRepository.ToListAsync(
+                    _srsRequirementRepository.GetQueryableSet()
+                        .Where(x => x.SrsDocumentId == srsDocument.Id));
+            }
+        }
+
         var llmContext = new LlmScenarioSuggestionContext
         {
             TestSuiteId = suite.Id,
@@ -142,6 +166,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             EndpointParameterDetails = endpointParameterDetails.ToDictionary(x => x.EndpointId),
             AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             BypassCache = command.ForceRefresh,
+            SrsDocument = srsDocument,
+            SrsRequirements = srsRequirements,
         };
 
         var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
@@ -230,6 +256,10 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 ReviewStatus = ReviewStatus.Pending,
                 LlmModel = llmResult.LlmModel,
                 TokensUsed = llmResult.TokensUsed,
+                SrsDocumentId = suite.SrsDocumentId,
+                CoveredRequirementIds = scenario.CoveredRequirementIds?.Count > 0
+                    ? JsonSerializer.Serialize(scenario.CoveredRequirementIds, JsonOpts)
+                    : null,
                 CreatedDateTime = now,
                 RowVersion = Guid.NewGuid().ToByteArray(),
             };
