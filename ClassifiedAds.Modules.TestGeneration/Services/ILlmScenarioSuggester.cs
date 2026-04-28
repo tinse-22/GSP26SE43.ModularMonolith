@@ -41,6 +41,19 @@ public class LlmScenarioSuggestionContext
     /// If true, skip cache lookup and force a live n8n generation.
     /// </summary>
     public bool BypassCache { get; set; }
+
+    /// <summary>
+    /// SRS document linked to the test suite. Null when no SRS is associated.
+    /// Content (ParsedMarkdown or RawContent) is sent to n8n so the LLM can align
+    /// generated test scenarios with documented requirements.
+    /// </summary>
+    public SrsDocument SrsDocument { get; set; }
+
+    /// <summary>
+    /// Individual requirements extracted from the SRS document.
+    /// Passed to n8n so the LLM can generate traceable test scenarios.
+    /// </summary>
+    public IReadOnlyList<SrsRequirement> SrsRequirements { get; set; } = Array.Empty<SrsRequirement>();
 }
 
 public class LlmScenarioSuggestionResult
@@ -97,6 +110,11 @@ public class LlmSuggestedScenario
     public List<string> Tags { get; set; } = new List<string>();
 
     public List<N8nTestCaseVariable> Variables { get; set; } = new List<N8nTestCaseVariable>();
+
+    /// <summary>
+    /// SRS requirement UUIDs this scenario covers, as reported by the LLM.
+    /// </summary>
+    public List<Guid> CoveredRequirementIds { get; set; } = new List<Guid>();
 
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.

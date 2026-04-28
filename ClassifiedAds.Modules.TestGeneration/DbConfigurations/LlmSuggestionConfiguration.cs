@@ -70,6 +70,9 @@ public class LlmSuggestionConfiguration : IEntityTypeConfiguration<Entities.LlmS
         builder.Property(x => x.ModifiedContent)
             .HasColumnType("jsonb");
 
+        builder.Property(x => x.CoveredRequirementIds)
+            .HasColumnType("jsonb");
+
         // Indexes
         builder.HasIndex(x => new { x.TestSuiteId, x.ReviewStatus });
         builder.HasIndex(x => x.EndpointId);

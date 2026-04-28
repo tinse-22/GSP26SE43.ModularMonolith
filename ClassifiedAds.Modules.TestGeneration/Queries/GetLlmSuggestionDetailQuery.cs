@@ -4,6 +4,7 @@ using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,15 +23,21 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
     private readonly IRepository<LlmSuggestionFeedback, Guid> _feedbackRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
 
     public GetLlmSuggestionDetailQueryHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
-        IRepository<LlmSuggestionFeedback, Guid> feedbackRepository)
+        IRepository<LlmSuggestionFeedback, Guid> feedbackRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository)
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
         _feedbackRepository = feedbackRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+        _srsRequirementRepository = srsRequirementRepository;
     }
 
     public async Task<LlmSuggestionModel> HandleAsync(
@@ -66,6 +73,32 @@ public class GetLlmSuggestionDetailQueryHandler : IQueryHandler<GetLlmSuggestion
                     x.SuggestionId == suggestion.Id));
 
         var model = LlmSuggestionModel.FromEntity(suggestion);
+
+        // Resolve SRS document title
+        if (suggestion.SrsDocumentId.HasValue)
+        {
+            var srsDoc = await _srsDocumentRepository.FirstOrDefaultAsync(
+                _srsDocumentRepository.GetQueryableSet()
+                    .Where(x => x.Id == suggestion.SrsDocumentId.Value));
+            if (srsDoc != null)
+            {
+                model.SrsDocumentTitle = srsDoc.Title;
+            }
+        }
+
+        // Resolve covered requirement code + title
+        var reqIds = model.CoveredRequirementIds;
+        if (reqIds.Count > 0)
+        {
+            var reqs = await _srsRequirementRepository.ToListAsync(
+                _srsRequirementRepository.GetQueryableSet()
+                    .Where(x => reqIds.Contains(x.Id)));
+
+            model.CoveredRequirements = reqs
+                .Select(r => new CoveredRequirementBriefModel { Id = r.Id, Code = r.RequirementCode, Title = r.Title })
+                .ToList();
+        }
+
         model.CurrentUserFeedback = feedbackRows
             .Where(x => x.UserId == query.CurrentUserId)
             .Select(LlmSuggestionFeedbackModel.FromEntity)

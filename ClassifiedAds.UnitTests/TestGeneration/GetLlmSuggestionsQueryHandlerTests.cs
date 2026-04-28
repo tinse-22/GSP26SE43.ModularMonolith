@@ -17,6 +17,8 @@ public class GetLlmSuggestionsQueryHandlerTests
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<LlmSuggestion, Guid>> _suggestionRepoMock;
     private readonly Mock<IRepository<LlmSuggestionFeedback, Guid>> _feedbackRepoMock;
+    private readonly Mock<IRepository<SrsDocument, Guid>> _srsDocRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsReqRepoMock;
     private readonly GetLlmSuggestionsQueryHandler _handler;
 
     public GetLlmSuggestionsQueryHandlerTests()
@@ -24,11 +26,15 @@ public class GetLlmSuggestionsQueryHandlerTests
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _suggestionRepoMock = new Mock<IRepository<LlmSuggestion, Guid>>();
         _feedbackRepoMock = new Mock<IRepository<LlmSuggestionFeedback, Guid>>();
+        _srsDocRepoMock = new Mock<IRepository<SrsDocument, Guid>>();
+        _srsReqRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
 
         _handler = new GetLlmSuggestionsQueryHandler(
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
-            _feedbackRepoMock.Object);
+            _feedbackRepoMock.Object,
+            _srsDocRepoMock.Object,
+            _srsReqRepoMock.Object);
     }
 
     [Fact]
@@ -235,40 +241,40 @@ public class GetLlmSuggestionsQueryHandlerTests
         ReviewStatus reviewStatus = ReviewStatus.Pending,
         TestType testType = TestType.Negative,
         Guid? endpointId = null) => new()
-    {
-        Id = suggestionId,
-        TestSuiteId = DefaultSuiteId,
-        EndpointId = endpointId ?? Guid.NewGuid(),
-        DisplayOrder = displayOrder,
-        SuggestedName = name,
-        SuggestedDescription = "Test description",
-        SuggestionType = LlmSuggestionType.BoundaryNegative,
-        TestType = testType,
-        Priority = TestPriority.High,
-        ReviewStatus = reviewStatus,
-        SuggestedRequest = "{}",
-        SuggestedExpectation = "{}",
-        SuggestedTags = "[\"negative\"]",
-        RowVersion = Guid.NewGuid().ToByteArray(),
-        CreatedDateTime = DateTimeOffset.UtcNow,
-    };
+        {
+            Id = suggestionId,
+            TestSuiteId = DefaultSuiteId,
+            EndpointId = endpointId ?? Guid.NewGuid(),
+            DisplayOrder = displayOrder,
+            SuggestedName = name,
+            SuggestedDescription = "Test description",
+            SuggestionType = LlmSuggestionType.BoundaryNegative,
+            TestType = testType,
+            Priority = TestPriority.High,
+            ReviewStatus = reviewStatus,
+            SuggestedRequest = "{}",
+            SuggestedExpectation = "{}",
+            SuggestedTags = "[\"negative\"]",
+            RowVersion = Guid.NewGuid().ToByteArray(),
+            CreatedDateTime = DateTimeOffset.UtcNow,
+        };
 
     private static LlmSuggestionFeedback CreateFeedback(
         Guid suggestionId,
         Guid userId,
         LlmSuggestionFeedbackSignal signal,
         string notes) => new()
-    {
-        Id = Guid.NewGuid(),
-        SuggestionId = suggestionId,
-        TestSuiteId = DefaultSuiteId,
-        EndpointId = Guid.NewGuid(),
-        UserId = userId,
-        FeedbackSignal = signal,
-        Notes = notes,
-        CreatedDateTime = DateTimeOffset.UtcNow,
-        RowVersion = Guid.NewGuid().ToByteArray(),
-    };
+        {
+            Id = Guid.NewGuid(),
+            SuggestionId = suggestionId,
+            TestSuiteId = DefaultSuiteId,
+            EndpointId = Guid.NewGuid(),
+            UserId = userId,
+            FeedbackSignal = signal,
+            Notes = notes,
+            CreatedDateTime = DateTimeOffset.UtcNow,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+        };
 
     private void SetupSuiteFound(TestSuite suite)
     {
