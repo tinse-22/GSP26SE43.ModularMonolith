@@ -79,6 +79,53 @@ public class GetSrsRequirementsQueryHandler : IQueryHandler<GetSrsRequirementsQu
     }
 }
 
+public class GetSrsRequirementDetailQuery : IQuery<SrsRequirementModel>
+{
+    public Guid ProjectId { get; set; }
+
+    public Guid SrsDocumentId { get; set; }
+
+    public Guid RequirementId { get; set; }
+
+    public Guid CurrentUserId { get; set; }
+}
+
+public class GetSrsRequirementDetailQueryHandler : IQueryHandler<GetSrsRequirementDetailQuery, SrsRequirementModel>
+{
+    private readonly IRepository<SrsRequirement, Guid> _requirementRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+
+    public GetSrsRequirementDetailQueryHandler(
+        IRepository<SrsRequirement, Guid> requirementRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository)
+    {
+        _requirementRepository = requirementRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+    }
+
+    public async Task<SrsRequirementModel> HandleAsync(GetSrsRequirementDetailQuery query, CancellationToken cancellationToken = default)
+    {
+        var docExists = await _srsDocumentRepository.GetQueryableSet()
+            .AnyAsync(x => x.Id == query.SrsDocumentId && x.ProjectId == query.ProjectId && !x.IsDeleted, cancellationToken);
+
+        if (!docExists)
+        {
+            throw new NotFoundException($"SrsDocument {query.SrsDocumentId} khong tim thay.");
+        }
+
+        var req = await _requirementRepository.FirstOrDefaultAsync(
+            _requirementRepository.GetQueryableSet()
+                .Where(x => x.Id == query.RequirementId && x.SrsDocumentId == query.SrsDocumentId));
+
+        if (req == null)
+        {
+            throw new NotFoundException($"SrsRequirement {query.RequirementId} khong tim thay.");
+        }
+
+        return SrsRequirementModel.FromEntity(req);
+    }
+}
+
 public class GetSrsRequirementClarificationsQuery : IQuery<List<SrsRequirementClarificationModel>>
 {
     public Guid ProjectId { get; set; }

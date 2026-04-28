@@ -442,6 +442,22 @@
     {
       "mistake": "Gọi API POST nhiều lần để poll kết quả",
       "correct": "POST là synchronous — 1 call duy nhất, chờ đến khi nhận 201 là xong. Dùng GET /results nếu cần fetch lại."
+    },
+    {
+      "mistake": "Truyền endpointId: null để xóa endpoint mapping khỏi requirement (PATCH requirement)",
+      "correct": "Dùng clearEndpointId: true thay vì endpointId: null. Guid? không phân biệt được 'FE bỏ qua field' và 'FE truyền null có chủ đích'. Xem BE18E-002 fix trong FE18-TRACEABILITY-EDIT-HANDOFF.md."
+    },
+    {
+      "mistake": "Expect POST .../analyze trả về SrsAnalysisJobModel đầy đủ (có Status, TriggeredAt, ...)",
+      "correct": "POST .../analyze trả về { jobId: guid, message: string } (SrsAnalysisAcceptedResponse). Dùng GET /analysis-jobs/{jobId} để lấy SrsAnalysisJobModel đầy đủ. Endpoint này có thể block synchronously. Xem BE18E-004 fix."
+    },
+    {
+      "mistake": "JOIN traceability với testrun qua endpointId",
+      "correct": "JOIN phải dùng testCaseId: traceability.requirements[i].testCases[j].testCaseId === testRunResult.cases[k].testCaseId."
+    },
+    {
+      "mistake": "Hiển thị SRS panel khi requirements=[]. Báo lỗi khi suite chưa có SRS",
+      "correct": "Khi traceability.srsDocumentId === null hoặc requirements=[] → ẩn SRS panel hoàn toàn. Không show lỗi."
     }
   ],
 

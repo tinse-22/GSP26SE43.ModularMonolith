@@ -1,7 +1,9 @@
 using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
+using ClassifiedAds.Modules.TestGeneration.Commands;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using ClassifiedAds.Modules.TestGeneration.Models.Requests;
 using ClassifiedAds.Modules.TestGeneration.Queries;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -55,4 +57,58 @@ public class SrsTraceabilityController : ControllerBase
 
         return Ok(result);
     }
+
+    /// <summary>FE-18E: Manually create a traceability link between a test case and an SRS requirement.</summary>
+    [Authorize(Permissions.ManageTraceabilityLinks)]
+    [HttpPost("traceability/links")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(TraceabilityLinkModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TraceabilityLinkModel>> CreateLink(
+        Guid projectId,
+        Guid suiteId,
+        [FromBody] CreateTraceabilityLinkRequest request)
+    {
+        var command = new CreateTraceabilityLinkCommand
+        {
+            ProjectId = projectId,
+            TestSuiteId = suiteId,
+            TestCaseId = request.TestCaseId,
+            SrsRequirementId = request.SrsRequirementId,
+            CurrentUserId = _currentUser.UserId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Created manual TraceabilityLink. LinkId={LinkId}, TestCaseId={TestCaseId}, RequirementId={RequirementId}, ActorUserId={ActorUserId}",
+            command.Result.Id, request.TestCaseId, request.SrsRequirementId, _currentUser.UserId);
+
+        return Created(
+            $"/api/projects/{projectId}/test-suites/{suiteId}/traceability",
+            command.Result);
+    }
+
+    /// <summary>FE-18E: Delete a traceability link by its ID.</summary>
+    [Authorize(Permissions.ManageTraceabilityLinks)]
+    [HttpDelete("traceability/links/{linkId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteLink(
+        Guid projectId,
+        Guid suiteId,
+        Guid linkId)
+    {
+        await _dispatcher.DispatchAsync(new DeleteTraceabilityLinkCommand
+        {
+            ProjectId = projectId,
+            TestSuiteId = suiteId,
+            LinkId = linkId,
+            CurrentUserId = _currentUser.UserId,
+        });
+
+        return NoContent();
+    }
 }
+
