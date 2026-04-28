@@ -102,13 +102,17 @@ public class SrsDocumentsController : ControllerBase
             command.Result);
     }
 
-    /// <summary>FE-18B: Trigger LLM analysis — creates SrsAnalysisJob and calls n8n.</summary>
+    /// <summary>FE-18B: Trigger LLM analysis — creates SrsAnalysisJob and calls n8n.
+    /// NOTE: This call may block until n8n processing completes (synchronous-under-202 behavior).
+    /// Poll /analysis-jobs/{jobId} afterwards mainly for status display or resume; the response
+    /// already contains the JobId once the endpoint returns.
+    /// </summary>
     [Authorize(Permissions.TriggerSrsAnalysis)]
     [HttpPost("{srsDocumentId:guid}/analyze")]
-    [ProducesResponseType(typeof(SrsAnalysisJobModel), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(SrsAnalysisAcceptedResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<SrsAnalysisJobModel>> Analyze(Guid projectId, Guid srsDocumentId)
+    public async Task<ActionResult<SrsAnalysisAcceptedResponse>> Analyze(Guid projectId, Guid srsDocumentId)
     {
         var command = new TriggerSrsAnalysisCommand
         {
@@ -123,7 +127,7 @@ public class SrsDocumentsController : ControllerBase
             "Triggered SRS analysis. SrsDocumentId={SrsDocumentId}, JobId={JobId}, ActorUserId={ActorUserId}",
             srsDocumentId, command.JobId, _currentUser.UserId);
 
-        return Accepted(new { JobId = command.JobId, Message = "Analysis job queued. Poll /analysis-jobs/{jobId} for status." });
+        return Accepted(new SrsAnalysisAcceptedResponse { JobId = command.JobId, Message = "Analysis job queued. Poll /analysis-jobs/{jobId} for status." });
     }
 
     /// <summary>FE-18B: Poll analysis job status.</summary>
@@ -145,6 +149,83 @@ public class SrsDocumentsController : ControllerBase
         });
 
         return Ok(result);
+    }
+
+    /// <summary>FE-18C: Get a single SRS requirement by ID.</summary>
+    [Authorize(Permissions.GetSrsDocuments)]
+    [HttpGet("{srsDocumentId:guid}/requirements/{requirementId:guid}")]
+    [ProducesResponseType(typeof(SrsRequirementModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SrsRequirementModel>> GetRequirementById(
+        Guid projectId,
+        Guid srsDocumentId,
+        Guid requirementId)
+    {
+        var result = await _dispatcher.DispatchAsync(new GetSrsRequirementDetailQuery
+        {
+            ProjectId = projectId,
+            SrsDocumentId = srsDocumentId,
+            RequirementId = requirementId,
+            CurrentUserId = _currentUser.UserId,
+        });
+
+        return Ok(result);
+    }
+
+    /// <summary>FE-18C: Manually add a new SRS requirement to a document.</summary>
+    [Authorize(Permissions.ManageSrsRequirements)]
+    [HttpPost("{srsDocumentId:guid}/requirements")]
+    [Consumes("application/json")]
+    [ProducesResponseType(typeof(SrsRequirementModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SrsRequirementModel>> AddRequirement(
+        Guid projectId,
+        Guid srsDocumentId,
+        [FromBody] AddSrsRequirementRequest request)
+    {
+        var command = new AddSrsRequirementCommand
+        {
+            ProjectId = projectId,
+            SrsDocumentId = srsDocumentId,
+            CurrentUserId = _currentUser.UserId,
+            Title = request.Title,
+            Description = request.Description,
+            RequirementType = request.RequirementType,
+            TestableConstraints = request.TestableConstraints,
+            EndpointId = request.EndpointId,
+        };
+
+        await _dispatcher.DispatchAsync(command);
+
+        _logger.LogInformation(
+            "Added manual SrsRequirement. Id={RequirementId}, SrsDocumentId={SrsDocumentId}, ActorUserId={ActorUserId}",
+            command.Result.Id, srsDocumentId, _currentUser.UserId);
+
+        return Created(
+            $"/api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{command.Result.Id}",
+            command.Result);
+    }
+
+    /// <summary>FE-18C: Delete an SRS requirement and all its traceability links.</summary>
+    [Authorize(Permissions.ManageSrsRequirements)]
+    [HttpDelete("{srsDocumentId:guid}/requirements/{requirementId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteRequirement(
+        Guid projectId,
+        Guid srsDocumentId,
+        Guid requirementId)
+    {
+        await _dispatcher.DispatchAsync(new DeleteSrsRequirementCommand
+        {
+            ProjectId = projectId,
+            SrsDocumentId = srsDocumentId,
+            RequirementId = requirementId,
+            CurrentUserId = _currentUser.UserId,
+        });
+
+        return NoContent();
     }
 
     /// <summary>FE-18C: List extracted SRS requirements with optional filters.</summary>
@@ -194,6 +275,7 @@ public class SrsDocumentsController : ControllerBase
             Title = request.Title,
             TestableConstraints = request.TestableConstraints,
             EndpointId = request.EndpointId,
+            ClearEndpointId = request.ClearEndpointId,
             IsReviewed = request.IsReviewed,
         };
 

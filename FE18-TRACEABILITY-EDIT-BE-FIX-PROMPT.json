@@ -1,0 +1,137 @@
+{
+  "_meta": {
+    "title": "BE Fix Prompt: FE-18E Traceability Edit & Manage",
+    "source_handoff": "FE18-TRACEABILITY-EDIT-HANDOFF.md",
+    "reviewed_at": "2026-04-28",
+    "repo": "D:/GSP26SE43.ModularMonolith",
+    "conclusion": "Handoff dung luong FE co ban, nhung chua phai best solution cho BE. Can fix permission seed/migration, project ownership guards, PATCH requirement semantics, va tests truoc khi coi la ready."
+  },
+  "task_classification_for_agent": [
+    "Application code only",
+    "Touches EF seed / migration because Identity role permission seed must change",
+    "Does not intentionally touch Docker / compose / runtime wiring unless implementation adds a new project reference or runtime dependency"
+  ],
+  "mandatory_repo_gates": {
+    "gitnexus": [
+      "If GitNexus MCP is available, load gitnexus://repo/GSP26SE43.ModularMonolith/context before edits.",
+      "Before editing each existing symbol, run gitnexus_impact({ target: '<symbol>', direction: 'upstream' }).",
+      "Before finishing, run gitnexus_detect_changes on the relevant scope.",
+      "If GitNexus is unavailable, explicitly report that and fall back to manual inspection."
+    ],
+    "migrations": [
+      "Because RolePermissionMappings is EF HasData seed input, generate an Identity migration if role claims change.",
+      "Run: dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore",
+      "Run: dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations"
+    ],
+    "docker": [
+      "No Docker change is expected for this fix.",
+      "If you add a project reference, module, runtime service, env var, port, volume, healthcheck, or startup dependency, inspect ClassifiedAds.Migrator/Dockerfile, ClassifiedAds.WebAPI/Dockerfile, ClassifiedAds.Background/Dockerfile, and docker-compose.yml.",
+      "If compose changes, run docker compose config."
+    ]
+  },
+  "findings_to_fix": [
+    {
+      "id": "BE18E-001",
+      "severity": "blocker",
+      "title": "New SRS/traceability permissions are not seeded into Identity roles",
+      "evidence": [
+        "ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs defines Permission:GetSrsDocuments, Permission:ManageSrsRequirements, Permission:GetSrsTraceability, Permission:ManageTraceabilityLinks.",
+        "ClassifiedAds.Modules.Identity/Authorization/RolePermissionMappings.cs includes older TestGeneration permissions but not the SRS/traceability permission set.",
+        "Search found no SRS permission values in ClassifiedAds.Migrator/Migrations/Identity or IdentityDbContextModelSnapshot."
+      ],
+      "impact": "Endpoints protected by these policies can return 403 for default Admin/User roles even though the FE handoff says permissions exist.",
+      "required_solution": [
+        "Add these permission values to RolePermissionMappings.AdminPermissions and RolePermissionMappings.UserPermissions unless product explicitly wants stricter role separation: Permission:GetSrsDocuments, Permission:AddSrsDocument, Permission:DeleteSrsDocument, Permission:TriggerSrsAnalysis, Permission:ManageSrsRequirements, Permission:GetSrsTraceability, Permission:ManageTraceabilityLinks.",
+        "Generate an Identity migration under ClassifiedAds.Migrator/Migrations/Identity, for example: dotnet ef migrations add AddSrsTraceabilityPermissions --context IdentityDbContext --project ClassifiedAds.Migrator --startup-project ClassifiedAds.Migrator --output-dir Migrations/Identity.",
+        "Review generated role claim IDs and Up/Down operations. Do not hand-edit snapshots unless absolutely necessary."
+      ]
+    },
+    {
+      "id": "BE18E-002",
+      "severity": "high",
+      "title": "PATCH requirement cannot clear endpointId and does not validate project/document ownership",
+      "evidence": [
+        "UpdateSrsRequirementRequest.EndpointId is Guid?, so omitted and explicit null are indistinguishable.",
+        "UpdateSrsRequirementCommandHandler only queries SrsRequirement by RequirementId + SrsDocumentId and does not verify SrsDocument.ProjectId.",
+        "Handler only sets EndpointId when command.EndpointId.HasValue, so endpointId: null from FE does not clear the mapping although the handoff advertises guid | null."
+      ],
+      "impact": "FE cannot unmap a requirement from an endpoint. A route with the wrong projectId can still update a requirement if the caller knows the srsDocumentId and requirementId.",
+      "required_solution": [
+        "Inject IRepository<SrsDocument, Guid> into UpdateSrsRequirementCommandHandler and validate SrsDocumentId belongs to ProjectId and !IsDeleted, matching GetSrsRequirementDetailQuery/Add/Delete behavior.",
+        "Add explicit clear semantics for endpoint mapping. Prefer the repo's existing pattern from UpdateSrsDocumentRequest: add bool ClearEndpointId to UpdateSrsRequirementRequest and UpdateSrsRequirementCommand.",
+        "Implement: if ClearEndpointId then req.EndpointId = null; else if EndpointId.HasValue then req.EndpointId = EndpointId.Value.",
+        "Optionally support editing Description and RequirementType if FE truly needs full requirement edit, but keep it explicit and tested. If added, update the handoff contract."
+      ]
+    },
+    {
+      "id": "BE18E-003",
+      "severity": "high",
+      "title": "SRS document to suite linking can cross project boundaries",
+      "evidence": [
+        "UpdateSrsDocumentCommandHandler validates the SrsDocument by ProjectId.",
+        "When setting a new suite, it queries TestSuite by Id only: Where(x => x.Id == doc.TestSuiteId.Value)."
+      ],
+      "impact": "A document from project A can be linked to a suite from project B if the suite id is supplied.",
+      "required_solution": [
+        "When command.TestSuiteId is supplied, validate the target suite exists with Id == command.TestSuiteId and ProjectId == command.ProjectId.",
+        "If not found, throw NotFoundException.",
+        "When clearing old suite links, avoid clearing a suite from another project unless it is the currently linked suite for that document and passes the intended ownership guard.",
+        "Set LastModifiedById/RowVersion on affected TestSuite records and RowVersion on SrsDocument consistently with existing update patterns."
+      ]
+    },
+    {
+      "id": "BE18E-004",
+      "severity": "medium",
+      "title": "Analyze endpoint contract is inconsistent with implementation behavior",
+      "evidence": [
+        "SrsDocumentsController declares ProducesResponseType(typeof(SrsAnalysisJobModel), 202) but returns an anonymous { JobId, Message } object.",
+        "TriggerSrsAnalysisCommandHandler awaits the n8n webhook and processes results before the controller returns, so the flow is synchronous-under-202 rather than true queue-and-poll."
+      ],
+      "impact": "FE handoff says trigger then poll, but POST may block until n8n completes and then polling may immediately show Completed. Contract docs and Swagger can mislead FE.",
+      "required_solution": [
+        "Choose and document one behavior: true async job creation + background/n8n callback, or synchronous analysis response.",
+        "For least code churn, keep current synchronous behavior but update controller response type/model and handoff wording to say the request can block and polling is mainly for resume/status display.",
+        "If converting to true async, do it as a separate change with queue/background wiring and Docker/compose review."
+      ]
+    },
+    {
+      "id": "BE18E-005",
+      "severity": "medium",
+      "title": "New traceability edit commands have little or no direct test coverage",
+      "evidence": [
+        "Search found tests for SaveAiGeneratedTestCases traceability links, but not for CreateTraceabilityLinkCommand, DeleteTraceabilityLinkCommand, AddSrsRequirementCommand, DeleteSrsRequirementCommand, or UpdateSrsRequirementCommand."
+      ],
+      "impact": "The highest-risk route ownership and link integrity behavior can regress silently.",
+      "required_solution": [
+        "Add focused unit tests or integration tests following existing TestGeneration test style.",
+        "Cover: permission seed values present in RolePermissionMappings; UpdateSrsRequirement rejects wrong project; UpdateSrsRequirement can clear EndpointId; UpdateSrsDocument rejects suite from another project; CreateTraceabilityLink rejects duplicate/out-of-suite/out-of-document; DeleteSrsRequirement removes links."
+      ]
+    }
+  ],
+  "recommended_be_flow": [
+    "SRS document is created under a project and optionally linked to a suite that belongs to the same project.",
+    "Analysis creates requirements and clarification questions. FE can poll or refresh job detail, but BE contract must accurately describe whether analysis is synchronous or async.",
+    "Requirement edit APIs must always validate ProjectId -> SrsDocumentId ownership before modifying requirements.",
+    "Requirement endpoint mapping must support explicit clear, not just set.",
+    "Traceability link APIs must validate ProjectId -> TestSuiteId, TestCase belongs to suite, and Requirement belongs to the SRS document linked to that suite.",
+    "Identity role claims must include every permission used by [Authorize(Permissions.*)] in the new endpoints."
+  ],
+  "acceptance_criteria": [
+    "Default Admin/User role mappings include all FE-18 SRS and traceability permissions or the final response explains any intentionally restricted role.",
+    "An Identity migration exists for the role claim seed update and migration freshness verification passes.",
+    "PATCH /api/projects/{projectId}/srs-documents/{srsDocumentId}/requirements/{requirementId} rejects wrong projectId.",
+    "PATCH requirement can clear endpointId using an explicit request field such as clearEndpointId.",
+    "PATCH /api/projects/{projectId}/srs-documents/{srsDocumentId} cannot link the SRS document to a test suite from another project.",
+    "Manual traceability link creation/deletion preserves suite and requirement ownership rules.",
+    "Tests cover the critical ownership and clear semantics.",
+    "Swagger/response contract for SRS analysis no longer claims SrsAnalysisJobModel if it returns a smaller accepted response."
+  ],
+  "suggested_commands": [
+    "dotnet ef migrations add AddSrsTraceabilityPermissions --context IdentityDbContext --project ClassifiedAds.Migrator --startup-project ClassifiedAds.Migrator --output-dir Migrations/Identity",
+    "dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore",
+    "dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations",
+    "dotnet test ClassifiedAds.UnitTests/ClassifiedAds.UnitTests.csproj --no-restore --filter \"FullyQualifiedName~TestGeneration\"",
+    "dotnet test ClassifiedAds.IntegrationTests/ClassifiedAds.IntegrationTests.csproj --no-restore --filter \"FullyQualifiedName~TestGeneration\""
+  ],
+  "prompt_for_ai_agent": "Bạn là AI coding agent làm việc trong repo D:/GSP26SE43.ModularMonolith. Nhiệm vụ: hoàn thiện BE cho FE-18E Traceability Edit & Manage theo đúng codebase và AGENTS.md.\n\nTrước khi sửa code, phân loại task: Application code only + Touches EF seed/migration. Nếu GitNexus MCP có sẵn, bắt buộc load repo context và chạy impact upstream cho các symbol sẽ sửa. Nếu GitNexus không có, báo rõ và inspect thủ công.\n\nHãy đọc FE18-TRACEABILITY-EDIT-HANDOFF.md và các file hiện tại trong ClassifiedAds.Modules.TestGeneration: SrsDocumentsController, SrsTraceabilityController, AddSrsRequirementCommand, DeleteSrsRequirementCommand, UpdateSrsRequirementCommand, CreateTraceabilityLinkCommand, DeleteTraceabilityLinkCommand, GetSrsTraceabilityQuery. Mục tiêu không phải viết lại toàn bộ, mà sửa các điểm chưa đạt best BE:\n\n1. Permission seed: các permission FE-18 trong ClassifiedAds.Modules.TestGeneration/Authorization/Permissions.cs phải được thêm vào ClassifiedAds.Modules.Identity/Authorization/RolePermissionMappings.cs cho Admin/User theo pattern TestGeneration hiện có, trừ khi có lý do sản phẩm để hạn chế. Sau đó generate Identity migration trong ClassifiedAds.Migrator/Migrations/Identity.\n\n2. PATCH requirement: UpdateSrsRequirementCommandHandler phải validate SrsDocumentId thuộc ProjectId và !IsDeleted trước khi update. Thêm clearEndpointId semantics theo pattern UpdateSrsDocumentRequest.ClearTestSuiteId để FE có thể clear endpointId. Nếu mở rộng edit description/requirementType thì cập nhật request, command, handler, tests, và handoff contract.\n\n3. Link SRS document to suite: UpdateSrsDocumentCommandHandler phải validate suite mới thuộc cùng ProjectId. Không cho link cross-project. Cập nhật RowVersion/LastModifiedById/UpdatedDateTime theo pattern repo khi sửa SrsDocument/TestSuite.\n\n4. Traceability link behavior: giữ validation ProjectId -> suite, testCase thuộc suite, requirement thuộc SRS document của suite, duplicate link trả ValidationException. Bổ sung tests cho duplicate/out-of-suite/out-of-document/delete guard nếu thiếu.\n\n5. Analyze endpoint contract: hiện controller khai báo 202 trả SrsAnalysisJobModel nhưng return anonymous { JobId, Message }, và command đang await n8n sync. Sửa Swagger/response model hoặc docs để contract trung thực. Không chuyển sang true async trừ khi bạn cập nhật background/runtime wiring và Docker/compose theo AGENTS.md.\n\n6. Tests: thêm unit/integration tests tối thiểu cho permission mappings, UpdateSrsRequirement wrong-project + clearEndpointId, UpdateSrsDocument cross-project guard, Create/DeleteTraceabilityLink guard, DeleteSrsRequirement removes links.\n\nBắt buộc sau khi code xong: chạy dotnet build 'ClassifiedAds.Migrator/ClassifiedAds.Migrator.csproj' --no-restore và dotnet 'ClassifiedAds.Migrator/bin/Debug/net10.0/ClassifiedAds.Migrator.dll' --verify-migrations. Nếu đã thay Identity seed, migration phải được generate và verify. Chạy test liên quan TestGeneration/Identity nếu khả dụng. Nếu Docker không đổi, báo rõ đã kiểm tra không có module/project reference/runtime dependency mới nên Docker build/compose không bắt buộc. Nếu có thay đổi Docker/compose ngoài dự kiến, chạy docker compose config và build service liên quan.\n\nFinal response phải nêu: migration verification command/result, Docker registration check có cần không, commands đã chạy, bước nào skip và lý do."
+}

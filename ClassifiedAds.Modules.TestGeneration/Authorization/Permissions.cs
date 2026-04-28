@@ -33,4 +33,5 @@ public static class Permissions
     public const string TriggerSrsAnalysis = "Permission:TriggerSrsAnalysis";
     public const string ManageSrsRequirements = "Permission:ManageSrsRequirements";
     public const string GetSrsTraceability = "Permission:GetSrsTraceability";
+    public const string ManageTraceabilityLinks = "Permission:ManageTraceabilityLinks";
 }
