@@ -79,6 +79,15 @@ public static class RolePermissionMappings
         "Permission:UpdateTestCase",
         "Permission:DeleteTestCase",
 
+        // SRS documents and traceability (FE-18)
+        "Permission:GetSrsDocuments",
+        "Permission:AddSrsDocument",
+        "Permission:DeleteSrsDocument",
+        "Permission:TriggerSrsAnalysis",
+        "Permission:ManageSrsRequirements",
+        "Permission:GetSrsTraceability",
+        "Permission:ManageTraceabilityLinks",
+
         // Test execution and reporting
         "Permission:GetExecutionEnvironments",
         "Permission:AddExecutionEnvironment",
@@ -142,6 +151,15 @@ public static class RolePermissionMappings
         "Permission:AddTestCase",
         "Permission:UpdateTestCase",
         "Permission:DeleteTestCase",
+
+        // SRS documents and traceability (FE-18)
+        "Permission:GetSrsDocuments",
+        "Permission:AddSrsDocument",
+        "Permission:DeleteSrsDocument",
+        "Permission:TriggerSrsAnalysis",
+        "Permission:ManageSrsRequirements",
+        "Permission:GetSrsTraceability",
+        "Permission:ManageTraceabilityLinks",
 
         // Test execution and reporting
         "Permission:GetExecutionEnvironments",

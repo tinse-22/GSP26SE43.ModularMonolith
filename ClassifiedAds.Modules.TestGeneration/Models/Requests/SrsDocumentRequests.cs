@@ -30,10 +30,30 @@ public class UpdateSrsRequirementRequest
 
     public Guid? EndpointId { get; set; }
 
+    /// <summary>
+    /// When true, explicitly removes the endpoint mapping regardless of EndpointId value.
+    /// Follows the same pattern as UpdateSrsDocumentRequest.ClearTestSuiteId.
+    /// </summary>
+    public bool ClearEndpointId { get; set; }
+
     public bool? IsReviewed { get; set; }
+}
+
+public class AddSrsRequirementRequest
+{
+    public string Title { get; set; }
+
+    public string Description { get; set; }
+
+    public SrsRequirementType RequirementType { get; set; }
+
+    public string TestableConstraints { get; set; }
+
+    public Guid? EndpointId { get; set; }
 }
 
 public class AnswerClarificationRequest
 {
     public string UserAnswer { get; set; }
 }
+

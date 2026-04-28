@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using System.Threading;
@@ -26,6 +27,12 @@ public class UpdateSrsRequirementCommand : ICommand
 
     public Guid? EndpointId { get; set; }
 
+    /// <summary>
+    /// When true, explicitly removes the endpoint mapping regardless of EndpointId value.
+    /// Mirrors UpdateSrsDocumentCommand.ClearTestSuiteId pattern.
+    /// </summary>
+    public bool ClearEndpointId { get; set; }
+
     public bool? IsReviewed { get; set; }
 
     public SrsRequirementModel Result { get; set; }
@@ -34,14 +41,27 @@ public class UpdateSrsRequirementCommand : ICommand
 public class UpdateSrsRequirementCommandHandler : ICommandHandler<UpdateSrsRequirementCommand>
 {
     private readonly IRepository<SrsRequirement, Guid> _requirementRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
 
-    public UpdateSrsRequirementCommandHandler(IRepository<SrsRequirement, Guid> requirementRepository)
+    public UpdateSrsRequirementCommandHandler(
+        IRepository<SrsRequirement, Guid> requirementRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository)
     {
         _requirementRepository = requirementRepository;
+        _srsDocumentRepository = srsDocumentRepository;
     }
 
     public async Task HandleAsync(UpdateSrsRequirementCommand command, CancellationToken cancellationToken = default)
     {
+        // Validate SrsDocument belongs to the ProjectId and is not deleted.
+        var docExists = await _srsDocumentRepository.GetQueryableSet()
+            .AnyAsync(x => x.Id == command.SrsDocumentId && x.ProjectId == command.ProjectId && !x.IsDeleted, cancellationToken);
+
+        if (!docExists)
+        {
+            throw new NotFoundException($"SrsDocument {command.SrsDocumentId} khong tim thay trong project {command.ProjectId}.");
+        }
+
         var req = await _requirementRepository.FirstOrDefaultAsync(
             _requirementRepository.GetQueryableSet()
                 .Where(x => x.Id == command.RequirementId && x.SrsDocumentId == command.SrsDocumentId));
@@ -61,9 +81,15 @@ public class UpdateSrsRequirementCommandHandler : ICommandHandler<UpdateSrsRequi
             req.TestableConstraints = command.TestableConstraints;
         }
 
-        if (command.EndpointId.HasValue)
+        // Explicit clear semantics: ClearEndpointId removes the mapping;
+        // otherwise set only if a new value is provided.
+        if (command.ClearEndpointId)
         {
-            req.EndpointId = command.EndpointId;
+            req.EndpointId = null;
+        }
+        else if (command.EndpointId.HasValue)
+        {
+            req.EndpointId = command.EndpointId.Value;
         }
 
         if (command.IsReviewed.HasValue)
