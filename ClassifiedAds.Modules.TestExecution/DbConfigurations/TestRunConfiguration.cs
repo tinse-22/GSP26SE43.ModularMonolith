@@ -18,10 +18,13 @@ public class TestRunConfiguration : IEntityTypeConfiguration<TestRun>
 
         builder.Property(x => x.RedisKey).HasMaxLength(200);
 
+        builder.Property(x => x.IsEphemeral).HasDefaultValue(false);
+
         builder.HasIndex(x => x.TestSuiteId);
         builder.HasIndex(x => x.EnvironmentId);
         builder.HasIndex(x => x.TriggeredById);
         builder.HasIndex(x => x.Status);
+        builder.HasIndex(x => x.IsEphemeral);
         builder.HasIndex(x => new { x.TestSuiteId, x.RunNumber }).IsUnique();
 
         builder.Property(x => x.RowVersion).IsRowVersion();

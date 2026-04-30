@@ -24,19 +24,27 @@ public class GetTestRunsQuery : IQuery<Paged<TestRunModel>>
     public int PageSize { get; set; } = 20;
 
     public TestRunStatus? Status { get; set; }
+
+    /// <summary>
+    /// Include ephemeral runs in the result set. Defaults to false.
+    /// </summary>
+    public bool IncludeEphemeral { get; set; } = false;
 }
 
 public class GetTestRunsQueryHandler : IQueryHandler<GetTestRunsQuery, Paged<TestRunModel>>
 {
     private readonly IRepository<TestRun, Guid> _runRepository;
     private readonly ITestExecutionReadGatewayService _gatewayService;
+    private readonly IRepository<ExecutionEnvironment, Guid> _envRepository;
 
     public GetTestRunsQueryHandler(
         IRepository<TestRun, Guid> runRepository,
-        ITestExecutionReadGatewayService gatewayService)
+        ITestExecutionReadGatewayService gatewayService,
+        IRepository<ExecutionEnvironment, Guid> envRepository)
     {
         _runRepository = runRepository;
         _gatewayService = gatewayService;
+        _envRepository = envRepository;
     }
 
     public async Task<Paged<TestRunModel>> HandleAsync(GetTestRunsQuery query, CancellationToken cancellationToken = default)
@@ -49,6 +57,11 @@ public class GetTestRunsQueryHandler : IQueryHandler<GetTestRunsQuery, Paged<Tes
 
         var baseQuery = _runRepository.GetQueryableSet()
             .Where(x => x.TestSuiteId == query.TestSuiteId);
+
+        if (!query.IncludeEphemeral)
+        {
+            baseQuery = baseQuery.Where(x => !x.IsEphemeral);
+        }
 
         if (query.Status.HasValue)
         {
@@ -67,9 +80,25 @@ public class GetTestRunsQueryHandler : IQueryHandler<GetTestRunsQuery, Paged<Tes
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize));
 
+        // Resolve environment names for display (suiteContext already loaded above)
+
+        var envIds = runs.Select(r => r.EnvironmentId).Distinct().ToList();
+        var envs = envIds.Count > 0
+            ? await _envRepository.ToListAsync(_envRepository.GetQueryableSet().Where(e => envIds.Contains(e.Id)))
+            : new System.Collections.Generic.List<ExecutionEnvironment>();
+        var envMap = envs.ToDictionary(e => e.Id, e => e.Name);
+
+        var items = runs.Select(r =>
+        {
+            var m = TestRunModel.FromEntity(r);
+            m.TestSuiteName = suiteContext?.Name ?? query.TestSuiteId.ToString();
+            m.EnvironmentName = envMap.TryGetValue(r.EnvironmentId, out var n) ? n : r.EnvironmentId.ToString();
+            return m;
+        }).ToList();
+
         return new Paged<TestRunModel>
         {
-            Items = runs.Select(TestRunModel.FromEntity).ToList(),
+            Items = items,
             TotalItems = totalCount,
             Page = pageNumber,
             PageSize = pageSize,
