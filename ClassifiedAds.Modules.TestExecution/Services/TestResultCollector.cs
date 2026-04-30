@@ -137,9 +137,17 @@ public class TestResultCollector : ITestResultCollector
         run.SkippedCount = skippedCount;
         run.DurationMs = totalDurationMs;
         run.CompletedAt = DateTimeOffset.UtcNow;
-        run.Status = caseResults.Any(IsExecutionFailure)
-            ? TestRunStatus.Failed
-            : TestRunStatus.Completed;
+
+        // If every case was skipped (e.g. dependency-based skipping), mark the run Completed.
+        // Otherwise only treat the run as Failed when at least one non-skipped case had an
+        // execution failure (failed before any HTTP response was received).
+        var nonSkippedResults = caseResults
+            .Where(r => !string.Equals(r?.Status, "Skipped", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        run.Status = nonSkippedResults.Count == 0
+            ? TestRunStatus.Completed
+            : (nonSkippedResults.Any(IsExecutionFailure) ? TestRunStatus.Failed : TestRunStatus.Completed);
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
         // ── Cache write ──────────────────────────────────────────────────────

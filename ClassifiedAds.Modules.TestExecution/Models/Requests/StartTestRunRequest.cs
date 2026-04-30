@@ -25,4 +25,11 @@ public class StartTestRunRequest
     public bool EnableRetry { get; set; } = true;
 
     public bool RerunSkippedCases { get; set; } = true;
+
+    /// <summary>
+    /// When false, the run will be executed but marked as ephemeral and excluded
+    /// from the primary Test Runs listing (used for quick/manual single-case runs).
+    /// Defaults to true to preserve existing behaviour.
+    /// </summary>
+    public bool RecordRun { get; set; } = true;
 }

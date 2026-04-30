@@ -241,10 +241,14 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
                 {
                     ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
-                    BodyContains = scenario.SuggestedTestType == TestType.HappyPath &&
-                                   !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
-                        ? new List<string> { scenario.ExpectedBehavior }
-                        : new List<string>(),
+                    BodyContains = scenario.SuggestedBodyContains?.Count > 0
+                        ? scenario.SuggestedBodyContains
+                        : (scenario.SuggestedTestType == TestType.HappyPath && !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
+                            ? new List<string> { scenario.ExpectedBehavior }
+                            : new List<string>()),
+                    BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
+                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
+                    HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
                 }, JsonOpts),
                 SuggestedVariables = scenario.Variables?.Count > 0
                     ? JsonSerializer.Serialize(scenario.Variables, JsonOpts)

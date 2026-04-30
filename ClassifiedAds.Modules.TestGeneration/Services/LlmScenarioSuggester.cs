@@ -66,7 +66,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
         "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
         "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
-        "13. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].";
+        "13. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].\n" +
+        "14. MANDATORY for HappyPath: populate expectation.bodyContains with 1-3 key substrings expected in the success response (e.g. [\"success\", \"id\", \"created\"]). NEVER leave bodyContains as null or [] for HappyPath.\n" +
+        "14b. MANDATORY for HappyPath: populate expectation.jsonPathChecks with 1-2 JSONPath assertions on critical response fields (e.g. {\"$.success\": \"true\", \"$.data.id\": \"*\"}). Use \"*\" to assert a field exists without checking exact value. NEVER leave jsonPathChecks as null or {} for HappyPath.\n" +
+        "15. MANDATORY for Boundary/Negative: populate expectation.bodyContains with 1-2 substrings expected in the error response (e.g. [\"error\"], [\"invalid\"], [\"required\"]). NEVER leave bodyContains as null or [] for Boundary/Negative.\n" +
+        "15b. MANDATORY for Boundary/Negative: populate expectation.jsonPathChecks with 1 JSONPath assertion on the error response (e.g. {\"$.success\": \"false\"} or {\"$.message\": \"*\"}). NEVER leave jsonPathChecks as null or {} for Boundary/Negative.";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -92,8 +96,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "      },\n" +
         "      \"expectation\": {\n" +
         "        \"expectedStatus\": [400],\n" +
-        "        \"bodyContains\": null,\n" +
-        "        \"bodyNotContains\": null\n" +
+        "        \"bodyContains\": [\"error\", \"required\"],\n" +
+        "        \"bodyNotContains\": null,\n" +
+        "        \"jsonPathChecks\": {\"$.success\": \"false\"}\n" +
         "      },\n" +
         "      \"coveredRequirementCodes\": [\"REQ-001\"],\n" +
         "      \"variables\": []\n" +
@@ -607,6 +612,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ExpectedStatusCode = expectedStatuses.First(),
                 ExpectedStatusCodes = expectedStatuses,
                 ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
+                SuggestedBodyContains = s.Expectation?.BodyContains,
+                SuggestedBodyNotContains = s.Expectation?.BodyNotContains,
+                SuggestedJsonPathChecks = s.Expectation?.JsonPathChecks,
+                SuggestedHeaderChecks = s.Expectation?.HeaderChecks,
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),

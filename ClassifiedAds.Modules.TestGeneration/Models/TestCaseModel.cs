@@ -37,6 +37,11 @@ public class TestCaseModel
     public TestCaseExpectationModel Expectation { get; set; }
     public List<TestCaseVariableModel> Variables { get; set; } = new ();
 
+    // SRS traceability
+    public bool HasSrsContext { get; set; }
+    public string SrsDocumentTitle { get; set; }
+    public List<CoveredRequirementBriefModel> CoveredRequirements { get; set; } = new ();
+
     public static TestCaseModel FromEntity(TestCase entity)
     {
         return new TestCaseModel
@@ -64,6 +69,19 @@ public class TestCaseModel
             Request = entity.Request != null ? TestCaseRequestModel.FromEntity(entity.Request) : null,
             Expectation = entity.Expectation != null ? TestCaseExpectationModel.FromEntity(entity.Expectation) : null,
             Variables = MapVariables(entity.Variables),
+            HasSrsContext = entity.RequirementLinks != null && entity.RequirementLinks.Any(),
+            SrsDocumentTitle = entity.RequirementLinks?
+                .Select(rl => rl.SrsRequirement?.SrsDocument?.Title)
+                .FirstOrDefault(t => t != null),
+            CoveredRequirements = entity.RequirementLinks?
+                .Where(rl => rl.SrsRequirement != null)
+                .Select(rl => new CoveredRequirementBriefModel
+                {
+                    Id = rl.SrsRequirement.Id,
+                    Code = rl.SrsRequirement.RequirementCode,
+                    Title = rl.SrsRequirement.Title,
+                })
+                .ToList() ?? new List<CoveredRequirementBriefModel>(),
         };
     }
 
