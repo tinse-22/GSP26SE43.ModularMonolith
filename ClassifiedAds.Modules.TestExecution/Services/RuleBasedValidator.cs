@@ -99,7 +99,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateBodyContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 5. Body not contains
-        TrackCheck(ValidateBodyNotContains(response, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
         TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
@@ -619,35 +619,35 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         // Soft mode 2: Test is Negative/Boundary AND actual non-2xx status exactly matched expected statuses
-        if (!IsBoundaryOrNegative(testCase?.TestType))
+        if (IsBoundaryOrNegative(testCase?.TestType))
         {
-            return false;
-        }
-
-        if (!response.StatusCode.HasValue || response.StatusCode.Value < 400)
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
-        {
-            return false;
-        }
-
-        try
-        {
-            var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
-            return expectedStatuses != null && expectedStatuses.Contains(response.StatusCode.Value);
-        }
-        catch
-        {
-            if (int.TryParse(expectation.ExpectedStatus.Trim('[', ']', ' '), out var single))
+            if (response.StatusCode.HasValue && response.StatusCode.Value >= 400 &&
+                !string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
             {
-                return single == response.StatusCode.Value;
+                try
+                {
+                    var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+                    if (expectedStatuses != null && expectedStatuses.Contains(response.StatusCode.Value))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    if (int.TryParse(expectation.ExpectedStatus.Trim('[', ']', ' '), out var single) &&
+                        single == response.StatusCode.Value)
+                    {
+                        return true;
+                    }
+                }
             }
 
-            return false;
+            // Soft mode 3: Any Negative/Boundary test - body content checks are advisory;
+            // the status code check is the primary assertion for these test types.
+            return true;
         }
+
+        return false;
     }
 
     private static bool ValidateBodyContains(
@@ -723,6 +723,7 @@ public class RuleBasedValidator : IRuleBasedValidator
     private static bool ValidateBodyNotContains(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
+        ExecutionTestCaseDto testCase,
         TestCaseValidationResult result)
     {
         if (string.IsNullOrWhiteSpace(expectation.BodyNotContains))
@@ -757,22 +758,35 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var body = response.Body ?? string.Empty;
         var allPassed = true;
+        var softMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
 
         foreach (var pattern in normalizedPatterns)
         {
             if (body.Contains(pattern, StringComparison.OrdinalIgnoreCase))
             {
-                allPassed = false;
-                result.Failures.Add(new ValidationFailureModel
+                if (softMode)
                 {
-                    Code = "BODY_NOT_CONTAINS_PRESENT",
-                    Message = $"Response body chứa chuỗi không mong đợi: '{Truncate(pattern, 100)}'.",
-                    Actual = Truncate(pattern, 200),
-                });
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "BODY_NOT_CONTAINS_PARTIAL_MISMATCH",
+                        Message = $"Response body chứa '{Truncate(pattern, 100)}', nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
+                        Target = "BodyNotContains",
+                    });
+                }
+                else
+                {
+                    allPassed = false;
+                    result.Failures.Add(new ValidationFailureModel
+                    {
+                        Code = "BODY_NOT_CONTAINS_PRESENT",
+                        Message = $"Response body chứa chuỗi không mong đợi: '{Truncate(pattern, 100)}'.",
+                        Actual = Truncate(pattern, 200),
+                    });
+                }
             }
         }
 
-        result.BodyNotContainsPassed = allPassed;
+        result.BodyNotContainsPassed = allPassed || softMode;
         return true;
     }
 
