@@ -155,21 +155,16 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         }
         catch (Exception ex)
         {
-            var result = new WebhookTriggerResult { ErrorMessage = ex.Message, ErrorDetails = ex.ToString() };
-            if (ShouldUseLocalFallback(result))
-            {
-                await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
-                return;
-            }
-            else
-            {
-                job.Status = SrsAnalysisJobStatus.Failed;
-                job.ErrorMessage = ex.Message;
-                job.CompletedAt = DateTimeOffset.UtcNow;
-                await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-                _logger.LogError(ex, "SRS refinement n8n call failed. JobId={JobId}", job.Id);
-                throw;
-            }
+            // For refinement, the local fallback is always safe: it merges user answers into
+            // constraints locally. Fall back for any n8n failure (404, 500/502/503/504, bad JSON,
+            // missing webhook config, network errors, etc.) so the endpoint never returns 400
+            // due to infrastructure unavailability.
+            _logger.LogWarning(
+                ex,
+                "SRS refinement n8n call failed — applying local fallback. JobId={JobId}, Error={Error}",
+                job.Id, ex.Message);
+            await ApplyLocalFallbackAsync(job, req, clarifications, cancellationToken);
+            return;
         }
 
         // n8n returned results — process them via the callback handler
@@ -211,16 +206,6 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         }, cancellationToken);
     }
 
-    private static bool ShouldUseLocalFallback(WebhookTriggerResult result)
-    {
-        if (result == null)
-        {
-            return false;
-        }
-
-        return ContainsIgnoreCase(result.ErrorMessage, "Status: NotFound")
-            || ContainsIgnoreCase(result.ErrorDetails, "not registered");
-    }
 
     private static string BuildRefinedConstraints(
         SrsRequirement requirement,
@@ -266,13 +251,6 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
         {
             return null;
         }
-    }
-
-    private static bool ContainsIgnoreCase(string input, string value)
-    {
-        return !string.IsNullOrWhiteSpace(input)
-            && !string.IsNullOrWhiteSpace(value)
-            && input.Contains(value, StringComparison.OrdinalIgnoreCase);
     }
 }
 
