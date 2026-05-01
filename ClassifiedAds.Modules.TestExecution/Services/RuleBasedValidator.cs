@@ -836,7 +836,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var allPassed = true;
-        var jsonPathSoftMode = result.Warnings.Any(w => w.Code == "ADAPTIVE_PERMISSIVE_STATUS_MATCH");
+        var jsonPathSoftMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
         using (doc)
         {
             foreach (var check in checks)
