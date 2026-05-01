@@ -29,6 +29,11 @@ public class TestRunModel
 
     public long DurationMs { get; set; }
 
+    // Human-friendly display names (optional)
+    public string TestSuiteName { get; set; }
+
+    public string EnvironmentName { get; set; }
+
     public DateTimeOffset? ResultsExpireAt { get; set; }
 
     public bool HasDetailedResults { get; set; }
@@ -57,6 +62,8 @@ public class TestRunModel
             HasDetailedResults = run.ResultsExpireAt.HasValue && run.ResultsExpireAt.Value > DateTimeOffset.UtcNow,
             CreatedDateTime = run.CreatedDateTime,
             UpdatedDateTime = run.UpdatedDateTime,
+            TestSuiteName = null,
+            EnvironmentName = null,
         };
     }
 }

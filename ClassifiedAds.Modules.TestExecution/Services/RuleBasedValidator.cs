@@ -787,10 +787,13 @@ public class RuleBasedValidator : IRuleBasedValidator
                 if (actualValue == null || !ValuesEqual(actualValue, check.Value))
                 {
                     allPassed = false;
+                    var isWildcard = check.Value == "*";
                     result.Failures.Add(new ValidationFailureModel
                     {
                         Code = "JSONPATH_ASSERTION_FAILED",
-                        Message = $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
+                        Message = isWildcard
+                            ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
+                            : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
                         Target = check.Key,
                         Expected = check.Value,
                         Actual = actualValue,
@@ -873,6 +876,12 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValuesEqual(string actual, string expected)
     {
+        // Wildcard "*" means "field must exist with any non-null value"
+        if (expected == "*")
+        {
+            return actual != null;
+        }
+
         if (actual == expected)
         {
             return true;

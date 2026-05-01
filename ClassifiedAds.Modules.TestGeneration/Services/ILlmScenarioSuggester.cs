@@ -105,6 +105,18 @@ public class LlmSuggestedScenario
 
     public string ExpectedBehavior { get; set; }
 
+    /// <summary>Full list of body-contains patterns from LLM (e.g. ["success", "id"]).</summary>
+    public List<string> SuggestedBodyContains { get; set; }
+
+    /// <summary>Full list of body-not-contains patterns from LLM.</summary>
+    public List<string> SuggestedBodyNotContains { get; set; }
+
+    /// <summary>JSONPath assertions from LLM (e.g. {"$.success": "true"}).</summary>
+    public Dictionary<string, string> SuggestedJsonPathChecks { get; set; }
+
+    /// <summary>Header assertions from LLM (e.g. {"Content-Type": "application/json"}).</summary>
+    public Dictionary<string, string> SuggestedHeaderChecks { get; set; }
+
     public string Priority { get; set; }
 
     public List<string> Tags { get; set; } = new List<string>();

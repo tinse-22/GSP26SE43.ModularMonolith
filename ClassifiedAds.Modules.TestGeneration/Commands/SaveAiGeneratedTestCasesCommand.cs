@@ -252,10 +252,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         TestCaseId = testCase.Id,
                         ExpectedStatus = NormalizeJsonOrDefault(dto.Expectation.ExpectedStatus, "[200]"),
                         ResponseSchema = NormalizeNullableJson(dto.Expectation.ResponseSchema),
-                        HeaderChecks = NormalizeJsonOrDefault(dto.Expectation.HeaderChecks, "{}"),
-                        BodyContains = NormalizeJsonOrDefault(dto.Expectation.BodyContains, "[]"),
-                        BodyNotContains = NormalizeJsonOrDefault(dto.Expectation.BodyNotContains, "[]"),
-                        JsonPathChecks = NormalizeJsonOrDefault(dto.Expectation.JsonPathChecks, "{}"),
+                        HeaderChecks = NormalizeNullableJsonObject(dto.Expectation.HeaderChecks),
+                        BodyContains = NormalizeNullableJsonArray(dto.Expectation.BodyContains),
+                        BodyNotContains = NormalizeNullableJsonArray(dto.Expectation.BodyNotContains),
+                        JsonPathChecks = NormalizeNullableJsonObject(dto.Expectation.JsonPathChecks),
                         MaxResponseTime = dto.Expectation.MaxResponseTime,
                         CreatedDateTime = now,
                     };
@@ -561,6 +561,56 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         catch
         {
             return JsonSerializer.Serialize(trimmed);
+        }
+    }
+
+    /// <summary>Returns null when value is null/empty/whitespace or an empty JSON object <c>{}</c>.</summary>
+    private static string NormalizeNullableJsonObject(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object && !doc.RootElement.EnumerateObject().Any())
+            {
+                return null; // empty {} → treat as not set
+            }
+
+            return trimmed;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Returns null when value is null/empty/whitespace or an empty JSON array <c>[]</c>.</summary>
+    private static string NormalizeNullableJsonArray(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() == 0)
+            {
+                return null; // empty [] → treat as not set
+            }
+
+            return trimmed;
+        }
+        catch
+        {
+            return null;
         }
     }
 
