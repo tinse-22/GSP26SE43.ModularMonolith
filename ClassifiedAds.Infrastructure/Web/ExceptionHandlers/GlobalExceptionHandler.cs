@@ -173,6 +173,33 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             return true;
         }
+        else if (IsRedisUnavailableException(exception))
+        {
+            _logger.LogWarning(exception, "[REDIS-UNAVAILABLE] [{Ticks}-{ThreadId}]",
+                DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
+
+            var problemDetails = new ProblemDetails
+            {
+                Detail = "Dich vu cache tam thoi khong kha dung. Vui long thu lai sau vai giay.",
+                Instance = null,
+                Status = (int)HttpStatusCode.ServiceUnavailable,
+                Title = "Service Unavailable",
+                Type = "https://datatracker.ietf.org/doc/html/rfc7231#section-6.6.4"
+            };
+
+            problemDetails.Extensions.Add("message", problemDetails.Detail);
+            problemDetails.Extensions.Add("traceId", Activity.Current.GetTraceId());
+            problemDetails.Extensions.Add("reasonCode", "CACHE_UNAVAILABLE");
+
+            response.ContentType = "application/problem+json";
+            response.StatusCode = problemDetails.Status.Value;
+            response.Headers["Retry-After"] = "5";
+
+            var result = JsonSerializer.Serialize(problemDetails);
+            await response.WriteAsync(result, cancellationToken: cancellationToken);
+
+            return true;
+        }
         else
         {
             _logger.LogError(exception, "[{Ticks}-{ThreadId}]", DateTime.UtcNow.Ticks, Environment.CurrentManagedThreadId);
@@ -229,5 +256,17 @@ public class GlobalExceptionHandler : IExceptionHandler
 
         return exception.InnerException is not null
             && IsNpgsqlTransientDisposed(exception.InnerException);
+    }
+
+    private static bool IsRedisUnavailableException(Exception exception)
+    {
+        var typeName = exception.GetType().FullName ?? string.Empty;
+        if (typeName.StartsWith("StackExchange.Redis.", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return exception.InnerException is not null
+            && IsRedisUnavailableException(exception.InnerException);
     }
 }

@@ -28,6 +28,8 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
     private readonly Mock<IRepository<TestCaseDependency, Guid>> _dependencyRepoMock;
     private readonly Mock<IRepository<TestCaseChangeLog, Guid>> _changeLogRepoMock;
     private readonly Mock<IRepository<TestSuiteVersion, Guid>> _versionRepoMock;
+    private readonly Mock<IRepository<TestCaseRequirementLink, Guid>> _linkRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsRequirementRepoMock;
     private readonly Mock<ILlmSuggestionMaterializer> _materializerMock;
     private readonly Mock<IApiTestOrderGateService> _gateServiceMock;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionMock;
@@ -45,6 +47,8 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
         _dependencyRepoMock = new Mock<IRepository<TestCaseDependency, Guid>>();
         _changeLogRepoMock = new Mock<IRepository<TestCaseChangeLog, Guid>>();
         _versionRepoMock = new Mock<IRepository<TestSuiteVersion, Guid>>();
+        _linkRepoMock = new Mock<IRepository<TestCaseRequirementLink, Guid>>();
+        _srsRequirementRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
         _materializerMock = new Mock<ILlmSuggestionMaterializer>();
         _gateServiceMock = new Mock<IApiTestOrderGateService>();
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
@@ -93,6 +97,8 @@ public class BulkReviewLlmSuggestionsCommandHandlerTests
             _dependencyRepoMock.Object,
             _changeLogRepoMock.Object,
             _versionRepoMock.Object,
+            _linkRepoMock.Object,
+            _srsRequirementRepoMock.Object,
             _materializerMock.Object,
             _gateServiceMock.Object,
             _subscriptionMock.Object,
