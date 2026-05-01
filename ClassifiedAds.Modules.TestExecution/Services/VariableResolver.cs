@@ -1360,6 +1360,7 @@ public class VariableResolver : IVariableResolver
             || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(testCase.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
+            || IsLoginLikeRequest(testCase) // Credentials already handled by NormalizeHappyPathCredentials
             )
         {
             return resolvedBody;
