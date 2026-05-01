@@ -330,6 +330,23 @@ public class VariableExtractor : IVariableExtractor
             }
         }
 
+        // id ↔ _id alias: MongoDB returns "_id" but LLM-generated paths use "id" (and vice-versa).
+        var altName = propertyName.Equals("id", StringComparison.OrdinalIgnoreCase)
+            ? "_id"
+            : propertyName.Equals("_id", StringComparison.OrdinalIgnoreCase) ? "id" : null;
+
+        if (altName != null)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals(altName, StringComparison.OrdinalIgnoreCase))
+                {
+                    propertyValue = property.Value;
+                    return true;
+                }
+            }
+        }
+
         propertyValue = default;
         return false;
     }
