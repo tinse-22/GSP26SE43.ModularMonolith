@@ -89,6 +89,12 @@ public class TestCaseRunResultModel
 
     public int? ExpectedMaxResponseTime { get; set; }
 
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
+
     /// <summary>
     /// Total number of execution attempts made for this test case across the entire run
     /// (including retries). This equals 1 when no retry was needed.

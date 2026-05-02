@@ -304,7 +304,7 @@ public class LlmScenarioSuggesterTests
         capturedPayload.GlobalBusinessRules.Length.Should().BeLessThanOrEqualTo(1200);
         capturedPayload.PromptConfig.SystemPrompt.Length.Should().BeLessThanOrEqualTo(1200);
         capturedPayload.PromptConfig.TaskInstruction.Length.Should().BeLessThanOrEqualTo(5000);
-        capturedPayload.PromptConfig.Rules.Length.Should().BeLessThanOrEqualTo(3500);
+        capturedPayload.PromptConfig.Rules.Length.Should().BeLessThanOrEqualTo(4500);
         capturedPayload.PromptConfig.ResponseFormat.Length.Should().BeLessThanOrEqualTo(2500);
 
         var endpointPayload = capturedPayload.Endpoints.First(x => x.EndpointId == EndpointId1);
@@ -990,6 +990,224 @@ public class LlmScenarioSuggesterTests
         scenario.Variables[1].HeaderName.Should().Be("X-Session-Id");
     }
 
+    #region New spec-driven assertion tests
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_IncludeErrorResponses_InN8nPayload()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) => capturedPayload = payload)
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert — endpoint1 (POST login) should have error responses from Swagger
+        capturedPayload.Should().NotBeNull();
+        var ep1 = capturedPayload.Endpoints.First(e => e.EndpointId == EndpointId1);
+        ep1.ErrorResponses.Should().ContainKey("400");
+        ep1.ErrorResponses.Should().ContainKey("422");
+        ep1.ErrorResponses.Should().NotContainKey("200"); // success codes excluded
+        ep1.ErrorResponses["400"].Description.Should().Be("Validation error");
+
+        // endpoint2 (GET users) should have 401
+        var ep2 = capturedPayload.Endpoints.First(e => e.EndpointId == EndpointId2);
+        ep2.ErrorResponses.Should().ContainKey("401");
+        ep2.ErrorResponses.Should().NotContainKey("200");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_UseSwaggerCodes_InExpectedStatus()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Model = "gpt-4o",
+                TokensUsed = 100,
+                Scenarios = new List<N8nSuggestedScenario>
+                {
+                    new()
+                    {
+                        EndpointId = EndpointId1,
+                        ScenarioName = "Invalid login",
+                        TestType = "Boundary",
+                        Priority = "High",
+                        Expectation = new N8nTestCaseExpectation
+                        {
+                            ExpectedStatus = new List<int> { 400 },
+                        },
+                    },
+                },
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert — expectedStatusCodes should only contain Swagger-defined codes
+        var scenario = result.Scenarios.First(s =>
+            s.EndpointId == EndpointId1 && s.ScenarioName == "Invalid login");
+        scenario.ExpectedStatusCodes.Should().Contain(400);
+        scenario.ExpectedStatusCodes.Should().Contain(422);
+        // Should NOT contain codes not in Swagger spec
+        scenario.ExpectedStatusCodes.Should().NotContain(409);
+        scenario.ExpectedStatusCodes.Should().NotContain(415);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_RepairJsonPathChecks_WhenLlmLeftEmpty()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Model = "gpt-4o",
+                TokensUsed = 100,
+                Scenarios = new List<N8nSuggestedScenario>
+                {
+                    new()
+                    {
+                        EndpointId = EndpointId1,
+                        ScenarioName = "Empty assertion scenario",
+                        TestType = "Negative",
+                        Priority = "High",
+                        Expectation = new N8nTestCaseExpectation
+                        {
+                            ExpectedStatus = new List<int> { 400 },
+                            // LLM left these empty
+                            JsonPathChecks = null,
+                            BodyContains = null,
+                        },
+                    },
+                },
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert — assertions should be repaired from Swagger 400 response schema
+        var scenario = result.Scenarios.First(s =>
+            s.EndpointId == EndpointId1 && s.ScenarioName == "Empty assertion scenario");
+
+        // Schema has "success" and "message" fields
+        scenario.SuggestedJsonPathChecks.Should().NotBeNull();
+        scenario.SuggestedJsonPathChecks.Should().NotBeEmpty();
+        scenario.SuggestedBodyContains.Should().NotBeNull();
+        scenario.SuggestedBodyContains.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_PopulateSrsTestableConstraints_InPayload()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        context.SrsDocument = new SrsDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Test SRS",
+            ParsedMarkdown = "# Requirements",
+        };
+        context.SrsRequirements = new List<SrsRequirement>
+        {
+            new()
+            {
+                Id = Guid.NewGuid(),
+                RequirementCode = "REQ-001",
+                Title = "Password validation",
+                Description = "Password must be at least 6 characters",
+                EndpointId = EndpointId1,
+                TestableConstraints = """[{"constraint": "password >= 6 chars \u2192 400", "priority": "High"}]""",
+            },
+        };
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) => capturedPayload = payload)
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert — SRS context should have testable constraints populated
+        capturedPayload.Should().NotBeNull();
+        capturedPayload.SrsContext.Should().NotBeNull();
+        capturedPayload.SrsContext.Requirements.Should().HaveCount(1);
+
+        var req = capturedPayload.SrsContext.Requirements[0];
+        req.Code.Should().Be("REQ-001");
+        req.EndpointId.Should().Be(EndpointId1);
+        req.TestableConstraints.Should().HaveCount(1);
+        req.TestableConstraints[0].Constraint.Should().Contain("password");
+        req.TestableConstraints[0].ExpectedOutcome.Should().Contain("400");
+        req.TestableConstraints[0].Priority.Should().Be("High");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_IncludeUpdatedRules_InPayload()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+
+        N8nBoundaryNegativePayload capturedPayload = null;
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) => capturedPayload = payload)
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        await _sut.SuggestScenariosAsync(context);
+
+        // Assert — rules should contain new Rule 13, 15c, 16
+        capturedPayload.PromptConfig.Rules.Should().Contain("errorResponses");
+        capturedPayload.PromptConfig.Rules.Should().Contain("SCHEMA-DRIVEN");
+        capturedPayload.PromptConfig.Rules.Should().Contain("SRS-CONSTRAINT-DRIVEN");
+    }
+
+    #endregion
+
     #region Helpers
 
     private static LlmScenarioSuggestionContext CreateDefaultContext()
@@ -1020,6 +1238,12 @@ public class LlmScenarioSuggesterTests
                     OperationId = "login",
                     ParameterSchemaPayloads = new List<string> { "{\"type\":\"object\"}" },
                     ResponseSchemaPayloads = new List<string> { "{\"type\":\"object\"}" },
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200, Schema = "{\"type\":\"object\",\"properties\":{\"token\":{\"type\":\"string\"}}}" },
+                        new() { StatusCode = 400, Description = "Validation error", Schema = "{\"type\":\"object\",\"properties\":{\"success\":{\"type\":\"boolean\"},\"message\":{\"type\":\"string\"}}}" },
+                        new() { StatusCode = 422, Description = "Unprocessable entity" },
+                    },
                 },
                 new()
                 {
@@ -1029,6 +1253,11 @@ public class LlmScenarioSuggesterTests
                     OperationId = "getUsers",
                     ParameterSchemaPayloads = new List<string>(),
                     ResponseSchemaPayloads = new List<string> { "{\"type\":\"array\"}" },
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200, Schema = "{\"type\":\"array\"}" },
+                        new() { StatusCode = 401, Description = "Unauthorized" },
+                    },
                 },
             },
             OrderedEndpoints = new List<ApiOrderItemModel>

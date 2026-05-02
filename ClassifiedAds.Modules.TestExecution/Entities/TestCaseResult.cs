@@ -123,4 +123,10 @@ public class TestCaseResult : Entity<Guid>, IAggregateRoot
     /// Response time validation result (null if not checked).
     /// </summary>
     public bool? ResponseTimePassed { get; set; }
+
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
 }

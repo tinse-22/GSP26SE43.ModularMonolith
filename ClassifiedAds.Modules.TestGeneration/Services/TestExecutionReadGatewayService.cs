@@ -182,8 +182,9 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
         {
             baselineOrderedCases = finalTestCaseIdSet
                 .Select(id => enabledTestCaseMap[id])
-                .OrderBy(tc => tc.IsOrderCustomized ? tc.CustomOrderIndex ?? int.MaxValue : int.MaxValue)
-                .ThenBy(tc => tc.OrderIndex)
+                .OrderBy(tc => tc.IsOrderCustomized ? 0 : 1)
+                .ThenBy(tc => tc.IsOrderCustomized ? tc.CustomOrderIndex ?? int.MaxValue : tc.OrderIndex)
+                .ThenBy(tc => tc.IsOrderCustomized ? 0 : tc.OrderIndex)
                 .ThenBy(tc => tc.Name)
                 .ThenBy(tc => tc.Id)
                 .ToList();
@@ -201,10 +202,12 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                 .ToList();
         }
 
-        var topologicallyOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
+        var finalOrderedCases = hasCustomOrder
+            ? baselineOrderedCases
+            : OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
 
         // 9. Map to DTOs with deterministic ordering
-        var orderedTestCases = topologicallyOrderedCases
+        var orderedTestCases = finalOrderedCases
             .Select((tc, index) => MapToExecutionTestCaseDto(tc, index, requestMap, expectationMap, variableMap, dependencyMap))
             .ToList();
 
@@ -368,6 +371,9 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                     BodyNotContains = expectation.BodyNotContains,
                     JsonPathChecks = expectation.JsonPathChecks,
                     MaxResponseTime = expectation.MaxResponseTime,
+                    ExpectationSource = expectation.ExpectationSource,
+                    RequirementCode = expectation.RequirementCode,
+                    PrimaryRequirementId = expectation.PrimaryRequirementId,
                 }
                 : null,
             Variables = variables?.Select(v => new ExecutionVariableRuleDto

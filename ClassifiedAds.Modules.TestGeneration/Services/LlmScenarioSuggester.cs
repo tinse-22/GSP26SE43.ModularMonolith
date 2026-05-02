@@ -36,7 +36,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private const int MaxObservationPromptLength = 3000;
     private const int MaxConfirmationPromptLength = 1200;
     private const int MaxTaskInstructionLength = 5000;
-    private const int MaxRulesLength = 3500;
+    private const int MaxRulesLength = 4500;
     private const int MaxResponseFormatLength = 2500;
     private const int MaxSchemaPayloadCountPerKind = 2;
     private const int MaxSchemaPayloadLength = 2500;
@@ -67,11 +67,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
         "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
         "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
-        "13. expectation.expectedStatus must be an array of integers e.g. [400] or [401] or [404].\n" +
-        "14. MANDATORY for HappyPath: populate expectation.bodyContains with 1-3 key substrings expected in the success response (e.g. [\"success\", \"id\", \"created\"]). NEVER leave bodyContains as null or [] for HappyPath.\n" +
-        "14b. MANDATORY for HappyPath: populate expectation.jsonPathChecks with 1-2 JSONPath assertions on critical response fields (e.g. {\"$.success\": \"true\", \"$.data.id\": \"*\"}). Use \"*\" to assert a field exists without checking exact value. NEVER leave jsonPathChecks as null or {} for HappyPath.\n" +
-        "15. MANDATORY for Boundary/Negative: populate expectation.bodyContains with 1-2 substrings expected in the error response (e.g. [\"error\"], [\"invalid\"], [\"required\"]). NEVER leave bodyContains as null or [] for Boundary/Negative.\n" +
-        "15b. MANDATORY for Boundary/Negative: populate expectation.jsonPathChecks with 1 JSONPath assertion on the error response (e.g. {\"$.success\": \"false\"} or {\"$.message\": \"*\"}). NEVER leave jsonPathChecks as null or {} for Boundary/Negative.";
+        "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n" +
+        "14. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
+        "15. For Boundary/Negative, propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload when inferable. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
+        "15b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
+        "16. SRS-CONSTRAINT-DRIVEN: When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
+        "   - The scenario's endpointId MUST be requirements[n].endpointId (if not null).\n" +
+        "   - coveredRequirementCodes MUST include requirements[n].code.\n" +
+        "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
+        "   - Example: constraint='password >= 6 chars → 400' → Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'].\n" +
+        "   - If no testableConstraints, ignore this rule.\n";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -126,6 +131,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IN8nIntegrationService _n8nService;
     private readonly ILlmAssistantGatewayService _llmGatewayService;
     private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
+    private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
     public LlmScenarioSuggester(
@@ -133,12 +139,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IN8nIntegrationService n8nService,
         ILlmAssistantGatewayService llmGatewayService,
         ILlmSuggestionFeedbackContextService feedbackContextService,
+        IExpectationResolver expectationResolver,
         ILogger<LlmScenarioSuggester> logger)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
         _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
+        _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -262,8 +270,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
 
         // Step 6: Parse response into domain models
-        var scenarios = ParseScenarios(n8nResponse, endpointContracts, context.SrsRequirements);
-        scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap, endpointContracts);
+        var scenarios = ParseScenarios(n8nResponse, endpointContracts, metadataMap, context.SrsRequirements);
+        scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap, endpointContracts, context.SrsRequirements);
 
         // Step 7: Cache results
         if (algorithmProfile.UseFeedbackLoopContext)
@@ -379,6 +387,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
                 ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
                 ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
+                ErrorResponses = BuildErrorResponseDescriptors(metadata?.Responses),
             });
         }
 
@@ -413,7 +422,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             {
                 Code = r.RequirementCode,
                 Title = r.Title,
-                Description = TruncateForPayload(r.Description, 500),
+                Description = TruncateForPayload(r.Description, 400),
+                EndpointId = r.EndpointId,
+                TestableConstraints = DeserializeTestableConstraints(
+                    r.RefinedConstraints ?? r.TestableConstraints),
             })
             .ToList();
 
@@ -570,6 +582,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(
         N8nBoundaryNegativeResponse response,
         IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap = null,
         IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
         if (response?.Scenarios == null || response.Scenarios.Count == 0)
@@ -589,7 +602,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         foreach (var s in response.Scenarios)
         {
             var parsedType = ParseTestType(s.TestType);
-            var expectedStatuses = BuildExpectedStatuses(parsedType, s.Expectation?.ExpectedStatus, s.Request?.HttpMethod);
+            ApiEndpointMetadataDto scenarioMetadata = null;
+            metadataMap?.TryGetValue(s.EndpointId, out scenarioMetadata);
 
             // Map requirement codes returned by LLM → GUIDs from our DB.
             var coveredIds = s.CoveredRequirementCodes
@@ -598,6 +612,33 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 .Distinct()
                 .ToList()
                 ?? new List<Guid>();
+
+            var candidateExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = s.Expectation?.ExpectedStatus ?? new List<int>(),
+                BodyContains = s.Expectation?.BodyContains ?? new List<string>(),
+                BodyNotContains = s.Expectation?.BodyNotContains ?? new List<string>(),
+                JsonPathChecks = s.Expectation?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                HeaderChecks = s.Expectation?.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            };
+
+            var resolvedExpectation = _expectationResolver.Resolve(new GeneratedScenarioContext
+            {
+                EndpointId = s.EndpointId,
+                TestType = parsedType,
+                HttpMethod = s.Request?.HttpMethod,
+                SwaggerResponses = scenarioMetadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+                LlmExpectation = candidateExpectation,
+                SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+                CoveredRequirementIds = coveredIds,
+                PreferredDefaultStatuses = candidateExpectation.ExpectedStatus ?? Array.Empty<int>(),
+            });
+
+            var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes ?? new List<int> { 200 };
+
+            var bodyContains = resolvedExpectation?.BodyContains?.Count > 0
+                ? resolvedExpectation.BodyContains
+                : s.Expectation?.BodyContains;
 
             var parsedScenario = new LlmSuggestedScenario
             {
@@ -612,15 +653,24 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 SuggestedHeaders = s.Request?.Headers,
                 ExpectedStatusCode = expectedStatuses.First(),
                 ExpectedStatusCodes = expectedStatuses,
-                ExpectedBehavior = s.Expectation?.BodyContains?.FirstOrDefault(),
-                SuggestedBodyContains = s.Expectation?.BodyContains,
-                SuggestedBodyNotContains = s.Expectation?.BodyNotContains,
-                SuggestedJsonPathChecks = s.Expectation?.JsonPathChecks,
-                SuggestedHeaderChecks = s.Expectation?.HeaderChecks,
+                ExpectedBehavior = bodyContains?.FirstOrDefault(),
+                SuggestedBodyContains = bodyContains,
+                SuggestedBodyNotContains = resolvedExpectation?.BodyNotContains?.Count > 0
+                    ? resolvedExpectation.BodyNotContains
+                    : s.Expectation?.BodyNotContains,
+                SuggestedJsonPathChecks = resolvedExpectation?.JsonPathChecks?.Count > 0
+                    ? resolvedExpectation.JsonPathChecks
+                    : s.Expectation?.JsonPathChecks,
+                SuggestedHeaderChecks = resolvedExpectation?.HeaderChecks?.Count > 0
+                    ? resolvedExpectation.HeaderChecks
+                    : s.Expectation?.HeaderChecks,
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
                 CoveredRequirementIds = coveredIds,
+                ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
+                RequirementCode = resolvedExpectation?.RequirementCode,
+                PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
             };
 
             if (endpointContracts != null &&
@@ -644,6 +694,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return scenarios;
     }
+
 
     private static bool IsScenarioContractComplete(
         LlmSuggestedScenario scenario,
@@ -689,89 +740,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return missingParts.Count == 0;
     }
 
-    private static List<int> BuildExpectedStatuses(TestType testType, List<int> source, string httpMethod)
-    {
-        var normalized = source?
-            .Where(code => code >= 100 && code <= 599)
-            .Distinct()
-            .ToList() ?? new List<int>();
-
-        if (testType == TestType.HappyPath)
-        {
-            var happyStatuses = normalized.Where(code => code >= 200 && code <= 299).ToList();
-            return MergeStatuses(happyStatuses, GetHappyPathDefaultStatuses(httpMethod));
-        }
-
-        // Boundary/Negative should not accept success statuses.
-        var nonSuccessStatuses = normalized.Where(code => code < 200 || code >= 300).ToList();
-        return MergeStatuses(nonSuccessStatuses, GetBoundaryNegativeDefaultStatuses(httpMethod));
-    }
-
-    private static List<int> GetHappyPathDefaultStatuses(string httpMethod)
-    {
-        var method = NormalizeHttpMethod(httpMethod);
-        return method switch
-        {
-            "POST" => new List<int> { 201, 200 },
-            "PUT" => new List<int> { 200, 204 },
-            "PATCH" => new List<int> { 200, 204 },
-            "DELETE" => new List<int> { 204, 200, 202 },
-            _ => new List<int> { 200 },
-        };
-    }
-
-    private static List<int> GetBoundaryNegativeDefaultStatuses(string httpMethod)
-    {
-        _ = NormalizeHttpMethod(httpMethod);
-        return new List<int> { 400, 401, 403, 404, 409, 415, 422 };
-    }
-
-    private static List<int> MergeStatuses(List<int> source, List<int> fallback)
-    {
-        var merged = new List<int>();
-
-        if (source != null)
-        {
-            foreach (var code in source)
-            {
-                if (!merged.Contains(code))
-                {
-                    merged.Add(code);
-                }
-            }
-        }
-
-        if (fallback != null)
-        {
-            foreach (var code in fallback)
-            {
-                if (!merged.Contains(code))
-                {
-                    merged.Add(code);
-                }
-            }
-        }
-
-        if (merged.Count == 0)
-        {
-            merged.Add(200);
-        }
-
-        return merged;
-    }
-
-    private static string NormalizeHttpMethod(string httpMethod)
-    {
-        return string.IsNullOrWhiteSpace(httpMethod)
-            ? "GET"
-            : httpMethod.Trim().ToUpperInvariant();
-    }
-
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(
         IReadOnlyList<LlmSuggestedScenario> rawScenarios,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
-        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts)
+        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         if (orderedEndpoints == null || orderedEndpoints.Count == 0)
         {
@@ -802,7 +776,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             if (!types.Contains(TestType.HappyPath))
             {
                 endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.HappyPath, endpointScenarios.Count + 1));
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.HappyPath, endpointScenarios.Count + 1, srsRequirements));
                 types.Add(TestType.HappyPath);
                 added++;
             }
@@ -810,7 +784,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             if (!types.Contains(TestType.Negative))
             {
                 endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Negative, endpointScenarios.Count + 1));
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Negative, endpointScenarios.Count + 1, srsRequirements));
                 types.Add(TestType.Negative);
                 added++;
             }
@@ -818,7 +792,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             if (HasBoundarySurface(endpoint, metadata) && !types.Contains(TestType.Boundary))
             {
                 endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Boundary, endpointScenarios.Count + 1));
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Boundary, endpointScenarios.Count + 1, srsRequirements));
                 types.Add(TestType.Boundary);
                 added++;
             }
@@ -835,7 +809,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
 
                 endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, nextType, endpointScenarios.Count + 1));
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, nextType, endpointScenarios.Count + 1, srsRequirements));
                 added++;
             }
         }
@@ -913,23 +887,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return parameters;
     }
 
-    private static LlmSuggestedScenario CreateFallbackScenario(
+    private LlmSuggestedScenario CreateFallbackScenario(
         ApiOrderItemModel endpoint,
         ApiEndpointMetadataDto metadata,
         EndpointRequestContract contract,
         TestType type,
-        int index)
+        int index,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         var method = endpoint?.HttpMethod ?? metadata?.HttpMethod ?? "GET";
         var path = endpoint?.Path ?? metadata?.Path ?? "/";
-
-        var expectedStatus = type switch
-        {
-            TestType.HappyPath => method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? 201 : 200,
-            TestType.Boundary => 400,
-            _ => ((endpoint?.IsAuthRelated ?? false) || (metadata?.IsAuthRelated ?? false)) ? 401 : 400,
-        };
-        var expectedStatuses = BuildExpectedStatuses(type, new List<int> { expectedStatus }, method);
 
         var namePrefix = type switch
         {
@@ -956,6 +923,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? ContractAwareRequestSynthesizer.BuildRequestData(contract.RequestContext, type)
             : new ContractAwareRequestData();
 
+        var resolvedExpectation = _expectationResolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = endpoint.EndpointId,
+            TestType = type,
+            HttpMethod = method,
+            SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+            SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+        });
+
+        var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes ?? new List<int> { 200 };
+
         return new LlmSuggestedScenario
         {
             EndpointId = endpoint.EndpointId,
@@ -969,10 +947,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             SuggestedHeaders = requestData.Headers,
             ExpectedStatusCode = expectedStatuses.First(),
             ExpectedStatusCodes = expectedStatuses,
-            ExpectedBehavior = null,
+            ExpectedBehavior = resolvedExpectation?.BodyContains?.FirstOrDefault(),
+            SuggestedBodyContains = resolvedExpectation?.BodyContains,
+            SuggestedBodyNotContains = resolvedExpectation?.BodyNotContains,
+            SuggestedJsonPathChecks = resolvedExpectation?.JsonPathChecks,
+            SuggestedHeaderChecks = resolvedExpectation?.HeaderChecks,
             Priority = type == TestType.HappyPath ? "Medium" : "High",
             Tags = tags,
             Variables = requestData.Variables,
+            ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
+            RequirementCode = resolvedExpectation?.RequirementCode,
+            PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
         };
     }
 
@@ -1584,6 +1569,120 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             .Distinct(StringComparer.Ordinal)
             .Take(MaxSchemaPayloadCountPerKind)
             .ToList();
+    }
+
+    /// <summary>
+    /// Builds error response descriptors from Swagger metadata for inclusion in the n8n payload.
+    /// Only includes 4xx/5xx responses. Max 5 entries to keep payload token count manageable.
+    /// </summary>
+    private static Dictionary<string, N8nErrorResponseDescriptor> BuildErrorResponseDescriptors(
+        IReadOnlyCollection<ApiEndpointResponseDescriptorDto> responses)
+    {
+        if (responses == null || responses.Count == 0)
+            return new Dictionary<string, N8nErrorResponseDescriptor>();
+
+        return responses
+            .Where(r => r.StatusCode >= 400 && r.StatusCode <= 599)
+            .OrderBy(r => r.StatusCode)
+            .Take(5)
+            .ToDictionary(
+                r => r.StatusCode.ToString(),
+                r => new N8nErrorResponseDescriptor
+                {
+                    Description = r.Description,
+                    SchemaJson = TruncateForPayload(r.Schema, 800),
+                    ExampleJson = TruncateForPayload(r.Examples, 400),
+                });
+    }
+
+    /// <summary>
+    /// Repairs scenario assertions from Swagger error response schema when LLM left them empty.
+    /// Only fills when LLM produced no assertions (Count == 0) — never overwrites LLM results.
+    ///
+    /// WARNING: This method depends on metadata.Responses being in sync with the runtime API.
+    /// If the Swagger spec is outdated (API changed fields but spec not regenerated),
+    /// this will produce assertions based on stale schema data, causing false test failures.
+    /// Team MUST ensure Swagger spec is regenerated before triggering test generation.
+    /// </summary>
+    private static LlmSuggestedScenario RepairAssertionsFromSchema(
+        LlmSuggestedScenario scenario,
+        IReadOnlyCollection<ApiEndpointResponseDescriptorDto> swaggerResponses)
+    {
+        if (swaggerResponses == null || swaggerResponses.Count == 0) return scenario;
+
+        // Find the matching Swagger response for this scenario's primary expected code
+        var primaryCode = scenario.ExpectedStatusCodes?.FirstOrDefault()
+            ?? scenario.ExpectedStatusCode;
+
+        var matchingResponse = swaggerResponses.FirstOrDefault(r => r.StatusCode == primaryCode)
+            ?? swaggerResponses.FirstOrDefault(r => r.StatusCode >= 400 && r.StatusCode < 500);
+
+        if (matchingResponse == null) return scenario;
+
+        // Only repair if LLM left empty
+        if ((scenario.SuggestedJsonPathChecks == null || scenario.SuggestedJsonPathChecks.Count == 0)
+            && !string.IsNullOrWhiteSpace(matchingResponse.Schema))
+        {
+            scenario.SuggestedJsonPathChecks = ErrorResponseSchemaAnalyzer.BuildJsonPathAssertions(
+                matchingResponse.Schema, scenario.SuggestedTestType);
+        }
+
+        if ((scenario.SuggestedBodyContains == null || scenario.SuggestedBodyContains.Count == 0)
+            && !string.IsNullOrWhiteSpace(matchingResponse.Schema))
+        {
+            scenario.SuggestedBodyContains = ErrorResponseSchemaAnalyzer.ExtractFieldNames(matchingResponse.Schema);
+        }
+
+        return scenario;
+    }
+
+    /// <summary>
+    /// Deserializes TestableConstraints JSON from SrsRequirement into structured briefs.
+    /// Format: [{"constraint": "password >= 6 → 400", "priority": "High"}, ...]
+    /// Returns max 5 constraints per requirement to keep payload compact.
+    /// </summary>
+    private static List<SrsTestableConstraintBrief> DeserializeTestableConstraints(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new List<SrsTestableConstraintBrief>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return new List<SrsTestableConstraintBrief>();
+
+            var result = new List<SrsTestableConstraintBrief>();
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var constraint = item.TryGetProperty("constraint", out var c) ? c.GetString() : null;
+                if (string.IsNullOrWhiteSpace(constraint)) continue;
+
+                var priority = item.TryGetProperty("priority", out var p) ? p.GetString() : "Medium";
+                var outcome = ExtractExpectedOutcome(constraint);
+
+                result.Add(new SrsTestableConstraintBrief
+                {
+                    Constraint = TruncateForPayload(constraint, 200),
+                    ExpectedOutcome = outcome,
+                    Priority = priority,
+                });
+            }
+            return result.Take(5).ToList();
+        }
+        catch { return new List<SrsTestableConstraintBrief>(); }
+    }
+
+    /// <summary>
+    /// Heuristic: extracts expected outcome from constraint text containing "→" or "-&gt;" arrow.
+    /// Example: "password >= 6 chars → 400" extracts "400".
+    /// </summary>
+    private static string ExtractExpectedOutcome(string constraintText)
+    {
+        if (string.IsNullOrWhiteSpace(constraintText)) return null;
+        var arrowIdx = constraintText.IndexOf('→');
+        if (arrowIdx < 0) arrowIdx = constraintText.IndexOf("->", StringComparison.Ordinal);
+        if (arrowIdx >= 0 && arrowIdx < constraintText.Length - 1)
+            return constraintText[(arrowIdx + 1)..].Trim();
+        return null;
     }
 
     private static string TruncateForPayload(string value, int maxLength)

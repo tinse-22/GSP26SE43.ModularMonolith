@@ -32,6 +32,10 @@ public class BoundaryNegativeOptions
     public bool IncludeLlmSuggestions { get; set; } = true;
 
     public Guid UserId { get; set; }
+
+    public SrsDocument SrsDocument { get; set; }
+
+    public IReadOnlyList<SrsRequirement> SrsRequirements { get; set; } = Array.Empty<SrsRequirement>();
 }
 
 public class BoundaryNegativeGenerationResult
