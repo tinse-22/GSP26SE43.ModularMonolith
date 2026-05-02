@@ -15,12 +15,12 @@ public class ReorderTestCasesCommand : ICommand
 {
     public Guid TestSuiteId { get; set; }
     public Guid CurrentUserId { get; set; }
-    public List<Guid> TestCaseIds { get; set; } = new ();
+    public List<Guid> TestCaseIds { get; set; } = new();
 }
 
 public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -68,19 +68,40 @@ public class ReorderTestCasesCommandHandler : ICommandHandler<ReorderTestCasesCo
             throw new ValidationException("Bạn không có quyền thao tác test suite này.");
         }
 
-        // 3) Load all test cases for suite
+        // 3) Load all non-deleted test cases for suite
         var testCases = await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
-                .Where(x => x.TestSuiteId == command.TestSuiteId));
+                .Where(x => x.TestSuiteId == command.TestSuiteId && !x.IsDeleted));
 
         var testCaseMap = testCases.ToDictionary(x => x.Id);
 
-        // 4) Validate all IDs belong to suite
+        // 4a) Validate no unknown IDs
         var invalidIds = command.TestCaseIds.Where(id => !testCaseMap.ContainsKey(id)).ToList();
         if (invalidIds.Count > 0)
         {
             throw new ValidationException(
                 $"Các test case không thuộc test suite này: {string.Join(", ", invalidIds)}.");
+        }
+
+        // 4b) Validate completeness — ALL non-deleted test cases must be included
+        var submittedSet = new HashSet<Guid>(command.TestCaseIds);
+        var missingIds = testCaseMap.Keys.Where(id => !submittedSet.Contains(id)).ToList();
+        if (missingIds.Count > 0)
+        {
+            throw new ValidationException(
+                $"Danh sách TestCaseIds phải chứa tất cả test case của suite. Còn thiếu {missingIds.Count} test case.");
+        }
+
+        // 4c) Validate no duplicate IDs
+        var duplicateIds = command.TestCaseIds
+            .GroupBy(id => id)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+        if (duplicateIds.Count > 0)
+        {
+            throw new ValidationException(
+                $"Danh sách TestCaseIds có ID trùng lặp: {string.Join(", ", duplicateIds)}.");
         }
 
         var now = DateTimeOffset.UtcNow;

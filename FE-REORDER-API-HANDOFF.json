@@ -2,10 +2,11 @@
   "_meta": {
     "title": "FE Handoff: AI Order Proposal → Re-order → Approve → LLM Generate",
     "scope": "Order proposal re-order step và test-case re-order sau khi materialize",
-    "date": "2026-04-27",
-    "version": "1.1.0",
+    "date": "2026-05-02",
+    "version": "1.2.0",
     "note": "Chỉ liệt kê params BE cần. Không gợi ý code FE.",
-    "changelog_v1.1.0": "[BUG FIX] GetTestCasesByTestSuite query đã được fix: giờ ORDER BY CustomOrderIndex khi IsOrderCustomized=true, thay vì luôn dùng OrderIndex. Trước đây PATCH /reorder ghi DB thành công nhưng GET vẫn trả về thứ tự cũ — FE không thấy thay đổi gì. Fix đã merge."
+    "changelog_v1.1.0": "[BUG FIX] GetTestCasesByTestSuite query đã được fix: giờ ORDER BY CustomOrderIndex khi IsOrderCustomized=true, thay vì luôn dùng OrderIndex. Trước đây PATCH /reorder ghi DB thành công nhưng GET vẫn trả về thứ tự cũ — FE không thấy thay đổi gì. Fix đã merge.",
+    "changelog_v1.2.0": "[IMPLEMENT] Server-side enforcement cho PATCH /reorder: (1) Completeness check — testCaseIds PHẢI chứa TẤT CẢ test case non-deleted của suite, không thể gửi subset; (2) Duplicate check — không được có ID trùng lặp trong list; (3) Chỉ load non-deleted test cases thay vì tất cả. Root cause của 'run thứ tự cũ': FE gửi subset → test cases còn lại giữ CustomOrderIndex cũ → conflict index → thứ tự không xác định. Fix này ngăn tình trạng đó xảy ra."
   },
 
   "flow_overview": {
@@ -304,7 +305,7 @@
     },
     "response_200": "200 OK — No body",
     "error_codes": {
-      "400": "testCaseIds thiếu | không chứa đủ tất cả testCaseId của suite | có ID không thuộc suite này"
+      "400": "testCaseIds thiếu | có ID không thuộc suite | THIẾU test case (không đủ tất cả non-deleted test cases của suite) | có ID trùng lặp"
     },
     "behavior_after_call": [
       "Mỗi TestCase trong list được set CustomOrderIndex = vị_trí_trong_mảng (0-based) và IsOrderCustomized = true",
@@ -313,7 +314,10 @@
     ],
     "fe_notes": [
       "Trước v1.1.0: PATCH ghi DB thành công (200 OK) nhưng GET vẫn trả về thứ tự cũ vì query dùng OrderIndex thay vì CustomOrderIndex — đây là bug đã fix",
-      "Sau v1.1.0: GET trả về list sort theo effective order: CustomOrderIndex khi IsOrderCustomized=true, OrderIndex khi IsOrderCustomized=false"
+      "Sau v1.1.0: GET trả về list sort theo effective order: CustomOrderIndex khi IsOrderCustomized=true, OrderIndex khi IsOrderCustomized=false",
+      "Thứ tự chạy TestRun: nếu bất kỳ test case nào có IsOrderCustomized=true, hệ thống dùng CustomOrderIndex làm baseline cho toàn bộ suite. Sau đó dependency topology sort vẫn chạy và CÓ THỂ override vị trí của một số test case nếu có dependency constraint. Đây là by-design.",
+      "[WARNING cho FE] Nếu user re-order xong mà run test vẫn thấy thứ tự cũ — rất có thể là do dependency topology override (test case B phụ thuộc A → A vẫn chạy trước B dù user put B first). FE nên hiển thị warning khi user drag-drop test case vào vị trí trước một test case mà nó phụ thuộc vào.",
+      "[v1.2.0 BREAKING] testCaseIds trong PATCH /reorder bây giờ PHẢI chứa TẤT CẢ test case non-deleted của suite (server enforce). Nếu gửi thiếu → 400 Bad Request. Nếu gửi ID trùng → 400 Bad Request. FE phải GET /test-cases?includeDisabled=true trước khi build reorder list để lấy đúng toàn bộ IDs."
     ]
   },
 
@@ -392,6 +396,12 @@
       "Có thể dùng isOrderCustomized để hiển thị icon 'đã tùy chỉnh' nếu muốn",
       "Khi drag-drop xong: gửi PATCH /reorder với toàn bộ testCaseIds theo thứ tự mới, rồi GET lại"
     ],
-    "invariant": "testCaseIds trong PATCH /reorder phải chứa TẤT CẢ test cases của suite (kể cả những cái không thay đổi vị trí)"
+    "invariant": "testCaseIds trong PATCH /reorder phải chứa TẤT CẢ test cases của suite (kể cả những cái không thay đổi vị trí)",
+    "execution_order_caveat": {
+      "_title": "Thứ tự thực thi khi run test (TestRun) có thể khác với thứ tự hiển thị",
+      "reason": "Dependency topology sort chạy sau khi áp CustomOrderIndex. Nếu test case A phụ thuộc B, B vẫn chạy trước A dù user đặt A trước B.",
+      "auto_expand": "Khi FE gọi POST /test-runs với selectedTestCaseIds là subset, BE tự động BFS-expand để include tất cả dependencies còn thiếu. FE KHÔNG cần tự thêm dependencies vào list.",
+      "ui_recommendation": "FE nên hiển thị warning/indicator khi user đặt test case vào vị trí 'sai' so với dependency constraint của nó (vd: đặt B trước A nhưng B phụ thuộc A). Nếu không, user sẽ thấy re-order 'không có tác dụng' khi chạy."
+    }
   }
 }
