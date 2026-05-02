@@ -3,12 +3,11 @@ using ClassifiedAds.Contracts.AuditLog.DTOs;
 using ClassifiedAds.Contracts.AuditLog.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.AuditLog.Entities;
+using ClassifiedAds.Modules.AuditLog.Persistence;
 using ClassifiedAds.Modules.AuditLog.Queries;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -16,78 +15,62 @@ namespace ClassifiedAds.Modules.AuditLog.Services;
 
 public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
 {
-    private readonly IRepository<IdempotentRequest, Guid> _idempotentRequestRepository;
+    private readonly AuditLogDbContext _dbContext;
 
-    public AuditLogService(IRepository<AuditLogEntry, Guid> repository,
+    public AuditLogService(
+        IRepository<AuditLogEntry, Guid> repository,
         Dispatcher dispatcher,
-        IRepository<IdempotentRequest, Guid> idempotentRequestRepository)
+        AuditLogDbContext dbContext)
         : base(repository, dispatcher)
     {
-        _idempotentRequestRepository = idempotentRequestRepository;
+        _dbContext = dbContext;
     }
 
     public async Task AddAsync(AuditLogEntryDTO dto, string requestId)
     {
-        var requestType = "ADD_AUDIT_LOG_ENTRY";
-        var uow = _idempotentRequestRepository.UnitOfWork;
+        const string requestType = "ADD_AUDIT_LOG_ENTRY";
 
-        try
+        await _dbContext.ExecuteInTransactionAsync(async ct =>
         {
-            await uow.ExecuteInTransactionAsync(async ct =>
+            var inserted = await TryInsertIdempotentRequestAsync(requestType, requestId, ct);
+            if (!inserted)
             {
-                var inserted = await TryInsertIdempotentRequestAsync(requestType, requestId, ct);
-                if (!inserted)
-                {
-                    return;
-                }
+                return;
+            }
 
-                await AddOrUpdateAsync(new AuditLogEntry
-                {
-                    UserId = dto.UserId,
-                    CreatedDateTime = dto.CreatedDateTime,
-                    Action = dto.Action,
-                    ObjectId = dto.ObjectId,
-                    Log = dto.Log,
-                }, ct);
+            await AddOrUpdateAsync(new AuditLogEntry
+            {
+                UserId = dto.UserId,
+                CreatedDateTime = dto.CreatedDateTime,
+                Action = dto.Action,
+                ObjectId = dto.ObjectId,
+                Log = dto.Log,
+            }, ct);
 
-                await uow.SaveChangesAsync(ct);
-            });
-        }
-        catch (DbUpdateException ex) when (IsDuplicateIdempotentRequestException(ex))
-        {
-            return;
-        }
+            await _dbContext.SaveChangesAsync(ct);
+        });
     }
 
-    private async Task<bool> TryInsertIdempotentRequestAsync(string requestType, string requestId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Atomically inserts an idempotency key using INSERT … ON CONFLICT DO NOTHING.
+    /// Returns true if the row was newly inserted (first caller wins),
+    /// false if the key already existed (duplicate suppressed at the DB level).
+    /// This eliminates the TOCTOU race of a SELECT-then-INSERT pattern and never
+    /// raises a 23505 duplicate-key exception.
+    /// </summary>
+    private async Task<bool> TryInsertIdempotentRequestAsync(string requestType, string requestId, CancellationToken ct)
     {
-        var existingRequest = await _idempotentRequestRepository.FirstOrDefaultAsync(
-            _idempotentRequestRepository.GetQueryableSet()
-                .Where(x => x.RequestType == requestType && x.RequestId == requestId));
+        var rowsAffected = await _dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO auditlog."IdempotentRequests" ("RequestType", "RequestId")
+            VALUES ({requestType}, {requestId})
+            ON CONFLICT ("RequestType", "RequestId") DO NOTHING
+            """,
+            ct);
 
-        if (existingRequest != null)
-        {
-            return false;
-        }
-
-        await _idempotentRequestRepository.AddAsync(new IdempotentRequest
-        {
-            RequestType = requestType,
-            RequestId = requestId,
-        }, cancellationToken);
-
-        await _idempotentRequestRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-        return true;
-    }
-
-    private static bool IsDuplicateIdempotentRequestException(DbUpdateException ex)
-    {
-        return ex.InnerException is PostgresException postgresException
-            && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
-            && string.Equals(
-                postgresException.ConstraintName,
-                "IX_IdempotentRequests_RequestType_RequestId",
-                StringComparison.OrdinalIgnoreCase);
+        // 1 = row inserted (this request owns the idempotency slot)
+        // 0 = conflict suppressed (another concurrent request already inserted this key)
+        return rowsAffected > 0;
     }
 
     public async Task<List<AuditLogEntryDTO>> GetAuditLogEntriesAsync(AuditLogEntryQueryOptions query)
