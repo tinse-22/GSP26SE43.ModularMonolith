@@ -1342,6 +1342,14 @@ public class VariableResolver : IVariableResolver
             || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsRegisterLikeRequest(ExecutionTestCaseDto testCase)
+    {
+        var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
+        return signature.Contains("/register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string NormalizeHappyPathSyntheticBody(
         ExecutionTestCaseDto testCase,
         string resolvedBody,
@@ -1352,6 +1360,7 @@ public class VariableResolver : IVariableResolver
             || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(testCase.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
+            || IsLoginLikeRequest(testCase) // Credentials already handled by NormalizeHappyPathCredentials
             )
         {
             return resolvedBody;
@@ -1372,7 +1381,21 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        var hasPreferredEmail = TryGetPreferredTestEmail(variables, out var preferredEmail);
+        // For Register-like endpoints, prefer the run-unique email (fresh per run)
+        // so the same hardcoded LLM-generated email doesn't cause 409 on re-runs.
+        string preferredEmail = null;
+        bool hasPreferredEmail;
+        if (IsRegisterLikeRequest(testCase))
+        {
+            hasPreferredEmail = variables != null
+                && variables.TryGetValue("runUniqueEmail", out preferredEmail)
+                && !string.IsNullOrWhiteSpace(preferredEmail);
+        }
+        else
+        {
+            hasPreferredEmail = TryGetPreferredTestEmail(variables, out preferredEmail);
+        }
+
         var runSuffix = GetRunSuffix(variables);
 
         var emailRewritten = hasPreferredEmail && ReplaceSyntheticEmails(root, preferredEmail);

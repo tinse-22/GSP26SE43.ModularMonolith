@@ -15,15 +15,16 @@
 | [FE-04](#fe-04--test-scope--execution-configuration) | Test Scope & Execution Configuration | 2 |
 | [FE-05A](#fe-05a--api-test-order-proposal) | API Test Order Proposal | 2 |
 | [FE-05B](#fe-05b--happy-path-test-case-generation) | Happy-Path Test Case Generation | 1 |
-| [FE-06](#fe-06--boundary--negative-test-generation-planned) | Boundary & Negative Test Generation | 1 |
-| [FE-07+08](#fe-0708--test-execution--rule-based-validation-planned) | Test Execution + Rule-based Validation | 1 |
-| [FE-09](#fe-09--llm-failure-explanations-planned) | LLM Failure Explanations | 1 |
-| [FE-10](#fe-10--test-reporting--export-planned) | Test Reporting & Export | 1 |
+| [FE-06](#fe-06--boundary--negative-test-generation) | Boundary & Negative Test Generation | 1 |
+| [FE-07+08](#fe-0708--test-execution--rule-based-validation) | Test Execution + Rule-based Validation | 1 |
+| [FE-09](#fe-09--llm-failure-explanations) | LLM Failure Explanations | 1 |
+| [FE-10](#fe-10--test-reporting--export) | Test Reporting & Export | 1 |
 | [FE-11](#fe-11--manual-entry-mode) | Manual Entry Mode | 1 |
 | [FE-12](#fe-12--path-parameter-templating) | Path Parameter Templating | 1 |
 | [FE-13](#fe-13--curl-import) | cURL Import | 1 |
 | [FE-14](#fe-14--subscription--billing) | Subscription & Billing | 3 |
-| [FE-15/16/17](#fe-151617--llm-suggestion-review-pipeline-planned) | LLM Suggestion Review Pipeline | 2 |
+| [FE-15/16/17](#fe-151617--llm-suggestion-review-pipeline) | LLM Suggestion Review Pipeline | 3 |
+| [FE-18](#fe-18--srs--traceability) | SRS & Traceability | 2 |
 | [Infra](#infrastructure-diagrams) | Outbox Worker + Domain Event | 2 |
 
 ---
@@ -1010,7 +1011,7 @@ sequenceDiagram
 
 ---
 
-## FE-06 — Boundary & Negative Test Generation (Planned)
+## FE-06 — Boundary & Negative Test Generation
 
 ### FE-06-SD-01: Generate Boundary & Negative Test Cases
 
@@ -1114,7 +1115,7 @@ sequenceDiagram
 
 ---
 
-## FE-07/08 — Test Execution + Rule-based Validation (Planned)
+## FE-07/08 — Test Execution + Rule-based Validation
 
 ### FE-07-SD-01: Start Test Run (Execution + Validation)
 
@@ -1125,18 +1126,22 @@ sequenceDiagram
     participant Ctrl as TestRunsController
     participant Disp as Dispatcher
     participant CmdH as StartTestRunCommandHandler
+    participant GateSvc as ITestExecutionReadGatewayService
+    participant LimitSvc as ISubscriptionLimitGatewayService
+    participant EnvRepo as IRepository~ExecutionEnvironment, Guid~
+    participant RunRepo as IRepository~TestRun, Guid~
     participant Orch as TestExecutionOrchestrator
-    participant GateSvc as IApiTestOrderGateService
-    participant AuthSvc as IExecutionAuthConfigService
+    participant EnvResolver as IExecutionEnvironmentRuntimeResolver
+    participant EpMeta as IApiEndpointMetadataService
+    participant PreVal as IPreExecutionValidator
     participant Resolver as IVariableResolver
     participant Executor as IHttpTestExecutor
     participant Extractor as IVariableExtractor
     participant Validator as IRuleBasedValidator
     participant Collector as ITestResultCollector
-    participant RunRepo as IRepository~TestRun, Guid~
     participant DB as PostgreSQL
 
-    Client->>Ctrl: POST /api/test-suites/{suiteId}/runs {environmentId}
+    Client->>Ctrl: POST /api/test-suites/{suiteId}/test-runs {environmentId?, validationProfile, retryPolicy, selectedTestCaseIds?}
     activate Ctrl
 
     Ctrl->>Disp: DispatchAsync(cmd : StartTestRunCommand)
@@ -1145,77 +1150,174 @@ sequenceDiagram
     Disp->>CmdH: HandleAsync(cmd, ct)
     activate CmdH
 
-    Note right of CmdH: Create TestRun entity (Status = Running)
-
-    CmdH->>RunRepo: AddAsync(testRun)
-    activate RunRepo
-    RunRepo->>DB: INSERT INTO testexec."TestRuns"
-    DB-->>RunRepo: OK
-    RunRepo-->>CmdH: void
-    deactivate RunRepo
-
-    CmdH->>Orch: ExecuteAsync(testRunId, ct)
-    activate Orch
-
-    Orch->>GateSvc: RequireApprovedOrderAsync(suiteId, ct)
+    CmdH->>GateSvc: GetSuiteAccessContextAsync(cmd.TestSuiteId, ct)
     activate GateSvc
-    GateSvc-->>Orch: approvedOrder (test cases in dependency order)
+    GateSvc->>DB: SELECT FROM testgen."TestSuites"
+    DB-->>GateSvc: suiteContext
+    GateSvc-->>CmdH: suiteContext : SuiteAccessContext
     deactivate GateSvc
 
-    Orch->>AuthSvc: ResolveAuthConfig(environmentId)
-    activate AuthSvc
-    AuthSvc-->>Orch: authHeaders : Dictionary~string, string~
-    deactivate AuthSvc
+    alt suiteContext.CreatedById != cmd.CurrentUserId || suite not Ready
+        CmdH-->>Disp: throw ValidationException
+    else owned & ready
 
-    loop foreach testCase in dependency order
-        Orch->>Resolver: Resolve(testCase.Request, currentVariables)
-        activate Resolver
-        Note right of Resolver: Replace {{variable}} placeholders<br/>with extracted values
-        Resolver-->>Orch: resolvedRequest : ResolvedTestCaseRequest
-        deactivate Resolver
+        alt environmentId provided
+            CmdH->>EnvRepo: FirstOrDefaultAsync(x => x.Id == cmd.EnvironmentId)
+        else use default
+            CmdH->>EnvRepo: FirstOrDefaultAsync(x => x.IsDefault && x.ProjectId == projectId)
+        end
+        activate EnvRepo
+        EnvRepo->>DB: SELECT FROM testexec."ExecutionEnvironments"
+        DB-->>EnvRepo: environment?
+        EnvRepo-->>CmdH: environment : ExecutionEnvironment?
+        deactivate EnvRepo
 
-        Orch->>Executor: ExecuteAsync(resolvedRequest, environment, ct)
-        activate Executor
-        Note right of Executor: HttpClient.SendAsync<br/>with timeout, headers, auth
-        Executor-->>Orch: response : HttpTestResponse
-        deactivate Executor
+        alt environment == null
+            CmdH-->>Disp: throw NotFoundException
+        else found
 
-        Orch->>Extractor: Extract(response, testCase.Variables)
-        activate Extractor
-        Note right of Extractor: JSONPath, Header, Regex extraction
-        Extractor-->>Orch: extractedVars : Dictionary~string, string~
-        deactivate Extractor
+            CmdH->>RunRepo: ToListAsync(running/pending by user)
+            activate RunRepo
+            RunRepo->>DB: SELECT FROM testexec."TestRuns" WHERE Status IN (Pending, Running)
+            DB-->>RunRepo: runningCount
+            RunRepo-->>CmdH: currentRunning : int
+            deactivate RunRepo
 
-        Note right of Orch: Merge extractedVars into currentVariables
+            CmdH->>LimitSvc: CheckLimitAsync(userId, MaxConcurrentRuns, currentRunning+1, ct)
+            activate LimitSvc
+            LimitSvc-->>CmdH: concurrentCheck : LimitCheckResult
+            deactivate LimitSvc
 
-        Orch->>Validator: Validate(response, testCase.Expectation)
-        activate Validator
-        Note right of Validator: Status code check<br/>Response schema validation<br/>Header checks<br/>Body contains/not contains<br/>JSONPath checks<br/>Max response time
-        Validator-->>Orch: validationResult : TestCaseValidationResult
-        deactivate Validator
+            alt !concurrentCheck.IsAllowed
+                CmdH-->>Disp: throw ValidationException (concurrent run limit)
+            else OK
 
-        alt testCase failed && has dependents
-            Note right of Orch: Skip dependent test cases (SkippedCount++)
+                CmdH->>LimitSvc: TryConsumeLimitAsync(userId, MaxTestRunsPerMonth, 1, ct)
+                activate LimitSvc
+                LimitSvc-->>CmdH: monthlyCheck : LimitCheckResult
+                deactivate LimitSvc
+
+                alt !monthlyCheck.IsAllowed
+                    CmdH-->>Disp: throw ValidationException (monthly quota)
+                else OK
+
+                    rect rgb(200, 220, 240)
+                        Note right of CmdH: Serializable Transaction: Allocate RunNumber + Insert Pending run
+
+                        CmdH->>RunRepo: Max(RunNumber) WHERE TestSuiteId = suiteId
+                        activate RunRepo
+                        RunRepo->>DB: SELECT MAX("RunNumber") FROM testexec."TestRuns"
+                        DB-->>RunRepo: maxRunNumber?
+                        RunRepo-->>CmdH: int?
+                        deactivate RunRepo
+
+                        CmdH->>RunRepo: AddAsync(run : TestRun {Status=Pending, IsEphemeral=!cmd.RecordRun})
+                        activate RunRepo
+                        RunRepo->>DB: INSERT INTO testexec."TestRuns"
+                        DB-->>RunRepo: OK
+                        RunRepo-->>CmdH: void
+                        deactivate RunRepo
+
+                        CmdH->>RunRepo: UnitOfWork.SaveChangesAsync()
+                        activate RunRepo
+                        RunRepo->>DB: COMMIT (Serializable)
+                        DB-->>RunRepo: OK
+                        RunRepo-->>CmdH: int
+                        deactivate RunRepo
+                    end
+
+                    Note right of CmdH: Build effectivePolicy (cap MaxRetryAttempts ≤ 3)<br/>Determine effectiveProfile (Default|SrsStrict)
+
+                    CmdH->>Orch: ExecuteAsync(runId, userId, selectedIds, ct, strictValidation, effectivePolicy, effectiveProfile)
+                    activate Orch
+
+                    Orch->>GateSvc: GetExecutionContextAsync(suiteId, selectedIds, ct)
+                    activate GateSvc
+                    GateSvc->>DB: SELECT TestCases ordered by dependency
+                    DB-->>GateSvc: executionContext
+                    GateSvc-->>Orch: executionContext : ExecutionContextDto
+                    deactivate GateSvc
+
+                    Orch->>EnvResolver: ResolveAsync(environment, ct)
+                    activate EnvResolver
+                    Note right of EnvResolver: Inject runtime vars:<br/>runId, runSuffix, runTimestamp,<br/>runUniqueEmail, runUniquePassword<br/>Resolve auth configs (OAuth, ApiKey, etc.)
+                    EnvResolver-->>Orch: resolvedEnv : ResolvedExecutionEnvironment
+                    deactivate EnvResolver
+
+                    Orch->>EpMeta: GetEndpointMetadataAsync(specId, endpointIds, ct)
+                    activate EpMeta
+                    EpMeta->>DB: SELECT endpoint schemas + response definitions
+                    DB-->>EpMeta: metadata
+                    EpMeta-->>Orch: endpointMetadataMap : Dictionary~Guid, ApiEndpointMetadataDto~
+                    deactivate EpMeta
+
+                    Orch->>RunRepo: UpdateAsync(run : Status=Running, StartedAt)
+                    activate RunRepo
+                    RunRepo->>DB: UPDATE testexec."TestRuns"
+                    DB-->>RunRepo: OK
+                    RunRepo-->>Orch: void
+                    deactivate RunRepo
+
+                    loop foreach testCase in dependency order
+                        Orch->>PreVal: Validate(testCase, resolvedEnv, variableBag, endpointMetadata)
+                        activate PreVal
+                        Note right of PreVal: Pre-checks: env baseUrl,<br/>path params, query params,<br/>body schema, unresolved {{placeholders}},<br/>variable chaining completeness
+                        PreVal-->>Orch: preResult : PreExecutionValidationResult
+                        deactivate PreVal
+
+                        alt failedDependencies detected
+                            Note right of Orch: Build SkippedResult (DependencyFailed)<br/>SummarizeDependencyRootCause
+                        else proceed
+
+                            Orch->>Resolver: Resolve(testCase.Request, variableBag, resolvedEnv)
+                            activate Resolver
+                            Note right of Resolver: Replace {{variable}} placeholders<br/>with extracted + runtime values
+                            Resolver-->>Orch: resolvedRequest : ResolvedTestCaseRequest
+                            deactivate Resolver
+
+                            Orch->>Executor: ExecuteAsync(resolvedRequest, resolvedEnv, ct)
+                            activate Executor
+                            Note right of Executor: HttpClient.SendAsync<br/>with timeout, headers, auth
+                            Executor-->>Orch: response : HttpTestResponse
+                            deactivate Executor
+
+                            Orch->>Extractor: Extract(response, testCase.Variables)
+                            activate Extractor
+                            Note right of Extractor: JSONPath, Header, Regex extraction
+                            Extractor-->>Orch: extractedVars : Dictionary~string, string~
+                            deactivate Extractor
+
+                            Note right of Orch: Merge extractedVars into variableBag
+
+                            Orch->>Validator: Validate(response, testCase, endpointMetadata, effectiveProfile)
+                            activate Validator
+                            Note right of Validator: 7 checks: StatusCode, ResponseSchema,<br/>Headers, BodyContains, BodyNotContains,<br/>JSONPath, MaxResponseTime<br/>(SrsStrict profile = strict status matching)
+                            Validator-->>Orch: validationResult : TestCaseValidationResult
+                            deactivate Validator
+                        end
+
+                        Note right of Orch: Track attempt (BuildAttemptModel, RecordResult)<br/>Retry loop if retryPolicy.EnableRetry && ShouldRetryCase
+                    end
+
+                    opt retryPolicy.RerunSkippedCases
+                        Note right of Orch: ReplayEligibleSkippedCasesAsync
+                    end
+
+                    Orch->>Collector: CollectAsync(run, orderedResults, retentionDays, envName, ct, attempts)
+                    activate Collector
+                    Collector->>DB: INSERT testexec."TestCaseAttempts" + UPDATE testexec."TestRuns" (Completed, counters)
+                    DB-->>Collector: OK
+                    Collector-->>Orch: result : TestRunResultModel
+                    deactivate Collector
+
+                    Orch-->>CmdH: result : TestRunResultModel
+                    deactivate Orch
+
+                    Note right of CmdH: cmd.Result = result
+                end
+            end
         end
     end
-
-    Orch->>Collector: CollectAsync(testRunId, allResults, ct)
-    activate Collector
-    Collector->>DB: INSERT test results + UPDATE TestRun counters
-    DB-->>Collector: OK
-    Collector-->>Orch: void
-    deactivate Collector
-
-    Note right of Orch: testRun.Status = Completed
-    Orch-->>CmdH: result : TestRunResult
-    deactivate Orch
-
-    CmdH->>RunRepo: UpdateAsync(testRun)
-    activate RunRepo
-    RunRepo->>DB: UPDATE testexec."TestRuns" (Completed, counters)
-    DB-->>RunRepo: OK
-    RunRepo-->>CmdH: void
-    deactivate RunRepo
 
     CmdH-->>Disp: void
     deactivate CmdH
@@ -1227,7 +1329,7 @@ sequenceDiagram
 
 ---
 
-## FE-09 — LLM Failure Explanations (Planned)
+## FE-09 — LLM Failure Explanations
 
 ### FE-09-SD-01: Explain Test Failure via LLM
 
@@ -1307,7 +1409,7 @@ sequenceDiagram
 
 ---
 
-## FE-10 — Test Reporting & Export (Planned)
+## FE-10 — Test Reporting & Export
 
 ### FE-10-SD-01: Generate Test Report
 
@@ -2025,7 +2127,7 @@ sequenceDiagram
 
 ---
 
-## FE-15/16/17 — LLM Suggestion Review Pipeline (Planned)
+## FE-15/16/17 — LLM Suggestion Review Pipeline
 
 ### FE-15-SD-01: Review LLM Suggestion (Approve/Reject/Modify)
 
@@ -2180,9 +2282,462 @@ sequenceDiagram
 
 ---
 
-## Infrastructure Diagrams
+### FE-17-SD-02: Generate LLM Suggestion Preview
 
-### INFRA-SD-01: Outbox Pattern — PublishEventWorker
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Ctrl as LlmSuggestionsController
+    participant Disp as Dispatcher
+    participant CmdH as GenerateLlmSuggestionPreviewCommandHandler
+    participant SuiteRepo as IRepository~TestSuite, Guid~
+    participant GateSvc as IApiTestOrderGateService
+    participant LimitSvc as ISubscriptionLimitGatewayService
+    participant SugRepo as IRepository~LlmSuggestion, Guid~
+    participant EpMeta as IApiEndpointMetadataService
+    participant ParamSvc as IEndpointParameterDetailService
+    participant SrsDocRepo as IRepository~SrsDocument, Guid~
+    participant SrsReqRepo as IRepository~SrsRequirement, Guid~
+    participant LlmSug as ILlmScenarioSuggester
+    participant DB as PostgreSQL
+
+    Client->>Ctrl: POST /api/test-suites/{suiteId}/llm-suggestions/generate {specificationId, forceRefresh?, algorithmProfile?}
+    activate Ctrl
+
+    Ctrl->>Disp: DispatchAsync(cmd : GenerateLlmSuggestionPreviewCommand)
+    activate Disp
+
+    Disp->>CmdH: HandleAsync(cmd, ct)
+    activate CmdH
+
+    CmdH->>SuiteRepo: FirstOrDefaultAsync(x => x.Id == cmd.TestSuiteId)
+    activate SuiteRepo
+    SuiteRepo->>DB: SELECT FROM testgen."TestSuites"
+    DB-->>SuiteRepo: row?
+    SuiteRepo-->>CmdH: suite : TestSuite?
+    deactivate SuiteRepo
+
+    alt suite == null || wrong owner || archived
+        CmdH-->>Disp: throw NotFoundException / ValidationException
+    else valid
+
+        CmdH->>GateSvc: RequireApprovedOrderAsync(suiteId, ct)
+        activate GateSvc
+        GateSvc->>DB: SELECT FROM testgen."TestOrderProposals" (approved)
+        DB-->>GateSvc: approvedOrder
+        GateSvc-->>CmdH: approvedOrder : IReadOnlyList~ApiOrderItemModel~
+        deactivate GateSvc
+
+        CmdH->>LimitSvc: CheckLimitAsync(userId, MaxLlmCallsPerMonth, 1, ct)
+        activate LimitSvc
+        LimitSvc-->>CmdH: llmCheck : LimitCheckResult
+        deactivate LimitSvc
+
+        alt !llmCheck.IsAllowed
+            CmdH-->>Disp: throw ValidationException (LLM monthly limit)
+        else OK
+
+            opt !cmd.ForceRefresh
+                CmdH->>SugRepo: ToListAsync(x => ReviewStatus == Pending for suite)
+                activate SugRepo
+                SugRepo->>DB: SELECT FROM testgen."LlmSuggestions" WHERE "ReviewStatus" = Pending
+                DB-->>SugRepo: existingPending
+                SugRepo-->>CmdH: List~LlmSuggestion~
+                deactivate SugRepo
+
+                alt existingPending.Count > 0
+                    CmdH-->>Disp: throw ValidationException (use ForceRefresh=true)
+                end
+            end
+
+            CmdH->>EpMeta: GetEndpointMetadataAsync(specId, endpointIds, ct)
+            activate EpMeta
+            EpMeta->>DB: SELECT FROM apidoc."ApiEndpoints" + parameters
+            DB-->>EpMeta: metadata
+            EpMeta-->>CmdH: endpointMetadata : IReadOnlyList~ApiEndpointMetadataDto~
+            deactivate EpMeta
+
+            CmdH->>ParamSvc: GetParameterDetailsAsync(specId, endpointIds, ct)
+            activate ParamSvc
+            ParamSvc-->>CmdH: paramDetails : IReadOnlyList~EndpointParameterDetailDto~
+            deactivate ParamSvc
+
+            opt suite.SrsDocumentId != null
+                CmdH->>SrsDocRepo: FirstOrDefaultAsync(x => x.Id == srsDocId)
+                activate SrsDocRepo
+                SrsDocRepo->>DB: SELECT FROM testgen."SrsDocuments"
+                DB-->>SrsDocRepo: srsDocument
+                SrsDocRepo-->>CmdH: srsDocument : SrsDocument?
+                deactivate SrsDocRepo
+
+                CmdH->>SrsReqRepo: ToListAsync(x => x.SrsDocumentId == docId)
+                activate SrsReqRepo
+                SrsReqRepo->>DB: SELECT FROM testgen."SrsRequirements"
+                DB-->>SrsReqRepo: srsRequirements
+                SrsReqRepo-->>CmdH: List~SrsRequirement~
+                deactivate SrsReqRepo
+            end
+
+            Note right of CmdH: Build LlmScenarioSuggestionContext<br/>{suite, endpointMetadata, approvedOrder,<br/>paramDetails, srsDocument, srsRequirements}
+
+            CmdH->>LlmSug: SuggestScenariosAsync(context, ct)
+            activate LlmSug
+            Note right of LlmSug: n8n webhook → LLM generates scenarios<br/>with CoveredRequirementIds per scenario<br/>(SRS traceability links)
+            LlmSug-->>CmdH: llmResult : LlmSuggestionResult
+            deactivate LlmSug
+
+            CmdH->>SugRepo: ToListAsync(non-materialized existing suggestions)
+            activate SugRepo
+            SugRepo->>DB: SELECT FROM testgen."LlmSuggestions" WHERE "AppliedTestCaseId" IS NULL
+            DB-->>SugRepo: existingSuggestions
+            SugRepo-->>CmdH: List~LlmSuggestion~
+            deactivate SugRepo
+
+            loop foreach existing suggestion
+                Note right of CmdH: Set ReviewStatus = Superseded
+                CmdH->>SugRepo: UpdateAsync(suggestion)
+                activate SugRepo
+                SugRepo->>DB: UPDATE testgen."LlmSuggestions"
+                DB-->>SugRepo: OK
+                SugRepo-->>CmdH: void
+                deactivate SugRepo
+            end
+
+            loop foreach scenario in llmResult.Scenarios
+                Note right of CmdH: Build LlmSuggestion entity:<br/>SuggestedRequest, SuggestedExpectation,<br/>CoveredRequirementIds (jsonb), SrsDocumentId
+                CmdH->>SugRepo: AddAsync(suggestion : LlmSuggestion {ReviewStatus=Pending})
+                activate SugRepo
+                SugRepo->>DB: INSERT INTO testgen."LlmSuggestions"
+                DB-->>SugRepo: OK
+                SugRepo-->>CmdH: void
+                deactivate SugRepo
+            end
+
+            CmdH->>SugRepo: UnitOfWork.SaveChangesAsync()
+            activate SugRepo
+            SugRepo->>DB: COMMIT
+            DB-->>SugRepo: OK
+            SugRepo-->>CmdH: int
+            deactivate SugRepo
+
+            opt !llmResult.FromCache && !llmResult.UsedLocalFallback
+                CmdH->>LimitSvc: IncrementUsageAsync(MaxLlmCallsPerMonth, 1, ct)
+                activate LimitSvc
+                LimitSvc-->>CmdH: void
+                deactivate LimitSvc
+            end
+
+            Note right of CmdH: cmd.Result = GenerateLlmSuggestionPreviewResultModel<br/>{totalSuggestions, endpointsCovered, llmModel, fromCache}
+        end
+    end
+
+    CmdH-->>Disp: void
+    deactivate CmdH
+    Disp-->>Ctrl: void
+    deactivate Disp
+    Ctrl-->>Client: 201 Created + GenerateLlmSuggestionPreviewResultModel
+    deactivate Ctrl
+```
+
+---
+
+## FE-18 — SRS & Traceability
+
+### FE-18-SD-01: Upload SRS Document & Trigger Analysis
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Ctrl as SrsDocumentsController
+    participant Disp as Dispatcher
+    participant CmdH1 as AddUpdateSrsDocumentCommandHandler
+    participant CmdH2 as TriggerSrsAnalysisCommandHandler
+    participant ProjRepo as IRepository~Project, Guid~
+    participant DocRepo as IRepository~SrsDocument, Guid~
+    participant JobRepo as IRepository~SrsAnalysisJob, Guid~
+    participant StorageGw as IStorageFileGatewayService
+    participant N8n as IN8nIntegrationService
+    participant Disp2 as Dispatcher
+    participant CmdH3 as ProcessSrsAnalysisCallbackCommandHandler
+    participant ReqRepo as IRepository~SrsRequirement, Guid~
+    participant ClarRepo as IRepository~SrsRequirementClarification, Guid~
+    participant DB as PostgreSQL
+
+    Client->>Ctrl: POST /api/projects/{projectId}/srs-documents {name, sourceType, content/url}
+    activate Ctrl
+
+    Ctrl->>Disp: DispatchAsync(cmd : AddUpdateSrsDocumentCommand)
+    activate Disp
+
+    Disp->>CmdH1: HandleAsync(cmd, ct)
+    activate CmdH1
+
+    CmdH1->>ProjRepo: FirstOrDefaultAsync(x => x.Id == projectId && x.OwnerId == userId)
+    activate ProjRepo
+    ProjRepo->>DB: SELECT FROM apidoc."Projects"
+    DB-->>ProjRepo: project?
+    ProjRepo-->>CmdH1: project : Project?
+    deactivate ProjRepo
+
+    alt project == null
+        CmdH1-->>Disp: throw NotFoundException
+    else found
+
+        alt sourceType == FileUpload
+            CmdH1->>StorageGw: UploadAsync(file, ct)
+            activate StorageGw
+            StorageGw-->>CmdH1: fileId : Guid
+            deactivate StorageGw
+        end
+
+        CmdH1->>DocRepo: AddAsync(doc : SrsDocument {status=Pending, sourceType, storageFileId})
+        activate DocRepo
+        DocRepo->>DB: INSERT INTO testgen."SrsDocuments"
+        DB-->>DocRepo: OK
+        DocRepo-->>CmdH1: void
+        deactivate DocRepo
+
+        CmdH1->>DocRepo: UnitOfWork.SaveChangesAsync()
+        activate DocRepo
+        DocRepo->>DB: COMMIT
+        DB-->>DocRepo: OK
+        DocRepo-->>CmdH1: int
+        deactivate DocRepo
+    end
+
+    CmdH1-->>Disp: void
+    deactivate CmdH1
+    Disp-->>Ctrl: result
+    deactivate Disp
+    Ctrl-->>Client: 201 Created + SrsDocumentModel
+    deactivate Ctrl
+
+    Note over Client,DB: --- Client triggers analysis ---
+
+    Client->>Ctrl: POST /api/projects/{projectId}/srs-documents/{docId}/analyze
+    activate Ctrl
+
+    Ctrl->>Disp: DispatchAsync(cmd : TriggerSrsAnalysisCommand)
+    activate Disp
+
+    Disp->>CmdH2: HandleAsync(cmd, ct)
+    activate CmdH2
+
+    CmdH2->>DocRepo: FirstOrDefaultAsync(x => x.Id == docId)
+    activate DocRepo
+    DocRepo->>DB: SELECT FROM testgen."SrsDocuments"
+    DB-->>DocRepo: doc?
+    DocRepo-->>CmdH2: doc : SrsDocument?
+    deactivate DocRepo
+
+    alt doc == null || no text content
+        CmdH2-->>Disp: throw NotFoundException / ValidationException
+    else valid
+
+        CmdH2->>JobRepo: AddAsync(job : SrsAnalysisJob {status=Queued, type=InitialAnalysis})
+        activate JobRepo
+        JobRepo->>DB: INSERT INTO testgen."SrsAnalysisJobs"
+        DB-->>JobRepo: OK
+        JobRepo-->>CmdH2: void
+        deactivate JobRepo
+
+        CmdH2->>DocRepo: UpdateAsync(doc : status=Processing)
+        activate DocRepo
+        DocRepo->>DB: UPDATE testgen."SrsDocuments"
+        DB-->>DocRepo: OK
+        DocRepo-->>CmdH2: void
+        deactivate DocRepo
+
+        CmdH2->>DocRepo: UnitOfWork.SaveChangesAsync()
+        activate DocRepo
+        DocRepo->>DB: COMMIT
+        DB-->>DocRepo: OK
+        DocRepo-->>CmdH2: int
+        deactivate DocRepo
+
+        Note right of CmdH2: Build n8n payload<br/>{rawContent, endpoints context}
+
+        CmdH2->>N8n: TriggerWebhookAsync~Payload, Response~(payload, ct)
+        activate N8n
+        Note right of N8n: n8n LLM extraction:<br/>Parse requirements,<br/>extract testable constraints,<br/>identify ambiguities
+        N8n-->>CmdH2: callbackData : SrsAnalysisCallbackRequest
+        deactivate N8n
+
+        alt n8n succeeded
+            Note right of CmdH2: Dispatch ProcessSrsAnalysisCallbackCommand synchronously<br/>(unlike async callback endpoint pattern)
+
+            CmdH2->>Disp2: DispatchAsync(callbackCmd : ProcessSrsAnalysisCallbackCommand)
+            activate Disp2
+
+            Disp2->>CmdH3: HandleAsync(callbackCmd, ct)
+            activate CmdH3
+
+            CmdH3->>JobRepo: FirstOrDefaultAsync(x => x.Id == jobId)
+            activate JobRepo
+            JobRepo->>DB: SELECT FROM testgen."SrsAnalysisJobs"
+            DB-->>JobRepo: job?
+            JobRepo-->>CmdH3: job : SrsAnalysisJob?
+            deactivate JobRepo
+
+            loop foreach requirement in callbackData.Requirements
+                CmdH3->>ReqRepo: AddAsync(requirement : SrsRequirement {requirementCode, testableConstraints, confidenceScore})
+                activate ReqRepo
+                ReqRepo->>DB: INSERT INTO testgen."SrsRequirements"
+                DB-->>ReqRepo: OK
+                ReqRepo-->>CmdH3: void
+                deactivate ReqRepo
+            end
+
+            loop foreach clarification in callbackData.ClarificationQuestions
+                CmdH3->>ClarRepo: AddAsync(clar : SrsRequirementClarification {question, suggestedOptions})
+                activate ClarRepo
+                ClarRepo->>DB: INSERT INTO testgen."SrsRequirementClarifications"
+                DB-->>ClarRepo: OK
+                ClarRepo-->>CmdH3: void
+                deactivate ClarRepo
+            end
+
+            CmdH3->>JobRepo: UpdateAsync(job : status=Completed)
+            activate JobRepo
+            JobRepo->>DB: UPDATE testgen."SrsAnalysisJobs"
+            DB-->>JobRepo: OK
+            JobRepo-->>CmdH3: void
+            deactivate JobRepo
+
+            CmdH3->>DocRepo: UpdateAsync(doc : status=Completed)
+            activate DocRepo
+            DocRepo->>DB: UPDATE testgen."SrsDocuments"
+            DB-->>DocRepo: OK
+            DocRepo-->>CmdH3: void
+            deactivate DocRepo
+
+            CmdH3->>ReqRepo: UnitOfWork.SaveChangesAsync()
+            activate ReqRepo
+            ReqRepo->>DB: COMMIT
+            DB-->>ReqRepo: OK
+            ReqRepo-->>CmdH3: int
+            deactivate ReqRepo
+
+            CmdH3-->>Disp2: void
+            deactivate CmdH3
+            Disp2-->>CmdH2: void
+            deactivate Disp2
+
+        else n8n or local fallback failed
+            CmdH2->>JobRepo: UpdateAsync(job : status=Failed, errorMessage)
+            CmdH2->>DocRepo: UpdateAsync(doc : status=Failed)
+            CmdH2->>DB: SaveChangesAsync
+        end
+    end
+
+    CmdH2-->>Disp: void (cmd.JobId = job.Id)
+    deactivate CmdH2
+    Disp-->>Ctrl: void
+    deactivate Disp
+    Ctrl-->>Client: 202 Accepted + {jobId} (for polling)
+    deactivate Ctrl
+```
+
+---
+
+### FE-18-SD-02: Get Traceability Matrix (Coverage Report)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Ctrl as SrsTraceabilityController
+    participant Disp as Dispatcher
+    participant QryH as GetSrsTraceabilityQueryHandler
+    participant SuiteRepo as IRepository~TestSuite, Guid~
+    participant DocRepo as IRepository~SrsDocument, Guid~
+    participant ReqRepo as IRepository~SrsRequirement, Guid~
+    participant TCRepo as IRepository~TestCase, Guid~
+    participant LinkRepo as IRepository~TestCaseRequirementLink, Guid~
+    participant GatewayRead as ITestExecutionReadGatewayService
+    participant DB as PostgreSQL
+
+    Client->>Ctrl: GET /api/projects/{projectId}/test-suites/{suiteId}/srs/traceability
+    activate Ctrl
+
+    Ctrl->>Disp: DispatchAsync(query : GetSrsTraceabilityQuery)
+    activate Disp
+
+    Disp->>QryH: HandleAsync(query, ct)
+    activate QryH
+
+    QryH->>SuiteRepo: FirstOrDefaultAsync(x => x.Id == suiteId)
+    activate SuiteRepo
+    SuiteRepo->>DB: SELECT FROM testgen."TestSuites"
+    DB-->>SuiteRepo: suite?
+    SuiteRepo-->>QryH: suite : TestSuite?
+    deactivate SuiteRepo
+
+    alt suite == null || suite.SrsDocumentId == null
+        QryH-->>Disp: throw NotFoundException / ValidationException
+    else has SRS doc
+
+        QryH->>DocRepo: FirstOrDefaultAsync(x => x.Id == suite.SrsDocumentId)
+        activate DocRepo
+        DocRepo->>DB: SELECT FROM testgen."SrsDocuments"
+        DB-->>DocRepo: srsDocument?
+        DocRepo-->>QryH: srsDocument : SrsDocument?
+        deactivate DocRepo
+
+        QryH->>ReqRepo: ToListAsync(x => x.SrsDocumentId == docId)
+        activate ReqRepo
+        ReqRepo->>DB: SELECT FROM testgen."SrsRequirements"
+        DB-->>ReqRepo: allRequirements
+        ReqRepo-->>QryH: List~SrsRequirement~
+        deactivate ReqRepo
+
+        QryH->>TCRepo: ToListAsync(x => x.TestSuiteId == suiteId)
+        activate TCRepo
+        TCRepo->>DB: SELECT FROM testgen."TestCases"
+        DB-->>TCRepo: allTestCases
+        TCRepo-->>QryH: List~TestCase~
+        deactivate TCRepo
+
+        QryH->>LinkRepo: ToListAsync(x => x.SrsDocumentId == docId)
+        activate LinkRepo
+        LinkRepo->>DB: SELECT FROM testgen."TestCaseRequirementLinks"
+        DB-->>LinkRepo: links
+        LinkRepo-->>QryH: List~TestCaseRequirementLink~
+        deactivate LinkRepo
+
+        QryH->>GatewayRead: GetExecutionEvidenceAsync(suiteId, ct)
+        activate GatewayRead
+        Note right of GatewayRead: Fetch latest test runs + results<br/>to determine Pass/Fail/Skipped/Unverified
+        GatewayRead->>DB: SELECT recent testexec."TestCaseAttempts"
+        DB-->>GatewayRead: latestResults
+        GatewayRead-->>QryH: evidenceMap : Dictionary~Guid, TestCaseExecutionResult~
+        deactivate GatewayRead
+
+        loop foreach requirement in allRequirements
+            Note right of QryH: Find all linked test cases<br/>Compute RequirementValidationStatus:<br/>- All passed → Validated<br/>- Any failed → Failed<br/>- Any skipped, rest passed → PartiallyTested<br/>- No test cases → Untested
+
+            QryH->>QryH: linkedTestCaseIds = linkRepo.Where(r.RequirementId == req.Id)
+            QryH->>QryH: outcomeStatuses = evidenceMap[tcId].Status foreach linkedTestCaseIds
+            QryH->>QryH: deterministic formula(outcomeStatuses) → validationStatus
+        end
+
+        Note right of QryH: Build TraceabilityMatrix:<br/>TotalRequirements, CoveredRequirements,<br/>TestedRequirements (Passed),<br/>FailedRequirements,<br/>CoveragePercentage = Covered / Total,<br/>RequirementRows[] with validation status
+
+        QryH-->>Disp: result : TraceabilityMatrix
+    end
+    deactivate QryH
+
+    Disp-->>Ctrl: result
+    deactivate Disp
+    Ctrl-->>Client: 200 OK + TraceabilityMatrix {coveragePercentage, requirementRows[]}
+    deactivate Ctrl
+```
+
+---
+
+## Infrastructure Diagrams
 
 ```mermaid
 sequenceDiagram
@@ -2317,7 +2872,7 @@ sequenceDiagram
 | FE-05A-SD-02 | FE-05A | Approve Test Order | 7 | ~22 |
 | FE-05B-SD-01 | FE-05B | Generate Happy-Path Test Cases (n8n LLM) | 12 | ~30 |
 | FE-06-SD-01 | FE-06 | Generate Boundary & Negative Cases | 10 | ~24 |
-| FE-07-SD-01 | FE-07/08 | Start Test Run (Execution + Validation) | 11 | ~28 |
+| FE-07-SD-01 | FE-07/08 | Start Test Run (Execution + Validation) | 18 | ~42 |
 | FE-09-SD-01 | FE-09 | Explain Test Failure via LLM | 8 | ~20 |
 | FE-10-SD-01 | FE-10 | Generate Test Report | 9 | ~22 |
 | FE-11-SD-01 | FE-11 | Create Manual Specification | 9 | ~26 |
@@ -2328,10 +2883,13 @@ sequenceDiagram
 | FE-14-SD-03 | FE-14 | PayOS Webhook Handler | 9 | ~28 |
 | FE-15-SD-01 | FE-15 | Review LLM Suggestion | 6 | ~18 |
 | FE-17-SD-01 | FE-17 | Bulk Review Suggestions | 6 | ~20 |
+| FE-17-SD-02 | FE-17 | Generate LLM Suggestion Preview | 14 | ~36 |
+| FE-18-SD-01 | FE-18 | Upload SRS Document & Trigger Analysis | 13 | ~40 |
+| FE-18-SD-02 | FE-18 | Get Traceability Matrix | 11 | ~28 |
 | INFRA-SD-01 | Infra | Outbox Pattern Worker | 5 | ~16 |
 | INFRA-SD-02 | Infra | Domain Event -> Outbox | 6 | ~14 |
 
-**Total: 24 sequence diagrams**
+**Total: 27 sequence diagrams**
 
 ---
 

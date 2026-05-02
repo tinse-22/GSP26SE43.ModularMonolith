@@ -131,6 +131,50 @@ public class ReorderTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenNotAllTestCasesIncluded()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+
+        var testCases = CreateTestCases(3);
+        SetupTestCasesFound(testCases);
+
+        // Only send 2 out of 3 — missing one test case
+        var command = new ReorderTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = suite.CreatedById,
+            TestCaseIds = new List<Guid> { testCases[0].Id, testCases[1].Id },
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*thiếu*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidation_WhenDuplicateIdsSubmitted()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+
+        var testCases = CreateTestCases(3);
+        SetupTestCasesFound(testCases);
+
+        // Send all 3 IDs but with a duplicate (4 entries total) — completeness passes, duplicate check fires
+        var command = new ReorderTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            CurrentUserId = suite.CreatedById,
+            TestCaseIds = new List<Guid> { testCases[0].Id, testCases[1].Id, testCases[2].Id, testCases[0].Id },
+        };
+
+        var act = () => _handler.HandleAsync(command);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*trùng*");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ThrowValidation_WhenNotSuiteOwner()
     {
         var suite = CreateSuite();
