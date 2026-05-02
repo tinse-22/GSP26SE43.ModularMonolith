@@ -30,12 +30,12 @@ public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
     {
         if (source == null)
         {
-            // Fallback: build minimal expectation (expect 200 OK)
             return new TestCaseExpectation
             {
                 Id = Guid.NewGuid(),
                 TestCaseId = testCaseId,
                 ExpectedStatus = JsonSerializer.Serialize(new[] { 200 }, JsonOpts),
+                ExpectationSource = ExpectationSource.Default.ToString(),
             };
         }
 
@@ -50,6 +50,11 @@ public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
             BodyNotContains = SerializeStringList(source.BodyNotContains),
             JsonPathChecks = SerializeDict(source.JsonPathChecks),
             MaxResponseTime = source.MaxResponseTime,
+            ExpectationSource = string.IsNullOrWhiteSpace(source.ExpectationSource)
+                ? ExpectationSource.Default.ToString()
+                : source.ExpectationSource,
+            RequirementCode = source.RequirementCode,
+            PrimaryRequirementId = source.PrimaryRequirementId,
         };
     }
 

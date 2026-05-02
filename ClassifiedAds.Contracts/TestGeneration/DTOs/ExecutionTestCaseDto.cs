@@ -60,6 +60,12 @@ public class ExecutionTestCaseExpectationDto
     public string JsonPathChecks { get; set; }
 
     public int? MaxResponseTime { get; set; }
+
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
 }
 
 public class ExecutionVariableRuleDto

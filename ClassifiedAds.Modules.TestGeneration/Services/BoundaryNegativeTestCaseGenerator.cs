@@ -41,6 +41,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
     private readonly ITestCaseRequestBuilder _requestBuilder;
     private readonly ITestCaseExpectationBuilder _expectationBuilder;
     private readonly ILlmSuggestionMaterializer _materializer;
+    private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<BoundaryNegativeTestCaseGenerator> _logger;
 
     public BoundaryNegativeTestCaseGenerator(
@@ -52,6 +53,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         ITestCaseRequestBuilder requestBuilder,
         ITestCaseExpectationBuilder expectationBuilder,
         ILlmSuggestionMaterializer materializer,
+        IExpectationResolver expectationResolver,
         ILogger<BoundaryNegativeTestCaseGenerator> logger)
     {
         _endpointMetadataService = endpointMetadataService ?? throw new ArgumentNullException(nameof(endpointMetadataService));
@@ -62,6 +64,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         _requestBuilder = requestBuilder ?? throw new ArgumentNullException(nameof(requestBuilder));
         _expectationBuilder = expectationBuilder ?? throw new ArgumentNullException(nameof(expectationBuilder));
         _materializer = materializer ?? throw new ArgumentNullException(nameof(materializer));
+        _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -121,7 +124,13 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
                     foreach (var mutation in mutations)
                     {
                         var tc = BuildPathMutationTestCase(
-                            suite.Id, orderItem, metadata, pathParam, mutation, pathParams);
+                            suite.Id,
+                            orderItem,
+                            metadata,
+                            pathParam,
+                            mutation,
+                            pathParams,
+                            options.SrsRequirements);
                         testCases.Add(tc);
                         pathMutationCount++;
                     }
@@ -152,7 +161,13 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
 
                 foreach (var mutation in bodyMutations)
                 {
-                    var tc = BuildBodyMutationTestCase(suite.Id, orderItem, metadata, mutation, allPathParams);
+                    var tc = BuildBodyMutationTestCase(
+                        suite.Id,
+                        orderItem,
+                        metadata,
+                        mutation,
+                        allPathParams,
+                        options.SrsRequirements);
                     testCases.Add(tc);
                     bodyMutationCount++;
                 }
@@ -171,6 +186,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
                 OrderedEndpoints = orderedEndpoints,
                 SpecificationId = specificationId,
                 EndpointParameterDetails = parameterMap,
+                SrsDocument = options.SrsDocument,
+                SrsRequirements = options.SrsRequirements ?? Array.Empty<SrsRequirement>(),
             };
 
             var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
@@ -222,7 +239,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         ApiEndpointMetadataDto metadata,
         ParameterDetailDto pathParam,
         PathParameterMutationDto mutation,
-        IReadOnlyList<ParameterDetailDto> allPathParams)
+        IReadOnlyList<ParameterDetailDto> allPathParams,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         var testCaseId = Guid.NewGuid();
         var testType = ClassifyPathMutationType(mutation.MutationType);
@@ -254,13 +272,21 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             Timeout = 30000,
         };
 
-        // Build expectation
-        testCase.Expectation = new TestCaseExpectation
+        var resolvedExpectation = _expectationResolver.ResolveToN8nExpectation(new GeneratedScenarioContext
         {
-            Id = Guid.NewGuid(),
-            TestCaseId = testCaseId,
-            ExpectedStatus = JsonSerializer.Serialize(mutation.GetEffectiveExpectedStatusCodes(), JsonOpts),
-        };
+            EndpointId = orderItem.EndpointId,
+            TestType = testType,
+            HttpMethod = orderItem.HttpMethod,
+            SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+            SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+            PreferredDefaultStatuses = mutation.GetEffectiveExpectedStatusCodes(),
+        });
+
+        testCase.Expectation = _expectationBuilder.Build(testCaseId, resolvedExpectation);
+        if (resolvedExpectation?.PrimaryRequirementId.HasValue == true)
+        {
+            testCase.PrimaryRequirementId = resolvedExpectation.PrimaryRequirementId;
+        }
 
         return testCase;
     }
@@ -270,7 +296,8 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
         ApiOrderItemModel orderItem,
         ApiEndpointMetadataDto metadata,
         BodyMutation mutation,
-        IReadOnlyList<ParameterDetailDto> allPathParams)
+        IReadOnlyList<ParameterDetailDto> allPathParams,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         var testCaseId = Guid.NewGuid();
 
@@ -304,12 +331,21 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             Timeout = 30000,
         };
 
-        testCase.Expectation = new TestCaseExpectation
+        var resolvedExpectation = _expectationResolver.ResolveToN8nExpectation(new GeneratedScenarioContext
         {
-            Id = Guid.NewGuid(),
-            TestCaseId = testCaseId,
-            ExpectedStatus = JsonSerializer.Serialize(mutation.GetEffectiveExpectedStatusCodes(), JsonOpts),
-        };
+            EndpointId = orderItem.EndpointId,
+            TestType = mutation.SuggestedTestType,
+            HttpMethod = orderItem.HttpMethod,
+            SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+            SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+            PreferredDefaultStatuses = mutation.GetEffectiveExpectedStatusCodes(),
+        });
+
+        testCase.Expectation = _expectationBuilder.Build(testCaseId, resolvedExpectation);
+        if (resolvedExpectation?.PrimaryRequirementId.HasValue == true)
+        {
+            testCase.PrimaryRequirementId = resolvedExpectation.PrimaryRequirementId;
+        }
 
         return testCase;
     }

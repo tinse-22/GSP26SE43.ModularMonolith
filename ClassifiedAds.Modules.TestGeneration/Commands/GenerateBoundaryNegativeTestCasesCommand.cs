@@ -51,6 +51,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
     private readonly IRepository<TestCaseVariable, Guid> _variableRepository;
     private readonly IRepository<TestCaseChangeLog, Guid> _changeLogRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly IApiTestOrderGateService _gateService;
     private readonly IBoundaryNegativeTestCaseGenerator _generator;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
@@ -65,6 +67,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
         IRepository<TestCaseVariable, Guid> variableRepository,
         IRepository<TestCaseChangeLog, Guid> changeLogRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         IApiTestOrderGateService gateService,
         IBoundaryNegativeTestCaseGenerator generator,
         ISubscriptionLimitGatewayService subscriptionLimitService,
@@ -78,6 +82,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
         _variableRepository = variableRepository;
         _changeLogRepository = changeLogRepository;
         _versionRepository = versionRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _gateService = gateService;
         _generator = generator;
         _subscriptionLimitService = subscriptionLimitService;
@@ -176,6 +182,24 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             }
         }
 
+        SrsDocument srsDocument = null;
+        IReadOnlyList<SrsRequirement> srsRequirements = Array.Empty<SrsRequirement>();
+        if (suite.SrsDocumentId.HasValue)
+        {
+            srsDocument = await _srsDocumentRepository.FirstOrDefaultAsync(
+                _srsDocumentRepository.GetQueryableSet()
+                    .Where(x => x.Id == suite.SrsDocumentId.Value && !x.IsDeleted));
+
+            if (srsDocument != null)
+            {
+                srsRequirements = await _srsRequirementRepository.ToListAsync(
+                    _srsRequirementRepository.GetQueryableSet()
+                        .Where(x => x.SrsDocumentId == srsDocument.Id)
+                        .OrderBy(x => x.DisplayOrder)
+                        .ThenBy(x => x.RequirementCode));
+            }
+        }
+
         // 6) Generate test cases via orchestrator pipeline
         var options = new BoundaryNegativeOptions
         {
@@ -183,6 +207,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<G
             IncludeBodyMutations = command.IncludeBodyMutations,
             IncludeLlmSuggestions = command.IncludeLlmSuggestions,
             UserId = command.CurrentUserId,
+            SrsDocument = srsDocument,
+            SrsRequirements = srsRequirements,
         };
 
         var generationResult = await _generator.GenerateAsync(

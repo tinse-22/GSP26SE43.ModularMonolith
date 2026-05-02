@@ -247,7 +247,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                             ? new List<string> { scenario.ExpectedBehavior }
                             : new List<string>()),
                     BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
-                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
+                    JsonPathChecks = NormalizeJsonPathChecks(scenario.SuggestedJsonPathChecks, scenario.SuggestedTestType),
                     HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
                 }, JsonOpts),
                 SuggestedVariables = scenario.Variables?.Count > 0
@@ -309,5 +309,37 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             "EndpointsCovered={Covered}, FromCache={FromCache}, ActorUserId={UserId}",
             command.TestSuiteId, suggestions.Count,
             command.Result.EndpointsCovered, llmResult.FromCache, command.CurrentUserId);
+    }
+
+    /// <summary>
+    /// For HappyPath tests, replaces hardcoded email-like values in JSONPath checks with "*" (wildcard).
+    /// This prevents false failures when the test uses a dynamically generated email at runtime
+    /// that differs from the static email the LLM hardcoded in the assertion.
+    /// </summary>
+    private static Dictionary<string, string> NormalizeJsonPathChecks(
+        Dictionary<string, string> checks,
+        TestType testType)
+    {
+        if (checks == null || checks.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        if (testType != TestType.HappyPath)
+        {
+            return checks;
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, value) in checks)
+        {
+            // Replace hardcoded email values with wildcard so dynamic per-run emails don't cause false failures
+            var normalized = !string.IsNullOrWhiteSpace(value) && value.Contains('@') && value != "*"
+                ? "*"
+                : value;
+            result[path] = normalized;
+        }
+
+        return result;
     }
 }
