@@ -17,6 +17,8 @@ public class GetLlmSuggestionDetailQueryHandlerTests
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<LlmSuggestion, Guid>> _suggestionRepoMock;
     private readonly Mock<IRepository<LlmSuggestionFeedback, Guid>> _feedbackRepoMock;
+    private readonly Mock<IRepository<SrsDocument, Guid>> _srsDocumentRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsRequirementRepoMock;
     private readonly GetLlmSuggestionDetailQueryHandler _handler;
 
     public GetLlmSuggestionDetailQueryHandlerTests()
@@ -24,11 +26,15 @@ public class GetLlmSuggestionDetailQueryHandlerTests
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _suggestionRepoMock = new Mock<IRepository<LlmSuggestion, Guid>>();
         _feedbackRepoMock = new Mock<IRepository<LlmSuggestionFeedback, Guid>>();
+        _srsDocumentRepoMock = new Mock<IRepository<SrsDocument, Guid>>();
+        _srsRequirementRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
 
         _handler = new GetLlmSuggestionDetailQueryHandler(
             _suiteRepoMock.Object,
             _suggestionRepoMock.Object,
-            _feedbackRepoMock.Object);
+            _feedbackRepoMock.Object,
+            _srsDocumentRepoMock.Object,
+            _srsRequirementRepoMock.Object);
     }
 
     [Fact]
@@ -193,17 +199,17 @@ public class GetLlmSuggestionDetailQueryHandlerTests
         Guid userId,
         LlmSuggestionFeedbackSignal signal,
         string notes) => new()
-    {
-        Id = Guid.NewGuid(),
-        SuggestionId = DefaultSuggestionId,
-        TestSuiteId = DefaultSuiteId,
-        EndpointId = Guid.NewGuid(),
-        UserId = userId,
-        FeedbackSignal = signal,
-        Notes = notes,
-        CreatedDateTime = DateTimeOffset.UtcNow,
-        RowVersion = Guid.NewGuid().ToByteArray(),
-    };
+        {
+            Id = Guid.NewGuid(),
+            SuggestionId = DefaultSuggestionId,
+            TestSuiteId = DefaultSuiteId,
+            EndpointId = Guid.NewGuid(),
+            UserId = userId,
+            FeedbackSignal = signal,
+            Notes = notes,
+            CreatedDateTime = DateTimeOffset.UtcNow,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+        };
 
     private void SetupSuiteFound(TestSuite suite)
     {

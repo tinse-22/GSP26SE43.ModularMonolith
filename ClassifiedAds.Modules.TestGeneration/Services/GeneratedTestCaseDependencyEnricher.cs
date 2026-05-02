@@ -543,7 +543,7 @@ public static class GeneratedTestCaseDependencyEnricher
             producerCandidates,
             testCase,
             pendingExistingVariables,
-            allowAuthBootstrapBindings: !IsRegisterLikeEndpoint(orderItem));
+            allowAuthBootstrapBindings: !IsRegisterLikeEndpoint(orderItem) || testCase.TestType != TestType.HappyPath);
 
         if (changed)
         {
@@ -642,7 +642,8 @@ public static class GeneratedTestCaseDependencyEnricher
                             "registeredEmail",
                             "$.email",
                             pendingExistingVariables);
-                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        var rawEmailValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                        if (!string.IsNullOrWhiteSpace(rawEmailValue) && ShouldSetPlaceholderValue(property.Value, variableName))
                         {
                             obj[property.Key] = $"{{{{{variableName}}}}}";
                             EnsureDependency(testCase, authProducer.TestCaseId);
@@ -658,7 +659,8 @@ public static class GeneratedTestCaseDependencyEnricher
                             "registeredPassword",
                             "$.password",
                             pendingExistingVariables);
-                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        var rawPasswordValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                        if (!string.IsNullOrWhiteSpace(rawPasswordValue) && ShouldSetPlaceholderValue(property.Value, variableName))
                         {
                             obj[property.Key] = $"{{{{{variableName}}}}}";
                             EnsureDependency(testCase, authProducer.TestCaseId);

@@ -106,18 +106,23 @@ flowchart TB
     WebAPI --> ApiDoc
     WebAPI --> TestGen
     WebAPI --> TestExec
+    WebAPI --> TestRep
     WebAPI --> Identity
     WebAPI --> AuditLog
     WebAPI --> Notification
     WebAPI --> Subscription
     WebAPI --> Storage
     WebAPI --> Configuration
+    WebAPI --> LlmAssistant
 
+    Background --> ApiDoc
+    Background --> TestGen
     Background --> Identity
     Background --> AuditLog
     Background --> Notification
     Background --> Subscription
     Background --> Storage
+    Background --> LlmAssistant
 
     Migrator --> ApiDoc
     Migrator --> TestGen
@@ -129,6 +134,7 @@ flowchart TB
     Migrator --> Subscription
     Migrator --> Storage
     Migrator --> Configuration
+    Migrator --> LlmAssistant
 
     FeatureModules --> Core
     Application --> Domain
@@ -234,23 +240,23 @@ flowchart LR
     WebAPI --> ApiDoc
     WebAPI --> TestGen
     WebAPI --> TestExec
+    WebAPI --> TestRep
     WebAPI --> Identity
     WebAPI --> AuditLog
     WebAPI --> Notification
     WebAPI --> Subscription
     WebAPI --> Storage
     WebAPI --> Configuration
+    WebAPI --> LlmAssistant
 
-    WebAPI -.->|PLANNED FE-10| TestRep
-    WebAPI -.->|PLANNED FE-09| LlmAssistant
-
+    Background --> ApiDoc
+    Background --> TestGen
     Background --> Identity
     Background --> AuditLog
     Background --> Notification
     Background --> Subscription
     Background --> Storage
-
-    Background -.->|PLANNED FE-07| TestExec
+    Background --> LlmAssistant
 
     Migrator --> ApiDoc
     Migrator --> TestGen
@@ -262,7 +268,7 @@ flowchart LR
     Migrator --> Subscription
     Migrator --> Storage
     Migrator --> Configuration
-    Migrator -.->|PLANNED| LlmAssistant
+    Migrator --> LlmAssistant
 
     WebAPI --> Application
     WebAPI --> Domain

@@ -121,18 +121,21 @@ classDiagram
         <<aggregate root>>
         +Id : Guid
         +ProjectId : Guid
-        +ApiSpecId : Guid
+        +ApiSpecId : Guid?
         +SelectedEndpointIds : List~Guid~
+        +EndpointBusinessContexts : Dictionary~Guid_string~
+        +GlobalBusinessRules : string
+        +SrsDocumentId : Guid?
         +Name : string
         +Description : string
         +GenerationType : GenerationType
         +Status : TestSuiteStatus
         +CreatedById : Guid
         +ApprovalStatus : ApprovalStatus
-        +ApprovedById : Guid
-        +ApprovedAt : DateTimeOffset
+        +ApprovedById : Guid?
+        +ApprovedAt : DateTimeOffset?
         +Version : int
-        +LastModifiedById : Guid
+        +LastModifiedById : Guid?
         +CreatedDateTime : DateTimeOffset
         +UpdatedDateTime : DateTimeOffset
     }
@@ -141,19 +144,22 @@ classDiagram
         <<entity>>
         +Id : Guid
         +TestSuiteId : Guid
-        +EndpointId : Guid
+        +EndpointId : Guid?
         +Name : string
         +Description : string
         +TestType : TestType
         +Priority : TestPriority
         +IsEnabled : bool
-        +DependsOnId : Guid
         +OrderIndex : int
-        +CustomOrderIndex : int
+        +CustomOrderIndex : int?
         +IsOrderCustomized : bool
         +Tags : string
-        +LastModifiedById : Guid
+        +LastModifiedById : Guid?
         +Version : int
+        +IsDeleted : bool
+        +DeletedAt : DateTimeOffset?
+        +DeletedById : Guid?
+        +PrimaryRequirementId : Guid?
     }
 
     class TestCaseRequest {
@@ -180,7 +186,7 @@ classDiagram
         +BodyContains : string
         +BodyNotContains : string
         +JsonPathChecks : string
-        +MaxResponseTime : int
+        +MaxResponseTime : int?
     }
 
     class TestCaseVariable {
@@ -229,14 +235,14 @@ classDiagram
         +ProposedOrder : string
         +AiReasoning : string
         +ConsideredFactors : string
-        +ReviewedById : Guid
-        +ReviewedAt : DateTimeOffset
+        +ReviewedById : Guid?
+        +ReviewedAt : DateTimeOffset?
         +ReviewNotes : string
         +UserModifiedOrder : string
         +AppliedOrder : string
-        +AppliedAt : DateTimeOffset
+        +AppliedAt : DateTimeOffset?
         +LlmModel : string
-        +TokensUsed : int
+        +TokensUsed : int?
     }
 
     class TestSuiteVersion {
@@ -253,15 +259,177 @@ classDiagram
         +NewState : string
     }
 
+    class TestGenerationJob {
+        <<entity>>
+        +Id : Guid
+        +TestSuiteId : Guid
+        +ProposalId : Guid?
+        +Status : GenerationJobStatus
+        +TriggeredById : Guid
+        +QueuedAt : DateTimeOffset
+        +TriggeredAt : DateTimeOffset?
+        +CompletedAt : DateTimeOffset?
+        +TestCasesGenerated : int?
+        +ErrorMessage : string
+        +ErrorDetails : string
+        +RetryCount : int
+        +WebhookName : string
+        +WebhookUrl : string
+        +CallbackUrl : string
+    }
+
+    class TestCaseDependency {
+        <<entity>>
+        +Id : Guid
+        +TestCaseId : Guid
+        +DependsOnTestCaseId : Guid
+    }
+
+    class TestCaseRequirementLink {
+        <<entity>>
+        +Id : Guid
+        +TestCaseId : Guid
+        +SrsRequirementId : Guid
+        +TraceabilityScore : float?
+        +MappingRationale : string
+    }
+
+    class LlmSuggestion {
+        <<entity>>
+        +Id : Guid
+        +TestSuiteId : Guid
+        +EndpointId : Guid?
+        +CacheKey : string
+        +DisplayOrder : int
+        +SuggestionType : LlmSuggestionType
+        +TestType : TestType
+        +SuggestedName : string
+        +SuggestedDescription : string
+        +SuggestedRequest : string
+        +SuggestedExpectation : string
+        +SuggestedVariables : string
+        +SuggestedTags : string
+        +Priority : TestPriority
+        +ReviewStatus : ReviewStatus
+        +ReviewedById : Guid?
+        +ReviewedAt : DateTimeOffset?
+        +ReviewNotes : string
+        +ModifiedContent : string
+        +AppliedTestCaseId : Guid?
+        +LlmModel : string
+        +TokensUsed : int?
+        +SrsDocumentId : Guid?
+        +CoveredRequirementIds : string
+        +IsDeleted : bool
+        +DeletedAt : DateTimeOffset?
+        +DeletedById : Guid?
+        +CreatedDateTime : DateTimeOffset
+        +UpdatedDateTime : DateTimeOffset
+    }
+
+    class LlmSuggestionFeedback {
+        <<entity>>
+        +Id : Guid
+        +SuggestionId : Guid
+        +TestSuiteId : Guid
+        +EndpointId : Guid?
+        +UserId : Guid
+        +FeedbackSignal : LlmSuggestionFeedbackSignal
+        +Notes : string
+    }
+
+    class SrsDocument {
+        <<aggregate root>>
+        +Id : Guid
+        +ProjectId : Guid
+        +TestSuiteId : Guid?
+        +Title : string
+        +SourceType : SrsSourceType
+        +RawContent : string
+        +StorageFileId : Guid?
+        +ParsedMarkdown : string
+        +AnalysisStatus : SrsAnalysisStatus
+        +AnalyzedAt : DateTimeOffset?
+        +CreatedById : Guid
+        +IsDeleted : bool
+        +DeletedAt : DateTimeOffset?
+        +CreatedDateTime : DateTimeOffset
+        +UpdatedDateTime : DateTimeOffset
+    }
+
+    class SrsRequirement {
+        <<entity>>
+        +Id : Guid
+        +SrsDocumentId : Guid
+        +RequirementCode : string
+        +Title : string
+        +Description : string
+        +RequirementType : SrsRequirementType
+        +TestableConstraints : string
+        +Assumptions : string
+        +Ambiguities : string
+        +ConfidenceScore : float?
+        +EndpointId : Guid?
+        +MappedEndpointPath : string
+        +DisplayOrder : int
+        +IsReviewed : bool
+        +ReviewedById : Guid?
+        +ReviewedAt : DateTimeOffset?
+        +RefinedConstraints : string
+        +RefinedConfidenceScore : float?
+        +RefinementRound : int
+    }
+
+    class SrsRequirementClarification {
+        <<entity>>
+        +Id : Guid
+        +SrsRequirementId : Guid
+        +AmbiguitySource : string
+        +Question : string
+        +SuggestedOptions : string
+        +UserAnswer : string
+        +IsAnswered : bool
+        +AnsweredAt : DateTimeOffset?
+        +AnsweredById : Guid?
+        +DisplayOrder : int
+        +IsCritical : bool
+    }
+
+    class SrsAnalysisJob {
+        <<entity>>
+        +Id : Guid
+        +SrsDocumentId : Guid
+        +Status : SrsAnalysisJobStatus
+        +TriggeredById : Guid
+        +QueuedAt : DateTimeOffset
+        +TriggeredAt : DateTimeOffset?
+        +CompletedAt : DateTimeOffset?
+        +RequirementsExtracted : int?
+        +ErrorMessage : string
+        +ErrorDetails : string
+        +RetryCount : int
+        +JobType : SrsAnalysisJobType
+    }
+
     TestSuite "1" *-- "0..*" TestCase : TestCases
     TestSuite "1" *-- "0..*" TestSuiteVersion : Versions
     TestSuite "1" *-- "0..*" TestOrderProposal : OrderProposals
+    TestSuite "1" *-- "0..*" TestGenerationJob : GenerationJobs
+    TestSuite "0..1" --> "0..1" SrsDocument : SrsDocument
     TestCase "1" *-- "0..1" TestCaseRequest : Request
     TestCase "1" *-- "0..1" TestCaseExpectation : Expectation
     TestCase "1" *-- "0..*" TestCaseVariable : Variables
     TestCase "1" *-- "0..*" TestDataSet : DataSets
     TestCase "1" *-- "0..*" TestCaseChangeLog : ChangeLogs
-    TestCase "0..*" --> "0..1" TestCase : DependsOn
+    TestCase "1" *-- "0..*" TestCaseDependency : Dependencies
+    TestCase "1" *-- "0..*" TestCaseRequirementLink : RequirementLinks
+    SrsDocument "1" *-- "0..*" SrsRequirement : Requirements
+    SrsDocument "1" *-- "0..*" SrsAnalysisJob : AnalysisJobs
+    SrsRequirement "1" *-- "0..*" TestCaseRequirementLink : TestCaseLinks
+    SrsRequirement "1" *-- "0..*" SrsRequirementClarification : Clarifications
+    LlmSuggestion "1" *-- "0..*" LlmSuggestionFeedback : Feedbacks
+
+    note "All cross-module references (ProjectId, EndpointId, ApiSpecId)\nare Guid-only FKs — no navigation properties.\nModule boundaries enforced by design.\nSrsDocumentId on TestSuite references SrsDocument within same module."
 ```
 
 ---
@@ -306,6 +474,34 @@ classDiagram
         +UpdatedDateTime : DateTimeOffset
     }
 
+    class TestCaseResult {
+        <<entity>>
+        +Id : Guid
+        +TestRunId : Guid
+        +TestCaseId : Guid
+        +EndpointId : Guid?
+        +Name : string
+        +OrderIndex : int
+        +Status : string
+        +HttpStatusCode : int?
+        +DurationMs : long
+        +ResolvedUrl : string
+        +RequestHeaders : string
+        +ResponseHeaders : string
+        +ResponseBodyPreview : string
+        +FailureReasons : string
+        +ExtractedVariables : string
+        +DependencyIds : string
+        +SkippedBecauseDependencyIds : string
+        +StatusCodeMatched : bool
+        +SchemaMatched : bool?
+        +HeaderChecksPassed : bool?
+        +BodyContainsPassed : bool?
+        +BodyNotContainsPassed : bool?
+        +JsonPathChecksPassed : bool?
+        +ResponseTimePassed : bool?
+    }
+
     %% TestReporting Module
     class TestReport {
         <<aggregate root>>
@@ -336,7 +532,9 @@ classDiagram
         +UpdatedDateTime : DateTimeOffset
     }
 
-    note "All cross-module references\n(TestSuiteId, EnvironmentId, TestRunId, FileId)\nare Guid-only FKs — no navigation properties.\nModule boundaries enforced by design."
+    TestRun "1" *-- "0..*" TestCaseResult : Results
+
+    note "All cross-module references\n(TestSuiteId, EnvironmentId, TestRunId, FileId)\nare Guid-only FKs — no navigation properties.\nModule boundaries enforced by design.\nTestCaseResult stored in PostgreSQL as cold storage\nwhen Redis cache expires."
 ```
 
 ---
@@ -1922,99 +2120,115 @@ classDiagram
 
 ```mermaid
 classDiagram
-    %% Planned Entities
+    %% Implemented Entities (FE-15/16/17 shipped)
     class LlmSuggestion {
-        <<planned entity>>
+        <<entity>>
         +Id : Guid
         +TestSuiteId : Guid
-        +EndpointId : Guid
-        +SuggestionType : SuggestionType
+        +EndpointId : Guid?
+        +CacheKey : string
+        +DisplayOrder : int
+        +SuggestionType : LlmSuggestionType
         +TestType : TestType
         +SuggestedName : string
         +SuggestedDescription : string
         +SuggestedRequest : string
         +SuggestedExpectation : string
-        +Confidence : double
+        +SuggestedVariables : string
+        +SuggestedTags : string
+        +Priority : TestPriority
         +ReviewStatus : ReviewStatus
-        +ReviewedById : Guid
-        +ReviewedAt : DateTimeOffset
+        +ReviewedById : Guid?
+        +ReviewedAt : DateTimeOffset?
         +ReviewNotes : string
         +ModifiedContent : string
-        +LlmInteractionId : Guid
+        +AppliedTestCaseId : Guid?
+        +LlmModel : string
+        +TokensUsed : int?
+        +SrsDocumentId : Guid?
+        +CoveredRequirementIds : string
+        +IsDeleted : bool
+        +DeletedAt : DateTimeOffset?
+        +DeletedById : Guid?
         +CreatedDateTime : DateTimeOffset
         +UpdatedDateTime : DateTimeOffset
     }
 
-    class UserFeedback {
-        <<planned entity>>
+    class LlmSuggestionFeedback {
+        <<entity>>
         +Id : Guid
         +SuggestionId : Guid
+        +TestSuiteId : Guid
+        +EndpointId : Guid?
         +UserId : Guid
-        +Rating : int
-        +Comment : string
-        +CreatedDateTime : DateTimeOffset
+        +FeedbackSignal : LlmSuggestionFeedbackSignal
+        +Notes : string
     }
 
-    %% Commands Planned
+    %% Commands
     class ReviewLlmSuggestionCommand {
-        <<planned command>>
+        <<command>>
+        +TestSuiteId : Guid
         +SuggestionId : Guid
-        +Action : ReviewAction
-        +ModifiedContent : string
+        +CurrentUserId : Guid
+        +ReviewAction : string
+        +RowVersion : string
         +ReviewNotes : string
-        +UserId : Guid
+        +ModifiedContent : EditableLlmSuggestionInput
     }
 
     class BulkReviewLlmSuggestionsCommand {
-        <<planned command>>
+        <<command>>
         +TestSuiteId : Guid
-        +Action : ReviewAction
-        +FilterByType : SuggestionType
-        +FilterByConfidence : double
-        +UserId : Guid
+        +CurrentUserId : Guid
+        +Action : string
+        +ReviewNotes : string
+        +FilterBySuggestionType : string
+        +FilterByTestType : string
+        +FilterByEndpointId : Guid?
     }
 
-    class SubmitSuggestionFeedbackCommand {
-        <<planned command>>
+    class UpsertLlmSuggestionFeedbackCommand {
+        <<command>>
+        +TestSuiteId : Guid
         +SuggestionId : Guid
-        +UserId : Guid
-        +Rating : int
-        +Comment : string
+        +CurrentUserId : Guid
+        +Signal : string
+        +Notes : string
     }
 
-    %% Handlers Planned
+    %% Handlers
     class ReviewLlmSuggestionCommandHandler {
-        <<planned handler>>
+        <<handler>>
     }
     class BulkReviewLlmSuggestionsCommandHandler {
-        <<planned handler>>
+        <<handler>>
     }
-    class SubmitSuggestionFeedbackCommandHandler {
-        <<planned handler>>
+    class UpsertLlmSuggestionFeedbackCommandHandler {
+        <<handler>>
     }
 
-    %% Services Planned
+    %% Services
     class ILlmSuggestionReviewService {
         <<interface>>
-        +ApproveAsync(suggestion, userId, ct) Task
         +RejectAsync(suggestion, userId, notes, ct) Task
-        +ModifyAndApproveAsync(suggestion, modified, userId, ct) Task
-        +MaterializeApprovedAsync(suiteId, ct) Task~int~
+        +RejectManyAsync(suggestions, userId, notes, ct) Task
+        +ApproveManyAsync(suite, approvals, userId, ct) Task~LlmSuggestionApprovalBatchResult~
     }
     class LlmSuggestionReviewService {
-        <<planned domain service>>
+        <<domain service>>
     }
 
-    class IUserFeedbackService {
+    class ILlmSuggestionFeedbackUpsertService {
         <<interface>>
-        +SubmitFeedbackAsync(suggestionId, userId, rating, comment, ct) Task
+        +UpsertAsync(request, ct) Task~LlmSuggestionFeedbackUpsertResult~
     }
-    class UserFeedbackService {
-        <<planned domain service>>
+    class LlmSuggestionFeedbackUpsertService {
+        <<application service>>
     }
 
     ILlmSuggestionReviewService <|.. LlmSuggestionReviewService
-    IUserFeedbackService <|.. UserFeedbackService
+    ILlmSuggestionFeedbackUpsertService <|.. LlmSuggestionFeedbackUpsertService
 
     ReviewLlmSuggestionCommandHandler ..> ReviewLlmSuggestionCommand : handles
     ReviewLlmSuggestionCommandHandler ..> ILlmSuggestionReviewService
@@ -2022,12 +2236,12 @@ classDiagram
     BulkReviewLlmSuggestionsCommandHandler ..> BulkReviewLlmSuggestionsCommand : handles
     BulkReviewLlmSuggestionsCommandHandler ..> ILlmSuggestionReviewService
 
-    SubmitSuggestionFeedbackCommandHandler ..> SubmitSuggestionFeedbackCommand : handles
-    SubmitSuggestionFeedbackCommandHandler ..> IUserFeedbackService
+    UpsertLlmSuggestionFeedbackCommandHandler ..> UpsertLlmSuggestionFeedbackCommand : handles
+    UpsertLlmSuggestionFeedbackCommandHandler ..> ILlmSuggestionFeedbackUpsertService
 
-    LlmSuggestion "1" *-- "0..*" UserFeedback : Feedbacks
+    LlmSuggestion "1" *-- "0..*" LlmSuggestionFeedback : Feedbacks
 
-    note "ReviewStatus enum planned:\nPending, Approved, Rejected,\nModifiedAndApproved, Expired"
+    note "ReviewStatus enum:\nPending, Approved, Rejected,\nModifiedAndApproved, Superseded\n\nLlmSuggestion entities live in TestGeneration module.\nDuplicated in A.2 for domain reference."
 ```
 
 ---

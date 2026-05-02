@@ -58,6 +58,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "   AUTH FLOW RULES:\n" +
         "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
         "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
+        "   - Negative 'email already exists' / 'duplicate email': MUST use \"{{registeredEmail}}\" in the email field (NOT a new unique email). This ensures the test sends a real already-registered email so the API returns 409.\n" +
         "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
         "6. endpointId must be the EXACT UUID from input.\n" +
         "7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +

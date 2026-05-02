@@ -172,16 +172,34 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             ? approvedOrder.OrderBy(x => x.OrderIndex).Select(x => x.EndpointId).ToList()
             : new List<Guid>();
 
-        // 8. Build baseline order from endpoint/custom order, then enforce dependency topology.
-        var baselineOrderedCases = finalTestCaseIdSet
+        var hasCustomOrder = finalTestCaseIdSet
             .Select(id => enabledTestCaseMap[id])
-            .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
-                ? endpointOrderMap[tc.EndpointId.Value]
-                : int.MaxValue)
-            .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
-            .ThenBy(tc => tc.Name)
-            .ThenBy(tc => tc.Id)
-            .ToList();
+            .Any(tc => tc.IsOrderCustomized);
+
+        // 8. Build baseline order from custom order (if any), otherwise from approved endpoint order.
+        List<TestCase> baselineOrderedCases;
+        if (hasCustomOrder)
+        {
+            baselineOrderedCases = finalTestCaseIdSet
+                .Select(id => enabledTestCaseMap[id])
+                .OrderBy(tc => tc.IsOrderCustomized ? tc.CustomOrderIndex ?? int.MaxValue : int.MaxValue)
+                .ThenBy(tc => tc.OrderIndex)
+                .ThenBy(tc => tc.Name)
+                .ThenBy(tc => tc.Id)
+                .ToList();
+        }
+        else
+        {
+            baselineOrderedCases = finalTestCaseIdSet
+                .Select(id => enabledTestCaseMap[id])
+                .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
+                    ? endpointOrderMap[tc.EndpointId.Value]
+                    : int.MaxValue)
+                .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
+                .ThenBy(tc => tc.Name)
+                .ThenBy(tc => tc.Id)
+                .ToList();
+        }
 
         var topologicallyOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
 
