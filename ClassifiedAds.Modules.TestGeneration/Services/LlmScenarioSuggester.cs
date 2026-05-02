@@ -631,7 +631,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 LlmExpectation = candidateExpectation,
                 SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
                 CoveredRequirementIds = coveredIds,
-                PreferredDefaultStatuses = candidateExpectation.ExpectedStatus ?? Array.Empty<int>(),
+                PreferredDefaultStatuses = (IReadOnlyList<int>)candidateExpectation.ExpectedStatus ?? Array.Empty<int>(),
             });
 
             var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes ?? new List<int> { 200 };
