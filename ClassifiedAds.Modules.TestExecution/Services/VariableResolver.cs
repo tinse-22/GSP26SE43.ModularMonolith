@@ -1341,6 +1341,11 @@ public class VariableResolver : IVariableResolver
         return first + string.Concat(rest);
     }
 
+    private static bool AllowsIdentifierLiteralReplacement(ExecutionTestCaseDto testCase)
+    {
+        return string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsLoginLikeRequest(ExecutionTestCaseDto testCase)
     {
         var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
@@ -1840,6 +1845,23 @@ public class VariableResolver : IVariableResolver
         return false;
     }
 
+    private static bool TryGetPreferredEmailForSyntheticBody(
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> variables,
+        out string preferredEmail)
+    {
+        preferredEmail = null;
+
+        if (IsRegisterLikeRequest(testCase))
+        {
+            return variables != null
+                && variables.TryGetValue("runUniqueEmail", out preferredEmail)
+                && !string.IsNullOrWhiteSpace(preferredEmail);
+        }
+
+        return TryGetPreferredTestEmail(variables, out preferredEmail);
+    }
+
     private static bool ReplaceSyntheticEmails(JsonNode node, string preferredEmail)
     {
         if (node is JsonObject obj)
@@ -1921,6 +1943,11 @@ public class VariableResolver : IVariableResolver
             || localPart.StartsWith("user", StringComparison.OrdinalIgnoreCase)
             || localPart.StartsWith("qa", StringComparison.OrdinalIgnoreCase)
             || localPart.StartsWith("auto", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldRewriteSyntheticPassword(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) && !value.Contains("{{", StringComparison.Ordinal);
     }
 
     private static string GetRunSuffix(IReadOnlyDictionary<string, string> variables)
