@@ -83,7 +83,8 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<IApiTestOrderService, ApiTestOrderService>()
             .AddScoped<IApiTestOrderGateService, ApiTestOrderGateService>()
             .AddScoped<ITestSuiteScopeService, TestSuiteScopeService>()
-            .AddScoped<ITestSuiteProjectService, TestSuiteProjectService>();
+            .AddScoped<ITestSuiteProjectService, TestSuiteProjectService>()
+            .AddScoped<IExpectationResolver, ExpectationResolver>();
 
         // FE-07/08: Cross-module execution read gateway
         services

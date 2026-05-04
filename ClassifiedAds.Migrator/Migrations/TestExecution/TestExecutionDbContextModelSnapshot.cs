@@ -222,6 +222,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestExecution
                     b.Property<Guid?>("EndpointId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ExpectationSource")
+                        .HasColumnType("text");
+
                     b.Property<string>("ExtractedVariables")
                         .HasColumnType("jsonb");
 
@@ -245,8 +248,14 @@ namespace ClassifiedAds.Migrator.Migrations.TestExecution
                     b.Property<int>("OrderIndex")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("PrimaryRequirementId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RequestHeaders")
                         .HasColumnType("jsonb");
+
+                    b.Property<string>("RequirementCode")
+                        .HasColumnType("text");
 
                     b.Property<string>("ResolvedUrl")
                         .HasMaxLength(2000)
@@ -327,6 +336,11 @@ namespace ClassifiedAds.Migrator.Migrations.TestExecution
                     b.Property<int>("FailedCount")
                         .HasColumnType("integer");
 
+                    b.Property<bool>("IsEphemeral")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<int>("PassedCount")
                         .HasColumnType("integer");
 
@@ -371,6 +385,8 @@ namespace ClassifiedAds.Migrator.Migrations.TestExecution
                     b.HasKey("Id");
 
                     b.HasIndex("EnvironmentId");
+
+                    b.HasIndex("IsEphemeral");
 
                     b.HasIndex("Status");
 

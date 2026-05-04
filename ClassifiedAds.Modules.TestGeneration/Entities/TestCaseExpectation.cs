@@ -48,6 +48,12 @@ public class TestCaseExpectation : Entity<Guid>, IAggregateRoot
     /// </summary>
     public int? MaxResponseTime { get; set; }
 
+    public string ExpectationSource { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
+
+    public string RequirementCode { get; set; }
+
     // Navigation properties
     public TestCase TestCase { get; set; }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace ClassifiedAds.Modules.TestGeneration.Models;
 
@@ -9,7 +10,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Models;
 /// </summary>
 public class N8nHappyPathResponse
 {
-    public List<N8nGeneratedTestCase> TestCases { get; set; } = new ();
+    public List<N8nGeneratedTestCase> TestCases { get; set; } = new();
     public string Model { get; set; }
     public int? TokensUsed { get; set; }
     public string Reasoning { get; set; }
@@ -21,19 +22,19 @@ public class N8nGeneratedTestCase
     public string Name { get; set; }
     public string Description { get; set; }
     public string Priority { get; set; }
-    public List<string> Tags { get; set; } = new ();
+    public List<string> Tags { get; set; } = new();
     public N8nTestCaseRequest Request { get; set; }
     public N8nTestCaseExpectation Expectation { get; set; }
-    public List<N8nTestCaseVariable> Variables { get; set; } = new ();
+    public List<N8nTestCaseVariable> Variables { get; set; } = new();
 }
 
 public class N8nTestCaseRequest
 {
     public string HttpMethod { get; set; }
     public string Url { get; set; }
-    public Dictionary<string, string> Headers { get; set; } = new ();
-    public Dictionary<string, string> PathParams { get; set; } = new ();
-    public Dictionary<string, string> QueryParams { get; set; } = new ();
+    public Dictionary<string, string> Headers { get; set; } = new();
+    public Dictionary<string, string> PathParams { get; set; } = new();
+    public Dictionary<string, string> QueryParams { get; set; } = new();
     public string BodyType { get; set; }
     public string Body { get; set; }
     public int? Timeout { get; set; }
@@ -41,13 +42,20 @@ public class N8nTestCaseRequest
 
 public class N8nTestCaseExpectation
 {
-    public List<int> ExpectedStatus { get; set; } = new ();
+    public List<int> ExpectedStatus { get; set; } = new();
     public string ResponseSchema { get; set; }
-    public Dictionary<string, string> HeaderChecks { get; set; } = new ();
-    public List<string> BodyContains { get; set; } = new ();
-    public List<string> BodyNotContains { get; set; } = new ();
-    public Dictionary<string, string> JsonPathChecks { get; set; } = new ();
+    [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
+    public Dictionary<string, string> HeaderChecks { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringListConverter))]
+    public List<string> BodyContains { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringListConverter))]
+    public List<string> BodyNotContains { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
+    public Dictionary<string, string> JsonPathChecks { get; set; } = new();
     public int? MaxResponseTime { get; set; }
+    public string ExpectationSource { get; set; }
+    public string RequirementCode { get; set; }
+    public Guid? PrimaryRequirementId { get; set; }
 }
 
 public class N8nTestCaseVariable

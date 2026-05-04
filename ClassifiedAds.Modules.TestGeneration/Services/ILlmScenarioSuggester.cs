@@ -41,6 +41,19 @@ public class LlmScenarioSuggestionContext
     /// If true, skip cache lookup and force a live n8n generation.
     /// </summary>
     public bool BypassCache { get; set; }
+
+    /// <summary>
+    /// SRS document linked to the test suite. Null when no SRS is associated.
+    /// Content (ParsedMarkdown or RawContent) is sent to n8n so the LLM can align
+    /// generated test scenarios with documented requirements.
+    /// </summary>
+    public SrsDocument SrsDocument { get; set; }
+
+    /// <summary>
+    /// Individual requirements extracted from the SRS document.
+    /// Passed to n8n so the LLM can generate traceable test scenarios.
+    /// </summary>
+    public IReadOnlyList<SrsRequirement> SrsRequirements { get; set; } = Array.Empty<SrsRequirement>();
 }
 
 public class LlmScenarioSuggestionResult
@@ -92,11 +105,34 @@ public class LlmSuggestedScenario
 
     public string ExpectedBehavior { get; set; }
 
+    /// <summary>Full list of body-contains patterns from LLM (e.g. ["success", "id"]).</summary>
+    public List<string> SuggestedBodyContains { get; set; }
+
+    /// <summary>Full list of body-not-contains patterns from LLM.</summary>
+    public List<string> SuggestedBodyNotContains { get; set; }
+
+    /// <summary>JSONPath assertions from LLM (e.g. {"$.success": "true"}).</summary>
+    public Dictionary<string, string> SuggestedJsonPathChecks { get; set; }
+
+    /// <summary>Header assertions from LLM (e.g. {"Content-Type": "application/json"}).</summary>
+    public Dictionary<string, string> SuggestedHeaderChecks { get; set; }
+
     public string Priority { get; set; }
 
     public List<string> Tags { get; set; } = new List<string>();
 
     public List<N8nTestCaseVariable> Variables { get; set; } = new List<N8nTestCaseVariable>();
+
+    /// <summary>
+    /// SRS requirement UUIDs this scenario covers, as reported by the LLM.
+    /// </summary>
+    public List<Guid> CoveredRequirementIds { get; set; } = new List<Guid>();
+
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
 
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.

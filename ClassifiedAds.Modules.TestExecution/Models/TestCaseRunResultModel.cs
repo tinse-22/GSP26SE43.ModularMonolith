@@ -77,4 +77,27 @@ public class TestCaseRunResultModel
     public bool? JsonPathChecksPassed { get; set; }
 
     public bool? ResponseTimePassed { get; set; }
+
+    // ── Expectation snapshots (for FE Evidence panel) ────────────────────
+    public string ExpectedBodyContains { get; set; }
+
+    public string ExpectedBodyNotContains { get; set; }
+
+    public string ExpectedHeaderChecks { get; set; }
+
+    public string ExpectedJsonPathChecks { get; set; }
+
+    public int? ExpectedMaxResponseTime { get; set; }
+
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
+
+    /// <summary>
+    /// Total number of execution attempts made for this test case across the entire run
+    /// (including retries). This equals 1 when no retry was needed.
+    /// </summary>
+    public int TotalAttempts { get; set; } = 1;
 }

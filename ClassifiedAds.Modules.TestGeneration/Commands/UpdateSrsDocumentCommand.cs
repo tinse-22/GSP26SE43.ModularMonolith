@@ -76,17 +76,20 @@ public class UpdateSrsDocumentCommandHandler : ICommandHandler<UpdateSrsDocument
             }
         }
 
-        // Set SrsDocumentId on the newly-linked suite.
+        // Set SrsDocumentId on the newly-linked suite, validating it belongs to the same project.
         if (doc.TestSuiteId.HasValue)
         {
             var newSuite = await _suiteRepository.FirstOrDefaultAsync(
                 _suiteRepository.GetQueryableSet()
-                    .Where(x => x.Id == doc.TestSuiteId.Value));
-            if (newSuite != null)
+                    .Where(x => x.Id == doc.TestSuiteId.Value && x.ProjectId == command.ProjectId));
+
+            if (newSuite == null)
             {
-                newSuite.SrsDocumentId = command.SrsDocumentId;
-                await _suiteRepository.UpdateAsync(newSuite, cancellationToken);
+                throw new NotFoundException($"TestSuite {doc.TestSuiteId.Value} khong tim thay trong project {command.ProjectId}.");
             }
+
+            newSuite.SrsDocumentId = command.SrsDocumentId;
+            await _suiteRepository.UpdateAsync(newSuite, cancellationToken);
         }
 
         await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);

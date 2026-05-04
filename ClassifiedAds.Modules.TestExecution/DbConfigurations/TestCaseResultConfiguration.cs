@@ -18,6 +18,9 @@ public class TestCaseResultConfiguration : IEntityTypeConfiguration<TestCaseResu
         builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ResolvedUrl).HasMaxLength(2000);
         builder.Property(x => x.ResponseBodyPreview).HasMaxLength(65536);
+        builder.Property(x => x.ExpectationSource);
+        builder.Property(x => x.RequirementCode);
+        builder.Property(x => x.PrimaryRequirementId);
 
         // JSONB columns for complex structures (best practice for PostgreSQL)
         builder.Property(x => x.RequestHeaders).HasColumnType("jsonb");

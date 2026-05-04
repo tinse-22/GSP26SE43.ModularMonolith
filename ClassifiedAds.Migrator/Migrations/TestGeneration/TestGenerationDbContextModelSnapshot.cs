@@ -72,6 +72,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("CoveredRequirementIds")
+                        .HasColumnType("jsonb");
+
                     b.Property<DateTimeOffset>("CreatedDateTime")
                         .HasColumnType("timestamp with time zone");
 
@@ -122,6 +125,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                         .IsConcurrencyToken()
                         .IsRequired()
                         .HasColumnType("bytea");
+
+                    b.Property<Guid?>("SrsDocumentId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SuggestedDescription")
                         .HasColumnType("text");
@@ -795,6 +801,9 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
                     b.Property<DateTimeOffset>("CreatedDateTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ExpectationSource")
+                        .HasColumnType("text");
+
                     b.Property<string>("ExpectedStatus")
                         .HasColumnType("jsonb");
 
@@ -806,6 +815,12 @@ namespace ClassifiedAds.Migrator.Migrations.TestGeneration
 
                     b.Property<int?>("MaxResponseTime")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("PrimaryRequirementId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequirementCode")
+                        .HasColumnType("text");
 
                     b.Property<string>("ResponseSchema")
                         .HasColumnType("jsonb");

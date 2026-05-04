@@ -67,16 +67,12 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         };
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
-        // Build expectation from LLM suggestion
-        var n8nExpectation = new N8nTestCaseExpectation
-        {
-            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
-            BodyContains = scenario.SuggestedTestType == TestType.HappyPath &&
-                           !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
-                ? new List<string> { scenario.ExpectedBehavior }
-                : new List<string>(),
-        };
+        var n8nExpectation = BuildScenarioExpectation(scenario);
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
+        if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
+        {
+            testCase.PrimaryRequirementId = n8nExpectation.PrimaryRequirementId;
+        }
 
         // Build variables from LLM suggestion
         if (scenario.Variables != null)
@@ -132,6 +128,10 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
         var n8nExpectation = DeserializeOrDefault<N8nTestCaseExpectation>(suggestion.SuggestedExpectation);
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
+        if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
+        {
+            testCase.PrimaryRequirementId = n8nExpectation.PrimaryRequirementId;
+        }
 
         var variables = DeserializeOrDefault<List<N8nTestCaseVariable>>(suggestion.SuggestedVariables);
         if (variables != null)
@@ -206,27 +206,36 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
+        var originalExpectation = DeserializeOrDefault<N8nTestCaseExpectation>(suggestion.SuggestedExpectation);
+
         // Use modified expectation if provided, else fall back to original suggestion
         N8nTestCaseExpectation n8nExpectation;
         if (modified.Expectation != null)
         {
             n8nExpectation = new N8nTestCaseExpectation
             {
-                ExpectedStatus = modified.Expectation.ExpectedStatus,
-                BodyContains = modified.Expectation.BodyContains,
-                BodyNotContains = modified.Expectation.BodyNotContains,
-                ResponseSchema = modified.Expectation.ResponseSchema,
-                HeaderChecks = modified.Expectation.HeaderChecks,
-                JsonPathChecks = modified.Expectation.JsonPathChecks,
-                MaxResponseTime = modified.Expectation.MaxResponseTime,
+                ExpectedStatus = modified.Expectation.ExpectedStatus ?? originalExpectation?.ExpectedStatus,
+                BodyContains = modified.Expectation.BodyContains ?? originalExpectation?.BodyContains,
+                BodyNotContains = modified.Expectation.BodyNotContains ?? originalExpectation?.BodyNotContains,
+                ResponseSchema = modified.Expectation.ResponseSchema ?? originalExpectation?.ResponseSchema,
+                HeaderChecks = modified.Expectation.HeaderChecks ?? originalExpectation?.HeaderChecks,
+                JsonPathChecks = modified.Expectation.JsonPathChecks ?? originalExpectation?.JsonPathChecks,
+                MaxResponseTime = modified.Expectation.MaxResponseTime ?? originalExpectation?.MaxResponseTime,
+                ExpectationSource = originalExpectation?.ExpectationSource,
+                RequirementCode = originalExpectation?.RequirementCode,
+                PrimaryRequirementId = originalExpectation?.PrimaryRequirementId,
             };
         }
         else
         {
-            n8nExpectation = DeserializeOrDefault<N8nTestCaseExpectation>(suggestion.SuggestedExpectation);
+            n8nExpectation = originalExpectation;
         }
 
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
+        if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
+        {
+            testCase.PrimaryRequirementId = n8nExpectation.PrimaryRequirementId;
+        }
 
         // Use modified variables if provided, else fall back to original suggestion
         List<N8nTestCaseVariable> variables;
@@ -344,6 +353,40 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         }
 
         return JsonSerializer.Serialize(tags, JsonOpts);
+    }
+
+    private static N8nTestCaseExpectation BuildScenarioExpectation(LlmSuggestedScenario scenario)
+    {
+        if (scenario == null)
+        {
+            return new N8nTestCaseExpectation();
+        }
+
+        var bodyContains = scenario.SuggestedBodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
+            ?? new List<string>();
+
+        if (bodyContains.Count == 0
+            && scenario.SuggestedTestType == TestType.HappyPath
+            && !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior))
+        {
+            bodyContains.Add(scenario.ExpectedBehavior);
+        }
+
+        return new N8nTestCaseExpectation
+        {
+            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
+            BodyContains = bodyContains,
+            BodyNotContains = scenario.SuggestedBodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>(),
+            HeaderChecks = scenario.SuggestedHeaderChecks != null
+                ? new Dictionary<string, string>(scenario.SuggestedHeaderChecks, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            JsonPathChecks = scenario.SuggestedJsonPathChecks != null
+                ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            ExpectationSource = scenario.ExpectationSource,
+            RequirementCode = scenario.RequirementCode,
+            PrimaryRequirementId = scenario.PrimaryRequirementId,
+        };
     }
 
     private static T DeserializeOrDefault<T>(string json)

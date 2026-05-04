@@ -37,6 +37,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly IApiTestOrderGateService _gateService;
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
@@ -47,6 +49,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     public GenerateLlmSuggestionPreviewCommandHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         IApiTestOrderGateService gateService,
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
@@ -56,6 +60,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _gateService = gateService;
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
@@ -131,6 +137,24 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             endpointIds,
             cancellationToken);
 
+        // 6a) Load SRS document + requirements when available so LLM can generate traceable scenarios
+        SrsDocument srsDocument = null;
+        List<SrsRequirement> srsRequirements = new();
+
+        if (suite.SrsDocumentId.HasValue)
+        {
+            srsDocument = await _srsDocumentRepository.FirstOrDefaultAsync(
+                _srsDocumentRepository.GetQueryableSet()
+                    .Where(x => x.Id == suite.SrsDocumentId.Value));
+
+            if (srsDocument != null)
+            {
+                srsRequirements = await _srsRequirementRepository.ToListAsync(
+                    _srsRequirementRepository.GetQueryableSet()
+                        .Where(x => x.SrsDocumentId == srsDocument.Id));
+            }
+        }
+
         var llmContext = new LlmScenarioSuggestionContext
         {
             TestSuiteId = suite.Id,
@@ -142,6 +166,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             EndpointParameterDetails = endpointParameterDetails.ToDictionary(x => x.EndpointId),
             AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
             BypassCache = command.ForceRefresh,
+            SrsDocument = srsDocument,
+            SrsRequirements = srsRequirements,
         };
 
         var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
@@ -215,10 +241,14 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
                 {
                     ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
-                    BodyContains = scenario.SuggestedTestType == TestType.HappyPath &&
-                                   !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
-                        ? new List<string> { scenario.ExpectedBehavior }
-                        : new List<string>(),
+                    BodyContains = scenario.SuggestedBodyContains?.Count > 0
+                        ? scenario.SuggestedBodyContains
+                        : (scenario.SuggestedTestType == TestType.HappyPath && !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
+                            ? new List<string> { scenario.ExpectedBehavior }
+                            : new List<string>()),
+                    BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
+                    JsonPathChecks = NormalizeJsonPathChecks(scenario.SuggestedJsonPathChecks, scenario.SuggestedTestType),
+                    HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
                 }, JsonOpts),
                 SuggestedVariables = scenario.Variables?.Count > 0
                     ? JsonSerializer.Serialize(scenario.Variables, JsonOpts)
@@ -230,6 +260,10 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 ReviewStatus = ReviewStatus.Pending,
                 LlmModel = llmResult.LlmModel,
                 TokensUsed = llmResult.TokensUsed,
+                SrsDocumentId = suite.SrsDocumentId,
+                CoveredRequirementIds = scenario.CoveredRequirementIds?.Count > 0
+                    ? JsonSerializer.Serialize(scenario.CoveredRequirementIds, JsonOpts)
+                    : null,
                 CreatedDateTime = now,
                 RowVersion = Guid.NewGuid().ToByteArray(),
             };
@@ -275,5 +309,37 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             "EndpointsCovered={Covered}, FromCache={FromCache}, ActorUserId={UserId}",
             command.TestSuiteId, suggestions.Count,
             command.Result.EndpointsCovered, llmResult.FromCache, command.CurrentUserId);
+    }
+
+    /// <summary>
+    /// For HappyPath tests, replaces hardcoded email-like values in JSONPath checks with "*" (wildcard).
+    /// This prevents false failures when the test uses a dynamically generated email at runtime
+    /// that differs from the static email the LLM hardcoded in the assertion.
+    /// </summary>
+    private static Dictionary<string, string> NormalizeJsonPathChecks(
+        Dictionary<string, string> checks,
+        TestType testType)
+    {
+        if (checks == null || checks.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        if (testType != TestType.HappyPath)
+        {
+            return checks;
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, value) in checks)
+        {
+            // Replace hardcoded email values with wildcard so dynamic per-run emails don't cause false failures
+            var normalized = !string.IsNullOrWhiteSpace(value) && value.Contains('@') && value != "*"
+                ? "*"
+                : value;
+            result[path] = normalized;
+        }
+
+        return result;
     }
 }

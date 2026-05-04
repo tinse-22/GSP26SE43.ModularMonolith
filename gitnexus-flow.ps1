@@ -1,9 +1,12 @@
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5099'
 $renderUrl = 'https://test-llm-api-testing.onrender.com'
-$specFile = 'D:\GSP26SE43.ModularMonolith\swagger.json'
+$specFile = Join-Path $PSScriptRoot 'swagger.json'
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runTag = "gitnexus-flow-$timestamp"
+
+# Ensure output directory exists
+New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'artifacts\test-results') | Out-Null
 
 $summary = [ordered]@{
   baseUrl = $base
@@ -57,17 +60,46 @@ try {
   Write-Host "Starting stage: $stage"
   if (-not (Test-Path $specFile)) { throw "Spec file not found: $specFile" }
   
-  $uploadUri = "$base/api/projects/$projectId/specifications/upload"
-  $fileItem = Get-Item $specFile
-  $uploadForm = @{
-    uploadMethod = '0'
-    file = $fileItem
-    name = "spec-$timestamp"
-    sourceType = '0'
-    version = '1.0.0'
-    autoActivate = 'true'
-  }
-  $spec = Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $auth -Form $uploadForm
+  $specBytes = [System.IO.File]::ReadAllBytes($specFile)
+  $boundary = [System.Guid]::NewGuid().ToString()
+  $LF = "`r`n"
+  $bodyLines = @(
+    "--$boundary",
+    'Content-Disposition: form-data; name="uploadMethod"',
+    '',
+    '0',
+    "--$boundary",
+    'Content-Disposition: form-data; name="name"',
+    '',
+    "spec-$timestamp",
+    "--$boundary",
+    'Content-Disposition: form-data; name="sourceType"',
+    '',
+    '0',
+    "--$boundary",
+    'Content-Disposition: form-data; name="version"',
+    '',
+    '1.0.0',
+    "--$boundary",
+    'Content-Disposition: form-data; name="autoActivate"',
+    '',
+    'true'
+  )
+  $textPart = ($bodyLines -join $LF) + $LF
+  $textBytes = [System.Text.Encoding]::UTF8.GetBytes($textPart)
+  $fileHeader = "--$boundary$LF" +
+    "Content-Disposition: form-data; name=`"file`"; filename=`"swagger.json`"$LF" +
+    "Content-Type: application/json$LF$LF"
+  $fileHeaderBytes = [System.Text.Encoding]::UTF8.GetBytes($fileHeader)
+  $fileFooter = "$LF--$boundary--$LF"
+  $fileFooterBytes = [System.Text.Encoding]::UTF8.GetBytes($fileFooter)
+  $fullBody = New-Object System.Collections.Generic.List[byte]
+  $fullBody.AddRange($textBytes)
+  $fullBody.AddRange($fileHeaderBytes)
+  $fullBody.AddRange($specBytes)
+  $fullBody.AddRange($fileFooterBytes)
+  $uploadHeaders = @{ Authorization = "Bearer $token"; 'Content-Type' = "multipart/form-data; boundary=$boundary" }
+  $spec = Invoke-RestMethod -Method Post -Uri "$base/api/projects/$projectId/specifications/upload" -Headers $uploadHeaders -Body $fullBody.ToArray() -TimeoutSec 120
   $specId = [string]$spec.id
   Write-Host "[OK] SPEC uploaded id=$specId status=$($spec.parseStatus)"
 
@@ -123,4 +155,4 @@ catch {
   $summary.failedStage = $stage
 }
 
-$summary | ConvertTo-Json | Set-Content -Path "artifacts\test-results\$runTag.json"
+$summary | ConvertTo-Json | Set-Content -Path (Join-Path $PSScriptRoot "artifacts\test-results\$runTag.json")

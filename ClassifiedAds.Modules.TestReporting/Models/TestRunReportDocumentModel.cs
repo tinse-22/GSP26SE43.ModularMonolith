@@ -12,6 +12,8 @@ public class TestRunReportDocumentModel
 
     public Guid ProjectId { get; set; }
 
+    public string ProjectName { get; set; }
+
     public Guid? ApiSpecId { get; set; }
 
     public string SuiteName { get; set; }

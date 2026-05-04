@@ -62,6 +62,7 @@ public class TestRunsController : ControllerBase
                 .Where(id => id != Guid.Empty)
                 .Distinct()
                 .ToList(),
+            RecordRun = request?.RecordRun ?? true,
         };
 
         await _dispatcher.DispatchAsync(command);
@@ -76,7 +77,8 @@ public class TestRunsController : ControllerBase
         Guid suiteId,
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 20,
-        [FromQuery] string status = null)
+        [FromQuery] string status = null,
+        [FromQuery] bool includeEphemeral = false)
     {
         TestRunStatus? statusFilter = null;
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<TestRunStatus>(status, true, out var parsed))
@@ -91,6 +93,7 @@ public class TestRunsController : ControllerBase
             PageNumber = pageNumber,
             PageSize = pageSize,
             Status = statusFilter,
+            IncludeEphemeral = includeEphemeral,
         });
 
         return Ok(result);

@@ -1,0 +1,407 @@
+{
+  "_meta": {
+    "title": "FE Handoff: AI Order Proposal → Re-order → Approve → LLM Generate",
+    "scope": "Order proposal re-order step và test-case re-order sau khi materialize",
+    "date": "2026-05-02",
+    "version": "1.2.0",
+    "note": "Chỉ liệt kê params BE cần. Không gợi ý code FE.",
+    "changelog_v1.1.0": "[BUG FIX] GetTestCasesByTestSuite query đã được fix: giờ ORDER BY CustomOrderIndex khi IsOrderCustomized=true, thay vì luôn dùng OrderIndex. Trước đây PATCH /reorder ghi DB thành công nhưng GET vẫn trả về thứ tự cũ — FE không thấy thay đổi gì. Fix đã merge.",
+    "changelog_v1.2.0": "[IMPLEMENT] Server-side enforcement cho PATCH /reorder: (1) Completeness check — testCaseIds PHẢI chứa TẤT CẢ test case non-deleted của suite, không thể gửi subset; (2) Duplicate check — không được có ID trùng lặp trong list; (3) Chỉ load non-deleted test cases thay vì tất cả. Root cause của 'run thứ tự cũ': FE gửi subset → test cases còn lại giữ CustomOrderIndex cũ → conflict index → thứ tự không xác định. Fix này ngăn tình trạng đó xảy ra."
+  },
+
+  "flow_overview": {
+    "description": "Full flow từ khi AI propose order đến khi LLM suggestions được duyệt",
+    "steps": [
+      "STEP-1: POST /api/test-suites/{suiteId}/order-proposals (AI propose)",
+      "STEP-2: [OPTIONAL] PUT /api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder (USER RE-ORDER)",
+      "STEP-3: POST /api/test-suites/{suiteId}/order-proposals/{proposalId}/approve (Approve)",
+      "STEP-4: POST /api/test-suites/{suiteId}/llm-suggestions/generate (Generate LLM)",
+      "STEP-5: GET /api/test-suites/{suiteId}/llm-suggestions (List suggestions)",
+      "STEP-6a: PUT /api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review (Review single)",
+      "STEP-6b: POST /api/test-suites/{suiteId}/llm-suggestions/bulk-review (Bulk review)",
+      "STEP-7: [OPTIONAL] PATCH /api/test-suites/{suiteId}/test-cases/reorder (Re-order materialized test cases)"
+    ],
+    "critical_note": "rowVersion thay đổi sau STEP-2 (reorder). FE PHẢI dùng rowVersion từ response của STEP-2, KHÔNG dùng rowVersion từ STEP-1 khi gọi STEP-3 approve."
+  },
+
+  "step1_propose": {
+    "description": "AI đề xuất thứ tự chạy các endpoint. Đây là bước tạo proposal trước khi user review.",
+    "method": "POST",
+    "url": "/api/test-suites/{suiteId}/order-proposals",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid — ID của TestSuite"
+    },
+    "request_body": {
+      "specificationId": "guid [REQUIRED] — ID của ApiSpecification đã upload",
+      "selectedEndpointIds": "guid[] [OPTIONAL] — Subset endpoints muốn propose. Bỏ trống = tất cả endpoints",
+      "source": "string [OPTIONAL] — Enum: 'Ai' | 'Manual'. Default: 'Ai'",
+      "llmModel": "string [OPTIONAL, max 100] — Tên LLM model muốn dùng",
+      "reasoningNote": "string [OPTIONAL, max 2000] — Ghi chú về lý do propose"
+    },
+    "response_201": {
+      "proposalId": "guid — ID của proposal vừa tạo. Dùng ở STEP-2 và STEP-3",
+      "testSuiteId": "guid",
+      "proposalNumber": "int — Số thứ tự proposal trong suite",
+      "status": "string — Enum: 'Pending' | 'Approved' | 'Rejected'",
+      "source": "string — Enum: 'Ai' | 'Manual'",
+      "proposedOrder": [
+        {
+          "endpointId": "guid",
+          "httpMethod": "string — GET | POST | PUT | DELETE | PATCH",
+          "path": "string — VD: /api/users/{id}",
+          "orderIndex": "int — 0-based thứ tự do AI đề xuất",
+          "dependsOnEndpointIds": "guid[] — Các endpoint phải chạy trước",
+          "reasonCodes": "string[] — Lý do AI sắp xếp",
+          "isAuthRelated": "bool"
+        }
+      ],
+      "userModifiedOrder": "null nếu chưa re-order",
+      "appliedOrder": "null nếu chưa approve",
+      "aiReasoning": "string | null — Giải thích của AI",
+      "rowVersion": "string [BASE64] — Bắt buộc dùng cho STEP-2 hoặc STEP-3"
+    },
+    "error_codes": {
+      "400": "specificationId thiếu hoặc suite không hợp lệ",
+      "404": "suiteId không tồn tại"
+    }
+  },
+
+  "step2_reorder": {
+    "description": "User xem proposedOrder từ STEP-1 và kéo thả để đổi thứ tự. Đây là bước RE-ORDER duy nhất trước Approve.",
+    "method": "PUT",
+    "url": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/reorder",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid — Phải khớp suiteId của proposal",
+      "proposalId": "guid — Lấy từ response.proposalId của STEP-1"
+    },
+    "request_body": {
+      "rowVersion": "string [REQUIRED, BASE64] — Lấy từ response.rowVersion của STEP-1 (hoặc lần reorder trước nếu gọi nhiều lần)",
+      "orderedEndpointIds": "guid[] [REQUIRED] — Danh sách endpointId theo thứ tự MỚI do user sắp xếp. Phải chứa đủ tất cả endpointId trong proposedOrder",
+      "reviewNotes": "string [OPTIONAL, max 4000] — Ghi chú lý do re-order"
+    },
+    "response_200": {
+      "proposalId": "guid",
+      "testSuiteId": "guid",
+      "proposalNumber": "int",
+      "status": "string — Vẫn là 'Pending'",
+      "source": "string",
+      "proposedOrder": "List<ApiOrderItemModel> — Order gốc do AI đề xuất (KHÔNG thay đổi)",
+      "userModifiedOrder": [
+        {
+          "endpointId": "guid",
+          "httpMethod": "string",
+          "path": "string",
+          "orderIndex": "int — Thứ tự mới sau khi user re-order",
+          "dependsOnEndpointIds": "guid[]",
+          "reasonCodes": "string[]",
+          "isAuthRelated": "bool"
+        }
+      ],
+      "appliedOrder": "null — Chưa approve",
+      "reviewNotes": "string | null",
+      "rowVersion": "string [BASE64] — ⚠️ ĐÃ THAY ĐỔI. Dùng cái này cho STEP-3, KHÔNG dùng rowVersion cũ từ STEP-1"
+    },
+    "error_codes": {
+      "400": "rowVersion thiếu | orderedEndpointIds thiếu hoặc không khớp danh sách endpoint | proposal không ở trạng thái Pending",
+      "404": "proposalId không tồn tại trong suiteId đã cho",
+      "409": "rowVersion cũ — proposal đã bị thay đổi bởi request khác (Optimistic Concurrency). FE cần GET lại proposal để lấy rowVersion mới"
+    },
+    "notes": [
+      "STEP-2 là OPTIONAL — nếu user đồng ý với order AI đề xuất, có thể bỏ qua và sang STEP-3 trực tiếp",
+      "Có thể gọi STEP-2 nhiều lần. Mỗi lần gọi trả về rowVersion mới",
+      "orderedEndpointIds phải chứa ĐÚNG các endpointId trong proposedOrder, không thêm không bớt"
+    ]
+  },
+
+  "step3_approve": {
+    "description": "User approve proposal. Sau bước này order trở thành gate bắt buộc trước khi generate LLM.",
+    "method": "POST",
+    "url": "/api/test-suites/{suiteId}/order-proposals/{proposalId}/approve",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid",
+      "proposalId": "guid — Lấy từ STEP-1 response.proposalId"
+    },
+    "request_body": {
+      "rowVersion": "string [REQUIRED, BASE64] — Lấy từ response.rowVersion của STEP-2 nếu đã reorder, hoặc STEP-1 nếu bỏ qua re-order",
+      "reviewNotes": "string [OPTIONAL, max 4000]"
+    },
+    "response_200": {
+      "proposalId": "guid",
+      "testSuiteId": "guid",
+      "status": "string — 'Approved'",
+      "appliedOrder": [
+        {
+          "endpointId": "guid",
+          "httpMethod": "string",
+          "path": "string",
+          "orderIndex": "int",
+          "dependsOnEndpointIds": "guid[]",
+          "reasonCodes": "string[]",
+          "isAuthRelated": "bool"
+        }
+      ],
+      "reviewedById": "guid",
+      "reviewedAt": "datetime ISO8601",
+      "appliedAt": "datetime ISO8601",
+      "rowVersion": "string [BASE64]"
+    },
+    "error_codes": {
+      "400": "rowVersion thiếu | proposal không ở trạng thái Pending",
+      "404": "proposalId không tồn tại",
+      "409": "Optimistic Concurrency — rowVersion cũ"
+    }
+  },
+
+  "step4_generate_llm": {
+    "description": "Sau khi order được approve, FE gọi để AI sinh LLM suggestions (boundary/negative test cases). Bắt buộc đã có approved order mới gọi được.",
+    "method": "POST",
+    "url": "/api/test-suites/{suiteId}/llm-suggestions/generate",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid"
+    },
+    "request_body": {
+      "specificationId": "guid [REQUIRED] — ID của ApiSpecification (cùng spec đã dùng ở STEP-1)",
+      "forceRefresh": "bool [REQUIRED] — true: xóa pending suggestions cũ và tạo mới; false: dùng lại nếu đã có pending",
+      "algorithmProfile": {
+        "_note": "OPTIONAL — Bỏ qua để dùng default (tất cả enabled)",
+        "useObservationConfirmationPrompting": "bool — Default: true",
+        "useDependencyAwareOrdering": "bool — Default: true",
+        "useSchemaRelationshipAnalysis": "bool — Default: true",
+        "useSemanticTokenMatching": "bool — Default: true",
+        "useFeedbackLoopContext": "bool — Default: true"
+      }
+    },
+    "response_201": {
+      "testSuiteId": "guid",
+      "totalSuggestions": "int — Tổng số suggestions được tạo",
+      "endpointsCovered": "int — Số endpoint đã được phủ",
+      "llmModel": "string",
+      "llmTokensUsed": "int | null",
+      "fromCache": "bool — true nếu trả về từ cache",
+      "generatedAt": "datetime ISO8601",
+      "suggestions": "LlmSuggestionModel[] — Danh sách suggestions với status Pending"
+    },
+    "error_codes": {
+      "400": "specificationId thiếu | chưa có approved order cho suite (order gate chưa pass)",
+      "404": "suiteId không tồn tại",
+      "409": "forceRefresh=false nhưng đang có pending suggestions chưa review hết"
+    }
+  },
+
+  "step5_list_suggestions": {
+    "description": "List tất cả LLM suggestions để user review.",
+    "method": "GET",
+    "url": "/api/test-suites/{suiteId}/llm-suggestions",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid"
+    },
+    "query_params": {
+      "reviewStatus": "string [OPTIONAL] — Filter: 'Pending' | 'Approved' | 'Rejected' | 'ModifiedAndApproved' | 'Superseded'",
+      "testType": "string [OPTIONAL] — Filter: 'HappyPath' | 'Boundary' | 'Negative' | ...",
+      "endpointId": "guid [OPTIONAL] — Filter theo endpoint cụ thể",
+      "includeDeleted": "bool [OPTIONAL] — Default: false"
+    },
+    "response_200": "LlmSuggestionModel[] — Xem schema ở section suggestion_model"
+  },
+
+  "step6a_review_single": {
+    "description": "Review 1 suggestion: approve / reject / modify-and-approve.",
+    "method": "PUT",
+    "url": "/api/test-suites/{suiteId}/llm-suggestions/{suggestionId}/review",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid",
+      "suggestionId": "guid — Lấy từ STEP-5 response[].id"
+    },
+    "request_body": {
+      "action": "string [REQUIRED] — Enum: 'Approve' | 'Reject' | 'Modify'",
+      "rowVersion": "string [REQUIRED, BASE64] — Lấy từ LlmSuggestionModel.rowVersion",
+      "reviewNotes": "string [OPTIONAL, REQUIRED khi action='Reject'] — Lý do reject",
+      "modifiedContent": {
+        "_note": "REQUIRED khi action='Modify', bỏ qua khi Approve/Reject",
+        "name": "string [OPTIONAL]",
+        "description": "string [OPTIONAL]",
+        "testType": "string [OPTIONAL]",
+        "priority": "string [OPTIONAL]",
+        "tags": "string[] [OPTIONAL]",
+        "request": {
+          "httpMethod": "string [OPTIONAL]",
+          "url": "string [OPTIONAL]",
+          "headers": "object {key: string, value: string} [OPTIONAL]",
+          "pathParams": "object {key: string, value: string} [OPTIONAL]",
+          "queryParams": "object {key: string, value: string} [OPTIONAL]",
+          "body": "string [OPTIONAL]"
+        },
+        "expectation": {
+          "expectedStatus": "int[] [OPTIONAL] — VD: [200, 201]",
+          "bodyContains": "string[] [OPTIONAL]",
+          "bodyNotContains": "string[] [OPTIONAL]",
+          "responseSchema": "string [OPTIONAL] — JSON Schema string",
+          "headerChecks": "object {header: value} [OPTIONAL]",
+          "jsonPathChecks": "object {jsonpath: expectedValue} [OPTIONAL]",
+          "maxResponseTime": "int [OPTIONAL] — milliseconds"
+        },
+        "variables": [
+          {
+            "variableName": "string",
+            "extractFrom": "string — 'response_body' | 'response_header' | ...",
+            "jsonPath": "string [OPTIONAL]",
+            "headerName": "string [OPTIONAL]",
+            "regex": "string [OPTIONAL]",
+            "defaultValue": "string [OPTIONAL]"
+          }
+        ]
+      }
+    },
+    "response_200": "LlmSuggestionModel — Suggestion sau khi review. Nếu action=Approve/Modify: appliedTestCaseId được set",
+    "error_codes": {
+      "400": "action không hợp lệ | rowVersion thiếu | Reject không có reviewNotes | Modify không có modifiedContent",
+      "404": "suggestionId không tồn tại trong suiteId",
+      "409": "rowVersion cũ — suggestion đã bị thay đổi"
+    }
+  },
+
+  "step6b_bulk_review": {
+    "description": "Bulk approve hoặc bulk reject tất cả pending suggestions (có filter).",
+    "method": "POST",
+    "url": "/api/test-suites/{suiteId}/llm-suggestions/bulk-review",
+    "auth": "Bearer JWT",
+    "path_params": {
+      "suiteId": "guid"
+    },
+    "request_body": {
+      "action": "string [REQUIRED, max 20] — Enum: 'Approve' | 'Reject'",
+      "reviewNotes": "string [OPTIONAL, max 4000]",
+      "filterBySuggestionType": "string [OPTIONAL, max 50] — Filter chỉ bulk review loại này",
+      "filterByTestType": "string [OPTIONAL, max 50] — Filter chỉ bulk review test type này",
+      "filterByEndpointId": "guid [OPTIONAL] — Filter chỉ bulk review endpoint này"
+    },
+    "response_200": {
+      "testSuiteId": "guid",
+      "action": "string",
+      "matchedCount": "int — Số suggestions khớp filter",
+      "processedCount": "int — Số suggestions đã xử lý",
+      "materializedCount": "int — Số TestCase được tạo (chỉ > 0 nếu action=Approve)",
+      "reviewedAt": "datetime ISO8601"
+    }
+  },
+
+  "step7_reorder_testcases": {
+    "description": "Sau khi suggestions được approve và materialize thành TestCase, user có thể re-order test cases.",
+    "method": "PATCH",
+    "url": "/api/test-suites/{suiteId}/test-cases/reorder",
+    "auth": "Bearer JWT",
+    "required_permission": "Permission:UpdateTestCase",
+    "path_params": {
+      "suiteId": "guid"
+    },
+    "request_body": {
+      "testCaseIds": "guid[] [REQUIRED] — Danh sách testCaseId theo thứ tự MỚI muốn hiển thị. Phải chứa ĐỦ tất cả testCaseId active của suite (không thêm, không bớt)"
+    },
+    "response_200": "200 OK — No body",
+    "error_codes": {
+      "400": "testCaseIds thiếu | có ID không thuộc suite | THIẾU test case (không đủ tất cả non-deleted test cases của suite) | có ID trùng lặp"
+    },
+    "behavior_after_call": [
+      "Mỗi TestCase trong list được set CustomOrderIndex = vị_trí_trong_mảng (0-based) và IsOrderCustomized = true",
+      "[v1.1.0 FIX] GET /api/test-suites/{suiteId}/test-cases sau đó sẽ trả về list đã được sort theo CustomOrderIndex",
+      "FE PHẢI gọi GET lại sau PATCH để lấy danh sách với thứ tự mới"
+    ],
+    "fe_notes": [
+      "Trước v1.1.0: PATCH ghi DB thành công (200 OK) nhưng GET vẫn trả về thứ tự cũ vì query dùng OrderIndex thay vì CustomOrderIndex — đây là bug đã fix",
+      "Sau v1.1.0: GET trả về list sort theo effective order: CustomOrderIndex khi IsOrderCustomized=true, OrderIndex khi IsOrderCustomized=false",
+      "Thứ tự chạy TestRun: nếu bất kỳ test case nào có IsOrderCustomized=true, hệ thống dùng CustomOrderIndex làm baseline cho toàn bộ suite. Sau đó dependency topology sort vẫn chạy và CÓ THỂ override vị trí của một số test case nếu có dependency constraint. Đây là by-design.",
+      "[WARNING cho FE] Nếu user re-order xong mà run test vẫn thấy thứ tự cũ — rất có thể là do dependency topology override (test case B phụ thuộc A → A vẫn chạy trước B dù user put B first). FE nên hiển thị warning khi user drag-drop test case vào vị trí trước một test case mà nó phụ thuộc vào.",
+      "[v1.2.0 BREAKING] testCaseIds trong PATCH /reorder bây giờ PHẢI chứa TẤT CẢ test case non-deleted của suite (server enforce). Nếu gửi thiếu → 400 Bad Request. Nếu gửi ID trùng → 400 Bad Request. FE phải GET /test-cases?includeDisabled=true trước khi build reorder list để lấy đúng toàn bộ IDs."
+    ]
+  },
+
+  "suggestion_model": {
+    "_description": "Schema của LlmSuggestionModel — dùng cho STEP-5 response và STEP-6a response",
+    "id": "guid",
+    "testSuiteId": "guid",
+    "endpointId": "guid | null",
+    "cacheKey": "string",
+    "displayOrder": "int — Thứ tự hiển thị suggestion trong danh sách",
+    "suggestionType": "string — Enum: 'HappyPath' | 'Boundary' | 'Negative' | 'Security' | ...",
+    "testType": "string — Enum: 'HappyPath' | 'Boundary' | 'Negative' | ...",
+    "suggestedName": "string",
+    "suggestedDescription": "string",
+    "suggestedRequest": "string — JSON serialized request",
+    "suggestedExpectation": "string — JSON serialized expectation",
+    "suggestedVariables": "SuggestionVariableModel[]",
+    "suggestedTags": "string[]",
+    "priority": "string — Enum: 'Low' | 'Medium' | 'High' | 'Critical'",
+    "reviewStatus": "string — Enum: 'Pending' | 'Approved' | 'Rejected' | 'ModifiedAndApproved' | 'Superseded'",
+    "reviewedById": "guid | null",
+    "reviewedAt": "datetime | null",
+    "reviewNotes": "string | null",
+    "modifiedContent": "string | null — JSON của EditableLlmSuggestionInput nếu đã modify",
+    "appliedTestCaseId": "guid | null — ID TestCase được tạo ra khi Approve/Modify",
+    "llmModel": "string",
+    "tokensUsed": "int | null",
+    "isDeleted": "bool",
+    "deletedAt": "datetime | null",
+    "createdDateTime": "datetime",
+    "updatedDateTime": "datetime | null",
+    "rowVersion": "string [BASE64] — Dùng cho STEP-6a review"
+  },
+
+  "rowversion_chain": {
+    "_title": "Chuỗi rowVersion qua các bước — FE PHẢI theo đúng chain này",
+    "steps": [
+      {
+        "step": "STEP-1 Propose response",
+        "field": "response.rowVersion",
+        "use_for": "STEP-2 reorder request.rowVersion (nếu có reorder) HOẶC STEP-3 approve request.rowVersion (nếu bỏ qua reorder)"
+      },
+      {
+        "step": "STEP-2 Reorder response",
+        "field": "response.rowVersion",
+        "use_for": "STEP-3 approve request.rowVersion — BẮT BUỘC dùng cái này nếu đã reorder"
+      },
+      {
+        "step": "STEP-5 List/Get Suggestion",
+        "field": "suggestion.rowVersion (per item)",
+        "use_for": "STEP-6a review request.rowVersion"
+      }
+    ]
+  },
+
+  "gate_condition": {
+    "_title": "Điều kiện gate để STEP-4 generate LLM chạy được",
+    "conditions": [
+      "Suite phải tồn tại và không bị archive",
+      "Phải có ít nhất 1 order proposal ở trạng thái 'Approved' cho suiteId đó",
+      "Đó là lý do STEP-3 phải chạy trước STEP-4"
+    ]
+  },
+
+  "testcase_effective_order": {
+    "_title": "Cách FE đọc thứ tự test cases từ GET response (v1.1.0+)",
+    "rule": "BE đã sort response theo effective order. FE dùng thứ tự mảng trả về trực tiếp.",
+    "effective_order_logic": "effectiveOrderIndex = IsOrderCustomized ? CustomOrderIndex : OrderIndex",
+    "fields_per_item": {
+      "orderIndex": "int — Thứ tự gốc do AI hoặc system assign khi tạo TestCase. Không thay đổi sau reorder.",
+      "customOrderIndex": "int | null — Thứ tự do user tùy chỉnh. Chỉ có giá trị khi IsOrderCustomized=true.",
+      "isOrderCustomized": "bool — true nếu user đã reorder TestCase này ít nhất 1 lần."
+    },
+    "fe_display_hint": [
+      "Dùng mảng response để render list — thứ tự mảng = thứ tự hiển thị đúng",
+      "Có thể dùng isOrderCustomized để hiển thị icon 'đã tùy chỉnh' nếu muốn",
+      "Khi drag-drop xong: gửi PATCH /reorder với toàn bộ testCaseIds theo thứ tự mới, rồi GET lại"
+    ],
+    "invariant": "testCaseIds trong PATCH /reorder phải chứa TẤT CẢ test cases của suite (kể cả những cái không thay đổi vị trí)",
+    "execution_order_caveat": {
+      "_title": "Thứ tự thực thi khi run test (TestRun) có thể khác với thứ tự hiển thị",
+      "reason": "Dependency topology sort chạy sau khi áp CustomOrderIndex. Nếu test case A phụ thuộc B, B vẫn chạy trước A dù user đặt A trước B.",
+      "auto_expand": "Khi FE gọi POST /test-runs với selectedTestCaseIds là subset, BE tự động BFS-expand để include tất cả dependencies còn thiếu. FE KHÔNG cần tự thêm dependencies vào list.",
+      "ui_recommendation": "FE nên hiển thị warning/indicator khi user đặt test case vào vị trí 'sai' so với dependency constraint của nó (vd: đặt B trước A nhưng B phụ thuộc A). Nếu không, user sẽ thấy re-order 'không có tác dụng' khi chạy."
+    }
+  }
+}

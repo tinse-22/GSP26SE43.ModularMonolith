@@ -15,6 +15,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -45,6 +46,10 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
     private readonly ILogger<TriggerSrsAnalysisCommandHandler> _logger;
 
     private const string WebhookName = "analyze-srs";
+
+    private static readonly Regex StatusCodeRegex = new(@"\b([1-5]\d\d)\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex MinLengthRegex = new(@"(?:min(?:imum)?\s*length|min\s*length|at\s*least|>=?)\s*(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex MaxLengthRegex = new(@"(?:max(?:imum)?\s*length|at\s*most|<=?)\s*(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public TriggerSrsAnalysisCommandHandler(
         IRepository<SrsDocument, Guid> srsDocumentRepository,
@@ -233,6 +238,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         {
             var matchedEndpoint = MatchEndpoint(candidate, endpoints, index);
             var ambiguityNotes = BuildAmbiguityNotes(candidate);
+            var constraint = BuildStructuredConstraint(candidate);
 
             return new N8nSrsRequirementResult
             {
@@ -240,14 +246,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
                 Title = Truncate(candidate, 120),
                 Description = candidate,
                 Type = InferRequirementType(candidate),
-                TestableConstraints = JsonSerializer.Serialize(new[]
-                {
-                    new Dictionary<string, string>
-                    {
-                        ["constraint"] = candidate,
-                        ["priority"] = InferPriority(candidate),
-                    },
-                }),
+                TestableConstraints = JsonSerializer.Serialize(new[] { constraint }),
                 Assumptions = JsonSerializer.Serialize(BuildAssumptions(candidate, matchedEndpoint)),
                 Ambiguities = JsonSerializer.Serialize(ambiguityNotes),
                 ConfidenceScore = ambiguityNotes.Count == 0 ? 0.78f : 0.62f,
@@ -259,10 +258,8 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
     private static List<N8nSrsClarificationQuestion> BuildLocalClarifications(
         IReadOnlyList<N8nSrsRequirementResult> requirements)
     {
-        var target = requirements.FirstOrDefault(x => ContainsIgnoreCase(x.Description, "register")
-            || ContainsIgnoreCase(x.Description, "create account")
-            || ContainsIgnoreCase(x.Description, "tai khoan"))
-            ?? requirements.FirstOrDefault();
+        var target = requirements.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Description)
+            && !HasActionableConstraint(x.Description));
 
         if (target == null)
         {
@@ -274,13 +271,14 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
             new()
             {
                 RequirementCode = target.RequirementCode,
-                AmbiguitySource = "Can xac nhan thong tin test account can dung khi tao tai khoan.",
-                Question = "Khi tao tai khoan trong SUT, co phai dung email tinvtse@gmail.com va password User@123 khong?",
+                AmbiguitySource = "Local fallback found requirement wording without a concrete expected outcome.",
+                Question = "Requirement này cần status code hoặc điều kiện pass/fail cụ thể nào để sinh expected chính xác?",
                 IsCritical = true,
                 SuggestedOptions = JsonSerializer.Serialize(new[]
                 {
-                    "Su dung tinvtse@gmail.com / User@123",
-                    "Dung thong tin khac do nguoi dung cung cap",
+                    "Bổ sung HTTP status mong đợi",
+                    "Bổ sung field/validation cụ thể cần kiểm tra",
+                    "Cho phép chỉ suy ra từ Swagger nếu SRS chưa nói rõ",
                 }),
             },
         };
@@ -290,13 +288,30 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         string rawContent,
         IReadOnlyList<N8nSrsEndpointRef> endpoints)
     {
-        var candidates = (rawContent ?? string.Empty)
+        var lines = (rawContent ?? string.Empty)
             .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(NormalizeCandidate)
-            .Where(x => x.Length >= 20)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(6)
+            .Where(x => x.Length >= 12)
             .ToList();
+
+        var candidates = new List<string>();
+        foreach (var line in lines)
+        {
+            if (!LooksLikeRequirementCandidate(line))
+            {
+                continue;
+            }
+
+            if (!candidates.Contains(line, StringComparer.OrdinalIgnoreCase))
+            {
+                candidates.Add(line);
+            }
+
+            if (candidates.Count >= 12)
+            {
+                break;
+            }
+        }
 
         if (candidates.Count > 0)
         {
@@ -307,20 +322,20 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
         {
             return endpoints
                 .Take(4)
-                .Select(x => $"{x.Method} {x.Path} phai xu ly happy path, validation, va authorization dung theo hop dong API.")
+                .Select(x => $"{x.Method} {x.Path} must follow happy path, validation, and authorization rules defined by the API contract.")
                 .ToList();
         }
 
         return new List<string>
         {
-            "He thong phai thuc thi dung cac luong nghiep vu chinh va xu ly loi theo noi dung SRS da cung cap.",
+            "The system must enforce business flows and validation outcomes described in the SRS.",
         };
     }
 
     private static string NormalizeCandidate(string line)
     {
         var value = (line ?? string.Empty).Trim();
-        value = value.TrimStart('-', '*', '#', ' ', '\t');
+        value = value.TrimStart('-', '*', '#', ' ', '\t', '|');
 
         while (value.Length > 0 && char.IsDigit(value[0]))
         {
@@ -329,6 +344,170 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
 
         value = value.TrimStart('.', ')', ':', '-', ' ');
         return value.Trim();
+    }
+
+    private static bool LooksLikeRequirementCandidate(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        if (line.StartsWith("```", StringComparison.Ordinal)
+            || line.StartsWith("---", StringComparison.Ordinal)
+            || line.StartsWith("===", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return line.Contains("must", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("should", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("required", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("validation", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("invalid", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("forbidden", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("format", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("minimum", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("maximum", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("at least", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("at most", StringComparison.OrdinalIgnoreCase)
+            || line.Contains(">=", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("<=", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("phải", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("không", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("tối thiểu", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("tối đa", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("bắt buộc", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, string> BuildStructuredConstraint(string candidate)
+    {
+        var expectedOutcome = ExtractExpectedOutcome(candidate);
+        return new Dictionary<string, string>
+        {
+            ["constraint"] = candidate,
+            ["expectedOutcome"] = expectedOutcome,
+            ["priority"] = InferPriority(candidate),
+            ["field"] = InferFieldName(candidate),
+            ["ruleType"] = InferRuleType(candidate),
+        };
+    }
+
+    private static string ExtractExpectedOutcome(string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return null;
+        }
+
+        var status = StatusCodeRegex.Match(candidate);
+        if (status.Success)
+        {
+            return status.Groups[1].Value;
+        }
+
+        var lower = candidate.ToLowerInvariant();
+        if (lower.Contains("duplicate") || lower.Contains("already exists") || lower.Contains("conflict"))
+        {
+            return "409";
+        }
+
+        if (lower.Contains("unauthorized"))
+        {
+            return "401";
+        }
+
+        if (lower.Contains("forbidden"))
+        {
+            return "403";
+        }
+
+        if (lower.Contains("not found"))
+        {
+            return "404";
+        }
+
+        if (lower.Contains("invalid")
+            || lower.Contains("required")
+            || lower.Contains("validation")
+            || lower.Contains("minlength")
+            || lower.Contains("maxLength")
+            || lower.Contains("format")
+            || lower.Contains("tối thiểu")
+            || lower.Contains("tối đa")
+            || lower.Contains("bắt buộc"))
+        {
+            return "400";
+        }
+
+        if (lower.Contains("success")
+            || lower.Contains("created")
+            || lower.Contains("registered")
+            || lower.Contains("login"))
+        {
+            return "200/201";
+        }
+
+        return null;
+    }
+
+    private static string InferFieldName(string candidate)
+    {
+        var lower = candidate?.ToLowerInvariant() ?? string.Empty;
+        foreach (var field in new[] { "email", "password", "username", "name", "price", "stock", "categoryid", "category", "token" })
+        {
+            if (lower.Contains(field, StringComparison.OrdinalIgnoreCase))
+            {
+                return field == "categoryid" ? "categoryId" : field;
+            }
+        }
+
+        return "request";
+    }
+
+    private static string InferRuleType(string candidate)
+    {
+        var lower = candidate?.ToLowerInvariant() ?? string.Empty;
+        if (lower.Contains("duplicate") || lower.Contains("already exists") || lower.Contains("unique"))
+        {
+            return "uniqueness";
+        }
+
+        if (lower.Contains("format") || lower.Contains("email"))
+        {
+            return "format";
+        }
+
+        if (MinLengthRegex.IsMatch(lower) || MaxLengthRegex.IsMatch(lower) || lower.Contains("minimum") || lower.Contains("maximum") || lower.Contains("tối thiểu") || lower.Contains("tối đa"))
+        {
+            return "boundary";
+        }
+
+        if (lower.Contains("required") || lower.Contains("bắt buộc") || lower.Contains("missing"))
+        {
+            return "required";
+        }
+
+        if (lower.Contains("unauthorized") || lower.Contains("forbidden") || lower.Contains("authorization") || lower.Contains("token"))
+        {
+            return "authorization";
+        }
+
+        return "behavior";
+    }
+
+    private static bool HasActionableConstraint(string candidate)
+    {
+        return !string.IsNullOrWhiteSpace(ExtractExpectedOutcome(candidate))
+            || MinLengthRegex.IsMatch(candidate ?? string.Empty)
+            || MaxLengthRegex.IsMatch(candidate ?? string.Empty)
+            || candidate?.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true
+            || candidate?.Contains("unique", StringComparison.OrdinalIgnoreCase) == true
+            || candidate?.Contains("required", StringComparison.OrdinalIgnoreCase) == true
+            || candidate?.Contains("format", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static List<string> BuildAssumptions(string candidate, N8nSrsEndpointRef endpoint)
@@ -345,6 +524,11 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
             assumptions.Add("Authentication endpoints use the configured runtime base URL.");
         }
 
+        if (!HasActionableConstraint(candidate))
+        {
+            assumptions.Add("Expected outcome may need clarification if Swagger does not define it clearly.");
+        }
+
         return assumptions;
     }
 
@@ -352,11 +536,9 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
     {
         var notes = new List<string>();
 
-        if (ContainsIgnoreCase(candidate, "register")
-            || ContainsIgnoreCase(candidate, "create account")
-            || ContainsIgnoreCase(candidate, "tai khoan"))
+        if (!HasActionableConstraint(candidate))
         {
-            notes.Add("Can xac nhan bo thong tin test account can dung cho luong tao tai khoan.");
+            notes.Add("Missing explicit pass/fail outcome in fallback requirement text.");
         }
 
         return notes;

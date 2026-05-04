@@ -44,7 +44,10 @@ public class GetTestCaseDetailQueryHandler : IQueryHandler<GetTestCaseDetailQuer
                 .Include(x => x.Request)
                 .Include(x => x.Expectation)
                 .Include(x => x.Variables)
-                .Include(x => x.Dependencies));
+                .Include(x => x.Dependencies)
+                .Include(x => x.RequirementLinks)
+                    .ThenInclude(rl => rl.SrsRequirement)
+                        .ThenInclude(r => r.SrsDocument));
 
         if (testCase == null)
         {

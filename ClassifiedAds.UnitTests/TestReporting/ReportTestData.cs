@@ -354,6 +354,7 @@ internal static class ReportTestData
         {
             TestSuiteId = SuiteId,
             ProjectId = ProjectId,
+            ProjectName = ProjectName,
             ApiSpecId = ApiSpecId,
             SuiteName = "Checkout Regression",
             ReportType = reportType,
@@ -422,6 +423,11 @@ internal static class ReportTestData
                         HttpMethod = "GET",
                         Url = "/api/users/{id}",
                         Headers = "{\"Cookie\":\"***MASKED***\"}",
+                    },
+                    Expectation = new ExecutionTestCaseExpectationDto
+                    {
+                        ExpectedStatus = "200",
+                        MaxResponseTime = 1000,
                     },
                     Status = "Failed",
                     HttpStatusCode = 500,

@@ -70,6 +70,17 @@ public class LlmSuggestion : Entity<Guid>, IAggregateRoot
     public int? TokensUsed { get; set; }
 
     /// <summary>
+    /// SRS document that was linked to the TestSuite at generation time.
+    /// Non-null means the LLM received SRS requirements in its prompt.
+    /// </summary>
+    public Guid? SrsDocumentId { get; set; }
+
+    /// <summary>
+    /// Serialized List&lt;Guid&gt; JSON — SRS requirement IDs the LLM reported this suggestion covers.
+    /// </summary>
+    public string CoveredRequirementIds { get; set; }
+
+    /// <summary>
     /// Whether this suggestion has been soft-deleted.
     /// </summary>
     public bool IsDeleted { get; set; }

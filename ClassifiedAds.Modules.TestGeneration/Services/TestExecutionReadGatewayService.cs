@@ -172,21 +172,42 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             ? approvedOrder.OrderBy(x => x.OrderIndex).Select(x => x.EndpointId).ToList()
             : new List<Guid>();
 
-        // 8. Build baseline order from endpoint/custom order, then enforce dependency topology.
-        var baselineOrderedCases = finalTestCaseIdSet
+        var hasCustomOrder = finalTestCaseIdSet
             .Select(id => enabledTestCaseMap[id])
-            .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
-                ? endpointOrderMap[tc.EndpointId.Value]
-                : int.MaxValue)
-            .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
-            .ThenBy(tc => tc.Name)
-            .ThenBy(tc => tc.Id)
-            .ToList();
+            .Any(tc => tc.IsOrderCustomized);
 
-        var topologicallyOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
+        // 8. Build baseline order from custom order (if any), otherwise from approved endpoint order.
+        List<TestCase> baselineOrderedCases;
+        if (hasCustomOrder)
+        {
+            baselineOrderedCases = finalTestCaseIdSet
+                .Select(id => enabledTestCaseMap[id])
+                .OrderBy(tc => tc.IsOrderCustomized ? 0 : 1)
+                .ThenBy(tc => tc.IsOrderCustomized ? tc.CustomOrderIndex ?? int.MaxValue : tc.OrderIndex)
+                .ThenBy(tc => tc.IsOrderCustomized ? 0 : tc.OrderIndex)
+                .ThenBy(tc => tc.Name)
+                .ThenBy(tc => tc.Id)
+                .ToList();
+        }
+        else
+        {
+            baselineOrderedCases = finalTestCaseIdSet
+                .Select(id => enabledTestCaseMap[id])
+                .OrderBy(tc => tc.EndpointId.HasValue && endpointOrderMap.ContainsKey(tc.EndpointId.Value)
+                    ? endpointOrderMap[tc.EndpointId.Value]
+                    : int.MaxValue)
+                .ThenBy(tc => tc.CustomOrderIndex ?? tc.OrderIndex)
+                .ThenBy(tc => tc.Name)
+                .ThenBy(tc => tc.Id)
+                .ToList();
+        }
+
+        var finalOrderedCases = hasCustomOrder
+            ? baselineOrderedCases
+            : OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
 
         // 9. Map to DTOs with deterministic ordering
-        var orderedTestCases = topologicallyOrderedCases
+        var orderedTestCases = finalOrderedCases
             .Select((tc, index) => MapToExecutionTestCaseDto(tc, index, requestMap, expectationMap, variableMap, dependencyMap))
             .ToList();
 
@@ -350,6 +371,9 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                     BodyNotContains = expectation.BodyNotContains,
                     JsonPathChecks = expectation.JsonPathChecks,
                     MaxResponseTime = expectation.MaxResponseTime,
+                    ExpectationSource = expectation.ExpectationSource,
+                    RequirementCode = expectation.RequirementCode,
+                    PrimaryRequirementId = expectation.PrimaryRequirementId,
                 }
                 : null,
             Variables = variables?.Select(v => new ExecutionVariableRuleDto

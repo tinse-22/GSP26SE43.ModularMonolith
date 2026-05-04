@@ -53,6 +53,11 @@ public class TestResultCollector : ITestResultCollector
         var skippedCount = caseResults.Count(r => r.Status == "Skipped");
         var totalDurationMs = caseResults.Sum(r => r.DurationMs);
 
+        // ── Pre-compute attempt counts per test case ─────────────────────────
+        var attemptCountByCase = (attempts ?? Array.Empty<TestCaseExecutionAttemptModel>())
+            .GroupBy(a => a.TestCaseId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         // ── Case models ──────────────────────────────────────────────────────
         var caseModels = caseResults.Select(r => new TestCaseRunResultModel
         {
@@ -72,6 +77,14 @@ public class TestResultCollector : ITestResultCollector
             QueryParams = r.QueryParams ?? new Dictionary<string, string>(),
             TimeoutMs = r.TimeoutMs,
             ExpectedStatus = r.ExpectedStatus,
+            ExpectedBodyContains = r.ExpectedBodyContains,
+            ExpectedBodyNotContains = r.ExpectedBodyNotContains,
+            ExpectedHeaderChecks = r.ExpectedHeaderChecks,
+            ExpectedJsonPathChecks = r.ExpectedJsonPathChecks,
+            ExpectedMaxResponseTime = r.ExpectedMaxResponseTime,
+            ExpectationSource = r.ExpectationSource,
+            RequirementCode = r.RequirementCode,
+            PrimaryRequirementId = r.PrimaryRequirementId,
             RequestHeaders = r.RequestHeaders ?? new Dictionary<string, string>(),
             ResponseHeaders = r.ResponseHeaders ?? new Dictionary<string, string>(),
             ResponseBodyPreview = TruncateBody(r.ResponseBody),
@@ -90,6 +103,7 @@ public class TestResultCollector : ITestResultCollector
             BodyNotContainsPassed = r.BodyNotContainsPassed,
             JsonPathChecksPassed = r.JsonPathChecksPassed,
             ResponseTimePassed = r.ResponseTimePassed,
+            TotalAttempts = attemptCountByCase.TryGetValue(r.TestCaseId, out var cnt) ? cnt : 1,
         }).ToList();
 
         // ── Attempt models ───────────────────────────────────────────────────
@@ -126,9 +140,17 @@ public class TestResultCollector : ITestResultCollector
         run.SkippedCount = skippedCount;
         run.DurationMs = totalDurationMs;
         run.CompletedAt = DateTimeOffset.UtcNow;
-        run.Status = caseResults.Any(IsExecutionFailure)
-            ? TestRunStatus.Failed
-            : TestRunStatus.Completed;
+
+        // If every case was skipped (e.g. dependency-based skipping), mark the run Completed.
+        // Otherwise only treat the run as Failed when at least one non-skipped case had an
+        // execution failure (failed before any HTTP response was received).
+        var nonSkippedResults = caseResults
+            .Where(r => !string.Equals(r?.Status, "Skipped", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        run.Status = nonSkippedResults.Count == 0
+            ? TestRunStatus.Completed
+            : (nonSkippedResults.Any(IsExecutionFailure) ? TestRunStatus.Failed : TestRunStatus.Completed);
         run.ResultsExpireAt = DateTimeOffset.UtcNow.AddDays(retentionDays > 0 ? retentionDays : 7);
 
         // ── Cache write ──────────────────────────────────────────────────────
@@ -265,6 +287,9 @@ public class TestResultCollector : ITestResultCollector
                 BodyNotContainsPassed = caseModel.BodyNotContainsPassed,
                 JsonPathChecksPassed = caseModel.JsonPathChecksPassed,
                 ResponseTimePassed = caseModel.ResponseTimePassed,
+                ExpectationSource = caseModel.ExpectationSource,
+                RequirementCode = caseModel.RequirementCode,
+                PrimaryRequirementId = caseModel.PrimaryRequirementId,
             })
             .ToList();
     }

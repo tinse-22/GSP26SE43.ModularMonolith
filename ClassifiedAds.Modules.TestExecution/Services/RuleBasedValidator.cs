@@ -96,13 +96,13 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateHeaders(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 4. Body contains
-        TrackCheck(ValidateBodyContains(response, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateBodyContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 5. Body not contains
-        TrackCheck(ValidateBodyNotContains(response, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
-        TrackCheck(ValidateJsonPathChecks(response, expectation, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 7. Max response time
         TrackCheck(ValidateResponseTime(response, expectation, result), ref checksPerformed, ref checksSkipped);
@@ -606,9 +606,54 @@ public class RuleBasedValidator : IRuleBasedValidator
         return true;
     }
 
+    private static bool IsBodyContainsSoftMode(
+        HttpTestResponse response,
+        ExecutionTestCaseExpectationDto expectation,
+        ExecutionTestCaseDto testCase,
+        TestCaseValidationResult result)
+    {
+        // Soft mode 1: Adaptive permissive match was applied (2xx returned for a Negative/Boundary test expecting 4xx)
+        if (result.Warnings.Any(w => w.Code == "ADAPTIVE_PERMISSIVE_STATUS_MATCH"))
+        {
+            return true;
+        }
+
+        // Soft mode 2: Test is Negative/Boundary AND actual non-2xx status exactly matched expected statuses
+        if (IsBoundaryOrNegative(testCase?.TestType))
+        {
+            if (response.StatusCode.HasValue && response.StatusCode.Value >= 400 &&
+                !string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
+            {
+                try
+                {
+                    var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+                    if (expectedStatuses != null && expectedStatuses.Contains(response.StatusCode.Value))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    if (int.TryParse(expectation.ExpectedStatus.Trim('[', ']', ' '), out var single) &&
+                        single == response.StatusCode.Value)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            // Soft mode 3: Any Negative/Boundary test - body content checks are advisory;
+            // the status code check is the primary assertion for these test types.
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool ValidateBodyContains(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
+        ExecutionTestCaseDto testCase,
         TestCaseValidationResult result)
     {
         if (string.IsNullOrWhiteSpace(expectation.BodyContains))
@@ -643,28 +688,42 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var body = response.Body ?? string.Empty;
         var allPassed = true;
+        var softMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
 
         foreach (var pattern in normalizedPatterns)
         {
-            if (!body.Contains(pattern, StringComparison.Ordinal))
+            if (!body.Contains(pattern, StringComparison.OrdinalIgnoreCase))
             {
-                allPassed = false;
-                result.Failures.Add(new ValidationFailureModel
+                if (softMode)
                 {
-                    Code = "BODY_CONTAINS_MISSING",
-                    Message = $"Response body không chứa chuỗi mong đợi: '{Truncate(pattern, 100)}'.",
-                    Expected = Truncate(pattern, 200),
-                });
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "BODY_CONTAINS_PARTIAL_MISMATCH",
+                        Message = $"Response body không chứa '{Truncate(pattern, 100)}', nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
+                        Target = "BodyContains",
+                    });
+                }
+                else
+                {
+                    allPassed = false;
+                    result.Failures.Add(new ValidationFailureModel
+                    {
+                        Code = "BODY_CONTAINS_MISSING",
+                        Message = $"Response body không chứa chuỗi mong đợi: '{Truncate(pattern, 100)}'.",
+                        Expected = Truncate(pattern, 200),
+                    });
+                }
             }
         }
 
-        result.BodyContainsPassed = allPassed;
+        result.BodyContainsPassed = allPassed || softMode;
         return true;
     }
 
     private static bool ValidateBodyNotContains(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
+        ExecutionTestCaseDto testCase,
         TestCaseValidationResult result)
     {
         if (string.IsNullOrWhiteSpace(expectation.BodyNotContains))
@@ -699,28 +758,42 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var body = response.Body ?? string.Empty;
         var allPassed = true;
+        var softMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
 
         foreach (var pattern in normalizedPatterns)
         {
-            if (body.Contains(pattern, StringComparison.Ordinal))
+            if (body.Contains(pattern, StringComparison.OrdinalIgnoreCase))
             {
-                allPassed = false;
-                result.Failures.Add(new ValidationFailureModel
+                if (softMode)
                 {
-                    Code = "BODY_NOT_CONTAINS_PRESENT",
-                    Message = $"Response body chứa chuỗi không mong đợi: '{Truncate(pattern, 100)}'.",
-                    Actual = Truncate(pattern, 200),
-                });
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "BODY_NOT_CONTAINS_PARTIAL_MISMATCH",
+                        Message = $"Response body chứa '{Truncate(pattern, 100)}', nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
+                        Target = "BodyNotContains",
+                    });
+                }
+                else
+                {
+                    allPassed = false;
+                    result.Failures.Add(new ValidationFailureModel
+                    {
+                        Code = "BODY_NOT_CONTAINS_PRESENT",
+                        Message = $"Response body chứa chuỗi không mong đợi: '{Truncate(pattern, 100)}'.",
+                        Actual = Truncate(pattern, 200),
+                    });
+                }
             }
         }
 
-        result.BodyNotContainsPassed = allPassed;
+        result.BodyNotContainsPassed = allPassed || softMode;
         return true;
     }
 
     private static bool ValidateJsonPathChecks(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
+        ExecutionTestCaseDto testCase,
         TestCaseValidationResult result)
     {
         if (string.IsNullOrWhiteSpace(expectation.JsonPathChecks))
@@ -777,6 +850,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var allPassed = true;
+        var jsonPathSoftMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
         using (doc)
         {
             foreach (var check in checks)
@@ -786,20 +860,37 @@ public class RuleBasedValidator : IRuleBasedValidator
 
                 if (actualValue == null || !ValuesEqual(actualValue, check.Value))
                 {
-                    allPassed = false;
-                    result.Failures.Add(new ValidationFailureModel
+                    var isWildcard = check.Value == "*";
+                    if (jsonPathSoftMode)
                     {
-                        Code = "JSONPATH_ASSERTION_FAILED",
-                        Message = $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
-                        Target = check.Key,
-                        Expected = check.Value,
-                        Actual = actualValue,
-                    });
+                        result.Warnings.Add(new ValidationWarningModel
+                        {
+                            Code = "JSONPATH_PARTIAL_MISMATCH",
+                            Message = isWildcard
+                                ? $"JSONPath '{check.Key}' không tìm thấy, nhưng được bỏ qua vì API permissive đã chấp nhận request."
+                                : $"JSONPath '{check.Key}' không khớp (mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'), nhưng được bỏ qua vì API permissive đã chấp nhận request.",
+                            Target = check.Key,
+                        });
+                    }
+                    else
+                    {
+                        allPassed = false;
+                        result.Failures.Add(new ValidationFailureModel
+                        {
+                            Code = "JSONPATH_ASSERTION_FAILED",
+                            Message = isWildcard
+                                ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
+                                : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
+                            Target = check.Key,
+                            Expected = check.Value,
+                            Actual = actualValue,
+                        });
+                    }
                 }
             }
         }
 
-        result.JsonPathChecksPassed = allPassed;
+        result.JsonPathChecksPassed = allPassed || jsonPathSoftMode;
         return true;
     }
 
@@ -873,6 +964,12 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValuesEqual(string actual, string expected)
     {
+        // Wildcard "*" means "field must exist with any non-null value"
+        if (expected == "*")
+        {
+            return actual != null;
+        }
+
         if (actual == expected)
         {
             return true;

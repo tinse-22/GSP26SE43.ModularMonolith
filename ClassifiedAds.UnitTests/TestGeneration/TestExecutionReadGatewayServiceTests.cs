@@ -93,9 +93,10 @@ public class TestExecutionReadGatewayServiceTests
     }
 
     [Fact]
-    public async Task GetExecutionContextAsync_SelectedSubsetMissingDependency_ShouldThrowValidation()
+    public async Task GetExecutionContextAsync_SelectedSubsetMissingDependency_ShouldAutoExpandToIncludeDependency()
     {
-        // Arrange: caseB depends on caseA, but only caseB is selected
+        // Arrange: caseB depends on caseA, but only caseB is selected.
+        // Auto-expansion (BFS) should silently include caseA so the run succeeds.
         var caseAId = Guid.NewGuid();
         var caseBId = Guid.NewGuid();
         var endpointId = Guid.NewGuid();
@@ -112,12 +113,13 @@ public class TestExecutionReadGatewayServiceTests
 
         SetupGatewayMocks(new[] { caseA, caseB }, new[] { dependency }, endpointId);
 
-        // Act — select only caseB without its dependency caseA
-        var act = () => _service.GetExecutionContextAsync(_suiteId, new[] { caseBId });
+        // Act — select only caseB; caseA is auto-expanded as a transitive dependency
+        var result = await _service.GetExecutionContextAsync(_suiteId, new[] { caseBId });
 
-        // Assert
-        await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("dependency"));
+        // Assert — both cases are present; caseA (dependency) runs before caseB
+        result.OrderedTestCases.Should().HaveCount(2);
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().ContainInOrder(caseAId, caseBId);
     }
 
     [Fact]
@@ -177,6 +179,33 @@ public class TestExecutionReadGatewayServiceTests
 
         result.OrderedTestCases.Select(x => x.OrderIndex)
             .Should().ContainInOrder(0, 1, 2);
+    }
+
+    [Fact]
+    public async Task GetExecutionContextAsync_Should_Prioritize_CustomOrder_WhenAnyCustomized()
+    {
+        // Arrange: custom order conflicts with approved endpoint order
+        var endpointA = Guid.NewGuid();
+        var endpointB = Guid.NewGuid();
+        var caseAId = Guid.NewGuid();
+        var caseBId = Guid.NewGuid();
+
+        var caseA = CreateTestCase(caseAId, endpointA, 0);
+        var caseB = CreateTestCase(caseBId, endpointB, 1);
+
+        caseA.IsOrderCustomized = true;
+        caseA.CustomOrderIndex = 1;
+        caseB.IsOrderCustomized = true;
+        caseB.CustomOrderIndex = 0;
+
+        SetupGatewayMocks(new[] { caseA, caseB }, Array.Empty<TestCaseDependency>(), endpointA, endpointB);
+
+        // Act
+        var result = await _service.GetExecutionContextAsync(_suiteId, null);
+
+        // Assert
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().ContainInOrder(caseBId, caseAId);
     }
 
     [Fact]
@@ -251,9 +280,10 @@ public class TestExecutionReadGatewayServiceTests
     }
 
     [Fact]
-    public async Task GetExecutionContextAsync_TransitiveDependencyMissing_ShouldThrowValidation()
+    public async Task GetExecutionContextAsync_TransitiveDependencyMissing_ShouldAutoExpandTransitively()
     {
-        // Arrange: C depends on B, B depends on A. Select only B and C (missing A)
+        // Arrange: C depends on B, B depends on A. Select only B and C (missing A).
+        // Auto-expansion BFS should include A via B's dependency chain.
         var caseAId = Guid.NewGuid();
         var caseBId = Guid.NewGuid();
         var caseCId = Guid.NewGuid();
@@ -271,12 +301,13 @@ public class TestExecutionReadGatewayServiceTests
 
         SetupGatewayMocks(new[] { caseA, caseB, caseC }, deps, endpointId);
 
-        // Act — select B and C but not A
-        var act = () => _service.GetExecutionContextAsync(_suiteId, new[] { caseBId, caseCId });
+        // Act — select B and C; A is auto-expanded as a transitive dependency of B
+        var result = await _service.GetExecutionContextAsync(_suiteId, new[] { caseBId, caseCId });
 
-        // Assert
-        await act.Should().ThrowAsync<ValidationException>()
-            .Where(ex => ex.Message.Contains("dependency"));
+        // Assert — all 3 cases are present in correct topological order A→B→C
+        result.OrderedTestCases.Should().HaveCount(3);
+        result.OrderedTestCases.Select(x => x.TestCaseId)
+            .Should().ContainInOrder(caseAId, caseBId, caseCId);
     }
 
     [Fact]

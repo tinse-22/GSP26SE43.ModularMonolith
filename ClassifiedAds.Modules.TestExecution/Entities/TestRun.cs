@@ -77,6 +77,12 @@ public class TestRun : Entity<Guid>, IAggregateRoot
     /// When Redis data expires.
     /// </summary>
     public DateTimeOffset? ResultsExpireAt { get; set; }
+
+    /// <summary>
+    /// When true this run is ephemeral (e.g. a quick/manual single-case execution)
+    /// and should not be shown in the primary Test Runs listing.
+    /// </summary>
+    public bool IsEphemeral { get; set; } = false;
 }
 
 public enum TestRunStatus

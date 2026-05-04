@@ -35,6 +35,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
     private readonly IRepository<TestCaseDependency, Guid> _dependencyRepository;
     private readonly IRepository<TestCaseChangeLog, Guid> _changeLogRepository;
     private readonly IRepository<TestSuiteVersion, Guid> _versionRepository;
+    private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly ILlmSuggestionMaterializer _materializer;
     private readonly IApiTestOrderGateService _gateService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
@@ -50,6 +52,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         IRepository<TestCaseDependency, Guid> dependencyRepository,
         IRepository<TestCaseChangeLog, Guid> changeLogRepository,
         IRepository<TestSuiteVersion, Guid> versionRepository,
+        IRepository<TestCaseRequirementLink, Guid> linkRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository,
         ILlmSuggestionMaterializer materializer,
         IApiTestOrderGateService gateService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
@@ -64,6 +68,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         _dependencyRepository = dependencyRepository;
         _changeLogRepository = changeLogRepository;
         _versionRepository = versionRepository;
+        _linkRepository = linkRepository;
+        _srsRequirementRepository = srsRequirementRepository;
         _materializer = materializer;
         _gateService = gateService;
         _subscriptionLimitService = subscriptionLimitService;
@@ -228,6 +234,20 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(suite.Id, cancellationToken);
         var orderItemMap = approvedOrder.ToDictionary(x => x.EndpointId);
 
+        // Pre-load valid SRS requirement IDs for this suite to validate links during approve.
+        var validRequirementIds = new HashSet<Guid>();
+        if (suite.SrsDocumentId.HasValue)
+        {
+            var reqIds = await _srsRequirementRepository.ToListAsync(
+                _srsRequirementRepository.GetQueryableSet()
+                    .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
+                    .Select(x => x.Id));
+            foreach (var id in reqIds)
+            {
+                validRequirementIds.Add(id);
+            }
+        }
+
         var existingTestCases = (await _testCaseRepository.ToListAsync(
             _testCaseRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == suite.Id && !x.IsDeleted)))
@@ -350,6 +370,38 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                             VersionAfterChange = 1,
                             CreatedDateTime = now,
                         }, ct);
+
+                        // Create traceability links from suggestion's CoveredRequirementIds.
+                        var coveredIds = LlmSuggestionModel.DeserializeGuidListStatic(item.Suggestion.CoveredRequirementIds);
+                        Guid? primaryReqId = null;
+                        foreach (var reqId in coveredIds.Distinct())
+                        {
+                            if (reqId == Guid.Empty) continue;
+                            if (validRequirementIds.Count > 0 && !validRequirementIds.Contains(reqId))
+                            {
+                                _logger.LogWarning(
+                                    "coveredRequirementId {ReqId} for suggestion '{SuggestionId}' does not belong to SrsDocumentId={SrsDocumentId}. Skipping link.",
+                                    reqId, item.Suggestion.Id, suite.SrsDocumentId);
+                                continue;
+                            }
+
+                            await _linkRepository.AddAsync(new TestCaseRequirementLink
+                            {
+                                Id = Guid.NewGuid(),
+                                TestCaseId = testCase.Id,
+                                SrsRequirementId = reqId,
+                                TraceabilityScore = 1.0f,
+                                MappingRationale = "Auto-linked from LLM suggestion on approve.",
+                            }, ct);
+
+                            primaryReqId ??= reqId;
+                        }
+
+                        if (primaryReqId.HasValue && testCase.PrimaryRequirementId == null)
+                        {
+                            testCase.PrimaryRequirementId = primaryReqId;
+                            await _testCaseRepository.UpdateAsync(testCase, ct);
+                        }
 
                         await _suggestionRepository.UpdateAsync(item.Suggestion, ct);
                     }

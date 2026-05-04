@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,15 +27,21 @@ public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuer
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
     private readonly IRepository<LlmSuggestionFeedback, Guid> _feedbackRepository;
+    private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
+    private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
 
     public GetLlmSuggestionsQueryHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
-        IRepository<LlmSuggestionFeedback, Guid> feedbackRepository)
+        IRepository<LlmSuggestionFeedback, Guid> feedbackRepository,
+        IRepository<SrsDocument, Guid> srsDocumentRepository,
+        IRepository<SrsRequirement, Guid> srsRequirementRepository)
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
         _feedbackRepository = feedbackRepository;
+        _srsDocumentRepository = srsDocumentRepository;
+        _srsRequirementRepository = srsRequirementRepository;
     }
 
     public async Task<List<LlmSuggestionModel>> HandleAsync(
@@ -108,15 +115,58 @@ public class GetLlmSuggestionsQueryHandler : IQueryHandler<GetLlmSuggestionsQuer
             .GroupBy(x => x.SuggestionId)
             .ToDictionary(x => x.Key, x => (IReadOnlyCollection<LlmSuggestionFeedback>)x.ToList());
 
-        return suggestions.Select(x => MapSuggestion(x, query.CurrentUserId, feedbackLookup)).ToList();
+        // Resolve SRS document titles
+        var srsDocIds = suggestions
+            .Where(x => x.SrsDocumentId.HasValue)
+            .Select(x => x.SrsDocumentId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var srsDocTitles = srsDocIds.Length > 0
+            ? await _srsDocumentRepository.GetQueryableSet()
+                .Where(x => srsDocIds.Contains(x.Id))
+                .Select(x => new { x.Id, x.Title })
+                .ToDictionaryAsync(x => x.Id, x => x.Title, cancellationToken)
+            : new Dictionary<Guid, string>();
+
+        // Resolve SRS requirement code + title
+        var allReqIds = suggestions
+            .SelectMany(x => LlmSuggestionModel.DeserializeGuidListStatic(x.CoveredRequirementIds))
+            .Distinct()
+            .ToArray();
+
+        var srsRequirements = allReqIds.Length > 0
+            ? await _srsRequirementRepository.GetQueryableSet()
+                .Where(x => allReqIds.Contains(x.Id))
+                .Select(x => new CoveredRequirementBriefModel { Id = x.Id, Code = x.RequirementCode, Title = x.Title })
+                .ToListAsync(cancellationToken)
+            : new List<CoveredRequirementBriefModel>();
+
+        var reqLookup = srsRequirements.ToDictionary(x => x.Id);
+
+        return suggestions.Select(x => MapSuggestion(x, query.CurrentUserId, feedbackLookup, srsDocTitles, reqLookup)).ToList();
     }
 
     private static LlmSuggestionModel MapSuggestion(
         LlmSuggestion suggestion,
         Guid currentUserId,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<LlmSuggestionFeedback>> feedbackLookup)
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<LlmSuggestionFeedback>> feedbackLookup,
+        IReadOnlyDictionary<Guid, string> srsDocTitles,
+        IReadOnlyDictionary<Guid, CoveredRequirementBriefModel> reqLookup)
     {
         var model = LlmSuggestionModel.FromEntity(suggestion);
+
+        if (suggestion.SrsDocumentId.HasValue
+            && srsDocTitles.TryGetValue(suggestion.SrsDocumentId.Value, out var docTitle))
+        {
+            model.SrsDocumentTitle = docTitle;
+        }
+
+        model.CoveredRequirements = model.CoveredRequirementIds
+            .Where(id => reqLookup.ContainsKey(id))
+            .Select(id => reqLookup[id])
+            .ToList();
+
         feedbackLookup.TryGetValue(suggestion.Id, out var feedbackRows);
         feedbackRows ??= Array.Empty<LlmSuggestionFeedback>();
 

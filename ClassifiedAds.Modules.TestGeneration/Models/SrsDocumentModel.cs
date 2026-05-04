@@ -158,6 +158,18 @@ public class SrsAnalysisJobModel
     }
 }
 
+/// <summary>
+/// Accepted (202) response for POST .../analyze.
+/// The call may block synchronously until n8n completes; JobId is returned so FE can poll
+/// /analysis-jobs/{jobId} for status display or resume.
+/// </summary>
+public class SrsAnalysisAcceptedResponse
+{
+    public Guid JobId { get; set; }
+
+    public string Message { get; set; }
+}
+
 public class SrsRequirementClarificationModel
 {
     public Guid Id { get; set; }

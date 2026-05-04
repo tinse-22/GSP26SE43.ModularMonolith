@@ -17,6 +17,7 @@ public class GetTestRunsQueryHandlerTests
 {
     private readonly Mock<IRepository<TestRun, Guid>> _runRepoMock;
     private readonly Mock<ITestExecutionReadGatewayService> _gatewayMock;
+    private readonly Mock<IRepository<ExecutionEnvironment, Guid>> _envRepoMock;
     private readonly GetTestRunsQueryHandler _handler;
 
     private readonly Guid _suiteId = Guid.NewGuid();
@@ -26,7 +27,14 @@ public class GetTestRunsQueryHandlerTests
     {
         _runRepoMock = new Mock<IRepository<TestRun, Guid>>();
         _gatewayMock = new Mock<ITestExecutionReadGatewayService>();
-        _handler = new GetTestRunsQueryHandler(_runRepoMock.Object, _gatewayMock.Object);
+        _envRepoMock = new Mock<IRepository<ExecutionEnvironment, Guid>>();
+
+        _envRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new TestAsyncEnumerable<ExecutionEnvironment>(new System.Collections.Generic.List<ExecutionEnvironment>()));
+        _envRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<ExecutionEnvironment>>()))
+            .Returns<IQueryable<ExecutionEnvironment>>(query => Task.FromResult(query.ToList()));
+
+        _handler = new GetTestRunsQueryHandler(_runRepoMock.Object, _gatewayMock.Object, _envRepoMock.Object);
     }
 
     [Fact]

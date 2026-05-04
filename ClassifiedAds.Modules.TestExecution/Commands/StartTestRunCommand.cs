@@ -38,6 +38,12 @@ public class StartTestRunCommand : ICommand
     public int MaxRetryAttempts { get; set; } = 3;
 
     /// <summary>
+    /// When false the run will be recorded as ephemeral (not shown in the main TestRuns listing).
+    /// Defaults to true.
+    /// </summary>
+    public bool RecordRun { get; set; } = true;
+
+    /// <summary>
     /// Enables the retry mechanism for failed test cases whose only failures are expectation
     /// mismatches.  When false, no retries are attempted regardless of MaxRetryAttempts.
     /// </summary>
@@ -203,6 +209,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
                 RunNumber = (maxRunNumber ?? 0) + 1,
                 Status = TestRunStatus.Pending,
                 RedisKey = $"testrun:{runId}:results",
+                IsEphemeral = !command.RecordRun,
             };
 
             await _runRepository.AddAsync(run, ct);

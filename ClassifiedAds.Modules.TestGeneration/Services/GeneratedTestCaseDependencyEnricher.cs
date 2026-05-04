@@ -15,7 +15,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public static class GeneratedTestCaseDependencyEnricher
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -124,6 +124,7 @@ public static class GeneratedTestCaseDependencyEnricher
             }
 
             AddDeclaredDependencies(testCase, orderItem, producersByEndpoint);
+            EnsureSameEndpointPostHappyPathDependency(testCase, orderItem, producersByEndpoint);
             FillMissingRouteParams(
                 testCase,
                 orderItem,
@@ -225,6 +226,48 @@ public static class GeneratedTestCaseDependencyEnricher
 
             EnsureDependency(testCase, producer.TestCaseId);
         }
+    }
+
+    /// <summary>
+    /// Ensures that non-HappyPath tests on a POST endpoint always depend on the happy-path
+    /// producer for the same endpoint. This guarantees that a resource already exists before
+    /// negative/boundary tests (e.g. "create duplicate") attempt to verify conflict behaviour.
+    /// </summary>
+    private static void EnsureSameEndpointPostHappyPathDependency(
+        TestCase testCase,
+        ApiOrderItemModel orderItem,
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint)
+    {
+        // Only apply to non-HappyPath tests
+        if (testCase.TestType == TestType.HappyPath)
+        {
+            return;
+        }
+
+        // Only POST endpoints can create resources that need to exist before conflict tests
+        var method = (orderItem.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
+        if (method != "POST")
+        {
+            return;
+        }
+
+        if (!testCase.EndpointId.HasValue)
+        {
+            return;
+        }
+
+        if (!producersByEndpoint.TryGetValue(testCase.EndpointId.Value, out var producer))
+        {
+            return;
+        }
+
+        // Prevent self-dependency
+        if (producer.TestCaseId == testCase.Id)
+        {
+            return;
+        }
+
+        EnsureDependency(testCase, producer.TestCaseId);
     }
 
     private static void FillMissingRouteParams(
@@ -543,7 +586,7 @@ public static class GeneratedTestCaseDependencyEnricher
             producerCandidates,
             testCase,
             pendingExistingVariables,
-            allowAuthBootstrapBindings: !IsRegisterLikeEndpoint(orderItem));
+            allowAuthBootstrapBindings: !IsRegisterLikeEndpoint(orderItem) || testCase.TestType != TestType.HappyPath);
 
         if (changed)
         {
@@ -642,7 +685,8 @@ public static class GeneratedTestCaseDependencyEnricher
                             "registeredEmail",
                             "$.email",
                             pendingExistingVariables);
-                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        var rawEmailValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                        if (!string.IsNullOrWhiteSpace(rawEmailValue) && ShouldSetPlaceholderValue(property.Value, variableName))
                         {
                             obj[property.Key] = $"{{{{{variableName}}}}}";
                             EnsureDependency(testCase, authProducer.TestCaseId);
@@ -658,7 +702,8 @@ public static class GeneratedTestCaseDependencyEnricher
                             "registeredPassword",
                             "$.password",
                             pendingExistingVariables);
-                        if (ShouldSetPlaceholderValue(property.Value, variableName))
+                        var rawPasswordValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                        if (!string.IsNullOrWhiteSpace(rawPasswordValue) && ShouldSetPlaceholderValue(property.Value, variableName))
                         {
                             obj[property.Key] = $"{{{{{variableName}}}}}";
                             EnsureDependency(testCase, authProducer.TestCaseId);
