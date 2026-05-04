@@ -209,10 +209,6 @@ internal static class ContractAwareRequestSynthesizer
         JsonNode bodyNode)
     {
         var result = new List<N8nTestCaseVariable>();
-        if (testType != TestType.HappyPath)
-        {
-            return result;
-        }
 
         if (bodyNode != null && context.IsRegisterLikeEndpoint)
         {
@@ -220,7 +216,7 @@ internal static class ContractAwareRequestSynthesizer
             {
                 result.Add(new N8nTestCaseVariable
                 {
-                    VariableName = "registeredEmail",
+                    VariableName = testType == TestType.HappyPath ? "registeredEmail" : "requestEmail",
                     ExtractFrom = "RequestBody",
                     JsonPath = emailPath,
                 });
@@ -230,7 +226,7 @@ internal static class ContractAwareRequestSynthesizer
             {
                 result.Add(new N8nTestCaseVariable
                 {
-                    VariableName = "registeredPassword",
+                    VariableName = testType == TestType.HappyPath ? "registeredPassword" : "requestPassword",
                     ExtractFrom = "RequestBody",
                     JsonPath = passwordPath,
                 });
@@ -1029,7 +1025,7 @@ internal static class ContractAwareRequestSynthesizer
 
         string value = normalizedFormat switch
         {
-            "email" => "testuser@example.com",
+            "email" => "{{runUniqueEmail}}",
             "uuid" => "00000000-0000-0000-0000-000000000001",
             "date" => "2024-01-01",
             "date-time" => "2024-01-01T00:00:00Z",
@@ -1041,17 +1037,17 @@ internal static class ContractAwareRequestSynthesizer
         {
             var candidate when candidate.Contains("file") => "sample-file.txt",
             var candidate when candidate.Contains("image") => "sample-image.txt",
-            var candidate when candidate.Contains("password") => "Test123!",
-            var candidate when candidate.Contains("email") => "testuser@example.com",
-            var candidate when candidate.Contains("username") => "testuser",
+            var candidate when candidate.Contains("password") => "{{runUniquePassword}}",
+            var candidate when candidate.Contains("email") => "{{runUniqueEmail}}",
+            var candidate when candidate.Contains("username") => "auto-user",
             var candidate when candidate.Contains("phone") => "+12025550123",
             var candidate when candidate.Contains("price") || candidate.Contains("amount") || candidate.Contains("cost") => "9.99",
             var candidate when candidate.Contains("quantity") || candidate.Contains("stock") || candidate.Contains("count") => "1",
             var candidate when candidate.EndsWith("id") => "1",
-            var candidate when candidate.Contains("name") => "Sample Name",
-            var candidate when candidate.Contains("title") => "Sample Title",
-            var candidate when candidate.Contains("description") => "Sample description",
-            _ => "sample-value",
+            var candidate when candidate.Contains("name") => "Auto Name",
+            var candidate when candidate.Contains("title") => "Auto Title",
+            var candidate when candidate.Contains("description") => "Auto description",
+            _ => "auto-value",
         };
 
         if (minLength.HasValue && value.Length < minLength.Value)

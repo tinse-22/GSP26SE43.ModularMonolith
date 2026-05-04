@@ -88,13 +88,9 @@ public sealed class ExpectationResolver : IExpectationResolver
                     continue;
                 }
 
-                var bodyContains = ExtractBodyContains(requirement, constraint.Constraint, context.TestType);
+                var bodyContains = ExtractBodyContains(requirement, constraint, context.TestType);
                 var bodyNotContains = ExtractBodyNotContains(requirement, constraint.Constraint);
-                var jsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint.Constraint, context.TestType);
-                if (bodyContains.Count == 0 && bodyNotContains.Count == 0 && jsonPathChecks.Count == 0)
-                {
-                    continue;
-                }
+                var jsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
 
                 return new ResolvedExpectation
                 {
@@ -250,6 +246,8 @@ public sealed class ExpectationResolver : IExpectationResolver
                 {
                     Constraint = constraint,
                     ExpectedOutcome = expectedOutcome,
+                    Field = item.TryGetProperty("field", out var field) ? field.GetString() : InferFieldName(constraint),
+                    RuleType = item.TryGetProperty("ruleType", out var ruleType) ? ruleType.GetString() : InferRuleType(constraint),
                 });
             }
 
@@ -308,9 +306,9 @@ public sealed class ExpectationResolver : IExpectationResolver
         return filtered;
     }
 
-    private static List<string> ExtractBodyContains(SrsRequirement requirement, string constraintText, TestType testType)
+    private static List<string> ExtractBodyContains(SrsRequirement requirement, SrsConstraintCandidate constraint, TestType testType)
     {
-        var raw = string.Join(" ", new[] { requirement?.Title, requirement?.Description, constraintText }
+        var raw = string.Join(" ", new[] { requirement?.Title, requirement?.Description, constraint?.Constraint, constraint?.ExpectedOutcome }
             .Where(x => !string.IsNullOrWhiteSpace(x)));
         if (string.IsNullOrWhiteSpace(raw))
         {
@@ -319,44 +317,80 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         var lower = raw.ToLowerInvariant();
         var result = new List<string>();
+        var field = constraint?.Field;
 
-        void AddIfContains(string key, string value = null)
+        void Add(string value)
         {
-            if (lower.Contains(key) && !result.Any(x => string.Equals(x, value ?? key, StringComparison.OrdinalIgnoreCase)))
+            if (!string.IsNullOrWhiteSpace(value)
+                && !result.Any(x => string.Equals(x, value, StringComparison.OrdinalIgnoreCase)))
             {
-                result.Add(value ?? key);
+                result.Add(value);
             }
         }
 
-        AddIfContains("registered successfully", "registered successfully");
-        AddIfContains("validation failed", "Validation failed");
-        AddIfContains("route not found", "Route not found");
-        AddIfContains("already exists", "already exists");
-        AddIfContains("duplicate", "duplicate");
-        AddIfContains("conflict", "conflict");
-        AddIfContains("unauthorized", "unauthorized");
-        AddIfContains("forbidden", "forbidden");
-        AddIfContains("invalid", "invalid");
-        AddIfContains("required", "required");
-        AddIfContains("fielderrors", "fieldErrors");
-        AddIfContains("formerrors", "formErrors");
-
-        foreach (var keyword in new[] { "password", "email", "category", "price", "stock", "categoryId" })
+        if (!string.IsNullOrWhiteSpace(field) && !string.Equals(field, "request", StringComparison.OrdinalIgnoreCase))
         {
-            if (raw.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                && !result.Any(x => string.Equals(x, keyword, StringComparison.OrdinalIgnoreCase)))
-            {
-                result.Add(keyword);
-            }
+            Add(field);
+        }
+
+        if (constraint?.RuleType == "required")
+        {
+            Add("required");
+        }
+
+        if (constraint?.RuleType == "format")
+        {
+            Add("invalid");
+        }
+
+        if (constraint?.RuleType == "uniqueness")
+        {
+            Add("already exists");
+        }
+
+        if (constraint?.RuleType == "authorization")
+        {
+            Add(lower.Contains("forbidden") ? "forbidden" : "unauthorized");
+        }
+
+        if (lower.Contains("validation failed"))
+        {
+            Add("Validation failed");
+        }
+
+        if (lower.Contains("registered successfully"))
+        {
+            Add("registered successfully");
+        }
+
+        if (lower.Contains("not found"))
+        {
+            Add("not found");
+        }
+
+        if (lower.Contains("conflict"))
+        {
+            Add("conflict");
+        }
+
+        if (lower.Contains("minimum"))
+        {
+            Add("minimum");
+        }
+
+        if (lower.Contains("maximum"))
+        {
+            Add("maximum");
+        }
+
+        if (lower.Contains("lowercase"))
+        {
+            Add("lowercase");
         }
 
         if (result.Count == 0 && testType != TestType.HappyPath)
         {
-            var generic = ValidationKeywords.FirstOrDefault(lower.Contains);
-            if (!string.IsNullOrWhiteSpace(generic))
-            {
-                result.Add(generic.Equals("validation failed", StringComparison.OrdinalIgnoreCase) ? "Validation failed" : generic);
-            }
+            Add("error");
         }
 
         return result.Take(3).ToList();
@@ -382,59 +416,90 @@ public sealed class ExpectationResolver : IExpectationResolver
         return result;
     }
 
-    private static Dictionary<string, string> BuildSrsJsonPathChecks(SrsRequirement requirement, string constraintText, TestType testType)
+    private static Dictionary<string, string> BuildSrsJsonPathChecks(SrsRequirement requirement, SrsConstraintCandidate constraint, TestType testType, IReadOnlyList<int> statuses)
     {
-        var raw = string.Join(" ", new[] { requirement?.Title, requirement?.Description, constraintText }
+        var raw = string.Join(" ", new[] { requirement?.Title, requirement?.Description, constraint?.Constraint, constraint?.ExpectedOutcome }
             .Where(x => !string.IsNullOrWhiteSpace(x)));
         var lower = raw.ToLowerInvariant();
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var isSuccess = statuses != null && statuses.Any(code => code is >= 200 and < 300);
 
-        if (testType == TestType.HappyPath && lower.Contains("success"))
+        result["$.success"] = isSuccess ? "true" : "false";
+
+        if (!isSuccess)
         {
-            result["$.success"] = "true";
+            if (!string.IsNullOrWhiteSpace(constraint?.Field) && !string.Equals(constraint.Field, "request", StringComparison.OrdinalIgnoreCase))
+            {
+                result["$.errors.*"] = constraint.Field;
+            }
+            else if (constraint?.RuleType == "authorization")
+            {
+                result["$.message"] = lower.Contains("forbidden") ? "forbidden" : "unauthorized";
+            }
+            else
+            {
+                result["$.message"] = "*";
+            }
+
+            return result;
         }
-        else if (testType != TestType.HappyPath && (lower.Contains("validation") || lower.Contains("error") || lower.Contains("invalid") || lower.Contains("duplicate") || lower.Contains("unauthorized") || lower.Contains("forbidden") || lower.Contains("not found") || lower.Contains("conflict")))
+
+        if (constraint?.RuleType == "authorization")
         {
-            result["$.success"] = "false";
+            result["$.token"] = "*";
+        }
+        else if (lower.Contains("register") || lower.Contains("created") || lower.Contains("success"))
+        {
+            result["$.message"] = "*";
         }
 
         return result;
     }
 
-    private static ResolvedExpectation NormalizeLlmExpectation(N8nTestCaseExpectation expectation, TestType testType)
+
+    private static string InferFieldName(string text)
     {
-        if (expectation == null)
+        var lower = text?.ToLowerInvariant() ?? string.Empty;
+        foreach (var field in new[] { "email", "password", "username", "name", "price", "stock", "categoryid", "category", "token" })
         {
-            return null;
+            if (lower.Contains(field, StringComparison.OrdinalIgnoreCase))
+            {
+                return field == "categoryid" ? "categoryId" : field;
+            }
         }
 
-        var statuses = NormalizeStatuses(expectation.ExpectedStatus?.ToList() ?? new List<int>(), testType);
-        var bodyContains = expectation.BodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
-        var bodyNotContains = expectation.BodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
-        var jsonPathChecks = expectation.JsonPathChecks?.Count > 0
-            ? new Dictionary<string, string>(expectation.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var headerChecks = expectation.HeaderChecks?.Count > 0
-            ? new Dictionary<string, string>(expectation.HeaderChecks, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        return "request";
+    }
 
-        if (statuses.Count == 0 && bodyContains.Count == 0 && bodyNotContains.Count == 0 && jsonPathChecks.Count == 0 && headerChecks.Count == 0)
+    private static string InferRuleType(string text)
+    {
+        var lower = text?.ToLowerInvariant() ?? string.Empty;
+        if (lower.Contains("duplicate") || lower.Contains("already exists") || lower.Contains("unique"))
         {
-            return null;
+            return "uniqueness";
         }
 
-        return new ResolvedExpectation
+        if (lower.Contains("unauthorized") || lower.Contains("forbidden") || lower.Contains("authorization") || lower.Contains("token"))
         {
-            ExpectedStatusCodes = statuses,
-            ResponseSchema = expectation.ResponseSchema,
-            HeaderChecks = headerChecks,
-            BodyContains = bodyContains,
-            BodyNotContains = bodyNotContains,
-            JsonPathChecks = jsonPathChecks,
-            MaxResponseTime = expectation.MaxResponseTime,
-            RequirementCode = expectation.RequirementCode,
-            PrimaryRequirementId = expectation.PrimaryRequirementId,
-        };
+            return "authorization";
+        }
+
+        if (lower.Contains("required") || lower.Contains("missing") || lower.Contains("bắt buộc"))
+        {
+            return "required";
+        }
+
+        if (lower.Contains("format") || lower.Contains("invalid") || lower.Contains("lowercase") || lower.Contains("email"))
+        {
+            return "format";
+        }
+
+        if (lower.Contains("minimum") || lower.Contains("maximum") || lower.Contains("minlength") || lower.Contains("maxlength") || lower.Contains("tối thiểu") || lower.Contains("tối đa"))
+        {
+            return "boundary";
+        }
+
+        return "behavior";
     }
 
     private static List<int> GetDefaultStatuses(TestType testType, string httpMethod)
@@ -460,5 +525,9 @@ public sealed class ExpectationResolver : IExpectationResolver
         public string Constraint { get; init; }
 
         public string ExpectedOutcome { get; init; }
+
+        public string Field { get; init; }
+
+        public string RuleType { get; init; }
     }
 }

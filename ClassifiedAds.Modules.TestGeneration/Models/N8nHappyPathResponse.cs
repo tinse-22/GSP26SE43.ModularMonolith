@@ -46,7 +46,9 @@ public class N8nTestCaseExpectation
     public string ResponseSchema { get; set; }
     [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> HeaderChecks { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringListConverter))]
     public List<string> BodyContains { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringListConverter))]
     public List<string> BodyNotContains { get; set; } = new();
     [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> JsonPathChecks { get; set; } = new();
