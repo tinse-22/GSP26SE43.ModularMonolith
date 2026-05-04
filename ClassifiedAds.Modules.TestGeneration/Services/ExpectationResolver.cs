@@ -179,6 +179,42 @@ public sealed class ExpectationResolver : IExpectationResolver
         };
     }
 
+    private static ResolvedExpectation NormalizeLlmExpectation(N8nTestCaseExpectation expectation, TestType testType)
+    {
+        if (expectation == null)
+        {
+            return null;
+        }
+
+        var statuses = NormalizeStatuses(expectation.ExpectedStatus?.ToList() ?? new List<int>(), testType);
+        var bodyContains = expectation.BodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
+        var bodyNotContains = expectation.BodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
+        var jsonPathChecks = expectation.JsonPathChecks?.Count > 0
+            ? new Dictionary<string, string>(expectation.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var headerChecks = expectation.HeaderChecks?.Count > 0
+            ? new Dictionary<string, string>(expectation.HeaderChecks, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (statuses.Count == 0 && bodyContains.Count == 0 && bodyNotContains.Count == 0 && jsonPathChecks.Count == 0 && headerChecks.Count == 0)
+        {
+            return null;
+        }
+
+        return new ResolvedExpectation
+        {
+            ExpectedStatusCodes = statuses,
+            ResponseSchema = expectation.ResponseSchema,
+            HeaderChecks = headerChecks,
+            BodyContains = bodyContains,
+            BodyNotContains = bodyNotContains,
+            JsonPathChecks = jsonPathChecks,
+            MaxResponseTime = expectation.MaxResponseTime,
+            RequirementCode = expectation.RequirementCode,
+            PrimaryRequirementId = expectation.PrimaryRequirementId,
+        };
+    }
+
     private static ResolvedExpectation BuildDefault(GeneratedScenarioContext context)
     {
         var statuses = NormalizeStatuses(context?.PreferredDefaultStatuses?.ToList() ?? new List<int>(), context?.TestType ?? TestType.Negative);
