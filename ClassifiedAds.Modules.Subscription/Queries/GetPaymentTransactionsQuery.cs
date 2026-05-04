@@ -17,6 +17,10 @@ public class GetPaymentTransactionsQuery : IQuery<List<PaymentTransactionModel>>
     public Guid? UserId { get; set; }
 
     public PaymentStatus? Status { get; set; }
+
+    public DateTimeOffset? From { get; set; }
+
+    public DateTimeOffset? To { get; set; }
 }
 
 public class GetPaymentTransactionsQueryHandler : IQueryHandler<GetPaymentTransactionsQuery, List<PaymentTransactionModel>>
@@ -47,6 +51,16 @@ public class GetPaymentTransactionsQueryHandler : IQueryHandler<GetPaymentTransa
         if (query.Status.HasValue)
         {
             db = db.Where(x => x.Status == query.Status.Value);
+        }
+
+        if (query.From.HasValue)
+        {
+            db = db.Where(x => x.CreatedDateTime >= query.From.Value);
+        }
+
+        if (query.To.HasValue)
+        {
+            db = db.Where(x => x.CreatedDateTime <= query.To.Value);
         }
 
         var items = await _paymentTransactionRepository.ToListAsync(
