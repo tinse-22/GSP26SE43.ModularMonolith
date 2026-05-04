@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.Subscription.Authorization;
 using ClassifiedAds.Modules.Subscription.Commands;
 using ClassifiedAds.Modules.Subscription.ConfigurationOptions;
+using ClassifiedAds.Modules.Subscription.Entities;
 using ClassifiedAds.Modules.Subscription.Models;
 using ClassifiedAds.Modules.Subscription.Queries;
 using ClassifiedAds.Modules.Subscription.RateLimiterPolicies;
@@ -225,6 +226,50 @@ public class PaymentsController : ControllerBase
             purpose = intent.Purpose,
             createdAt = intent.CreatedDateTime,
         });
+    }
+
+    [Authorize(Permissions.GetPaymentTransactions)]
+    [HttpGet("revenue")]
+    [ProducesResponseType(typeof(RevenueSeriesModel), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RevenueSeriesModel>> GetRevenueSeries(
+        [FromQuery] DateOnly? from = null,
+        [FromQuery] DateOnly? to = null,
+        [FromQuery] string groupBy = null,
+        [FromQuery] string currency = null,
+        CancellationToken ct = default)
+    {
+        var result = await _dispatcher.DispatchAsync(new GetRevenueSeriesQuery
+        {
+            From = from,
+            To = to,
+            GroupBy = groupBy,
+            Currency = currency,
+        }, ct);
+
+        return Ok(result);
+    }
+
+    [Authorize(Permissions.GetPaymentTransactions)]
+    [HttpGet("transactions")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<PaymentTransactionModel>>> GetTransactions(
+        [FromQuery] Guid? userId = null,
+        [FromQuery] Guid? subscriptionId = null,
+        [FromQuery] PaymentStatus? status = null,
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null,
+        CancellationToken ct = default)
+    {
+        var items = await _dispatcher.DispatchAsync(new GetPaymentTransactionsQuery
+        {
+            UserId = userId,
+            SubscriptionId = subscriptionId,
+            Status = status,
+            From = from,
+            To = to,
+        }, ct);
+
+        return Ok(items);
     }
 
     [Authorize(Permissions.SyncPayment)]
