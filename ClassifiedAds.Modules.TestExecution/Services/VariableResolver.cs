@@ -70,7 +70,7 @@ public class VariableResolver : IVariableResolver
 
         // Resolve path params and apply to URL
         var pathParams = DeserializeDictionary(request.PathParams);
-        var allowIdentifierLiteralReplacement = string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
+        var allowIdentifierLiteralReplacement = AllowsIdentifierLiteralReplacement(testCase);
         var normalizedPathParams = NormalizePathParams(pathParams, resolvedUrl, mergedVars, allowIdentifierLiteralReplacement);
         var resolvedPathParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var routeTokenApplied = false;
@@ -709,7 +709,6 @@ public class VariableResolver : IVariableResolver
     {
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || testCase?.Request == null
-            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
             || !IsLoginLikeRequest(testCase))
         {
@@ -731,24 +730,8 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        string preferredEmail = null;
-        if (variables != null)
-        {
-            if (variables.TryGetValue("registeredEmail", out var registeredEmail) && !string.IsNullOrWhiteSpace(registeredEmail))
-            {
-                preferredEmail = registeredEmail;
-            }
-            else if (variables.TryGetValue("testEmail", out var testEmail) && !string.IsNullOrWhiteSpace(testEmail))
-            {
-                preferredEmail = testEmail;
-            }
-        }
-
-        var preferredPassword = variables != null
-            && variables.TryGetValue("registeredPassword", out var registeredPassword)
-            && !string.IsNullOrWhiteSpace(registeredPassword)
-                ? registeredPassword
-                : null;
+        TryGetPreferredCredentialValue(variables, new[] { "registeredEmail", "requestEmail", "testEmail", "runUniqueEmail" }, out var preferredEmail);
+        TryGetPreferredCredentialValue(variables, new[] { "registeredPassword", "requestPassword", "testPassword", "runUniquePassword" }, out var preferredPassword);
 
         if (string.IsNullOrWhiteSpace(preferredEmail) && string.IsNullOrWhiteSpace(preferredPassword))
         {
@@ -768,20 +751,20 @@ public class VariableResolver : IVariableResolver
             {
                 if (property.Value is JsonValue value && value.TryGetValue<string>(out var current))
                 {
-                    if (property.Key.Equals("email", StringComparison.OrdinalIgnoreCase) &&
-                        !string.IsNullOrWhiteSpace(preferredEmail) &&
-                        !current.Contains("{{", StringComparison.Ordinal) &&
-                        !string.Equals(current, preferredEmail, StringComparison.Ordinal))
+                    if (property.Key.Equals("email", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(preferredEmail)
+                        && ShouldRewriteSyntheticEmail(current)
+                        && !string.Equals(current, preferredEmail, StringComparison.Ordinal))
                     {
                         obj[property.Key] = preferredEmail;
                         changed = true;
                         continue;
                     }
 
-                    if (property.Key.Equals("password", StringComparison.OrdinalIgnoreCase) &&
-                        !string.IsNullOrWhiteSpace(preferredPassword) &&
-                        !current.Contains("{{", StringComparison.Ordinal) &&
-                        !string.Equals(current, preferredPassword, StringComparison.Ordinal))
+                    if (property.Key.Equals("password", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(preferredPassword)
+                        && ShouldRewriteSyntheticPassword(current)
+                        && !string.Equals(current, preferredPassword, StringComparison.Ordinal))
                     {
                         obj[property.Key] = preferredPassword;
                         changed = true;
@@ -815,6 +798,31 @@ public class VariableResolver : IVariableResolver
         return false;
     }
 
+    private static bool TryGetPreferredCredentialValue(
+        IReadOnlyDictionary<string, string> variables,
+        IEnumerable<string> candidateKeys,
+        out string preferredValue)
+    {
+        preferredValue = null;
+        if (variables == null || candidateKeys == null)
+        {
+            return false;
+        }
+
+        foreach (var key in candidateKeys)
+        {
+            if (variables.TryGetValue(key, out var value)
+                && !string.IsNullOrWhiteSpace(value)
+                && !ContainsUnresolvedPlaceholder(value))
+            {
+                preferredValue = value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string NormalizeIdentifierLiteralsInJsonBody(
         ExecutionTestCaseDto testCase,
         string resolvedBody,
@@ -822,7 +830,7 @@ public class VariableResolver : IVariableResolver
     {
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || variables == null
-            || !string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase))
+            || !AllowsIdentifierLiteralReplacement(testCase))
         {
             return resolvedBody;
         }
@@ -1357,11 +1365,9 @@ public class VariableResolver : IVariableResolver
     {
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || testCase?.Request == null
-            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(testCase.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
-            || IsLoginLikeRequest(testCase) // Credentials already handled by NormalizeHappyPathCredentials
-            )
+            || IsLoginLikeRequest(testCase))
         {
             return resolvedBody;
         }
@@ -1381,25 +1387,12 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        // For Register-like endpoints, prefer the run-unique email (fresh per run)
-        // so the same hardcoded LLM-generated email doesn't cause 409 on re-runs.
-        string preferredEmail = null;
-        bool hasPreferredEmail;
-        if (IsRegisterLikeRequest(testCase))
-        {
-            hasPreferredEmail = variables != null
-                && variables.TryGetValue("runUniqueEmail", out preferredEmail)
-                && !string.IsNullOrWhiteSpace(preferredEmail);
-        }
-        else
-        {
-            hasPreferredEmail = TryGetPreferredTestEmail(variables, out preferredEmail);
-        }
-
+        var hasPreferredEmail = TryGetPreferredEmailForSyntheticBody(testCase, variables, out var preferredEmail);
         var runSuffix = GetRunSuffix(variables);
 
         var emailRewritten = hasPreferredEmail && ReplaceSyntheticEmails(root, preferredEmail);
-        var nameRewritten = ReplaceSyntheticResourceNames(root, runSuffix);
+        var nameRewritten = string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            && ReplaceSyntheticResourceNames(root, runSuffix);
 
         return emailRewritten || nameRewritten
             ? root.ToJsonString(JsonOptions)

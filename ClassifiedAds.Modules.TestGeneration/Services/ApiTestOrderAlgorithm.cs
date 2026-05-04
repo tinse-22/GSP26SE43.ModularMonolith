@@ -59,10 +59,8 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
             .Select(x => x.First())
             .ToList();
 
-        // Step 1: Collect all dependency edges.
         var allEdges = new List<DependencyEdge>();
 
-        // Step 1a: Pre-computed dependencies from ApiEndpointMetadataService (Rules 1-4).
         foreach (var endpoint in deduplicatedEndpoints)
         {
             if (endpoint.DependsOnEndpointIds == null || endpoint.DependsOnEndpointIds.Count == 0)
@@ -88,29 +86,25 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
             }
         }
 
-        // Step 1b: Schema-Schema transitive dependencies (KAT paper).
         var schemaEdges = FindSchemaSchemaEdges(deduplicatedEndpoints);
         allEdges.AddRange(schemaEdges);
 
-        // Step 1c: Semantic token dependencies (SPDG paper).
         var semanticEdges = FindSemanticTokenEdges(deduplicatedEndpoints);
         allEdges.AddRange(semanticEdges);
 
-        // Step 2: Build sortable operations.
+        ApplyAuthFlowDependencies(deduplicatedEndpoints, allEdges);
+
         var sortableOps = deduplicatedEndpoints
-            .Select(e => new SortableOperation
+            .Select(endpoint => new SortableOperation
             {
-                OperationId = e.EndpointId,
-                HttpMethod = e.HttpMethod,
-                Path = e.Path,
-                IsAuthRelated = e.IsAuthRelated,
+                OperationId = endpoint.EndpointId,
+                HttpMethod = endpoint.HttpMethod,
+                Path = endpoint.Path,
+                IsAuthRelated = endpoint.IsAuthRelated,
             })
             .ToList();
 
-        // Step 3: Run enhanced topological sort with fan-out ranking.
         var sortedResults = _topologicalSorter.Sort(sortableOps, allEdges);
-
-        // Step 4: Map to ApiOrderItemModel.
         var endpointMap = deduplicatedEndpoints.ToDictionary(e => e.EndpointId);
 
         return sortedResults
@@ -129,6 +123,106 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
                 };
             })
             .ToList();
+    }
+
+    private static void ApplyAuthFlowDependencies(List<ApiEndpointMetadataDto> endpoints, List<DependencyEdge> allEdges)
+    {
+        var registerEndpoints = endpoints.Where(IsRegisterLikeEndpoint).ToList();
+        var loginEndpoints = endpoints.Where(IsLoginLikeEndpoint).ToList();
+        if (registerEndpoints.Count == 0 || loginEndpoints.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var loginEndpoint in loginEndpoints)
+        {
+            var registerEndpoint = registerEndpoints.FirstOrDefault(x => AreAuthEndpointsCompatible(x, loginEndpoint));
+            if (registerEndpoint == null || registerEndpoint.EndpointId == loginEndpoint.EndpointId)
+            {
+                continue;
+            }
+
+            if (!allEdges.Any(x => x.SourceOperationId == loginEndpoint.EndpointId && x.TargetOperationId == registerEndpoint.EndpointId))
+            {
+                allEdges.Add(new DependencyEdge
+                {
+                    SourceOperationId = loginEndpoint.EndpointId,
+                    TargetOperationId = registerEndpoint.EndpointId,
+                    Type = DependencyEdgeType.SemanticToken,
+                    Reason = "Auth flow heuristic: login should depend on a prior register/signup endpoint when both are present.",
+                    Confidence = 0.95,
+                });
+            }
+        }
+
+        foreach (var protectedEndpoint in endpoints.Where(RequiresAuthBootstrap))
+        {
+            var loginEndpoint = loginEndpoints.FirstOrDefault(x => AreAuthEndpointsCompatible(x, protectedEndpoint));
+            if (loginEndpoint == null || loginEndpoint.EndpointId == protectedEndpoint.EndpointId)
+            {
+                continue;
+            }
+
+            if (!allEdges.Any(x => x.SourceOperationId == protectedEndpoint.EndpointId && x.TargetOperationId == loginEndpoint.EndpointId))
+            {
+                allEdges.Add(new DependencyEdge
+                {
+                    SourceOperationId = protectedEndpoint.EndpointId,
+                    TargetOperationId = loginEndpoint.EndpointId,
+                    Type = DependencyEdgeType.SemanticToken,
+                    Reason = "Auth flow heuristic: protected endpoint should depend on a prior login/token endpoint when auth is required.",
+                    Confidence = 0.90,
+                });
+            }
+        }
+    }
+
+    private static bool RequiresAuthBootstrap(ApiEndpointMetadataDto endpoint)
+    {
+        return endpoint?.IsAuthRelated == true && !IsAuthLikeEndpoint(endpoint);
+    }
+
+    private static bool IsAuthLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    {
+        return IsRegisterLikeEndpoint(endpoint) || IsLoginLikeEndpoint(endpoint);
+    }
+
+    private static bool IsRegisterLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    {
+        var signature = BuildEndpointSignature(endpoint);
+        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLoginLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    {
+        var signature = BuildEndpointSignature(endpoint);
+        return signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool AreAuthEndpointsCompatible(ApiEndpointMetadataDto authEndpoint, ApiEndpointMetadataDto otherEndpoint)
+    {
+        var authPath = authEndpoint?.Path ?? string.Empty;
+        var otherPath = otherEndpoint?.Path ?? string.Empty;
+
+        if (authPath.Contains("/auth", StringComparison.OrdinalIgnoreCase) && otherPath.Contains("/auth", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var authResource = ExtractResourceTokensFromPath(authPath);
+        var otherResource = ExtractResourceTokensFromPath(otherPath);
+        return authResource.Intersect(otherResource, StringComparer.OrdinalIgnoreCase).Any();
+    }
+
+    private static string BuildEndpointSignature(ApiEndpointMetadataDto endpoint)
+    {
+        return string.Join(" ", endpoint?.HttpMethod, endpoint?.Path, endpoint?.OperationId).Trim();
     }
 
     /// <summary>

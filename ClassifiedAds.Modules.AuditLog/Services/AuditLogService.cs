@@ -60,10 +60,12 @@ public class AuditLogService : CrudService<AuditLogEntry>, IAuditLogService
     /// </summary>
     private async Task<bool> TryInsertIdempotentRequestAsync(string requestType, string requestId, CancellationToken ct)
     {
+        var createdDateTime = DateTimeOffset.UtcNow;
+
         var rowsAffected = await _dbContext.Database.ExecuteSqlAsync(
             $"""
-            INSERT INTO auditlog."IdempotentRequests" ("RequestType", "RequestId")
-            VALUES ({requestType}, {requestId})
+            INSERT INTO auditlog."IdempotentRequests" ("RequestType", "RequestId", "CreatedDateTime")
+            VALUES ({requestType}, {requestId}, {createdDateTime})
             ON CONFLICT ("RequestType", "RequestId") DO NOTHING
             """,
             ct);
