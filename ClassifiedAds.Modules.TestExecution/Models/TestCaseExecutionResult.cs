@@ -91,4 +91,10 @@ public class TestCaseExecutionResult
 
     /// <summary>Maximum allowed response time in milliseconds.</summary>
     public int? ExpectedMaxResponseTime { get; set; }
+
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
 }

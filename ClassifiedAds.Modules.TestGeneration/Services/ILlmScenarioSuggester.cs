@@ -128,6 +128,12 @@ public class LlmSuggestedScenario
     /// </summary>
     public List<Guid> CoveredRequirementIds { get; set; } = new List<Guid>();
 
+    public string ExpectationSource { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public Guid? PrimaryRequirementId { get; set; }
+
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>

@@ -42,7 +42,6 @@ public static class ServiceCollectionExtensions
             sql.UseSupabaseRetryPolicy();
         }))
             .AddScoped<IRepository<AuditLogEntry, Guid>, Repository<AuditLogEntry, Guid>>()
-            .AddScoped<IRepository<IdempotentRequest, Guid>, Repository<IdempotentRequest, Guid>>()
             .AddScoped(typeof(IAuditLogService), typeof(AuditLogService));
 
         services.AddMessageHandlers(Assembly.GetExecutingAssembly());

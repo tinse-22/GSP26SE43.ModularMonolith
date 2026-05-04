@@ -28,6 +28,10 @@ public class TestCaseExpectationConfiguration : IEntityTypeConfiguration<Entitie
         builder.Property(x => x.JsonPathChecks)
             .HasColumnType("jsonb");
 
+        builder.Property(x => x.ExpectationSource);
+        builder.Property(x => x.RequirementCode);
+        builder.Property(x => x.PrimaryRequirementId);
+
         builder.HasIndex(x => x.TestCaseId).IsUnique();
     }
 }

@@ -82,6 +82,9 @@ public class TestResultCollector : ITestResultCollector
             ExpectedHeaderChecks = r.ExpectedHeaderChecks,
             ExpectedJsonPathChecks = r.ExpectedJsonPathChecks,
             ExpectedMaxResponseTime = r.ExpectedMaxResponseTime,
+            ExpectationSource = r.ExpectationSource,
+            RequirementCode = r.RequirementCode,
+            PrimaryRequirementId = r.PrimaryRequirementId,
             RequestHeaders = r.RequestHeaders ?? new Dictionary<string, string>(),
             ResponseHeaders = r.ResponseHeaders ?? new Dictionary<string, string>(),
             ResponseBodyPreview = TruncateBody(r.ResponseBody),
@@ -284,6 +287,9 @@ public class TestResultCollector : ITestResultCollector
                 BodyNotContainsPassed = caseModel.BodyNotContainsPassed,
                 JsonPathChecksPassed = caseModel.JsonPathChecksPassed,
                 ResponseTimePassed = caseModel.ResponseTimePassed,
+                ExpectationSource = caseModel.ExpectationSource,
+                RequirementCode = caseModel.RequirementCode,
+                PrimaryRequirementId = caseModel.PrimaryRequirementId,
             })
             .ToList();
     }

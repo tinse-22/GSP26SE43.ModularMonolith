@@ -390,6 +390,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 DependencyIds = testCase.DependencyIds,
                 FailureReasons = preValidation.ToFailureReasons(),
                 Warnings = preValidation.Warnings,
+                ExpectationSource = testCase.Expectation?.ExpectationSource,
+                RequirementCode = testCase.Expectation?.RequirementCode,
+                PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
             };
         }
 
@@ -413,6 +416,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 {
                     new ValidationFailureModel { Code = "UNRESOLVED_VARIABLE", Message = ex.Message },
                 },
+                ExpectationSource = testCase.Expectation?.ExpectationSource,
+                RequirementCode = testCase.Expectation?.RequirementCode,
+                PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
             };
         }
 
@@ -466,6 +472,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExpectedHeaderChecks = testCase.Expectation?.HeaderChecks,
             ExpectedJsonPathChecks = testCase.Expectation?.JsonPathChecks,
             ExpectedMaxResponseTime = testCase.Expectation?.MaxResponseTime,
+            ExpectationSource = testCase.Expectation?.ExpectationSource,
+            RequirementCode = testCase.Expectation?.RequirementCode,
+            PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
             RequestHeaders = resolvedRequest.Headers,
             ResponseHeaders = response.Headers,
             ResponseBody = response.Body,
@@ -566,6 +575,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                     Message = skipMessage,
                 },
             },
+            ExpectationSource = testCase.Expectation?.ExpectationSource,
+            RequirementCode = testCase.Expectation?.RequirementCode,
+            PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
         };
     }
 
@@ -989,7 +1001,115 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
     }
 #pragma warning restore IDE0060
 
-    private static string BuildResourceIdVariableName(string urlOrPath) => null;
+    private static string BuildResourceIdVariableName(string urlOrPath)
+    {
+        if (string.IsNullOrWhiteSpace(urlOrPath))
+        {
+            return null;
+        }
+
+        // Strip query/fragment, then parse path-only
+        var queryIndex = urlOrPath.IndexOfAny(new[] { '?', '#' });
+        var path = queryIndex >= 0 ? urlOrPath[..queryIndex] : urlOrPath;
+        path = path.TrimEnd('/');
+
+        if (Uri.TryCreate(urlOrPath, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
+        {
+            path = absolute.AbsolutePath.TrimEnd('/');
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+        {
+            return null;
+        }
+
+        // Walk backwards to find the last meaningful resource segment
+        // (skip path params like {id}, version segments like v1, and "api")
+        string resourceSegment = null;
+        for (var i = segments.Length - 1; i >= 0; i--)
+        {
+            var seg = segments[i].Trim();
+            if (string.IsNullOrWhiteSpace(seg))
+            {
+                continue;
+            }
+
+            if (seg.StartsWith('{') && seg.EndsWith('}'))
+            {
+                continue;
+            }
+
+            if (string.Equals(seg, "api", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Skip version segments: v1, v2, v10
+            if (seg.Length <= 3 && seg.StartsWith('v') && seg.Skip(1).All(char.IsDigit))
+            {
+                continue;
+            }
+
+            resourceSegment = seg;
+            break;
+        }
+
+        if (string.IsNullOrWhiteSpace(resourceSegment))
+        {
+            return null;
+        }
+
+        var singular = SingularizeResourceSegment(resourceSegment);
+        var camel = ToCamelCase(singular);
+        return string.IsNullOrWhiteSpace(camel) ? null : camel + "Id";
+    }
+
+    /// <summary>Converts a plural resource segment to singular (e.g. "categories" → "category").</summary>
+    private static string SingularizeResourceSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && value.Length > 3)
+        {
+            return value[..^3] + "y";
+        }
+
+        if (value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+            && !value.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
+            && value.Length > 1)
+        {
+            return value[..^1];
+        }
+
+        return value;
+    }
+
+    /// <summary>Converts a kebab/snake/plain segment to camelCase (e.g. "order-item" → "orderItem").</summary>
+    private static string ToCamelCase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var parts = value.Split(new[] { '-', '_', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return value;
+        }
+
+        var first = parts[0].Length == 0
+            ? string.Empty
+            : char.ToLowerInvariant(parts[0][0]) + parts[0][1..];
+        var rest = parts.Skip(1)
+            .Select(p => p.Length == 0 ? string.Empty : char.ToUpperInvariant(p[0]) + p[1..]);
+        return first + string.Concat(rest);
+    }
 
     private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
     {
