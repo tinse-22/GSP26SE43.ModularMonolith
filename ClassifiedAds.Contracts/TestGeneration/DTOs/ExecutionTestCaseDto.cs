@@ -19,6 +19,12 @@ public class ExecutionTestCaseDto
 
     public IReadOnlyList<Guid> DependencyIds { get; set; } = Array.Empty<Guid>();
 
+    /// <summary>
+    /// JSON-serialized tag array from the TestCase entity (e.g. ["llm-suggested", "happy-path"]).
+    /// Used by VariableResolver to skip body normalization for LLM-sourced test cases.
+    /// </summary>
+    public string Tags { get; set; }
+
     public ExecutionTestCaseRequestDto Request { get; set; }
 
     public ExecutionTestCaseExpectationDto Expectation { get; set; }

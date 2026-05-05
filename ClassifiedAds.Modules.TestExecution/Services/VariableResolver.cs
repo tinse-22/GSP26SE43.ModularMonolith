@@ -31,6 +31,8 @@ public class VariableResolver : IVariableResolver
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
     private static readonly Regex DuplicatedIdentifierPlaceholderRegex = new(@"IdId(s)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // Matches values already uniquified by {{tcUniqueId}} resolution — local part ends with _xxxxxxxx (8 hex chars).
+    private static readonly Regex AlreadyUniquifiedRegex = new(@"_[a-f0-9]{8}$", RegexOptions.Compiled);
 
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
@@ -62,6 +64,13 @@ public class VariableResolver : IVariableResolver
         {
             mergedVars[kvp.Key] = kvp.Value;
         }
+
+        // Inject per-EXECUTION unique ID so LLM-generated bodies can embed {{tcUniqueId}}
+        // in any field requiring uniqueness (email, username, code, slug, etc.) without
+        // the BE needing to know which field names exist in the request payload.
+        // Must be random per execution (not derived from TestCaseId) so repeated runs
+        // of the same test case never collide on unique-constraint fields (e.g. email).
+        mergedVars["tcUniqueId"] = Guid.NewGuid().ToString("N")[..8].ToLowerInvariant();
 
         ApplyTokenAliases(mergedVars);
 
@@ -144,11 +153,23 @@ public class VariableResolver : IVariableResolver
         var resolvedBody = !string.IsNullOrEmpty(request.Body)
             ? ResolvePlaceholders(request.Body, mergedVars)
             : null;
-        resolvedBody = NormalizeHappyPathCredentials(testCase, resolvedBody, mergedVars);
-        resolvedBody = NormalizeIdentifierLiteralsInJsonBody(testCase, resolvedBody, mergedVars);
-        resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
-        resolvedBody = NormalizeNumericPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
-        resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
+
+        if (!IsLlmSourced(testCase))
+        {
+            // Non-LLM test cases: run the full normalization pipeline.
+            resolvedBody = NormalizeHappyPathCredentials(testCase, resolvedBody, mergedVars);
+            resolvedBody = NormalizeIdentifierLiteralsInJsonBody(testCase, resolvedBody, mergedVars);
+            resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
+            resolvedBody = NormalizeNumericPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
+            resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
+        }
+        else
+        {
+            // LLM-sourced test cases: preserve the exact LLM body (credentials, names, IDs)
+            // but still uniquify emails on register-like endpoints so repeated runs or
+            // multiple register test cases in the same run don't collide (409).
+            resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
+        }
 
         // Build final URL
         resolvedUrl = NormalizeSwaggerDocsApiUrl(resolvedUrl);
@@ -707,8 +728,12 @@ public class VariableResolver : IVariableResolver
         string resolvedBody,
         IReadOnlyDictionary<string, string> variables)
     {
+        // Only rewrite credentials for HappyPath login flows.
+        // Boundary/Negative tests need their LLM-suggested credentials preserved
+        // (e.g. "wrong password" scenario must not be replaced with the valid runUniquePassword).
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || testCase?.Request == null
+            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
             || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
             || !IsLoginLikeRequest(testCase))
         {
@@ -1346,6 +1371,19 @@ public class VariableResolver : IVariableResolver
         return string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Returns true when the test case was materialized from an LLM suggestion
+    /// (detected by the "llm-suggested" tag written by LlmSuggestionMaterializer).
+    /// LLM-sourced test cases must execute with the exact body the LLM provided;
+    /// all structural body normalization must be skipped for them.
+    /// </summary>
+    private static bool IsLlmSourced(ExecutionTestCaseDto testCase)
+    {
+        var tags = testCase?.Tags;
+        return !string.IsNullOrWhiteSpace(tags)
+            && tags.Contains("llm-suggested", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsLoginLikeRequest(ExecutionTestCaseDto testCase)
     {
         var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
@@ -1854,9 +1892,21 @@ public class VariableResolver : IVariableResolver
 
         if (IsRegisterLikeRequest(testCase))
         {
-            return variables != null
-                && variables.TryGetValue("runUniqueEmail", out preferredEmail)
-                && !string.IsNullOrWhiteSpace(preferredEmail);
+            if (variables == null
+                || !variables.TryGetValue("runUniqueEmail", out var runEmail)
+                || string.IsNullOrWhiteSpace(runEmail))
+            {
+                return false;
+            }
+
+            // Derive a per-test-case unique email so multiple register test cases
+            // in the same run (HappyPath + Boundary + Negative) don't collide (409).
+            var tcSuffix = testCase.TestCaseId.ToString("N")[..8].ToLowerInvariant();
+            var atIdx = runEmail.IndexOf('@');
+            preferredEmail = atIdx > 0
+                ? $"{runEmail[..atIdx]}_{tcSuffix}{runEmail[atIdx..]}"
+                : $"{runEmail}_{tcSuffix}";
+            return true;
         }
 
         return TryGetPreferredTestEmail(variables, out preferredEmail);
@@ -1931,6 +1981,12 @@ public class VariableResolver : IVariableResolver
 
         var localPart = value[..atIndex].Trim().ToLowerInvariant();
         var domain = value[(atIndex + 1)..].Trim().ToLowerInvariant();
+
+        // Already uniquified via {{tcUniqueId}} resolution (ends with _xxxxxxxx) — do not rewrite.
+        if (AlreadyUniquifiedRegex.IsMatch(localPart))
+        {
+            return false;
+        }
 
         if (domain.StartsWith("example.", StringComparison.OrdinalIgnoreCase))
         {

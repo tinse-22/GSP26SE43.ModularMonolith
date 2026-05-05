@@ -348,6 +348,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
             TestType = tc.TestType.ToString(),
             OrderIndex = orderIndex,
             DependencyIds = depIds?.AsReadOnly() ?? (IReadOnlyList<Guid>)Array.Empty<Guid>(),
+            Tags = tc.Tags,
             Request = request != null
                 ? new ExecutionTestCaseRequestDto
                 {

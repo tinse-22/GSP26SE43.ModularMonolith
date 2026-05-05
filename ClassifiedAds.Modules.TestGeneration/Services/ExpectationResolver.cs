@@ -21,6 +21,26 @@ public sealed class ExpectationResolver : IExpectationResolver
 
     public ResolvedExpectation Resolve(GeneratedScenarioContext context)
     {
+        // LLM already received the full SRS document and endpoint spec — it is the most
+        // context-aware source for assertions and status codes.
+        // Priority: LLM (when it provides valid data) → SRS (for traceability + filling gaps)
+        //           → Swagger (schema-based enrichment) → hardcoded defaults.
+        //
+        // SRS and Swagger are used to:
+        //   (a) Supply SRS traceability (PrimaryRequirementId, RequirementCode)
+        //   (b) Fill bodyContains / jsonPathChecks when LLM left them empty
+        //   (c) Supply status codes ONLY when LLM did not provide any
+
+        var llm = TryResolveFromLlm(context);
+        if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
+        {
+            // LLM has explicit, valid status codes — use them as authoritative.
+            // Enrich with SRS traceability and any missing body/jsonPath assertions.
+            return EnrichFromSrsAndSwagger(llm, context);
+        }
+
+        // LLM didn't provide usable status codes (or provided nothing at all).
+        // Fall back to SRS → Swagger → LLM body-only → Default.
         var srs = TryResolveFromSrs(context);
         if (srs != null)
         {
@@ -33,13 +53,60 @@ public sealed class ExpectationResolver : IExpectationResolver
             return swagger;
         }
 
-        var llm = TryResolveFromLlm(context);
+        // LLM had some assertions but no valid status — return with default status.
         if (llm != null)
         {
             return llm;
         }
 
         return BuildDefault(context);
+    }
+
+    /// <summary>
+    /// Takes an LLM-resolved expectation as the authoritative base and supplements it
+    /// with SRS traceability and any assertions that the LLM left empty.
+    /// The LLM's status codes, bodyContains, and jsonPathChecks are NEVER overridden.
+    /// </summary>
+    private static ResolvedExpectation EnrichFromSrsAndSwagger(
+        ResolvedExpectation llm,
+        GeneratedScenarioContext context)
+    {
+        var srs = TryResolveFromSrs(context);
+        var swagger = llm.ResponseSchema == null ? TryResolveFromSwagger(context) : null;
+
+        // Supplement bodyContains only when LLM provided none.
+        var bodyContains = llm.BodyContains?.Count > 0
+            ? llm.BodyContains
+            : srs?.BodyContains?.Count > 0
+                ? srs.BodyContains
+                : swagger?.BodyContains ?? new List<string>();
+
+        // Supplement jsonPathChecks only when LLM provided none.
+        var jsonPathChecks = llm.JsonPathChecks?.Count > 0
+            ? llm.JsonPathChecks
+            : srs?.JsonPathChecks?.Count > 0
+                ? srs.JsonPathChecks
+                : swagger?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Supplement bodyNotContains only when LLM provided none.
+        var bodyNotContains = llm.BodyNotContains?.Count > 0
+            ? llm.BodyNotContains
+            : srs?.BodyNotContains ?? new List<string>();
+
+        return new ResolvedExpectation
+        {
+            ExpectedStatusCodes = llm.ExpectedStatusCodes,
+            ResponseSchema = llm.ResponseSchema ?? swagger?.ResponseSchema,
+            HeaderChecks = llm.HeaderChecks,
+            BodyContains = bodyContains,
+            BodyNotContains = bodyNotContains,
+            JsonPathChecks = jsonPathChecks,
+            MaxResponseTime = llm.MaxResponseTime,
+            Source = ExpectationSource.Llm,
+            // Preserve SRS traceability even when LLM drives the assertions.
+            PrimaryRequirementId = llm.PrimaryRequirementId ?? srs?.PrimaryRequirementId,
+            RequirementCode = llm.RequirementCode ?? srs?.RequirementCode,
+        };
     }
 
     public N8nTestCaseExpectation ResolveToN8nExpectation(GeneratedScenarioContext context)
@@ -90,12 +157,26 @@ public sealed class ExpectationResolver : IExpectationResolver
 
                 var bodyContains = ExtractBodyContains(requirement, constraint, context.TestType);
                 var bodyNotContains = ExtractBodyNotContains(requirement, constraint.Constraint);
-                var jsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
+                var srsJsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
+
+                // If SRS could not derive any jsonPath assertions, fall back to what the LLM already
+                // suggested — the LLM had the full SRS context and produced API-specific assertions.
+                // This prevents overriding LLM's contextual checks with empty/generic ones.
+                var jsonPathChecks = srsJsonPathChecks.Count > 0
+                    ? srsJsonPathChecks
+                    : (context.LlmExpectation?.JsonPathChecks?.Count > 0
+                        ? new Dictionary<string, string>(context.LlmExpectation.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                        : srsJsonPathChecks);
+
+                // If SRS bodyContains is empty, fall back to LLM's bodyContains.
+                var finalBodyContains = bodyContains.Count > 0
+                    ? bodyContains
+                    : (context.LlmExpectation?.BodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? bodyContains);
 
                 return new ResolvedExpectation
                 {
                     ExpectedStatusCodes = statuses,
-                    BodyContains = bodyContains,
+                    BodyContains = finalBodyContains,
                     BodyNotContains = bodyNotContains,
                     JsonPathChecks = jsonPathChecks,
                     Source = ExpectationSource.Srs,
@@ -164,9 +245,15 @@ public sealed class ExpectationResolver : IExpectationResolver
             return null;
         }
 
+        // If LLM provided no status at all, supply a sensible default so the caller can
+        // detect "LLM had no status" vs "LLM had some statuses" in Resolve().
+        var statuses = normalized.ExpectedStatusCodes?.Count > 0
+            ? normalized.ExpectedStatusCodes
+            : GetDefaultStatuses(context?.TestType ?? TestType.Negative, context?.HttpMethod);
+
         return new ResolvedExpectation
         {
-            ExpectedStatusCodes = normalized.ExpectedStatusCodes,
+            ExpectedStatusCodes = statuses,
             ResponseSchema = normalized.ResponseSchema,
             HeaderChecks = normalized.HeaderChecks,
             BodyContains = normalized.BodyContains,
@@ -186,7 +273,14 @@ public sealed class ExpectationResolver : IExpectationResolver
             return null;
         }
 
-        var statuses = NormalizeStatuses(expectation.ExpectedStatus?.ToList() ?? new List<int>(), testType);
+        // Trust the LLM's status codes as-is — the LLM already read the SRS and endpoint
+        // spec, so it knows which codes are appropriate. Only validate the HTTP range.
+        // Do NOT filter by TestType here: a Boundary test may legitimately expect 2xx
+        // (testing at the valid edge of a constraint), and the LLM knows this.
+        var statuses = (expectation.ExpectedStatus ?? new List<int>())
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList();
         var bodyContains = expectation.BodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
         var bodyNotContains = expectation.BodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>();
         var jsonPathChecks = expectation.JsonPathChecks?.Count > 0
@@ -238,9 +332,21 @@ public sealed class ExpectationResolver : IExpectationResolver
         }
 
         var coveredIds = new HashSet<Guid>(context.CoveredRequirementIds ?? Array.Empty<Guid>());
-        return context.SrsRequirements
-            .Where(x => x.IsReviewed)
+        var candidates = context.SrsRequirements
             .Where(x => !x.EndpointId.HasValue || x.EndpointId == context.EndpointId)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return Enumerable.Empty<SrsRequirement>();
+        }
+
+        // Prefer reviewed requirements, but fall back to unreviewed if none are reviewed yet.
+        var pool = candidates.Any(x => x.IsReviewed)
+            ? candidates.Where(x => x.IsReviewed).ToList()
+            : candidates;
+
+        return pool
             .OrderByDescending(x => coveredIds.Contains(x.Id))
             .ThenByDescending(x => x.EndpointId == context.EndpointId)
             .ThenBy(x => x.DisplayOrder)
@@ -424,10 +530,9 @@ public sealed class ExpectationResolver : IExpectationResolver
             Add("lowercase");
         }
 
-        if (result.Count == 0 && testType != TestType.HappyPath)
-        {
-            Add("error");
-        }
+        // Removed: generic Add("error") fallback when result is empty.
+        // Returning an empty list lets the caller fall back to LLM's bodyContains,
+        // which is API-specific (derived from SRS by the LLM).
 
         return result.Take(3).ToList();
     }
@@ -460,22 +565,21 @@ public sealed class ExpectationResolver : IExpectationResolver
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var isSuccess = statuses != null && statuses.Any(code => code is >= 200 and < 300);
 
-        result["$.success"] = isSuccess ? "true" : "false";
+        // NOTE: Do NOT add $.success or $.message generically here.
+        // These fields are API-specific — not all APIs return {success: bool, message: string}.
+        // The LLM already received the full SRS and produces API-aware assertions.
+        // Only emit JSONPath assertions when we have concrete constraint-specific evidence.
 
         if (!isSuccess)
         {
-            if (!string.IsNullOrWhiteSpace(constraint?.Field) && !string.Equals(constraint.Field, "request", StringComparison.OrdinalIgnoreCase))
+            if (constraint?.RuleType == "authorization")
             {
-                result["$.errors.*"] = constraint.Field;
-            }
-            else if (constraint?.RuleType == "authorization")
-            {
+                // Authorization constraints reliably produce a message indicating the reason.
                 result["$.message"] = lower.Contains("forbidden") ? "forbidden" : "unauthorized";
             }
-            else
-            {
-                result["$.message"] = "*";
-            }
+            // Removed: result["$.errors.*"] = constraint.Field — assumes {errors: {field: ...}} structure,
+            // which is API-specific and wrong for APIs that use {fieldErrors, violations, error, ...}.
+            // The LLM's jsonPathChecks (used as fallback in TryResolveFromSrs) handles field-level assertions.
 
             return result;
         }
@@ -484,10 +588,8 @@ public sealed class ExpectationResolver : IExpectationResolver
         {
             result["$.token"] = "*";
         }
-        else if (lower.Contains("register") || lower.Contains("created") || lower.Contains("success"))
-        {
-            result["$.message"] = "*";
-        }
+        // Removed: keyword-matching result["$.message"] = "*" for register/created/success.
+        // The LLM's jsonPathChecks (used as fallback in TryResolveFromSrs) will cover this.
 
         return result;
     }

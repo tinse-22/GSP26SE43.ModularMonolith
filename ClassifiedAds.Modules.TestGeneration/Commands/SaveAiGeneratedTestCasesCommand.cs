@@ -7,11 +7,59 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.TestGeneration.Commands;
+
+/// <summary>
+/// Deserializes a field that may arrive as a JSON string <c>"[201]"</c>
+/// or as a JSON integer/string array <c>[201]</c> or <c>["200","201"]</c>,
+/// always converting to a canonical JSON string such as <c>"[201]"</c>.
+/// </summary>
+internal sealed class JsonArrayOrStringConverter : JsonConverter<string>
+{
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.String:
+                return reader.GetString();
+
+            case JsonTokenType.Number:
+                // single bare integer: 201 → "[201]"
+                return $"[{reader.GetInt32()}]";
+
+            case JsonTokenType.StartArray:
+                var ints = new List<int>();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                {
+                    if (reader.TokenType == JsonTokenType.Number)
+                    {
+                        ints.Add(reader.GetInt32());
+                    }
+                    else if (reader.TokenType == JsonTokenType.String &&
+                             int.TryParse(reader.GetString(), out var n))
+                    {
+                        ints.Add(n);
+                    }
+                }
+
+                return ints.Count > 0
+                    ? $"[{string.Join(",", ints)}]"
+                    : "[200]";
+
+            default:
+                reader.Skip();
+                return null;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value);
+}
 
 /// <summary>Callback payload posted by n8n after LLM test-case generation.</summary>
 public class AiTestCaseRequestDto
@@ -28,6 +76,7 @@ public class AiTestCaseRequestDto
 
 public class AiTestCaseExpectationDto
 {
+    [JsonConverter(typeof(JsonArrayOrStringConverter))]
     public string ExpectedStatus { get; set; } = "[200]";
     public string ResponseSchema { get; set; }
     public string HeaderChecks { get; set; }
