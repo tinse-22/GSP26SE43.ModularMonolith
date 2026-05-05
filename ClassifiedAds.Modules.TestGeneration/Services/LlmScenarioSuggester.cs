@@ -14,6 +14,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -53,10 +54,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "   - For GET/DELETE, keep only the 3 highest-value checks and avoid low-signal duplicates.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
+        "3b. If the boundary value equals a valid minimum/maximum per SRS, expectedStatus must be 2xx (success). Use 4xx only when the constraint is violated or when SRS explicitly says the boundary value fails.\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
-        "5. Use UNIQUE synthetic test data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "5. For ANY field that must be unique across test cases (email, username, code, slug, phone, etc.), " +
+        "embed the placeholder {{tcUniqueId}} as part of the value. The BE resolves this to a unique 8-char hex string per test case at runtime. " +
+        "Examples: email → \"testuser_{{tcUniqueId}}@example.com\", username → \"user_{{tcUniqueId}}\", code → \"CODE_{{tcUniqueId}}\". " +
+        "NEVER use bare random suffixes you invent yourself — always use {{tcUniqueId}} so uniqueness is guaranteed across any project and any field type.\n" +
         "   AUTH FLOW RULES:\n" +
-        "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
+        "   - Registration HappyPath: use \"testuser_{{tcUniqueId}}@example.com\" as email. Add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
         "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
         "   - Negative 'email already exists' / 'duplicate email': MUST use \"{{registeredEmail}}\" in the email field (NOT a new unique email). This ensures the test sends a real already-registered email so the API returns 409.\n" +
         "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
@@ -113,6 +118,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "  \"model\": \"<model name>\",\n" +
         "  \"tokensUsed\": 0\n" +
         "}";
+
+    private static readonly Regex EmailLiteralRegex = new(
+        @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -640,6 +649,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ? resolvedExpectation.BodyContains
                 : s.Expectation?.BodyContains;
 
+            bodyContains = NormalizeRegisterBodyContains(
+                bodyContains,
+                s.Request,
+                s.ScenarioName);
+
             var parsedScenario = new LlmSuggestedScenario
             {
                 EndpointId = s.EndpointId,
@@ -693,6 +707,46 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         return scenarios;
+    }
+
+    private static List<string> NormalizeRegisterBodyContains(
+        List<string> bodyContains,
+        N8nTestCaseRequest request,
+        string scenarioName)
+    {
+        if (bodyContains == null || bodyContains.Count == 0)
+        {
+            return bodyContains;
+        }
+
+        if (!IsRegisterLikeRequest(request?.HttpMethod, request?.Url, scenarioName))
+        {
+            return bodyContains;
+        }
+
+        var filtered = bodyContains
+            .Where(value => !IsEmailLiteral(value))
+            .ToList();
+
+        return filtered.Count > 0 ? filtered : bodyContains;
+    }
+
+    private static bool IsRegisterLikeRequest(string httpMethod, string url, string name)
+    {
+        var signature = $"{httpMethod} {url} {name}";
+        return signature.Contains("/register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEmailLiteral(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return EmailLiteralRegex.IsMatch(value);
     }
 
 

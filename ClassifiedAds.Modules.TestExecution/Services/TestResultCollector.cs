@@ -287,6 +287,7 @@ public class TestResultCollector : ITestResultCollector
                 BodyNotContainsPassed = caseModel.BodyNotContainsPassed,
                 JsonPathChecksPassed = caseModel.JsonPathChecksPassed,
                 ResponseTimePassed = caseModel.ResponseTimePassed,
+                ExpectedStatus = caseModel.ExpectedStatus,
                 ExpectationSource = caseModel.ExpectationSource,
                 RequirementCode = caseModel.RequirementCode,
                 PrimaryRequirementId = caseModel.PrimaryRequirementId,

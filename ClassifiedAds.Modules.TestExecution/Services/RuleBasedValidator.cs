@@ -642,9 +642,24 @@ public class RuleBasedValidator : IRuleBasedValidator
                 }
             }
 
-            // Soft mode 3: Any Negative/Boundary test - body content checks are advisory;
-            // the status code check is the primary assertion for these test types.
-            return true;
+            // Soft mode 3: Only when the test explicitly expects an error outcome (all 4xx/5xx).
+            // Success-boundary tests (e.g. expectedStatus=[201]) must still enforce body checks.
+            if (!string.IsNullOrWhiteSpace(expectation.ExpectedStatus))
+            {
+                try
+                {
+                    var expectedStatuses = JsonSerializer.Deserialize<List<int>>(expectation.ExpectedStatus);
+                    if (expectedStatuses != null && expectedStatuses.Count > 0 &&
+                        expectedStatuses.All(s => s >= 400))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // ignore parse errors; fall through to hard mode
+                }
+            }
         }
 
         return false;
@@ -860,15 +875,23 @@ public class RuleBasedValidator : IRuleBasedValidator
 
                 if (actualValue == null || !ValuesEqual(actualValue, check.Value))
                 {
-                    var isWildcard = check.Value == "*";
-                    if (jsonPathSoftMode)
+                    // Treat "notnull" the same as "*" — an existence check, not a literal match.
+                    var isExistenceCheck = check.Value == "*"
+                        || string.Equals(check.Value, "notnull", StringComparison.OrdinalIgnoreCase);
+
+                    // Soft-forgive ONLY when the path does not exist in the response (null).
+                    // Error responses legitimately lack success-path fields — that is expected.
+                    // When the field EXISTS but has the wrong value, it is a genuine assertion
+                    // failure regardless of soft mode.  Existence checks ("*"/"notnull") require
+                    // presence, so null is never soft-forgiven for them either.
+                    var canSoftForgive = jsonPathSoftMode && actualValue == null && !isExistenceCheck;
+
+                    if (canSoftForgive)
                     {
                         result.Warnings.Add(new ValidationWarningModel
                         {
                             Code = "JSONPATH_PARTIAL_MISMATCH",
-                            Message = isWildcard
-                                ? $"JSONPath '{check.Key}' không tìm thấy, nhưng được bỏ qua vì API permissive đã chấp nhận request."
-                                : $"JSONPath '{check.Key}' không khớp (mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'), nhưng được bỏ qua vì API permissive đã chấp nhận request.",
+                            Message = $"JSONPath '{check.Key}' không tìm thấy, nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
                             Target = check.Key,
                         });
                     }
@@ -878,7 +901,7 @@ public class RuleBasedValidator : IRuleBasedValidator
                         result.Failures.Add(new ValidationFailureModel
                         {
                             Code = "JSONPATH_ASSERTION_FAILED",
-                            Message = isWildcard
+                            Message = isExistenceCheck
                                 ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
                                 : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
                             Target = check.Key,
@@ -890,7 +913,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             }
         }
 
-        result.JsonPathChecksPassed = allPassed || jsonPathSoftMode;
+        result.JsonPathChecksPassed = allPassed;
         return true;
     }
 
@@ -964,8 +987,8 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValuesEqual(string actual, string expected)
     {
-        // Wildcard "*" means "field must exist with any non-null value"
-        if (expected == "*")
+        // Wildcards: "*" and "notnull" both mean "field must exist with any non-null value"
+        if (expected == "*" || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase))
         {
             return actual != null;
         }

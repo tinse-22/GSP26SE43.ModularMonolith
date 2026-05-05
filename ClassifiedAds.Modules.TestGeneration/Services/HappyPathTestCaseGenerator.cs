@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,6 +31,10 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
     };
+
+    private static readonly Regex EmailLiteralRegex = new(
+        @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IObservationConfirmationPromptBuilder _promptBuilder;
@@ -215,6 +220,8 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
             // Build request
             testCase.Request = _requestBuilder.Build(testCaseId, generated.Request, orderItem);
 
+            NormalizeRegisterExpectation(generated);
+
             // Build expectation
             testCase.Expectation = _expectationBuilder.Build(testCaseId, generated.Expectation);
             NormalizeHappyPathExpectedStatuses(testCase);
@@ -361,6 +368,47 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
         }
 
         return JsonSerializer.Serialize(tags, JsonOpts);
+    }
+
+    private static void NormalizeRegisterExpectation(N8nGeneratedTestCase generated)
+    {
+        if (generated?.Expectation?.BodyContains == null
+            || generated.Expectation.BodyContains.Count == 0)
+        {
+            return;
+        }
+
+        if (!IsRegisterLikeRequest(generated.Request?.HttpMethod, generated.Request?.Url, generated.Name))
+        {
+            return;
+        }
+
+        var filtered = generated.Expectation.BodyContains
+            .Where(value => !IsEmailLiteral(value))
+            .ToList();
+
+        if (filtered.Count > 0)
+        {
+            generated.Expectation.BodyContains = filtered;
+        }
+    }
+
+    private static bool IsRegisterLikeRequest(string httpMethod, string url, string name)
+    {
+        var signature = $"{httpMethod} {url} {name}";
+        return signature.Contains("/register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEmailLiteral(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return EmailLiteralRegex.IsMatch(value);
     }
 
     private static void NormalizeHappyPathExpectedStatuses(TestCase testCase)
