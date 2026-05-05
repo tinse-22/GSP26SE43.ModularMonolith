@@ -65,10 +65,12 @@ public class VariableResolver : IVariableResolver
             mergedVars[kvp.Key] = kvp.Value;
         }
 
-        // Inject per-test-case unique ID so LLM-generated bodies can embed {{tcUniqueId}}
+        // Inject per-EXECUTION unique ID so LLM-generated bodies can embed {{tcUniqueId}}
         // in any field requiring uniqueness (email, username, code, slug, etc.) without
         // the BE needing to know which field names exist in the request payload.
-        mergedVars["tcUniqueId"] = testCase.TestCaseId.ToString("N")[..8].ToLowerInvariant();
+        // Must be random per execution (not derived from TestCaseId) so repeated runs
+        // of the same test case never collide on unique-constraint fields (e.g. email).
+        mergedVars["tcUniqueId"] = Guid.NewGuid().ToString("N")[..8].ToLowerInvariant();
 
         ApplyTokenAliases(mergedVars);
 

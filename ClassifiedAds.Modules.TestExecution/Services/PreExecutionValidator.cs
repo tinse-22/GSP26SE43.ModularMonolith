@@ -424,6 +424,14 @@ public class PreExecutionValidator : IPreExecutionValidator
             mergedVars[kvp.Key] = kvp.Value;
         }
 
+        // Inject built-in runtime variables that VariableResolver guarantees at execution time.
+        // These are always available regardless of environment/variableBag so the validator
+        // must not report them as unresolved.
+        mergedVars.TryAdd("tcUniqueId", testCase.TestCaseId.ToString("N")[..8].ToLowerInvariant());
+        mergedVars.TryAdd("runId", "runtime");
+        mergedVars.TryAdd("runSuffix", "runtime");
+        mergedVars.TryAdd("runTimestamp", "runtime");
+
         // Check all surfaces for unresolvable placeholders
         CheckPlaceholders(testCase.Request.Url, "URL", mergedVars, result);
         CheckPlaceholders(testCase.Request.Body, "Body", mergedVars, result);
