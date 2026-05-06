@@ -15,6 +15,12 @@ public class RuleBasedValidator : IRuleBasedValidator
     private const int TotalValidationChecks = 7;
     private const string InvalidExpectationFormatCode = "INVALID_EXPECTATION_FORMAT";
 
+    // Detects JWT-like values: three non-trivial base64url segments separated by dots.
+    // JWTs are session-specific and always differ across runs; treat as existence checks.
+    private static readonly System.Text.RegularExpressions.Regex JwtLikeRegex = new(
+        @"^[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private readonly ILogger<RuleBasedValidator> _logger;
 
     public RuleBasedValidator(ILogger<RuleBasedValidator> logger)
@@ -875,9 +881,11 @@ public class RuleBasedValidator : IRuleBasedValidator
 
                 if (actualValue == null || !ValuesEqual(actualValue, check.Value))
                 {
-                    // Treat "notnull" the same as "*" — an existence check, not a literal match.
-                    var isExistenceCheck = check.Value == "*"
-                        || string.Equals(check.Value, "notnull", StringComparison.OrdinalIgnoreCase);
+                    // Treat "notnull", "*", empty, and JWT-like values as existence checks.
+                    var isExistenceCheck = string.IsNullOrWhiteSpace(check.Value)
+                        || check.Value == "*"
+                        || string.Equals(check.Value, "notnull", StringComparison.OrdinalIgnoreCase)
+                        || JwtLikeRegex.IsMatch(check.Value);
 
                     // Soft-forgive ONLY when the path does not exist in the response (null).
                     // Error responses legitimately lack success-path fields — that is expected.
@@ -987,10 +995,23 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValuesEqual(string actual, string expected)
     {
-        // Wildcards: "*" and "notnull" both mean "field must exist with any non-null value"
-        if (expected == "*" || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase))
+        // Wildcards: "*", "notnull", and empty/null all mean "field must exist with any non-null value".
+        // Empty expected value is treated as an existence check (not a literal empty-string match)
+        // because the DB sometimes stores "" when the LLM generated a token field assertion
+        // without knowing the actual value.
+        if (string.IsNullOrWhiteSpace(expected)
+            || expected == "*"
+            || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase))
         {
-            return actual != null;
+            return actual != null && actual.Length > 0;
+        }
+
+        // JWT guard: a stored JWT token will never match a newly-issued one (different
+        // iat/exp/jti claims per session). Treat a JWT-like expected value as an
+        // existence check — the useful assertion is "token is present", not exact match.
+        if (JwtLikeRegex.IsMatch(expected))
+        {
+            return actual != null && actual.Length > 0;
         }
 
         if (actual == expected)

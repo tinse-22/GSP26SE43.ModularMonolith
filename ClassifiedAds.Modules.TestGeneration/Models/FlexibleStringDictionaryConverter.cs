@@ -47,15 +47,35 @@ public sealed class FlexibleStringDictionaryConverter : JsonConverter<Dictionary
             var key = reader.GetString();
             reader.Read();
 
-            var value = reader.TokenType switch
+            string value;
+            switch (reader.TokenType)
             {
-                JsonTokenType.String => reader.GetString(),
-                JsonTokenType.Number => reader.TryGetInt64(out var l) ? l.ToString() : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
-                JsonTokenType.True => "true",
-                JsonTokenType.False => "false",
-                JsonTokenType.Null => string.Empty,
-                _ => reader.GetString() ?? string.Empty,
-            };
+                case JsonTokenType.String:
+                    value = reader.GetString();
+                    break;
+                case JsonTokenType.Number:
+                    value = reader.TryGetInt64(out var l) ? l.ToString() : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case JsonTokenType.True:
+                    value = "true";
+                    break;
+                case JsonTokenType.False:
+                    value = "false";
+                    break;
+                case JsonTokenType.Null:
+                    value = string.Empty;
+                    break;
+                case JsonTokenType.StartObject:
+                case JsonTokenType.StartArray:
+                    using (var doc = JsonDocument.ParseValue(ref reader))
+                    {
+                        value = doc.RootElement.GetRawText();
+                    }
+                    break;
+                default:
+                    value = string.Empty;
+                    break;
+            }
 
             result[key] = value;
         }

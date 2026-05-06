@@ -11,6 +11,8 @@ public class TestCaseExecutionResult
 
     public string Name { get; set; }
 
+    public string Description { get; set; }
+
     public string TestType { get; set; }
 
     public int OrderIndex { get; set; }

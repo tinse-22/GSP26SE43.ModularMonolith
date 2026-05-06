@@ -64,6 +64,7 @@ public class TestResultCollector : ITestResultCollector
             TestCaseId = r.TestCaseId,
             EndpointId = r.EndpointId,
             Name = r.Name,
+            Description = r.Description,
             TestType = r.TestType,
             OrderIndex = r.OrderIndex,
             Status = r.Status,
