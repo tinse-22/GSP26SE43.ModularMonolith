@@ -1433,9 +1433,14 @@ public class VariableResolver : IVariableResolver
         var hasPreferredEmail = TryGetPreferredEmailForSyntheticBody(testCase, variables, out var preferredEmail);
         var runSuffix = GetRunSuffix(variables);
 
-        var emailRewritten = hasPreferredEmail && ReplaceSyntheticEmails(root, preferredEmail);
-        var nameRewritten = string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
-            && ReplaceSyntheticResourceNames(root, runSuffix);
+        // Only uniquify emails for HappyPath tests.
+        // Boundary/Negative tests must preserve the email the LLM generated (e.g.
+        // a "duplicate email" test intentionally reuses {{registeredEmail}}, and
+        // replacing it with a fresh unique email would make the register succeed
+        // instead of failing — inverting the expected $.success=false assertion).
+        var isHappyPath = string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
+        var emailRewritten = hasPreferredEmail && isHappyPath && ReplaceSyntheticEmails(root, preferredEmail);
+        var nameRewritten = isHappyPath && ReplaceSyntheticResourceNames(root, runSuffix);
 
         return emailRewritten || nameRewritten
             ? root.ToJsonString(JsonOptions)

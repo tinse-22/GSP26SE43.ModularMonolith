@@ -48,7 +48,15 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
     private const string UnifiedRulesBlock =
         "=== RULES ===\n" +
-        "1. For EACH endpoint, generate at least: 1 HappyPath + 1 Boundary + 1 Negative.\n" +
+        "1. TEST COUNT RULE — follow this priority order:\n" +
+        "   a) If srsRequirements are provided and contain requirements that map to this endpoint: " +
+        "generate ONE test case per SRS requirement that covers this endpoint. " +
+        "Derive testType from the requirement type: success/functional/positive → HappyPath; " +
+        "boundary/edge → Boundary; negative/error/validation/constraint → Negative. " +
+        "Always include at least 1 HappyPath (add one if all mapped requirements are Boundary/Negative). " +
+        "Populate coveredRequirementIds on each test case with the matching requirement UUID(s).\n" +
+        "   b) If no srsRequirements are provided for this endpoint, or srsRequirements is empty: " +
+        "generate at least 1 HappyPath + 1 Boundary + 1 Negative.\n" +
         "2. testType must be exactly one of: \"HappyPath\", \"Boundary\", \"Negative\".\n" +
         "3. endpointId must match exact UUID from input.\n" +
         "4. Keep execution order aligned with endpoint order (orderIndex unique, 0-based, no duplicates).\n" +

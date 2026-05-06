@@ -53,4 +53,11 @@ public sealed class GeneratedScenarioContext
     public IReadOnlyList<Guid> CoveredRequirementIds { get; init; } = Array.Empty<Guid>();
 
     public IReadOnlyList<int> PreferredDefaultStatuses { get; init; } = Array.Empty<int>();
+
+    /// <summary>
+    /// Raw SRS document content (markdown). Used by ExpectationResolver to parse
+    /// validation rules / constraints directly from the SRS when testableConstraints JSON
+    /// on SrsRequirement entities is empty or malformed.
+    /// </summary>
+    public string SrsDocumentContent { get; init; }
 }
