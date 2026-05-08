@@ -265,7 +265,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     Priority = ParsePriority(dto.Priority),
                     IsEnabled = true,
                     OrderIndex = dto.OrderIndex > 0 ? dto.OrderIndex : orderIdx,
-                    Tags = NormalizeTagsJson(dto.Tags),
+                    Tags = EnsureLlmSourcedTagJson(dto.Tags, ParseTestType(dto.TestType)),
                     Version = 1,
                     LastModifiedById = actorUserId,
                     CreatedDateTime = now,
@@ -573,6 +573,54 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
             return JsonSerializer.Serialize(parts.Length > 0 ? parts : new[] { trimmed });
         }
+    }
+
+    /// <summary>
+    /// Ensures the saved test case always carries the "llm-suggested" and "auto-generated" tags
+    /// so that <see cref="VariableResolver.IsLlmSourced"/> returns <c>true</c> and the
+    /// body-normalisation pipeline is skipped at execution time.
+    /// </summary>
+    private static string EnsureLlmSourcedTagJson(string existingTagsJson, TestType testType)
+    {
+        var tags = new List<string>();
+
+        // Deserialise whatever n8n sent (may be null/empty/plain string/JSON array).
+        var normalised = NormalizeTagsJson(existingTagsJson);
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<string>>(normalised, JsonOpts);
+            if (parsed != null)
+            {
+                tags.AddRange(parsed);
+            }
+        }
+        catch { }
+
+        // Add canonical type tag.
+        var typeTag = testType switch
+        {
+            TestType.HappyPath  => "happy-path",
+            TestType.Boundary   => "boundary",
+            TestType.Negative   => "negative",
+            TestType.Security   => "security",
+            TestType.Performance => "performance",
+            _                   => "negative",
+        };
+        if (!tags.Contains(typeTag, StringComparer.OrdinalIgnoreCase))
+        {
+            tags.Add(typeTag);
+        }
+
+        // Ensure markers required by IsLlmSourced.
+        foreach (var required in new[] { "auto-generated", "llm-suggested" })
+        {
+            if (!tags.Contains(required, StringComparer.OrdinalIgnoreCase))
+            {
+                tags.Add(required);
+            }
+        }
+
+        return JsonSerializer.Serialize(tags, JsonOpts);
     }
 
     private static string NormalizeJsonOrDefault(string value, string fallbackJson)

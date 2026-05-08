@@ -77,6 +77,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
             _variableRepoMock.Object,
             _changeLogRepoMock.Object,
             _versionRepoMock.Object,
+            new Mock<IRepository<SrsDocument, Guid>>().Object,
+            new Mock<IRepository<SrsRequirement, Guid>>().Object,
             _gateServiceMock.Object,
             _generatorMock.Object,
             _subscriptionMock.Object,

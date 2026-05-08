@@ -24,4 +24,7 @@ public class ResolvedTestCaseRequest
     public int TimeoutMs { get; set; }
 
     public IReadOnlyList<Guid> DependencyIds { get; set; } = Array.Empty<Guid>();
+
+    /// <summary>The per-execution unique ID injected as {{tcUniqueId}} during resolution.</summary>
+    public string TcUniqueId { get; set; }
 }

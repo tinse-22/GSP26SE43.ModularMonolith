@@ -61,6 +61,7 @@ public class LlmScenarioSuggesterTests
             _n8nServiceMock.Object,
             _llmGatewayServiceMock.Object,
             _feedbackContextServiceMock.Object,
+            new Mock<IExpectationResolver>().Object,
             _loggerMock.Object);
     }
 

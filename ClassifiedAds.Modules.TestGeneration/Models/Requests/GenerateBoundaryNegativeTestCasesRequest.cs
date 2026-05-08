@@ -22,15 +22,15 @@ public class GenerateBoundaryNegativeTestCasesRequest
 
     /// <summary>
     /// Include rule-based path parameter mutations (empty, wrongType, boundary, injection).
-    /// Default: true.
+    /// Default: false — rely on LLM suggestions only.
     /// </summary>
-    public bool IncludePathMutations { get; set; } = true;
+    public bool IncludePathMutations { get; set; } = false;
 
     /// <summary>
     /// Include rule-based body mutations (missingRequired, typeMismatch, overflow, malformedJson).
-    /// Default: true.
+    /// Default: false — rely on LLM suggestions only.
     /// </summary>
-    public bool IncludeBodyMutations { get; set; } = true;
+    public bool IncludeBodyMutations { get; set; } = false;
 
     /// <summary>
     /// Include LLM-suggested boundary/negative scenarios via n8n webhook.
