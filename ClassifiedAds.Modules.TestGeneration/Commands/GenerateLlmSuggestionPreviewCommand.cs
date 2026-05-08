@@ -230,8 +230,12 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 SuggestedDescription = scenario.Description,
                 SuggestedRequest = JsonSerializer.Serialize(new N8nTestCaseRequest
                 {
-                    HttpMethod = orderItem?.HttpMethod,
-                    Url = orderItem?.Path,
+                    HttpMethod = string.IsNullOrWhiteSpace(scenario.SuggestedHttpMethod)
+                        ? orderItem?.HttpMethod
+                        : scenario.SuggestedHttpMethod,
+                    Url = string.IsNullOrWhiteSpace(scenario.SuggestedUrl)
+                        ? orderItem?.Path
+                        : scenario.SuggestedUrl,
                     BodyType = scenario.SuggestedBodyType,
                     Body = scenario.SuggestedBody,
                     PathParams = scenario.SuggestedPathParams,
@@ -240,22 +244,19 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 }, JsonOpts),
                 SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
                 {
-                    ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
-                    BodyContains = scenario.SuggestedBodyContains?.Count > 0
-                        ? scenario.SuggestedBodyContains
-                        : (scenario.SuggestedTestType == TestType.HappyPath && !string.IsNullOrWhiteSpace(scenario.ExpectedBehavior)
-                            ? new List<string> { scenario.ExpectedBehavior }
-                            : new List<string>()),
+                    ExpectedStatus = scenario.ExpectedStatusCodes ?? new List<int>(),
+                    BodyContains = scenario.SuggestedBodyContains ?? new List<string>(),
                     BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
-                    JsonPathChecks = NormalizeJsonPathChecks(scenario.SuggestedJsonPathChecks, scenario.SuggestedTestType),
+                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
                     HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
+                    ExpectationSource = scenario.ExpectationSource,
+                    RequirementCode = scenario.RequirementCode,
+                    PrimaryRequirementId = scenario.PrimaryRequirementId,
                 }, JsonOpts),
                 SuggestedVariables = scenario.Variables?.Count > 0
                     ? JsonSerializer.Serialize(scenario.Variables, JsonOpts)
                     : null,
-                SuggestedTags = LlmSuggestionMaterializer.SerializeTags(
-                    scenario.SuggestedTestType, "llm-suggested",
-                    scenario.Tags?.ToArray() ?? Array.Empty<string>()),
+                SuggestedTags = JsonSerializer.Serialize(scenario.Tags ?? new List<string>(), JsonOpts),
                 Priority = LlmSuggestionMaterializer.ParsePriority(scenario.Priority),
                 ReviewStatus = ReviewStatus.Pending,
                 LlmModel = llmResult.LlmModel,
@@ -311,35 +312,4 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             command.Result.EndpointsCovered, llmResult.FromCache, command.CurrentUserId);
     }
 
-    /// <summary>
-    /// For HappyPath tests, replaces hardcoded email-like values in JSONPath checks with "*" (wildcard).
-    /// This prevents false failures when the test uses a dynamically generated email at runtime
-    /// that differs from the static email the LLM hardcoded in the assertion.
-    /// </summary>
-    private static Dictionary<string, string> NormalizeJsonPathChecks(
-        Dictionary<string, string> checks,
-        TestType testType)
-    {
-        if (checks == null || checks.Count == 0)
-        {
-            return new Dictionary<string, string>();
-        }
-
-        if (testType != TestType.HappyPath)
-        {
-            return checks;
-        }
-
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (path, value) in checks)
-        {
-            // Replace hardcoded email values with wildcard so dynamic per-run emails don't cause false failures
-            var normalized = !string.IsNullOrWhiteSpace(value) && value.Contains('@') && value != "*"
-                ? "*"
-                : value;
-            result[path] = normalized;
-        }
-
-        return result;
-    }
 }

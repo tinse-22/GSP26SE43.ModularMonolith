@@ -1209,6 +1209,14 @@ public static class GeneratedTestCaseDependencyEnricher
         }
 
         var raw = currentValue?.ToJsonString(JsonOpts)?.Trim('"');
+        if (!string.IsNullOrWhiteSpace(raw) &&
+            raw.Contains("{{", StringComparison.Ordinal) &&
+            raw.Contains("}}", StringComparison.Ordinal) &&
+            !TryExtractPlaceholderVariable(raw, out _))
+        {
+            return false;
+        }
+
         if (TryExtractPlaceholderVariable(raw, out var placeholder))
         {
             return !string.Equals(placeholder, variableName, StringComparison.OrdinalIgnoreCase);

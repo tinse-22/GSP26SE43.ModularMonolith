@@ -27,8 +27,9 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int LeanScenarioTargetPerEndpoint = 3;
-    private const int StandardScenarioTargetPerEndpoint = 10;
+    private const int LeanScenarioTargetPerEndpoint = 5;
+    private const int StandardScenarioTargetPerEndpoint = 15;
+    private const int MaxScenarioTargetPerBatch = 20;
 
     private const int MaxBusinessContextLength = 1200;
     private const int MaxFeedbackContextLength = 1200;
@@ -50,21 +51,29 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 3 scenarios total; POST, PUT, and PATCH endpoints need exactly 10 scenarios total; other methods default to 10 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
-        "   - For GET/DELETE, keep only the 3 highest-value checks and avoid low-signal duplicates.\n" +
+        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 5 scenarios total; POST, PUT, and PATCH endpoints need exactly 15 scenarios total; other methods default to 15 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "   - For GET/DELETE, include the 5 highest-value checks covering happy-path, boundary, and negative cases.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "3b. If the boundary value equals a valid minimum/maximum per SRS, expectedStatus must be 2xx (success). Use 4xx only when the constraint is violated or when SRS explicitly says the boundary value fails.\n" +
         "4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n" +
-        "5. For ANY field that must be unique across test cases (email, username, code, slug, phone, etc.), " +
-        "embed the placeholder {{tcUniqueId}} as part of the value. The BE resolves this to a unique 8-char hex string per test case at runtime. " +
-        "Examples: email → \"testuser_{{tcUniqueId}}@example.com\", username → \"user_{{tcUniqueId}}\", code → \"CODE_{{tcUniqueId}}\". " +
-        "NEVER use bare random suffixes you invent yourself — always use {{tcUniqueId}} so uniqueness is guaranteed across any project and any field type.\n" +
-        "   AUTH FLOW RULES:\n" +
-        "   - Registration HappyPath: use \"testuser_{{tcUniqueId}}@example.com\" as email. Add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
-        "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
-        "   - Negative 'email already exists' / 'duplicate email': MUST use \"{{registeredEmail}}\" in the email field (NOT a new unique email). This ensures the test sends a real already-registered email so the API returns 409.\n" +
-        "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
+        "5. DYNAMIC DATA — MANDATORY rules for all test types and all API domains:\n" +
+        "   a) UNIQUENESS: For ANY field that must be unique per run (email, username, code, slug, phone, name, sku, ref, etc.), embed {{tcUniqueId}} in the value. " +
+        "The BE resolves {{tcUniqueId}} to a fresh 8-char hex per execution. " +
+        "Use regardless of API type: email → \"user_{{tcUniqueId}}@yourdomain.com\", username → \"user_{{tcUniqueId}}\", productCode → \"PROD_{{tcUniqueId}}\". " +
+        "NEVER invent your own suffixes — always use {{tcUniqueId}}.\n" +
+        "   b) CROSS-TEST VARIABLES: The execution engine AUTOMATICALLY extracts ALL primitive fields from every successful (2xx) POST/PUT/PATCH request body into a shared variable bag, keyed by exact field name. " +
+        "Downstream tests reference them as {{fieldName}} directly. " +
+        "If a prior register test sent {email, password, name}, then {{email}}, {{password}}, {{name}} are all available. " +
+        "If a prior create-product test sent {name, price}, then {{name}}, {{price}} are available. " +
+        "Semantic aliases: {{registeredEmail}} = {{email}} from first register, {{registeredPassword}} = {{password}} from first register.\n" +
+        "   c) RESPONSE IDs: Engine also auto-extracts IDs from successful response bodies (e.g. {{productId}}, {{orderId}} from $.data.id). Add explicit 'variables' rules only when you need a non-standard path.\n" +
+        "   d) FLOW CHAINS (apply to ALL API types, not just auth):\n" +
+        "      - HappyPath create/register: use {{tcUniqueId}} for all unique fields. No explicit variable rules needed for primitive request body fields.\n" +
+        "      - HappyPath login/get/update: use {{fieldName}} from the prior successful test (e.g. {{email}}, {{name}}, {{productId}}). Do NOT hardcode values.\n" +
+        "      - Negative 'duplicate value' tests: use {{<fieldName>}} matching the conflicting field (e.g. {{email}} for duplicate email, {{name}} for duplicate product name) — NOT a new unique value.\n" +
+        "      - Negative 'not found' tests: use \"nonexistent_{{tcUniqueId}}\" to guarantee the value does not exist.\n" +
+        "      - Tests needing a prior resource ID: use {{<resource>Id}} (e.g. {{productId}}, {{orderId}}, {{userId}}).\n" +
         "6. endpointId must be the EXACT UUID from input.\n" +
         "7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
         "8. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
@@ -176,15 +185,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? await BuildFeedbackContextSafeAsync(context, orderedSequence, cancellationToken)
             : LlmSuggestionFeedbackContextResult.Empty;
 
-        var useCacheLookup = algorithmProfile.UseFeedbackLoopContext && !context.BypassCache;
-        if (!useCacheLookup)
-        {
-            _logger.LogInformation(
-                "Skipping LLM suggestion cache lookup. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}",
-                context.TestSuiteId,
-                context.BypassCache,
-                algorithmProfile.UseFeedbackLoopContext);
-        }
+        var useCacheLookup = false;
+        _logger.LogInformation(
+            "Skipping LLM suggestion cache lookup. Fresh n8n call is enforced for every generate request. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}",
+            context.TestSuiteId,
+            context.BypassCache,
+            algorithmProfile.UseFeedbackLoopContext);
 
         // Step 1: Check cache for each endpoint
         var cacheKey = BuildCacheKey(context, orderedSequence, feedbackContext.FeedbackFingerprint);
@@ -208,105 +214,170 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return cachedResult;
         }
 
-        // Step 2: Build prompts using Observation-Confirmation pattern
+        // Step 2: Build prompts and call n8n in batches to avoid output truncation.
         var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
-        var orderedMetadata = orderedSequence
-            .Where(oe => metadataMap.ContainsKey(oe.EndpointId))
-            .Select(oe => metadataMap[oe.EndpointId])
-            .ToList();
+        var endpointBatches = BuildEndpointBatches(orderedSequence, metadataMap);
 
-        IReadOnlyList<ObservationConfirmationPrompt> prompts = Array.Empty<ObservationConfirmationPrompt>();
-        if (algorithmProfile.UseObservationConfirmationPrompting)
-        {
-            var promptContexts = EndpointPromptContextMapper.Map(orderedMetadata, context.Suite);
-            prompts = _promptBuilder.BuildForSequence(promptContexts);
-        }
-
-        // Step 3: Build n8n payload
-        var payload = BuildN8nPayload(
-            context,
-            orderedSequence,
-            metadataMap,
-            prompts,
-            feedbackContext.EndpointFeedbackContexts);
-        var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts).Length;
-
-        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
-
-        // Step 4: Call n8n webhook
-        _logger.LogInformation(
-            "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, PayloadBytes={PayloadBytes}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
-            N8nWebhookNames.GenerateLlmSuggestions,
-            context.TestSuiteId,
-            orderedSequence.Count,
-            payloadBytes,
-            feedbackContext.FeedbackFingerprint,
-            cacheKey);
-
-        var stopwatch = Stopwatch.StartNew();
+        var allScenarios = new List<LlmSuggestedScenario>();
+        var totalTokens = 0;
+        var totalLatencyMs = 0;
         var usedLocalFallback = false;
-        N8nBoundaryNegativeResponse n8nResponse;
+        string modelUsed = null;
 
-        try
+        for (var batchIndex = 0; batchIndex < endpointBatches.Count; batchIndex++)
         {
-            n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
-                N8nWebhookNames.GenerateLlmSuggestions, payload, cancellationToken);
-        }
-        catch (N8nTransientException ex)
-        {
-            usedLocalFallback = true;
-            _logger.LogWarning(
-                ex,
-                "Transient n8n failure while generating LLM suggestions. Falling back to local contract-based synthesis. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, StatusCode={StatusCode}, Webhook={Webhook}",
-                context.TestSuiteId,
-                orderedSequence.Count,
-                ex.StatusCode,
-                N8nWebhookNames.GenerateLlmSuggestions);
+            var batch = endpointBatches[batchIndex];
+            var orderedMetadata = batch
+                .Where(oe => metadataMap.ContainsKey(oe.EndpointId))
+                .Select(oe => metadataMap[oe.EndpointId])
+                .ToList();
 
-            n8nResponse = new N8nBoundaryNegativeResponse
+            IReadOnlyList<ObservationConfirmationPrompt> prompts = Array.Empty<ObservationConfirmationPrompt>();
+            if (algorithmProfile.UseObservationConfirmationPrompting)
             {
-                Scenarios = new List<N8nSuggestedScenario>(),
-                Model = "local-fallback",
-                TokensUsed = 0,
-            };
-        }
+                var promptContexts = EndpointPromptContextMapper.Map(orderedMetadata, context.Suite);
+                prompts = _promptBuilder.BuildForSequence(promptContexts);
+            }
 
-        stopwatch.Stop();
+            var payload = BuildN8nPayload(
+                context,
+                batch,
+                metadataMap,
+                prompts,
+                feedbackContext.EndpointFeedbackContexts);
+            var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts).Length;
 
-        var latencyMs = (int)stopwatch.ElapsedMilliseconds;
+            _logger.LogInformation(
+                "Calling n8n webhook '{WebhookName}' for boundary/negative scenario suggestion. TestSuiteId={TestSuiteId}, Batch={BatchIndex}/{BatchCount}, EndpointCount={EndpointCount}, PayloadBytes={PayloadBytes}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
+                N8nWebhookNames.GenerateLlmSuggestions,
+                context.TestSuiteId,
+                batchIndex + 1,
+                endpointBatches.Count,
+                batch.Count,
+                payloadBytes,
+                feedbackContext.FeedbackFingerprint,
+                cacheKey);
 
-        // Step 5: Log interaction for audit
-        await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
+            var stopwatch = Stopwatch.StartNew();
+            N8nBoundaryNegativeResponse n8nResponse;
 
-        // Step 6: Parse response into domain models
-        var scenarios = ParseScenarios(n8nResponse, endpointContracts, metadataMap, context.SrsRequirements);
-        scenarios = EnsureAdaptiveCoverage(scenarios, orderedSequence, metadataMap, endpointContracts, context.SrsRequirements);
+            try
+            {
+                n8nResponse = await _n8nService.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                    N8nWebhookNames.GenerateLlmSuggestions, payload, cancellationToken);
+            }
+            catch (N8nTransientException ex)
+            {
+                usedLocalFallback = true;
+                _logger.LogWarning(
+                    ex,
+                    "Transient n8n failure while generating LLM suggestions. Falling back to local contract-based synthesis. TestSuiteId={TestSuiteId}, Batch={BatchIndex}/{BatchCount}, EndpointCount={EndpointCount}, StatusCode={StatusCode}, Webhook={Webhook}",
+                    context.TestSuiteId,
+                    batchIndex + 1,
+                    endpointBatches.Count,
+                    batch.Count,
+                    ex.StatusCode,
+                    N8nWebhookNames.GenerateLlmSuggestions);
 
-        // Step 7: Cache results
-        if (algorithmProfile.UseFeedbackLoopContext)
-        {
-            await CacheResultsAsync(context, orderedSequence, cacheKey, scenarios, cancellationToken);
+                n8nResponse = new N8nBoundaryNegativeResponse
+                {
+                    Scenarios = new List<N8nSuggestedScenario>(),
+                    Model = "local-fallback",
+                    TokensUsed = 0,
+                };
+            }
+
+            stopwatch.Stop();
+            var latencyMs = (int)stopwatch.ElapsedMilliseconds;
+
+            await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
+
+            var batchScenarios = ParseScenarios(n8nResponse, context.SrsRequirements);
+            allScenarios.AddRange(batchScenarios);
+
+            if (algorithmProfile.UseFeedbackLoopContext)
+            {
+                await CacheResultsAsync(context, batch, cacheKey, batchScenarios, cancellationToken);
+            }
+
+            totalLatencyMs += latencyMs;
+            totalTokens += n8nResponse?.TokensUsed ?? 0;
+            if (string.IsNullOrWhiteSpace(modelUsed) && !string.IsNullOrWhiteSpace(n8nResponse?.Model))
+            {
+                modelUsed = n8nResponse.Model;
+            }
+
+            _logger.LogInformation(
+                "LLM scenario batch complete. TestSuiteId={TestSuiteId}, Batch={BatchIndex}/{BatchCount}, ScenarioCount={Count}, Model={Model}, TokensUsed={Tokens}, LatencyMs={LatencyMs}",
+                context.TestSuiteId,
+                batchIndex + 1,
+                endpointBatches.Count,
+                batchScenarios.Count,
+                n8nResponse?.Model,
+                n8nResponse?.TokensUsed,
+                latencyMs);
         }
 
         _logger.LogInformation(
             "LLM scenario suggestion complete. TestSuiteId={TestSuiteId}, ScenarioCount={Count}, Model={Model}, TokensUsed={Tokens}, LatencyMs={LatencyMs}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
             context.TestSuiteId,
-            scenarios.Count,
-            n8nResponse?.Model,
-            n8nResponse?.TokensUsed,
-            latencyMs,
+            allScenarios.Count,
+            modelUsed,
+            totalTokens,
+            totalLatencyMs,
             feedbackContext.FeedbackFingerprint,
             cacheKey);
 
         return new LlmScenarioSuggestionResult
         {
-            Scenarios = scenarios,
-            LlmModel = n8nResponse?.Model,
-            TokensUsed = n8nResponse?.TokensUsed,
-            LatencyMs = latencyMs,
+            Scenarios = allScenarios,
+            LlmModel = modelUsed,
+            TokensUsed = totalTokens,
+            LatencyMs = totalLatencyMs,
             FromCache = false,
             UsedLocalFallback = usedLocalFallback,
         };
+    }
+
+    private static List<List<ApiOrderItemModel>> BuildEndpointBatches(
+        IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        var batches = new List<List<ApiOrderItemModel>>();
+        if (orderedEndpoints == null || orderedEndpoints.Count == 0)
+        {
+            return batches;
+        }
+
+        var current = new List<ApiOrderItemModel>();
+        var currentTarget = 0;
+
+        foreach (var endpoint in orderedEndpoints)
+        {
+            ApiEndpointMetadataDto metadata = null;
+            if (metadataMap != null)
+            {
+                metadataMap.TryGetValue(endpoint.EndpointId, out metadata);
+            }
+            var target = ComputeAdaptiveScenarioTarget(endpoint, metadata);
+
+            if (current.Count > 0 && currentTarget + target > MaxScenarioTargetPerBatch)
+            {
+                batches.Add(current);
+                current = new List<ApiOrderItemModel>();
+                currentTarget = 0;
+            }
+
+            current.Add(endpoint);
+            currentTarget += target;
+        }
+
+        if (current.Count > 0)
+        {
+            batches.Add(current);
+        }
+
+        return batches;
     }
 
     private async Task<LlmScenarioSuggestionResult> TryGetCachedResultAsync(
@@ -590,8 +661,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(
         N8nBoundaryNegativeResponse response,
-        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
-        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap = null,
         IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
         if (response?.Scenarios == null || response.Scenarios.Count == 0)
@@ -611,8 +680,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         foreach (var s in response.Scenarios)
         {
             var parsedType = ParseTestType(s.TestType);
-            ApiEndpointMetadataDto scenarioMetadata = null;
-            metadataMap?.TryGetValue(s.EndpointId, out scenarioMetadata);
 
             // Map requirement codes returned by LLM → GUIDs from our DB.
             var coveredIds = s.CoveredRequirementCodes
@@ -622,37 +689,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 .ToList()
                 ?? new List<Guid>();
 
-            var candidateExpectation = new N8nTestCaseExpectation
-            {
-                ExpectedStatus = s.Expectation?.ExpectedStatus ?? new List<int>(),
-                BodyContains = s.Expectation?.BodyContains ?? new List<string>(),
-                BodyNotContains = s.Expectation?.BodyNotContains ?? new List<string>(),
-                JsonPathChecks = s.Expectation?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                HeaderChecks = s.Expectation?.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            };
-
-            var resolvedExpectation = _expectationResolver.Resolve(new GeneratedScenarioContext
-            {
-                EndpointId = s.EndpointId,
-                TestType = parsedType,
-                HttpMethod = s.Request?.HttpMethod,
-                SwaggerResponses = scenarioMetadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
-                LlmExpectation = candidateExpectation,
-                SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
-                CoveredRequirementIds = coveredIds,
-                PreferredDefaultStatuses = (IReadOnlyList<int>)candidateExpectation.ExpectedStatus ?? Array.Empty<int>(),
-            });
-
-            var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes ?? new List<int> { 200 };
-
-            var bodyContains = resolvedExpectation?.BodyContains?.Count > 0
-                ? resolvedExpectation.BodyContains
-                : s.Expectation?.BodyContains;
-
-            bodyContains = NormalizeRegisterBodyContains(
-                bodyContains,
-                s.Request,
-                s.ScenarioName);
+            var expectedStatuses = s.Expectation?.ExpectedStatus ?? new List<int>();
+            var bodyContains = s.Expectation?.BodyContains;
 
             var parsedScenario = new LlmSuggestedScenario
             {
@@ -660,48 +698,28 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ScenarioName = s.ScenarioName,
                 Description = s.Description,
                 SuggestedTestType = parsedType,
+                SuggestedHttpMethod = s.Request?.HttpMethod,
+                SuggestedUrl = s.Request?.Url,
                 SuggestedBodyType = s.Request?.BodyType,
                 SuggestedBody = s.Request?.Body,
                 SuggestedPathParams = s.Request?.PathParams,
                 SuggestedQueryParams = s.Request?.QueryParams,
                 SuggestedHeaders = s.Request?.Headers,
-                ExpectedStatusCode = expectedStatuses.First(),
+                ExpectedStatusCode = expectedStatuses.FirstOrDefault(),
                 ExpectedStatusCodes = expectedStatuses,
                 ExpectedBehavior = bodyContains?.FirstOrDefault(),
                 SuggestedBodyContains = bodyContains,
-                SuggestedBodyNotContains = resolvedExpectation?.BodyNotContains?.Count > 0
-                    ? resolvedExpectation.BodyNotContains
-                    : s.Expectation?.BodyNotContains,
-                SuggestedJsonPathChecks = resolvedExpectation?.JsonPathChecks?.Count > 0
-                    ? resolvedExpectation.JsonPathChecks
-                    : s.Expectation?.JsonPathChecks,
-                SuggestedHeaderChecks = resolvedExpectation?.HeaderChecks?.Count > 0
-                    ? resolvedExpectation.HeaderChecks
-                    : s.Expectation?.HeaderChecks,
+                SuggestedBodyNotContains = s.Expectation?.BodyNotContains,
+                SuggestedJsonPathChecks = s.Expectation?.JsonPathChecks,
+                SuggestedHeaderChecks = s.Expectation?.HeaderChecks,
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
                 CoveredRequirementIds = coveredIds,
-                ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
-                RequirementCode = resolvedExpectation?.RequirementCode,
-                PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
+                ExpectationSource = s.Expectation?.ExpectationSource,
+                RequirementCode = s.Expectation?.RequirementCode,
+                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId,
             };
-
-            if (endpointContracts != null &&
-                endpointContracts.TryGetValue(parsedScenario.EndpointId, out var contract))
-            {
-                parsedScenario = ContractAwareRequestSynthesizer.RepairScenario(parsedScenario, contract.RequestContext);
-
-                if (!IsScenarioContractComplete(parsedScenario, contract, out var missingParts))
-                {
-                    _logger.LogWarning(
-                        "Discarding incomplete LLM scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, Missing={Missing}",
-                        parsedScenario.EndpointId,
-                        parsedScenario.ScenarioName,
-                        string.Join(", ", missingParts));
-                    continue;
-                }
-            }
 
             scenarios.Add(parsedScenario);
         }
@@ -806,75 +824,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return rawScenarios ?? Array.Empty<LlmSuggestedScenario>();
         }
 
-        var scenarios = (rawScenarios ?? Array.Empty<LlmSuggestedScenario>()).ToList();
-        var byEndpoint = scenarios
+        // Only order the LLM-returned scenarios by endpoint order — no synthetic padding.
+        var byEndpoint = (rawScenarios ?? Array.Empty<LlmSuggestedScenario>())
             .GroupBy(x => x.EndpointId)
             .ToDictionary(g => g.Key, g => g.ToList());
-
-        var added = 0;
-
-        foreach (var endpoint in orderedEndpoints.OrderBy(x => x.OrderIndex))
-        {
-            ApiEndpointMetadataDto metadata = null;
-            metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
-
-            if (!byEndpoint.TryGetValue(endpoint.EndpointId, out var endpointScenarios))
-            {
-                endpointScenarios = new List<LlmSuggestedScenario>();
-                byEndpoint[endpoint.EndpointId] = endpointScenarios;
-            }
-
-            var types = endpointScenarios.Select(x => x.SuggestedTestType).ToHashSet();
-            var target = ComputeAdaptiveScenarioTarget(endpoint, metadata);
-
-            if (!types.Contains(TestType.HappyPath))
-            {
-                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.HappyPath, endpointScenarios.Count + 1, srsRequirements));
-                types.Add(TestType.HappyPath);
-                added++;
-            }
-
-            if (!types.Contains(TestType.Negative))
-            {
-                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Negative, endpointScenarios.Count + 1, srsRequirements));
-                types.Add(TestType.Negative);
-                added++;
-            }
-
-            if (HasBoundarySurface(endpoint, metadata) && !types.Contains(TestType.Boundary))
-            {
-                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Boundary, endpointScenarios.Count + 1, srsRequirements));
-                types.Add(TestType.Boundary);
-                added++;
-            }
-
-            while (endpointScenarios.Count < target)
-            {
-                var nextType = endpointScenarios.Count % 2 == 0
-                    ? TestType.Boundary
-                    : TestType.Negative;
-
-                if (nextType == TestType.Boundary && !HasBoundarySurface(endpoint, metadata))
-                {
-                    nextType = TestType.Negative;
-                }
-
-                endpointContracts.TryGetValue(endpoint.EndpointId, out var contract);
-                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, nextType, endpointScenarios.Count + 1, srsRequirements));
-                added++;
-            }
-        }
-
-        if (added > 0)
-        {
-            _logger.LogInformation(
-                "Adaptive coverage added {AddedCount} fallback scenario(s) across {EndpointCount} endpoint(s).",
-                added,
-                orderedEndpoints.Count);
-        }
 
         return orderedEndpoints
             .OrderBy(x => x.OrderIndex)

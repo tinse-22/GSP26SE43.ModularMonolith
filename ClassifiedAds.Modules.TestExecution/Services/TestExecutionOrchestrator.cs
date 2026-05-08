@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -424,6 +425,11 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             };
         }
 
+        // Write tcUniqueId back to VariableBag so ResolveExpectedValue can resolve
+        // {{tcUniqueId}} in JSON path expected values (e.g. "Product_{{tcUniqueId}}").
+        if (!string.IsNullOrEmpty(resolvedRequest.TcUniqueId))
+            context.VariableBag["tcUniqueId"] = resolvedRequest.TcUniqueId;
+
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
 
         var extracted = (_variableExtractor.Extract(
@@ -438,6 +444,25 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
+        // For any successful 2xx POST/PUT/PATCH: extract ALL primitive JSON fields from
+        // the resolved request body into variableBag using the exact field name as the key.
+        // This is the generic zero-hardcode mechanism: whatever field names the LLM used
+        // in the request body (email, password, name, price, username, code, ...) become
+        // available as {{fieldName}} variables for downstream tests — regardless of API type.
+        // Only 2xx responses are considered: failed/error responses (4xx/5xx) are not
+        // extracted, so boundary/negative test inputs never pollute the shared state.
+        foreach (var kvp in ExtractSentRequestBodyFields(resolvedRequest, response))
+        {
+            // Only write to variableBag if not already set by an earlier test case.
+            // This preserves the FIRST successful write (e.g. the register test sets
+            // registeredEmail; a later login test with the same email does not overwrite it).
+            if (!context.VariableBag.ContainsKey(kvp.Key) ||
+                string.IsNullOrWhiteSpace(context.VariableBag[kvp.Key]))
+            {
+                context.VariableBag[kvp.Key] = kvp.Value;
+            }
+        }
+
         foreach (var kvp in ExtractResponseBodyVariables(testCase, response))
         {
             context.VariableBag[kvp.Key] = kvp.Value;
@@ -449,7 +474,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
-        var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile);
+        var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile, context.VariableBag);
 
         return new TestCaseExecutionResult
         {
@@ -994,7 +1019,79 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         return false;
     }
 
-#pragma warning disable IDE0060 // unused parameters kept for future token extraction logic
+    private static readonly HashSet<string> TokenPropertyNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "token",
+        "accessToken",
+        "access_token",
+        "authToken",
+        "auth_token",
+        "idToken",
+        "id_token",
+        "jwt",
+        "bearerToken",
+        "bearer_token",
+        "sessionToken",
+        "session_token",
+    };
+
+    private static readonly string[] TokenJsonPaths =
+    {
+        "$.token",
+        "$.accessToken",
+        "$.access_token",
+        "$.authToken",
+        "$.auth_token",
+        "$.idToken",
+        "$.id_token",
+        "$.jwt",
+        "$.bearerToken",
+        "$.bearer_token",
+        "$.sessionToken",
+        "$.session_token",
+        "$.data.token",
+        "$.data.accessToken",
+        "$.data.access_token",
+        "$.data.authToken",
+        "$.data.auth_token",
+        "$.data.idToken",
+        "$.data.id_token",
+        "$.data.jwt",
+        "$.data.bearerToken",
+        "$.data.bearer_token",
+        "$.data.sessionToken",
+        "$.data.session_token",
+        "$.data.data.token",
+        "$.data.data.accessToken",
+        "$.data.data.access_token",
+        "$.result.token",
+        "$.result.accessToken",
+        "$.result.access_token",
+        "$.payload.token",
+        "$.payload.accessToken",
+        "$.payload.access_token",
+    };
+
+    private static readonly string[] TokenHeaderNames =
+    {
+        "Authorization",
+        "X-Auth-Token",
+        "X-Access-Token",
+        "X-Api-Token",
+        "X-Token",
+        "Api-Token",
+        "Access-Token",
+        "Auth-Token",
+    };
+
+    private static readonly Regex JwtRegex = new(
+        @"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        RegexOptions.Compiled);
+
+    private static readonly Regex CookieTokenRegex = new(
+        @"(?:^|;\s*)(?:access_token|auth_token|token|jwt|id_token)=([^;,\s]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static bool TryExtractToken(
         HttpTestResponse response,
         JsonDocument bodyDocument,
@@ -1002,9 +1099,259 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         out string token)
     {
         token = null;
+
+        if (TryExtractTokenFromHeaders(response?.Headers, out var headerToken))
+        {
+            token = headerToken;
+            return true;
+        }
+
+        if (bodyDocument != null && TryExtractTokenFromBody(bodyDocument, out var bodyToken))
+        {
+            token = bodyToken;
+            return true;
+        }
+
+        if (allowTextFallback && TryExtractTokenFromText(response?.Body, out var textToken))
+        {
+            token = textToken;
+            return true;
+        }
+
         return false;
     }
-#pragma warning restore IDE0060
+
+    private static bool TryExtractTokenFromHeaders(
+        IReadOnlyDictionary<string, string> headers,
+        out string token)
+    {
+        token = null;
+        if (headers == null || headers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var headerName in TokenHeaderNames)
+        {
+            if (!headers.TryGetValue(headerName, out var value))
+            {
+                continue;
+            }
+
+            var normalized = NormalizeTokenValue(value);
+            if (IsLikelyToken(normalized))
+            {
+                token = normalized;
+                return true;
+            }
+        }
+
+        if (headers.TryGetValue("Set-Cookie", out var cookieHeader)
+            && TryExtractTokenFromCookieHeader(cookieHeader, out var cookieToken))
+        {
+            token = cookieToken;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTokenFromBody(JsonDocument bodyDocument, out string token)
+    {
+        token = null;
+        if (bodyDocument == null)
+        {
+            return false;
+        }
+
+        foreach (var path in TokenJsonPaths)
+        {
+            var element = VariableExtractor.NavigateJsonPath(bodyDocument.RootElement, path);
+            var value = element?.ToString();
+            var normalized = NormalizeTokenValue(value);
+            if (IsLikelyToken(normalized))
+            {
+                token = normalized;
+                return true;
+            }
+        }
+
+        if (TryFindTokenByKey(bodyDocument.RootElement, out var found))
+        {
+            token = found;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTokenFromText(string body, out string token)
+    {
+        token = null;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        var match = JwtRegex.Match(body);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var normalized = NormalizeTokenValue(match.Value);
+        if (!IsLikelyToken(normalized))
+        {
+            return false;
+        }
+
+        token = normalized;
+        return true;
+    }
+
+    private static bool TryExtractTokenFromCookieHeader(string cookieHeader, out string token)
+    {
+        token = null;
+        if (string.IsNullOrWhiteSpace(cookieHeader))
+        {
+            return false;
+        }
+
+        var match = CookieTokenRegex.Match(cookieHeader);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var normalized = NormalizeTokenValue(match.Groups[1].Value);
+        if (!IsLikelyToken(normalized))
+        {
+            return false;
+        }
+
+        token = normalized;
+        return true;
+    }
+
+    private static bool TryFindTokenByKey(JsonElement element, out string token)
+    {
+        token = null;
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (TokenPropertyNames.Contains(property.Name))
+                {
+                    if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    {
+                        continue;
+                    }
+
+                    var normalized = NormalizeTokenValue(property.Value.ToString());
+                    if (IsLikelyToken(normalized))
+                    {
+                        token = normalized;
+                        return true;
+                    }
+                }
+
+                if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    if (TryFindTokenByKey(property.Value, out token))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (TryFindTokenByKey(item, out token))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeTokenValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim().Trim('"');
+        if (trimmed.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (trimmed.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[7..].Trim();
+        }
+        else if (trimmed.StartsWith("Token ", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[6..].Trim();
+        }
+        else if (trimmed.StartsWith("JWT ", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[4..].Trim();
+        }
+        else if (trimmed.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[7..].Trim();
+        }
+        else
+        {
+            var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 2 && IsAuthScheme(parts[0]))
+            {
+                trimmed = parts[1].Trim();
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private static bool IsAuthScheme(string scheme)
+    {
+        if (string.IsNullOrWhiteSpace(scheme))
+        {
+            return false;
+        }
+
+        return scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase)
+            || scheme.Equals("Token", StringComparison.OrdinalIgnoreCase)
+            || scheme.Equals("JWT", StringComparison.OrdinalIgnoreCase)
+            || scheme.Equals("ApiKey", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLikelyToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        if (token.Contains("{{", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (JwtRegex.IsMatch(token))
+        {
+            return true;
+        }
+
+        return token.Length >= 12;
+    }
 
     private static string BuildResourceIdVariableName(string urlOrPath)
     {
@@ -1118,6 +1465,92 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
     private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
     {
+    }
+
+    /// <summary>
+    /// For a successful register-like POST, extracts the email and password that were
+    /// actually sent in the request body and stores them under the canonical variable
+    /// names "registeredEmail" and "registeredPassword". This provides a zero-hardcode
+    /// mechanism: whatever the LLM (or rule-based generator) put in the register body
+    /// becomes the credential available to all subsequent tests via {{registeredEmail}}.
+    /// </summary>
+    /// <summary>
+    /// For any successful 2xx POST/PUT/PATCH: extracts ALL top-level primitive JSON fields
+    /// from the resolved request body and returns them keyed by their exact field name.
+    /// This is the generic, zero-hardcode mechanism that propagates test data forward in
+    /// the execution chain — independent of API type, domain, or field naming conventions.
+    ///
+    /// Examples:
+    ///   POST /auth/register   {email, password}  → variableBag["email"], ["password"]
+    ///   POST /products        {name, price}       → variableBag["name"], ["price"]
+    ///   POST /orders          {customerId, qty}   → variableBag["customerId"], ["qty"]
+    ///
+    /// Downstream LLM tests can then reference any of these as {{email}}, {{name}}, etc.
+    /// The caller is responsible for the write policy (first-write-wins vs overwrite).
+    /// </summary>
+    private static Dictionary<string, string> ExtractSentRequestBodyFields(
+        ResolvedTestCaseRequest resolvedRequest,
+        HttpTestResponse response)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Only for successful 2xx responses
+        if (response == null || response.StatusCode < 200 || response.StatusCode >= 300)
+            return result;
+
+        // Only for state-changing HTTP methods
+        var method = resolvedRequest?.HttpMethod ?? string.Empty;
+        if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase))
+            return result;
+
+        if (string.IsNullOrWhiteSpace(resolvedRequest?.Body))
+            return result;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(resolvedRequest.Body);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return result;
+
+            // Extract every top-level primitive field as-is.
+            // Nested objects/arrays are intentionally skipped — response body extraction
+            // (ExtractResponseBodyVariables) already handles those with dot-notation paths.
+            foreach (var property in root.EnumerateObject())
+            {
+                if (property.Value.ValueKind is System.Text.Json.JsonValueKind.Object
+                    or System.Text.Json.JsonValueKind.Array
+                    or System.Text.Json.JsonValueKind.Null
+                    or System.Text.Json.JsonValueKind.Undefined)
+                    continue;
+
+                var value = property.Value.ToString();
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                // Store under exact field name (e.g. "email", "name", "price").
+                result[property.Name] = value;
+
+                // ALSO store under common semantic aliases so LLM tests using
+                // {{registeredEmail}} / {{registeredPassword}} still resolve,
+                // without any URL pattern matching — purely field-name driven.
+                if (string.Equals(property.Name, "email", StringComparison.OrdinalIgnoreCase))
+                    result.TryAdd("registeredEmail", value);
+                if (string.Equals(property.Name, "password", StringComparison.OrdinalIgnoreCase))
+                    result.TryAdd("registeredPassword", value);
+                if (string.Equals(property.Name, "username", StringComparison.OrdinalIgnoreCase))
+                    result.TryAdd("registeredUsername", value);
+            }
+        }
+        catch
+        {
+            // Non-JSON body (FormData, plain text, etc.) — nothing to extract
+        }
+
+        return result;
     }
 
     // Intentionally empty — host/port normalization is handled by the runtime resolver.

@@ -60,6 +60,7 @@ public class BoundaryNegativeTestCaseGeneratorTests
             _requestBuilderMock.Object,
             _expectationBuilderMock.Object,
             materializer,
+            new Mock<IExpectationResolver>().Object,
             new Mock<ILogger<BoundaryNegativeTestCaseGenerator>>().Object);
     }
 
