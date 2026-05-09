@@ -82,10 +82,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
         "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
         "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n" +
-        "14. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
-        "15. For Boundary/Negative, propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload when inferable. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
-        "15b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
-        "16. SRS-CONSTRAINT-DRIVEN: When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
+        "14. EXPECTATION TOKENS (GENERALIZED): For jsonPathChecks values, use canonical tokens only: \"present\", \"not null\", \"non-empty\", \"string\", \"number\", \"boolean\", \"array\", \"object\", \"uuid\", \"datetime\", or regex:<pattern>. Avoid camelCase tokens like nonEmpty/notEmpty. Do not assert full message strings or session-specific values (token/id/timestamp); use existence/type/regex instead.\n" +
+        "15. AUTH MODE: For Unauthorized/Missing Token tests, set request.headers to include \"X-Test-Auth-Mode\": \"none\" and do NOT send Authorization. For Invalid Token tests, set Authorization to an invalid value and do NOT set X-Test-Auth-Mode.\n" +
+        "16. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
+        "17. For Boundary/Negative, propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload when inferable. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
+        "17b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
+        "18. SRS-CONSTRAINT-DRIVEN: When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
         "   - The scenario's endpointId MUST be requirements[n].endpointId (if not null).\n" +
         "   - coveredRequirementCodes MUST include requirements[n].code.\n" +
         "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
