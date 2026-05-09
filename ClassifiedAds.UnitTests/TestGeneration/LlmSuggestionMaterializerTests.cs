@@ -140,6 +140,42 @@ public class LlmSuggestionMaterializerTests
     }
 
     [Fact]
+    public void MaterializeFromScenario_Should_ReconcileSuccessJsonPath_WithExpectedStatus()
+    {
+        // Arrange
+        N8nTestCaseExpectation capturedExpectation = null;
+        _expectationBuilderMock
+            .Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
+            .Callback<Guid, N8nTestCaseExpectation>((_, expectation) => capturedExpectation = expectation)
+            .Returns<Guid, N8nTestCaseExpectation>((id, _) =>
+                new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+
+        var testSuiteId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = endpointId,
+            ScenarioName = "GET boundary success",
+            Description = "Boundary value is accepted",
+            SuggestedTestType = TestType.Boundary,
+            ExpectedStatusCodes = new List<int> { 200 },
+            SuggestedJsonPathChecks = new Dictionary<string, string>
+            {
+                ["$.success"] = "false",
+            },
+        };
+        var orderItem = new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "GET", Path = "/api/items", OrderIndex = 0 };
+
+        // Act
+        _sut.MaterializeFromScenario(scenario, testSuiteId, orderItem, 0);
+
+        // Assert
+        capturedExpectation.Should().NotBeNull();
+        capturedExpectation.JsonPathChecks.Should().ContainKey("$.success");
+        capturedExpectation.JsonPathChecks["$.success"].Should().Be("true");
+    }
+
+    [Fact]
     public void MaterializeFromScenario_Should_MapVariablesCorrectly()
     {
         // Arrange

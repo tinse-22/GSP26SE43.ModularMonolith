@@ -73,6 +73,7 @@ public class VariableResolver : IVariableResolver
         mergedVars["tcUniqueId"] = Guid.NewGuid().ToString("N")[..8].ToLowerInvariant();
 
         ApplyTokenAliases(mergedVars);
+        ApplyResourceIdAliases(mergedVars);
 
         // Resolve URL
         var resolvedUrl = ResolvePlaceholders(request.Url ?? string.Empty, mergedVars);
@@ -163,13 +164,9 @@ public class VariableResolver : IVariableResolver
             resolvedBody = NormalizeNumericPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
             resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
         }
-        else
-        {
-            // LLM-sourced test cases: preserve the exact LLM body (credentials, names, IDs)
-            // but still uniquify emails on register-like endpoints so repeated runs or
-            // multiple register test cases in the same run don't collide (409).
-            resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
-        }
+        // LLM-sourced: ResolvePlaceholders (above) already resolved all {{tcUniqueId}},
+        // {{email}}, {{productId}}, etc. from the n8n body. No further normalization runs.
+        // The body is used EXACTLY as n8n provided it, after variable substitution.
 
         // Build final URL
         resolvedUrl = NormalizeSwaggerDocsApiUrl(resolvedUrl);
@@ -214,6 +211,7 @@ public class VariableResolver : IVariableResolver
             BodyType = request.BodyType,
             TimeoutMs = timeout,
             DependencyIds = testCase.DependencyIds,
+            TcUniqueId = mergedVars.TryGetValue("tcUniqueId", out var tcId) ? tcId : null,
         };
     }
 
@@ -692,6 +690,80 @@ public class VariableResolver : IVariableResolver
         }
     }
 
+    private static void ApplyResourceIdAliases(Dictionary<string, string> mergedVars)
+    {
+        if (mergedVars == null || mergedVars.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in mergedVars.ToArray())
+        {
+            var key = entry.Key;
+            var value = entry.Value;
+            if (string.IsNullOrWhiteSpace(key)
+                || string.IsNullOrWhiteSpace(value)
+                || value.Contains("{{", StringComparison.Ordinal)
+                || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryBuildCreatedResourceAlias(key, out var createdAlias)
+                && (!mergedVars.ContainsKey(createdAlias) || string.IsNullOrWhiteSpace(mergedVars[createdAlias])))
+            {
+                mergedVars[createdAlias] = value;
+            }
+
+            if (TryBuildCanonicalResourceAlias(key, out var canonicalAlias)
+                && (!mergedVars.ContainsKey(canonicalAlias) || string.IsNullOrWhiteSpace(mergedVars[canonicalAlias])))
+            {
+                mergedVars[canonicalAlias] = value;
+            }
+        }
+    }
+
+    private static bool TryBuildCreatedResourceAlias(string key, out string alias)
+    {
+        alias = null;
+        if (string.IsNullOrWhiteSpace(key)
+            || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("created", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var stem = key[..^2];
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return false;
+        }
+
+        alias = "created" + char.ToUpperInvariant(stem[0]) + stem[1..] + "Id";
+        return true;
+    }
+
+    private static bool TryBuildCanonicalResourceAlias(string key, out string alias)
+    {
+        alias = null;
+        if (string.IsNullOrWhiteSpace(key)
+            || !key.StartsWith("created", StringComparison.OrdinalIgnoreCase)
+            || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || key.Length <= "created".Length + 2)
+        {
+            return false;
+        }
+
+        var stem = key.Substring("created".Length, key.Length - "created".Length - 2);
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return false;
+        }
+
+        alias = char.ToLowerInvariant(stem[0]) + stem[1..] + "Id";
+        return true;
+    }
+
     private static IEnumerable<string> GetTokenAliasNames(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -853,9 +925,12 @@ public class VariableResolver : IVariableResolver
         string resolvedBody,
         IReadOnlyDictionary<string, string> variables)
     {
+        // Run for HappyPath test cases (AllowsIdentifierLiteralReplacement) OR for any
+        // test case that has declared dependencies — even Boundary/Negative LLM tests
+        // need literal IDs replaced with the runtime IDs from upstream POST responses.
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || variables == null
-            || !AllowsIdentifierLiteralReplacement(testCase))
+            || (!AllowsIdentifierLiteralReplacement(testCase) && !HasDependencies(testCase)))
         {
             return resolvedBody;
         }
@@ -1024,8 +1099,12 @@ public class VariableResolver : IVariableResolver
         IReadOnlyDictionary<string, string> resolvedPathParams,
         IReadOnlyDictionary<string, string> variables)
     {
+        // Run for HappyPath OR any test case with dependencies (PUT/PATCH/DELETE that need
+        // to use the real resource ID from an upstream POST in the same run).
+        var eligible = string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || HasDependencies(testCase);
         if (string.IsNullOrWhiteSpace(resolvedUrl)
-            || !string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || !eligible
             || resolvedUrl.Contains("{", StringComparison.Ordinal))
         {
             return resolvedUrl;
@@ -1368,29 +1447,73 @@ public class VariableResolver : IVariableResolver
 
     private static bool AllowsIdentifierLiteralReplacement(ExecutionTestCaseDto testCase)
     {
-        return string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
+        // HappyPath test cases always need literal ID replacement.
+        // Any test case that declares dependencies also needs it so that fields like
+        // categoryId/productId/orderId are replaced with the runtime IDs produced by
+        // the upstream POST response — regardless of TestType (Boundary, Negative, etc.).
+        return string.Equals(testCase?.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || HasDependencies(testCase);
     }
 
     /// <summary>
-    /// Returns true when the test case was materialized from an LLM suggestion
-    /// (detected by the "llm-suggested" tag written by LlmSuggestionMaterializer).
-    /// LLM-sourced test cases must execute with the exact body the LLM provided;
-    /// all structural body normalization must be skipped for them.
+    /// Returns true when the test case was materialized from an LLM suggestion.
+    /// Primary detection: "llm-suggested" tag (set by LlmSuggestionMaterializer).
+    /// Backward compat: older materialized test cases have "auto-generated" but NOT
+    /// "rule-based" (rule-based mutations always carry "rule-based") and NOT "happy-path"
+    /// (HappyPath generated tests always carry "happy-path" and need their own normalization).
+    /// LLM-sourced test cases execute with the EXACT body n8n provided — no normalization.
     /// </summary>
     private static bool IsLlmSourced(ExecutionTestCaseDto testCase)
     {
         var tags = testCase?.Tags;
-        return !string.IsNullOrWhiteSpace(tags)
-            && tags.Contains("llm-suggested", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(tags))
+        {
+            return false;
+        }
+
+        // Primary: explicit marker added by LlmSuggestionMaterializer.EnsureLlmSourcedTag
+        if (tags.Contains("llm-suggested", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Backward compat 1: test cases materialized from LLM suggestions before the
+        // EnsureLlmSourcedTag fix often had "auto-generated" but no explicit "llm-suggested".
+        if (tags.Contains("auto-generated", StringComparison.OrdinalIgnoreCase)
+            && !tags.Contains("rule-based", StringComparison.OrdinalIgnoreCase)
+            && !tags.Contains("happy-path", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Backward compat 2: some legacy Boundary/Negative LLM rows only preserved raw
+        // n8n tags (e.g. ["boundary","happy-path"]) and missed system tags.
+        // If it's Boundary/Negative and clearly not rule-based, treat as LLM-sourced.
+        if (!tags.Contains("rule-based", StringComparison.OrdinalIgnoreCase)
+            && (tags.Contains("boundary", StringComparison.OrdinalIgnoreCase)
+                || tags.Contains("negative", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static bool IsLoginLikeRequest(ExecutionTestCaseDto testCase)
     {
-        var signature = $"{testCase?.Request?.HttpMethod} {testCase?.Request?.Url} {testCase?.Name}";
-        return signature.Contains("/auth/login", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+        var url = testCase?.Request?.Url ?? string.Empty;
+        var name = testCase?.Name ?? string.Empty;
+        // Match only auth-specific login patterns in URL; avoid over-matching generic /token
+        // endpoints (e.g. OAuth2 /oauth/token, /api/token) that belong to unrelated flows.
+        return url.Contains("/auth/login", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("/auth/signin", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("/auth/sign-in", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("/users/login", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("/account/login", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("log in", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("login", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsRegisterLikeRequest(ExecutionTestCaseDto testCase)
@@ -1400,6 +1523,34 @@ public class VariableResolver : IVariableResolver
             || signature.Contains("/signup", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("/sign-up", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Returns true when the test case is intentionally testing duplicate/existing email
+    /// registration (expects 409 Conflict). These tests must NOT have their email uniquified
+    /// so they can trigger the duplicate-email constraint on the server.
+    /// </summary>
+    private static bool IsDuplicateEmailTestCase(ExecutionTestCaseDto testCase)
+    {
+        var text = $"{testCase?.Name} {testCase?.Description}".ToLowerInvariant();
+        if (ContainsAny(text, "duplicate", "existing email", "already registered", "already exist",
+                        "conflict", "tồn tại", "trùng email", "đã đăng ký"))
+        {
+            return true;
+        }
+
+        // Also detect via expected HTTP 409 status.
+        var expectedStatus = testCase?.Expectation?.ExpectedStatus;
+        return !string.IsNullOrWhiteSpace(expectedStatus)
+            && expectedStatus.Contains("409", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns true when the test case depends on at least one prior test case.
+    /// Used to enable identifier literal replacement (e.g. categoryId: 1 → real ID)
+    /// even for LLM-sourced and non-HappyPath test cases.
+    /// </summary>
+    private static bool HasDependencies(ExecutionTestCaseDto testCase)
+        => testCase?.DependencyIds?.Count > 0;
 
     private static string NormalizeHappyPathSyntheticBody(
         ExecutionTestCaseDto testCase,
@@ -1431,16 +1582,22 @@ public class VariableResolver : IVariableResolver
         }
 
         var hasPreferredEmail = TryGetPreferredEmailForSyntheticBody(testCase, variables, out var preferredEmail);
+
+        // Use tcUniqueId (per-execution random) as suffix so that HappyPath POST test cases
+        // produce a unique name/code/slug and don't collide on unique-constraint fields.
         var runSuffix = GetRunSuffix(variables);
 
-        // Only uniquify emails for HappyPath tests.
-        // Boundary/Negative tests must preserve the email the LLM generated (e.g.
-        // a "duplicate email" test intentionally reuses {{registeredEmail}}, and
-        // replacing it with a fresh unique email would make the register succeed
-        // instead of failing — inverting the expected $.success=false assertion).
-        var isHappyPath = string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase);
-        var emailRewritten = hasPreferredEmail && isHappyPath && ReplaceSyntheticEmails(root, preferredEmail);
-        var nameRewritten = isHappyPath && ReplaceSyntheticResourceNames(root, runSuffix);
+        var isHappyPath = string.Equals(testCase.TestType?.Trim(), "HappyPath", StringComparison.OrdinalIgnoreCase);
+
+        // Never rewrite email outside HappyPath. Boundary/Negative tests carry intentional
+        // values from LLM (including placeholders) and must execute exactly as defined.
+        var shouldRewriteEmail = hasPreferredEmail && isHappyPath;
+        var emailRewritten = shouldRewriteEmail && ReplaceSyntheticEmails(root, preferredEmail);
+
+        // Only uniquify name/code/slug for HappyPath POST tests.
+        var nameRewritten = isHappyPath
+            && !string.IsNullOrWhiteSpace(runSuffix)
+            && ReplaceSyntheticResourceNames(root, runSuffix);
 
         return emailRewritten || nameRewritten
             ? root.ToJsonString(JsonOptions)
@@ -1897,20 +2054,28 @@ public class VariableResolver : IVariableResolver
 
         if (IsRegisterLikeRequest(testCase))
         {
-            if (variables == null
-                || !variables.TryGetValue("runUniqueEmail", out var runEmail)
-                || string.IsNullOrWhiteSpace(runEmail))
+            // Derive a per-execution unique email suffix so multiple register test cases
+            // in the same run (HappyPath + Boundary + Negative) don't collide (409).
+            // Prefer tcUniqueId (changes each execution) over TestCaseId (stable).
+            var tcSuffix = variables != null
+                && variables.TryGetValue("tcUniqueId", out var tcId)
+                && !string.IsNullOrWhiteSpace(tcId)
+                    ? tcId
+                    : testCase.TestCaseId.ToString("N")[..8].ToLowerInvariant();
+
+            if (variables != null
+                && variables.TryGetValue("runUniqueEmail", out var runEmail)
+                && !string.IsNullOrWhiteSpace(runEmail))
             {
-                return false;
+                var atIdx = runEmail.IndexOf('@');
+                preferredEmail = atIdx > 0
+                    ? $"{runEmail[..atIdx]}_{tcSuffix}{runEmail[atIdx..]}"
+                    : $"{runEmail}_{tcSuffix}";
+                return true;
             }
 
-            // Derive a per-test-case unique email so multiple register test cases
-            // in the same run (HappyPath + Boundary + Negative) don't collide (409).
-            var tcSuffix = testCase.TestCaseId.ToString("N")[..8].ToLowerInvariant();
-            var atIdx = runEmail.IndexOf('@');
-            preferredEmail = atIdx > 0
-                ? $"{runEmail[..atIdx]}_{tcSuffix}{runEmail[atIdx..]}"
-                : $"{runEmail}_{tcSuffix}";
+            // No runUniqueEmail configured: synthesize a unique email from tcUniqueId.
+            preferredEmail = $"testuser_{tcSuffix}@example.test";
             return true;
         }
 
@@ -2018,7 +2183,10 @@ public class VariableResolver : IVariableResolver
             return null;
         }
 
-        var candidateKeys = new[] { "runSuffix", "runIdSuffix", "runId" };
+        // Prefer tcUniqueId (per-execution random) so multiple POST test cases of the
+        // same resource type within a single run each get a distinct suffix.
+        // Fall back to run-level keys for environments where tcUniqueId is not injected.
+        var candidateKeys = new[] { "tcUniqueId", "runSuffix", "runIdSuffix", "runId" };
         foreach (var key in candidateKeys)
         {
             if (!variables.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))

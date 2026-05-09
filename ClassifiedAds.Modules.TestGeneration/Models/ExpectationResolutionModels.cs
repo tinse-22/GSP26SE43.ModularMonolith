@@ -60,4 +60,12 @@ public sealed class GeneratedScenarioContext
     /// on SrsRequirement entities is empty or malformed.
     /// </summary>
     public string SrsDocumentContent { get; init; }
+
+    /// <summary>
+    /// When set, the ExpectationResolver will prefer SRS constraints whose field name
+    /// matches this value. This prevents applying a generic email constraint to every
+    /// body mutation (empty body, missing password, etc.) when only email-specific
+    /// mutations should use the email SRS constraint.
+    /// </summary>
+    public string TargetFieldName { get; init; }
 }

@@ -50,6 +50,8 @@ public class BoundaryNegativeTestCaseGeneratorTests
         var materializer = new LlmSuggestionMaterializer(
             _requestBuilderMock.Object,
             _expectationBuilderMock.Object);
+        var expectationResolver = new ExpectationResolver(
+            new Mock<ILogger<ExpectationResolver>>().Object);
 
         _generator = new BoundaryNegativeTestCaseGenerator(
             _endpointMetadataServiceMock.Object,
@@ -60,6 +62,7 @@ public class BoundaryNegativeTestCaseGeneratorTests
             _requestBuilderMock.Object,
             _expectationBuilderMock.Object,
             materializer,
+            expectationResolver,
             new Mock<ILogger<BoundaryNegativeTestCaseGenerator>>().Object);
     }
 

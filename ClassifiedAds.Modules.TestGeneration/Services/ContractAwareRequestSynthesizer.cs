@@ -186,6 +186,8 @@ internal static class ContractAwareRequestSynthesizer
             return new JsonObject();
         }
 
+        ApplyUniqueValueHints(baseNode);
+
         if (testType == TestType.HappyPath)
         {
             return baseNode;
@@ -507,6 +509,79 @@ internal static class ContractAwareRequestSynthesizer
                 }
             }
         }
+    }
+
+    private static void ApplyUniqueValueHints(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue value &&
+                    value.TryGetValue<string>(out var currentValue) &&
+                    !currentValue.Contains("{{", StringComparison.Ordinal) &&
+                    TryBuildUniquePlaceholderValue(property.Key, out var uniqueValue))
+                {
+                    obj[property.Key] = uniqueValue;
+                    continue;
+                }
+
+                if (property.Value != null)
+                {
+                    ApplyUniqueValueHints(property.Value);
+                }
+            }
+
+            return;
+        }
+
+        if (node is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item != null)
+                {
+                    ApplyUniqueValueHints(item);
+                }
+            }
+        }
+    }
+
+    private static bool TryBuildUniquePlaceholderValue(string propertyName, out string value)
+    {
+        var name = propertyName?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (name.Contains("email"))
+        {
+            value = "testuser_{{tcUniqueId}}@example.com";
+            return true;
+        }
+
+        if (name.Contains("username"))
+        {
+            value = "user_{{tcUniqueId}}";
+            return true;
+        }
+
+        if (name.Contains("phone"))
+        {
+            value = "+1202555{{tcUniqueId}}";
+            return true;
+        }
+
+        if (name.Contains("code"))
+        {
+            value = "CODE_{{tcUniqueId}}";
+            return true;
+        }
+
+        if (name.Contains("slug"))
+        {
+            value = "slug-{{tcUniqueId}}";
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     private static bool IsScalarLike(JsonNode node)
@@ -1025,7 +1100,7 @@ internal static class ContractAwareRequestSynthesizer
 
         string value = normalizedFormat switch
         {
-            "email" => "{{runUniqueEmail}}",
+            "email" => "testuser_{{tcUniqueId}}@example.com",
             "uuid" => "00000000-0000-0000-0000-000000000001",
             "date" => "2024-01-01",
             "date-time" => "2024-01-01T00:00:00Z",
@@ -1038,9 +1113,11 @@ internal static class ContractAwareRequestSynthesizer
             var candidate when candidate.Contains("file") => "sample-file.txt",
             var candidate when candidate.Contains("image") => "sample-image.txt",
             var candidate when candidate.Contains("password") => "{{runUniquePassword}}",
-            var candidate when candidate.Contains("email") => "{{runUniqueEmail}}",
-            var candidate when candidate.Contains("username") => "auto-user",
-            var candidate when candidate.Contains("phone") => "+12025550123",
+            var candidate when candidate.Contains("email") => "testuser_{{tcUniqueId}}@example.com",
+            var candidate when candidate.Contains("username") => "user_{{tcUniqueId}}",
+            var candidate when candidate.Contains("phone") => "+1202555{{tcUniqueId}}",
+            var candidate when candidate.Contains("code") => "CODE_{{tcUniqueId}}",
+            var candidate when candidate.Contains("slug") => "slug-{{tcUniqueId}}",
             var candidate when candidate.Contains("price") || candidate.Contains("amount") || candidate.Contains("cost") => "9.99",
             var candidate when candidate.Contains("quantity") || candidate.Contains("stock") || candidate.Contains("count") => "1",
             var candidate when candidate.EndsWith("id") => "1",

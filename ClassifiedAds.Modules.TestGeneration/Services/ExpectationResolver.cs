@@ -169,19 +169,68 @@ public sealed class ExpectationResolver : IExpectationResolver
             return new N8nTestCaseExpectation { ExpectedStatus = new List<int> { 200 } };
         }
 
+        var expectedStatus = resolved.ExpectedStatusCodes?.Count > 0 ? resolved.ExpectedStatusCodes : new List<int> { 200 };
+
         return new N8nTestCaseExpectation
         {
-            ExpectedStatus = resolved.ExpectedStatusCodes?.Count > 0 ? resolved.ExpectedStatusCodes : new List<int> { 200 },
+            ExpectedStatus = expectedStatus,
             ResponseSchema = resolved.ResponseSchema,
             HeaderChecks = resolved.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             BodyContains = resolved.BodyContains ?? new List<string>(),
             BodyNotContains = resolved.BodyNotContains ?? new List<string>(),
-            JsonPathChecks = resolved.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            JsonPathChecks = ReconcileJsonPathChecksWithStatuses(resolved.JsonPathChecks, expectedStatus),
             MaxResponseTime = resolved.MaxResponseTime,
             ExpectationSource = resolved.Source.ToString(),
             RequirementCode = resolved.RequirementCode,
             PrimaryRequirementId = resolved.PrimaryRequirementId,
         };
+    }
+
+    internal static Dictionary<string, string> ReconcileJsonPathChecksWithStatuses(
+        Dictionary<string, string> jsonPathChecks,
+        IReadOnlyCollection<int> expectedStatuses)
+    {
+        var result = jsonPathChecks?.Count > 0
+            ? new Dictionary<string, string>(jsonPathChecks, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (result.Count == 0 || expectedStatuses == null || expectedStatuses.Count == 0)
+        {
+            return result;
+        }
+
+        var hasSuccessStatus = expectedStatuses.Any(code => code >= 200 && code <= 299);
+        var hasFailureStatus = expectedStatuses.Any(code => code < 200 || code >= 300);
+        if (hasSuccessStatus == hasFailureStatus)
+        {
+            return result;
+        }
+
+        foreach (var key in result.Keys.ToList())
+        {
+            if (!IsSuccessJsonPath(key))
+            {
+                continue;
+            }
+
+            result[key] = hasSuccessStatus ? "true" : "false";
+        }
+
+        return result;
+    }
+
+    private static bool IsSuccessJsonPath(string jsonPath)
+    {
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return false;
+        }
+
+        var normalized = jsonPath.Trim();
+        return normalized.Equals("$.success", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith(".success", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith("['success']", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith("[\"success\"]", StringComparison.OrdinalIgnoreCase);
     }
 
     private static (ResolvedExpectation Result, string SkipReason) TryResolveFromSrs(GeneratedScenarioContext context)
@@ -199,6 +248,28 @@ public sealed class ExpectationResolver : IExpectationResolver
 
             foreach (var constraint in constraints)
             {
+                // When TargetFieldName is specified, only apply constraints that target
+                // the same field (or have no specific field, i.e. whole-body constraints).
+                // This prevents a generic "email format → 400" constraint from being
+                // applied to every body mutation (empty body, missing password, etc.).
+                if (!string.IsNullOrWhiteSpace(context.TargetFieldName)
+                    && !string.IsNullOrWhiteSpace(constraint.Field)
+                    && !string.Equals(constraint.Field, context.TargetFieldName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // For read-only HTTP methods (GET/HEAD/OPTIONS), skip constraints whose
+                // field is a typical request-body field (email, password, username, etc.).
+                // GET endpoints have no request body, so body-field constraints from SRS
+                // should not override path-parameter mutation expectations.
+                if (IsReadOnlyHttpMethod(context.HttpMethod)
+                    && !string.IsNullOrWhiteSpace(constraint.Field)
+                    && IsBodyOnlyField(constraint.Field))
+                {
+                    continue;
+                }
+
                 var statuses = NormalizeStatuses(ParseStatusCodes(constraint.ExpectedOutcome, constraint.Constraint), context.TestType);
                 if (statuses.Count == 0)
                 {
@@ -741,6 +812,33 @@ public sealed class ExpectationResolver : IExpectationResolver
         }
 
         return new List<int> { 400, 401, 403, 404, 409, 415, 422 };
+    }
+
+    /// <summary>
+    /// Returns true for HTTP methods that never carry a request body.
+    /// </summary>
+    private static bool IsReadOnlyHttpMethod(string httpMethod)
+    {
+        var method = (httpMethod ?? string.Empty).Trim().ToUpperInvariant();
+        return method is "GET" or "HEAD" or "OPTIONS";
+    }
+
+    /// <summary>
+    /// Returns true for field names that only appear in request bodies,
+    /// never in path/query parameters.
+    /// </summary>
+    private static bool IsBodyOnlyField(string field)
+    {
+        var normalized = (field ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            var f when f.Contains("email") => true,
+            var f when f.Contains("password") => true,
+            var f when f.Contains("username") => true,
+            var f when f.Contains("phone") => true,
+            var f when f.Contains("address") => true,
+            _ => false,
+        };
     }
 
     private sealed class SrsConstraintCandidate

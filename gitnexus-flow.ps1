@@ -106,8 +106,25 @@ try {
   $stage = 'create-test-suite'
   Write-Host "Starting stage: $stage"
   $endpoints = Invoke-JsonApi -Method 'Get' -Path "/api/projects/$projectId/specifications/$specId/endpoints" -Headers $auth
-  $selectedEndpointIds = @($endpoints | Select-Object -First 5 | ForEach-Object { $_.id })
-  
+
+  # Sort endpoints so prerequisite creation endpoints come first:
+  # Priority: auth (register/login) → resource creation (POST) → resource mutation (PUT/PATCH) → reads (GET) → deletes
+  function Get-EndpointPriority($ep) {
+    $method = [string]$ep.httpMethod
+    $path = [string]$ep.path
+    if ($null -eq $method) { $method = '' }
+    if ($null -eq $path) { $path = '' }
+    $method = $method.ToUpperInvariant()
+    $path = $path.ToLowerInvariant()
+    if ($path -match 'register|login|auth') { return 0 }
+    if ($method -eq 'POST')   { return 1 }
+    if ($method -eq 'PUT' -or $method -eq 'PATCH') { return 2 }
+    if ($method -eq 'GET')    { return 3 }
+    return 4  # DELETE
+  }
+  $selectedEndpointIds = @($endpoints | Sort-Object { Get-EndpointPriority $_ } | ForEach-Object { $_.id })
+  Write-Host "  Endpoints selected: $($selectedEndpointIds.Count) (all, ordered by prerequisite priority)"
+
   $suiteBody = @{
     name = "Suite $runTag"
     apiSpecId = $specId

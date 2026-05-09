@@ -81,6 +81,10 @@ public class LlmSuggestedScenario
 
     public TestType SuggestedTestType { get; set; } = TestType.Negative;
 
+    public string SuggestedHttpMethod { get; set; }
+
+    public string SuggestedUrl { get; set; }
+
     public string SuggestedBody { get; set; }
 
     public string SuggestedBodyType { get; set; }

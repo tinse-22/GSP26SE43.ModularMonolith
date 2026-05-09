@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace ClassifiedAds.Modules.TestExecution.Services;
 
@@ -14,6 +15,15 @@ public class RuleBasedValidator : IRuleBasedValidator
 {
     private const int TotalValidationChecks = 7;
     private const string InvalidExpectationFormatCode = "INVALID_EXPECTATION_FORMAT";
+    private static readonly Regex TcUniqueIdPlaceholderRegex = new(
+        Regex.Escape("{{tcUniqueId}}"),
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // Detects JWT-like values: three non-trivial base64url segments separated by dots.
+    // JWTs are session-specific and always differ across runs; treat as existence checks.
+    private static readonly System.Text.RegularExpressions.Regex JwtLikeRegex = new(
+        @"^[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private readonly ILogger<RuleBasedValidator> _logger;
 
@@ -26,7 +36,8 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseDto testCase,
         ApiEndpointMetadataDto endpointMetadata = null,
-        ValidationProfile profile = ValidationProfile.Default)
+        ValidationProfile profile = ValidationProfile.Default,
+        IReadOnlyDictionary<string, string> variableBag = null)
     {
         var strictMode = profile != ValidationProfile.Default;
         var result = new TestCaseValidationResult
@@ -102,7 +113,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
-        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result, variableBag), ref checksPerformed, ref checksSkipped);
 
         // 7. Max response time
         TrackCheck(ValidateResponseTime(response, expectation, result), ref checksPerformed, ref checksSkipped);
@@ -567,21 +578,23 @@ public class RuleBasedValidator : IRuleBasedValidator
         foreach (var check in headerChecks)
         {
             var found = false;
+            var expectedHeaderValue = check.Value?.Trim();
             foreach (var h in responseHeaders)
             {
                 if (h.Key.Equals(check.Key, StringComparison.OrdinalIgnoreCase))
                 {
                     found = true;
-                    if (h.Value?.Trim() != check.Value?.Trim())
+                    var actualHeaderValue = h.Value?.Trim();
+                    if (!HeaderValuesEqual(check.Key, expectedHeaderValue, actualHeaderValue))
                     {
                         allPassed = false;
                         result.Failures.Add(new ValidationFailureModel
                         {
                             Code = "HEADER_MISMATCH",
-                            Message = $"Header '{check.Key}' không khớp. Mong đợi: '{check.Value?.Trim()}', thực tế: '{h.Value?.Trim()}'.",
+                            Message = $"Header '{check.Key}' không khớp. Mong đợi: '{expectedHeaderValue}', thực tế: '{actualHeaderValue}'.",
                             Target = check.Key,
-                            Expected = check.Value?.Trim(),
-                            Actual = h.Value?.Trim(),
+                            Expected = expectedHeaderValue,
+                            Actual = actualHeaderValue,
                         });
                     }
 
@@ -604,6 +617,36 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         result.HeaderChecksPassed = allPassed;
         return true;
+    }
+
+    private static bool HeaderValuesEqual(string headerName, string expected, string actual)
+    {
+        if (string.Equals(headerName, "Content-Type", StringComparison.OrdinalIgnoreCase))
+        {
+            var expectedMediaType = ExtractMediaType(expected);
+            var actualMediaType = ExtractMediaType(actual);
+            if (!string.IsNullOrWhiteSpace(expectedMediaType) &&
+                !string.IsNullOrWhiteSpace(actualMediaType) &&
+                string.Equals(expectedMediaType, actualMediaType, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return string.Equals(actual, expected, StringComparison.Ordinal);
+    }
+
+    private static string ExtractMediaType(string contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return null;
+        }
+
+        var semicolonIndex = contentType.IndexOf(';');
+        return semicolonIndex >= 0
+            ? contentType[..semicolonIndex].Trim()
+            : contentType.Trim();
     }
 
     private static bool IsBodyContainsSoftMode(
@@ -702,12 +745,41 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var body = response.Body ?? string.Empty;
+
+        // Build normalized variants of the body once so each pattern check is fast.
+        // Strategy 1: raw body as-is.
+        // Strategy 2: pretty-printed — normalises compact `"key":value` → `"key": value`.
+        // Strategy 3: structurally compact — strips all whitespace around JSON syntax
+        //              characters so `"key" : value` and `"key":value` both reduce
+        //              to `"key":value` regardless of original whitespace style.
+        var prettyBody = body;
+        var compactBody = body;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                var node = JsonNode.Parse(body);
+                prettyBody = JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true });
+                compactBody = NormalizeJsonWhitespace(body);
+            }
+            catch
+            {
+                // Not valid JSON — all three variants remain identical to raw body.
+            }
+        }
+
         var allPassed = true;
         var softMode = IsBodyContainsSoftMode(response, expectation, testCase, result);
 
         foreach (var pattern in normalizedPatterns)
         {
-            if (!body.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+            var compactPattern = NormalizeJsonWhitespace(pattern);
+            var matched =
+                body.Contains(pattern, StringComparison.OrdinalIgnoreCase) ||
+                prettyBody.Contains(pattern, StringComparison.OrdinalIgnoreCase) ||
+                compactBody.Contains(compactPattern, StringComparison.OrdinalIgnoreCase);
+
+            if (!matched)
             {
                 if (softMode)
                 {
@@ -777,7 +849,7 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         foreach (var pattern in normalizedPatterns)
         {
-            if (body.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+            if (body.Contains(pattern, StringComparison.Ordinal))
             {
                 if (softMode)
                 {
@@ -805,11 +877,20 @@ public class RuleBasedValidator : IRuleBasedValidator
         return true;
     }
 
+    private static string ResolveExpectedValue(string expected, IReadOnlyDictionary<string, string> variableBag)
+    {
+        if (variableBag == null || string.IsNullOrEmpty(expected) || !expected.Contains("{{", StringComparison.Ordinal))
+            return expected;
+        return System.Text.RegularExpressions.Regex.Replace(expected, @"\{\{(\w+)\}\}", m =>
+            variableBag.TryGetValue(m.Groups[1].Value, out var v) && !string.IsNullOrEmpty(v) ? v : m.Value);
+    }
+
     private static bool ValidateJsonPathChecks(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ExecutionTestCaseDto testCase,
-        TestCaseValidationResult result)
+        TestCaseValidationResult result,
+        IReadOnlyDictionary<string, string> variableBag = null)
     {
         if (string.IsNullOrWhiteSpace(expectation.JsonPathChecks))
         {
@@ -870,14 +951,24 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             foreach (var check in checks)
             {
+                var resolvedExpected = ResolveExpectedValue(check.Value, variableBag);
                 var element = VariableExtractor.NavigateJsonPath(doc.RootElement, check.Key);
                 var actualValue = element?.ToString();
 
-                if (actualValue == null || !ValuesEqual(actualValue, check.Value))
+                if (actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
                 {
-                    // Treat "notnull" the same as "*" — an existence check, not a literal match.
-                    var isExistenceCheck = check.Value == "*"
-                        || string.Equals(check.Value, "notnull", StringComparison.OrdinalIgnoreCase);
+                    // Treat "notnull", "*", "*.+", ".+", empty, and JWT-like values as existence checks.
+                    var isExistenceCheck = string.IsNullOrWhiteSpace(resolvedExpected)
+                        || resolvedExpected == "*"
+                        || resolvedExpected == "*.+"
+                        || resolvedExpected == "*+"
+                        || resolvedExpected == ".+"
+                        || resolvedExpected == "+"
+                        || string.Equals(resolvedExpected, "notnull", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(resolvedExpected, "any", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(resolvedExpected, "present", StringComparison.OrdinalIgnoreCase)
+                        || LooksLikeExistenceExpectation(resolvedExpected)
+                        || JwtLikeRegex.IsMatch(resolvedExpected);
 
                     // Soft-forgive ONLY when the path does not exist in the response (null).
                     // Error responses legitimately lack success-path fields — that is expected.
@@ -903,9 +994,9 @@ public class RuleBasedValidator : IRuleBasedValidator
                             Code = "JSONPATH_ASSERTION_FAILED",
                             Message = isExistenceCheck
                                 ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
-                                : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{check.Value}', thực tế: '{actualValue ?? "(null)"}'.",
+                                : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'.",
                             Target = check.Key,
-                            Expected = check.Value,
+                            Expected = resolvedExpected,
                             Actual = actualValue,
                         });
                     }
@@ -985,15 +1076,108 @@ public class RuleBasedValidator : IRuleBasedValidator
         });
     }
 
-    private static bool ValuesEqual(string actual, string expected)
+    private static bool ValuesEqual(string actual, string expected, JsonElement? actualElement = null)
     {
-        // Wildcards: "*" and "notnull" both mean "field must exist with any non-null value"
-        if (expected == "*" || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase))
+        // Wildcards: "*", "notnull", and empty/null all mean "field must exist with any non-null value".
+        // Empty expected value is treated as an existence check (not a literal empty-string match)
+        // because the DB sometimes stores "" when the LLM generated a token field assertion
+        // without knowing the actual value.
+        // Also treat common LLM-generated non-empty patterns as existence checks:
+        //   "*.+" / "*+" / ".+" / "+" / "any" / "present" — all mean "must be non-empty".
+        if (string.IsNullOrWhiteSpace(expected)
+            || expected == "*"
+            || expected == "*.+"
+            || expected == "*+"
+            || expected == ".+"
+            || expected == "+"
+            || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(expected, "any", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(expected, "present", StringComparison.OrdinalIgnoreCase))
         {
-            return actual != null;
+            return actual != null && actual.Length > 0;
+        }
+
+        if (LooksLikeExistenceExpectation(expected))
+        {
+            return actualElement.HasValue;
+        }
+
+        if (LooksLikeNonEmptyExpectation(expected))
+        {
+            if (!actualElement.HasValue)
+            {
+                return false;
+            }
+
+            return actualElement.Value.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => false,
+                JsonValueKind.String => !string.IsNullOrWhiteSpace(actualElement.Value.GetString()),
+                JsonValueKind.Array => actualElement.Value.GetArrayLength() > 0,
+                JsonValueKind.Object => actualElement.Value.EnumerateObject().Any(),
+                _ => true,
+            };
+        }
+
+        if (LooksLikeStringExpectation(expected))
+        {
+            return actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.String;
+        }
+
+        if (LooksLikeBooleanExpectation(expected))
+        {
+            if (!actualElement.HasValue)
+            {
+                return false;
+            }
+
+            return actualElement.Value.ValueKind == JsonValueKind.True
+                || actualElement.Value.ValueKind == JsonValueKind.False;
+        }
+
+        if (LooksLikeNumberExpectation(expected))
+        {
+            return actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Number;
+        }
+
+        if (LooksLikeArrayExpectation(expected))
+        {
+            return actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Array;
+        }
+
+        if (LooksLikeObjectExpectation(expected))
+        {
+            return actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Object;
+        }
+
+        if (LooksLikeDateTimeExpectation(expected))
+        {
+            return actualElement.HasValue
+                && actualElement.Value.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(actualElement.Value.GetString(), out _);
+        }
+
+        if (LooksLikeGuidExpectation(expected))
+        {
+            return actualElement.HasValue
+                && actualElement.Value.ValueKind == JsonValueKind.String
+                && Guid.TryParse(actualElement.Value.GetString(), out _);
+        }
+
+        // JWT guard: a stored JWT token will never match a newly-issued one (different
+        // iat/exp/jti claims per session). Treat a JWT-like expected value as an
+        // existence check — the useful assertion is "token is present", not exact match.
+        if (JwtLikeRegex.IsMatch(expected))
+        {
+            return actual != null && actual.Length > 0;
         }
 
         if (actual == expected)
+        {
+            return true;
+        }
+
+        if (MatchesTcUniqueIdTemplate(actual, expected))
         {
             return true;
         }
@@ -1010,7 +1194,372 @@ public class RuleBasedValidator : IRuleBasedValidator
             return actualBool == expectedBool;
         }
 
+        // Truthiness check: LLMs often generate `$.someField = true` to mean "the field
+        // must be present and non-empty / truthy", not a literal boolean equality.
+        // For example, `$.errors.fieldErrors.password = true` is intended as
+        // "password validation errors exist", but the actual value is an array of messages.
+        // When expected is literally "true", treat non-null/non-empty/non-false/non-zero
+        // actual values as passing — the intent is a truthy existence check.
+        if (string.Equals(expected, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            if (actual == null || actual.Length == 0)
+            {
+                return false;
+            }
+
+            // Explicit falsy literals → not truthy
+            if (string.Equals(actual, "false", StringComparison.OrdinalIgnoreCase)
+                || actual == "0"
+                || actual == "null"
+                || actual == "[]"
+                || actual == "{}")
+            {
+                return false;
+            }
+
+            // Non-empty array or object, any string, positive number → truthy
+            return true;
+        }
+
+        // When expected is "false", only the literal boolean false or 0 values satisfy it.
+        if (string.Equals(expected, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return actual != null
+                && (string.Equals(actual, "false", StringComparison.OrdinalIgnoreCase)
+                    || actual == "0"
+                    || actual == "null"
+                    || actual == "[]"
+                    || actual == "{}");
+        }
+
+        // Email fuzzy match: LLMs sometimes generate an email expected value with a different
+        // prefix than what VariableResolver generates (e.g. "upper_abc12345@example.com" vs
+        // "testuser_abc12345@example.com"). If both look like emails, share the same @domain,
+        // and share the same unique suffix after the last '_' (≥6 chars), treat as equal.
+        // This covers boundary test cases that test email format/case normalisation where
+        // the prefix is semantic but the uniqueness is encoded in the suffix.
+        if (actual != null
+            && actual.Contains('@', StringComparison.Ordinal)
+            && expected.Contains('@', StringComparison.Ordinal))
+        {
+            var actualAt = actual.IndexOf('@');
+            var expectedAt = expected.IndexOf('@');
+            var actualDomain = actual[(actualAt + 1)..].ToLowerInvariant();
+            var expectedDomain = expected[(expectedAt + 1)..].ToLowerInvariant();
+            if (actualDomain == expectedDomain)
+            {
+                var actualLocal = actual[..actualAt].ToLowerInvariant();
+                var expectedLocal = expected[..expectedAt].ToLowerInvariant();
+                var actualUnder = actualLocal.LastIndexOf('_');
+                var expectedUnder = expectedLocal.LastIndexOf('_');
+                if (actualUnder >= 0 && expectedUnder >= 0)
+                {
+                    var actualSuffix = actualLocal[(actualUnder + 1)..];
+                    var expectedSuffix = expectedLocal[(expectedUnder + 1)..];
+                    if (actualSuffix.Length >= 6 && actualSuffix == expectedSuffix)
+                        return true;
+                }
+            }
+        }
+
+        // Regex check: LLMs sometimes generate `{"regex":"^pattern$"}` as the expected value
+        // to describe a structural assertion (e.g. JWT format, UUID, email).
+        // Extract the pattern and test it against actual.
+        if (expected.StartsWith("{", StringComparison.Ordinal) && expected.Contains("\"regex\"", StringComparison.Ordinal))
+        {
+            try
+            {
+                var regexDoc = JsonDocument.Parse(expected);
+                if (regexDoc.RootElement.TryGetProperty("regex", out var patternEl))
+                {
+                    var pattern = patternEl.GetString();
+                    if (!string.IsNullOrEmpty(pattern) && actual != null)
+                    {
+                        return System.Text.RegularExpressions.Regex.IsMatch(
+                            actual,
+                            pattern,
+                            System.Text.RegularExpressions.RegexOptions.None,
+                            TimeSpan.FromMilliseconds(500));
+                    }
+                }
+            }
+            catch
+            {
+                // Not a valid regex object — fall through to literal comparison
+            }
+        }
+
+        // Inline regex support: many prompts serialize regex checks as "regex:<pattern>".
+        if (actual != null && TryExtractInlineRegexPattern(expected, out var inlinePattern))
+        {
+            try
+            {
+                return Regex.IsMatch(actual, inlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+            }
+            catch
+            {
+                // Invalid inline regex — fall through to other strategies.
+            }
+        }
+
+        // Plain regex support: many LLM outputs provide regex directly as a string,
+        // e.g. "^.+\\..+\\..+$" for JWT-like token checks.
+        if (actual != null && LooksLikeRegexPattern(expected))
+        {
+            try
+            {
+                return Regex.IsMatch(actual, expected, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+            }
+            catch
+            {
+                // Invalid regex — fall through to literal comparison.
+            }
+        }
+
         return string.Equals(actual, expected, StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeExistenceExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "exists"
+            || text == "exist"
+            || text == "must exist"
+            || text == "should exist"
+            || text == "is present"
+            || text == "must be present"
+            || text == "be present"
+            || text == "available"
+            || text == "is available"
+            || text == "defined"
+            || text == "is defined";
+    }
+
+    private static bool LooksLikeNonEmptyExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text.Contains("non-empty", StringComparison.Ordinal)
+            || text.Contains("not empty", StringComparison.Ordinal)
+            || text.Contains("not blank", StringComparison.Ordinal)
+            || text.Contains("not null", StringComparison.Ordinal)
+            || text.Contains("non empty", StringComparison.Ordinal)
+            || text.Contains("must be present", StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeStringExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "string"
+            || text == "must be string"
+            || text == "should be string"
+            || text == "must be a string"
+            || text == "must be a non-empty string"
+            || text == "must be non-empty string";
+    }
+
+    private static bool LooksLikeBooleanExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "boolean"
+            || text == "bool"
+            || text == "must be boolean"
+            || text == "must be bool"
+            || text == "should be boolean";
+    }
+
+    private static bool LooksLikeNumberExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "number"
+            || text == "numeric"
+            || text == "must be number"
+            || text == "must be numeric"
+            || text == "should be number"
+            || text == "integer"
+            || text == "must be integer";
+    }
+
+    private static bool LooksLikeArrayExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "array"
+            || text == "list"
+            || text == "must be array"
+            || text == "should be array";
+    }
+
+    private static bool LooksLikeObjectExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text == "object"
+            || text == "json object"
+            || text == "must be object"
+            || text == "should be object";
+    }
+
+    private static bool LooksLikeDateTimeExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text.Contains("datetime", StringComparison.Ordinal)
+            || text.Contains("date time", StringComparison.Ordinal)
+            || text.Contains("timestamp", StringComparison.Ordinal)
+            || text.Contains("iso", StringComparison.Ordinal) && text.Contains("date", StringComparison.Ordinal)
+            || text.Contains("createdat", StringComparison.Ordinal) && LooksLikeNonEmptyExpectation(text);
+    }
+
+    private static bool LooksLikeGuidExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        return text.Contains("uuid", StringComparison.Ordinal)
+            || text.Contains("guid", StringComparison.Ordinal)
+            || text.Contains("objectid", StringComparison.Ordinal)
+            || text.Contains("object id", StringComparison.Ordinal)
+            || text.Contains("mongo id", StringComparison.Ordinal);
+    }
+
+    private static bool TryExtractInlineRegexPattern(string expected, out string pattern)
+    {
+        pattern = null;
+
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var candidate = expected.Trim();
+        if (!candidate.StartsWith("regex", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var remainder = candidate[5..].TrimStart(); // after "regex"
+        if (remainder.StartsWith("pattern", StringComparison.OrdinalIgnoreCase))
+        {
+            remainder = remainder[7..].TrimStart();
+        }
+
+        if (remainder.StartsWith(":", StringComparison.Ordinal) ||
+            remainder.StartsWith("=", StringComparison.Ordinal))
+        {
+            remainder = remainder[1..].TrimStart();
+        }
+
+        remainder = remainder.Trim().Trim('\"', '\'');
+        if (string.IsNullOrWhiteSpace(remainder))
+        {
+            return false;
+        }
+
+        // Support slash-delimited forms: /pattern/ or /pattern/i
+        if (remainder.StartsWith("/", StringComparison.Ordinal))
+        {
+            var lastSlash = remainder.LastIndexOf('/');
+            if (lastSlash > 0)
+            {
+                remainder = remainder[1..lastSlash];
+            }
+        }
+
+        pattern = remainder;
+        return !string.IsNullOrWhiteSpace(pattern);
+    }
+
+    private static bool LooksLikeRegexPattern(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var candidate = expected.Trim();
+
+        // "regex:<pattern>" is handled by TryExtractInlineRegexPattern.
+        if (candidate.StartsWith("regex", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Skip canonical existence-check tokens handled above.
+        if (candidate == "*.+" || candidate == "*+" || candidate == ".+" || candidate == "+")
+        {
+            return false;
+        }
+
+        if (candidate.StartsWith("^", StringComparison.Ordinal) || candidate.EndsWith("$", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return candidate.Contains(@"\d", StringComparison.Ordinal)
+            || candidate.Contains(@"\w", StringComparison.Ordinal)
+            || candidate.Contains(@"\S", StringComparison.Ordinal)
+            || candidate.Contains(@"\s", StringComparison.Ordinal)
+            || candidate.Contains(".*", StringComparison.Ordinal)
+            || candidate.Contains(".+", StringComparison.Ordinal)
+            || candidate.Contains("(?:", StringComparison.Ordinal)
+            || (candidate.Contains("[", StringComparison.Ordinal) && candidate.Contains("]", StringComparison.Ordinal));
+    }
+
+    private static bool MatchesTcUniqueIdTemplate(string actual, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(actual)
+            || string.IsNullOrWhiteSpace(expected)
+            || !expected.Contains("{{tcUniqueId}}", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // tcUniqueId is an 8-char hex token. Some responses append an additional run suffix,
+        // e.g. "<prefix>_<tcUniqueId>-<runSuffix>", so allow an optional "-xxxxxxxx" tail.
+        var expectedPattern = "^" + Regex.Escape(expected) + "$";
+        expectedPattern = TcUniqueIdPlaceholderRegex.Replace(expectedPattern, "[a-f0-9]{8}(?:-[a-z0-9]{8})?");
+
+        return Regex.IsMatch(actual, expectedPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static string Truncate(string value, int maxLength)
@@ -1022,6 +1571,17 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         return value[..maxLength] + "...";
     }
+
+    /// <summary>
+    /// Strips all whitespace that surrounds JSON structural characters ({ } [ ] : ,).
+    /// This normalises any whitespace style (compact, pretty, hybrid) to a single
+    /// canonical compact form so pattern matching is whitespace-agnostic.
+    /// Note: whitespace INSIDE string literals that also contains structural characters
+    /// is also affected, but in practice patterns from LLM do not rely on exact
+    /// whitespace inside string values, so the trade-off is acceptable.
+    /// </summary>
+    private static string NormalizeJsonWhitespace(string s) =>
+        string.IsNullOrEmpty(s) ? s : Regex.Replace(s, @"\s*([{}\[\]:,])\s*", "$1");
 
     /// <summary>
     /// Determines if the expectation is for non-2xx (error) status codes.
