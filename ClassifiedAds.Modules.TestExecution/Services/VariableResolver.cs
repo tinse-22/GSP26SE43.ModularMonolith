@@ -27,6 +27,12 @@ public class VariableResolver : IVariableResolver
     private static readonly Regex AuthHeaderValueWithSeparatorRegex = new(
         @"^(?<scheme>[A-Za-z][A-Za-z0-9_-]*)\s*[:=]\s*(?<value>.+)$",
         RegexOptions.Compiled);
+    private static readonly string[] AuthModeHeaderNames =
+    {
+        "X-Test-Auth-Mode",
+        "X-Auth-Mode",
+        "X-LLM-Auth-Mode",
+    };
     private static readonly Regex ObjectIdRegex = new(@"^[a-fA-F0-9]{24}$", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
@@ -147,8 +153,30 @@ public class VariableResolver : IVariableResolver
             resolvedHeaders[kvp.Key] = resolvedValue;
         }
 
-        ApplyAuthHeaderTemplates(resolvedHeaders, mergedVars);
-        ApplyAuthFallbackHeader(resolvedHeaders, mergedVars);
+        var requestHasAuthHeader = HasExplicitAuthHeader(requestHeaders);
+        var authMode = ResolveAuthModeFromHeaders(resolvedHeaders);
+        if (TryConsumeNoAuthSentinel(resolvedHeaders))
+        {
+            authMode = "none";
+        }
+
+        var disableAuth = string.Equals(authMode, "none", StringComparison.OrdinalIgnoreCase);
+        var optionalAuth = string.Equals(authMode, "optional", StringComparison.OrdinalIgnoreCase);
+
+        if (disableAuth || (optionalAuth && !requestHasAuthHeader))
+        {
+            RemoveAuthHeaders(resolvedHeaders);
+        }
+
+        if (!disableAuth)
+        {
+            ApplyAuthHeaderTemplates(resolvedHeaders, mergedVars);
+
+            if (!(optionalAuth && !requestHasAuthHeader))
+            {
+                ApplyAuthFallbackHeader(resolvedHeaders, mergedVars);
+            }
+        }
 
         // Resolve body
         var resolvedBody = !string.IsNullOrEmpty(request.Body)
@@ -552,6 +580,118 @@ public class VariableResolver : IVariableResolver
 
         found = default;
         return false;
+    }
+
+    private static string ResolveAuthModeFromHeaders(IDictionary<string, string> headers)
+    {
+        if (headers == null || headers.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var name in AuthModeHeaderNames)
+        {
+            if (headers.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                headers.Remove(name);
+                return NormalizeAuthMode(value);
+            }
+
+            headers.Remove(name);
+        }
+
+        return null;
+    }
+
+    private static string NormalizeAuthMode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(" ", string.Empty);
+
+        return normalized switch
+        {
+            "none" or "noauth" or "disableauth" => "none",
+            "optional" => "optional",
+            "required" or "default" => "required",
+            _ => null,
+        };
+    }
+
+    private static bool HasExplicitAuthHeader(IDictionary<string, string> headers)
+    {
+        if (headers == null || headers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var kvp in headers)
+        {
+            if (IsAuthHeaderName(kvp.Key)
+                && !string.IsNullOrWhiteSpace(kvp.Value)
+                && !IsNoAuthSentinel(kvp.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void RemoveAuthHeaders(IDictionary<string, string> headers)
+    {
+        if (headers == null || headers.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var headerName in headers.Keys.ToList())
+        {
+            if (IsAuthHeaderName(headerName))
+            {
+                headers.Remove(headerName);
+            }
+        }
+    }
+
+    private static bool TryConsumeNoAuthSentinel(IDictionary<string, string> headers)
+    {
+        if (headers == null || headers.Count == 0)
+        {
+            return false;
+        }
+
+        var removed = false;
+        foreach (var headerName in headers.Keys.ToList())
+        {
+            if (IsAuthHeaderName(headerName) && IsNoAuthSentinel(headers[headerName]))
+            {
+                headers.Remove(headerName);
+                removed = true;
+            }
+        }
+
+        return removed;
+    }
+
+    private static bool IsNoAuthSentinel(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized == "__no_auth__"
+            || normalized == "no_auth"
+            || normalized == "no-auth"
+            || normalized == "noauth";
     }
 
     private static bool TryGetFirstTokenValue(

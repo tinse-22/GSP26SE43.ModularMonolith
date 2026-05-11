@@ -1091,6 +1091,9 @@ public class RuleBasedValidator : IRuleBasedValidator
             || expected == ".+"
             || expected == "+"
             || string.Equals(expected, "notnull", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(expected, "non-null", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(expected, "non null", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(expected, "nonnull", StringComparison.OrdinalIgnoreCase)
             || string.Equals(expected, "any", StringComparison.OrdinalIgnoreCase)
             || string.Equals(expected, "present", StringComparison.OrdinalIgnoreCase))
         {
@@ -1327,6 +1330,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var text = expected.Trim().ToLowerInvariant();
+        var normalized = Regex.Replace(text, @"[\s_-]+", string.Empty);
         return text == "exists"
             || text == "exist"
             || text == "must exist"
@@ -1337,7 +1341,9 @@ public class RuleBasedValidator : IRuleBasedValidator
             || text == "available"
             || text == "is available"
             || text == "defined"
-            || text == "is defined";
+            || text == "is defined"
+            || normalized == "notnull"
+            || normalized == "nonnull";
     }
 
     private static bool LooksLikeNonEmptyExpectation(string expected)
@@ -1348,12 +1354,16 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var text = expected.Trim().ToLowerInvariant();
+        var normalized = Regex.Replace(text, @"[\s_-]+", string.Empty);
         return text.Contains("non-empty", StringComparison.Ordinal)
             || text.Contains("not empty", StringComparison.Ordinal)
             || text.Contains("not blank", StringComparison.Ordinal)
-            || text.Contains("not null", StringComparison.Ordinal)
             || text.Contains("non empty", StringComparison.Ordinal)
-            || text.Contains("must be present", StringComparison.Ordinal);
+            || text.Contains("must be present", StringComparison.Ordinal)
+            || normalized.Contains("nonempty", StringComparison.Ordinal)
+            || normalized.Contains("notempty", StringComparison.Ordinal)
+            || normalized.Contains("nonblank", StringComparison.Ordinal)
+            || normalized.Contains("notblank", StringComparison.Ordinal);
     }
 
     private static bool LooksLikeStringExpectation(string expected)
@@ -1363,7 +1373,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text == "string"
             || text == "must be string"
             || text == "should be string"
@@ -1379,7 +1389,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text == "boolean"
             || text == "bool"
             || text == "must be boolean"
@@ -1394,7 +1404,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text == "number"
             || text == "numeric"
             || text == "must be number"
@@ -1411,7 +1421,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text == "array"
             || text == "list"
             || text == "must be array"
@@ -1425,7 +1435,7 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text == "object"
             || text == "json object"
             || text == "must be object"
@@ -1439,9 +1449,10 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text.Contains("datetime", StringComparison.Ordinal)
             || text.Contains("date time", StringComparison.Ordinal)
+            || text.Contains("date-time", StringComparison.Ordinal)
             || text.Contains("timestamp", StringComparison.Ordinal)
             || text.Contains("iso", StringComparison.Ordinal) && text.Contains("date", StringComparison.Ordinal)
             || text.Contains("createdat", StringComparison.Ordinal) && LooksLikeNonEmptyExpectation(text);
@@ -1454,12 +1465,33 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        var text = expected.Trim().ToLowerInvariant();
+        var text = NormalizeTypeToken(expected);
         return text.Contains("uuid", StringComparison.Ordinal)
             || text.Contains("guid", StringComparison.Ordinal)
             || text.Contains("objectid", StringComparison.Ordinal)
             || text.Contains("object id", StringComparison.Ordinal)
             || text.Contains("mongo id", StringComparison.Ordinal);
+    }
+
+    private static string NormalizeTypeToken(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return string.Empty;
+        }
+
+        var text = expected.Trim().ToLowerInvariant();
+        if (text.StartsWith("type:", StringComparison.Ordinal) || text.StartsWith("type=", StringComparison.Ordinal))
+        {
+            return text[5..].Trim();
+        }
+
+        if (text.StartsWith("format:", StringComparison.Ordinal) || text.StartsWith("format=", StringComparison.Ordinal))
+        {
+            return text[7..].Trim();
+        }
+
+        return text;
     }
 
     private static bool TryExtractInlineRegexPattern(string expected, out string pattern)
