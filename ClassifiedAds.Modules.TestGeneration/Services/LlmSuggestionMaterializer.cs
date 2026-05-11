@@ -395,6 +395,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             return new N8nTestCaseExpectation();
         }
 
+        var expectedStatus = scenario.GetEffectiveExpectedStatusCodes();
         var bodyContains = scenario.SuggestedBodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
             ?? new List<string>();
 
@@ -407,15 +408,17 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
         return new N8nTestCaseExpectation
         {
-            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
+            ExpectedStatus = expectedStatus,
             BodyContains = bodyContains,
             BodyNotContains = scenario.SuggestedBodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>(),
             HeaderChecks = scenario.SuggestedHeaderChecks != null
                 ? new Dictionary<string, string>(scenario.SuggestedHeaderChecks, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            JsonPathChecks = scenario.SuggestedJsonPathChecks != null
-                ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            JsonPathChecks = ExpectationResolver.ReconcileJsonPathChecksWithStatuses(
+                scenario.SuggestedJsonPathChecks != null
+                    ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                expectedStatus),
             ExpectationSource = scenario.ExpectationSource,
             RequirementCode = scenario.RequirementCode,
             PrimaryRequirementId = scenario.PrimaryRequirementId,

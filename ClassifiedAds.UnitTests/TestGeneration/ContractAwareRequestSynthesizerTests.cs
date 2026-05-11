@@ -59,7 +59,7 @@ public class ContractAwareRequestSynthesizerTests
         result.BodyType.Should().Be("JSON");
         using var document = JsonDocument.Parse(result.Body);
         var root = document.RootElement;
-        root.GetProperty("email").GetString().Should().Be("contract@example.com");
+        root.GetProperty("email").GetString().Should().Be("testuser_{{tcUniqueId}}@example.com");
         root.GetProperty("password").GetString().Should().Be("StrongPass1!");
         root.GetProperty("role").GetString().Should().Be("admin");
         root.GetProperty("status").GetString().Should().Be("draft");
@@ -135,7 +135,7 @@ public class ContractAwareRequestSynthesizerTests
 
         using var document = JsonDocument.Parse(result.Body);
         var root = document.RootElement;
-        root.GetProperty("email").GetString().Should().Contain("@");
+        root.GetProperty("email").GetString().Should().Be("testuser_{{tcUniqueId}}@example.com");
         root.GetProperty("password").GetString().Should().Be("Test123!");
         root.GetProperty("price").GetDecimal().Should().BeGreaterThan(0);
         root.GetProperty("quantity").GetInt32().Should().BeGreaterThan(0);

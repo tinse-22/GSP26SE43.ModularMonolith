@@ -280,6 +280,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
             SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
             PreferredDefaultStatuses = mutation.GetEffectiveExpectedStatusCodes(),
+            TargetFieldName = pathParam?.Name,
         });
 
         testCase.Expectation = _expectationBuilder.Build(testCaseId, resolvedExpectation);
@@ -339,6 +340,7 @@ public class BoundaryNegativeTestCaseGenerator : IBoundaryNegativeTestCaseGenera
             SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
             SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
             PreferredDefaultStatuses = mutation.GetEffectiveExpectedStatusCodes(),
+            TargetFieldName = mutation.TargetFieldName,
         });
 
         testCase.Expectation = _expectationBuilder.Build(testCaseId, resolvedExpectation);

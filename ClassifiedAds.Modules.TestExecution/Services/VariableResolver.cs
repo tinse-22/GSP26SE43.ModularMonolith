@@ -79,6 +79,7 @@ public class VariableResolver : IVariableResolver
         mergedVars["tcUniqueId"] = Guid.NewGuid().ToString("N")[..8].ToLowerInvariant();
 
         ApplyTokenAliases(mergedVars);
+        ApplyResourceIdAliases(mergedVars);
 
         // Resolve URL
         var resolvedUrl = ResolvePlaceholders(request.Url ?? string.Empty, mergedVars);
@@ -827,6 +828,80 @@ public class VariableResolver : IVariableResolver
                 }
             }
         }
+    }
+
+    private static void ApplyResourceIdAliases(Dictionary<string, string> mergedVars)
+    {
+        if (mergedVars == null || mergedVars.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in mergedVars.ToArray())
+        {
+            var key = entry.Key;
+            var value = entry.Value;
+            if (string.IsNullOrWhiteSpace(key)
+                || string.IsNullOrWhiteSpace(value)
+                || value.Contains("{{", StringComparison.Ordinal)
+                || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryBuildCreatedResourceAlias(key, out var createdAlias)
+                && (!mergedVars.ContainsKey(createdAlias) || string.IsNullOrWhiteSpace(mergedVars[createdAlias])))
+            {
+                mergedVars[createdAlias] = value;
+            }
+
+            if (TryBuildCanonicalResourceAlias(key, out var canonicalAlias)
+                && (!mergedVars.ContainsKey(canonicalAlias) || string.IsNullOrWhiteSpace(mergedVars[canonicalAlias])))
+            {
+                mergedVars[canonicalAlias] = value;
+            }
+        }
+    }
+
+    private static bool TryBuildCreatedResourceAlias(string key, out string alias)
+    {
+        alias = null;
+        if (string.IsNullOrWhiteSpace(key)
+            || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("created", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var stem = key[..^2];
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return false;
+        }
+
+        alias = "created" + char.ToUpperInvariant(stem[0]) + stem[1..] + "Id";
+        return true;
+    }
+
+    private static bool TryBuildCanonicalResourceAlias(string key, out string alias)
+    {
+        alias = null;
+        if (string.IsNullOrWhiteSpace(key)
+            || !key.StartsWith("created", StringComparison.OrdinalIgnoreCase)
+            || !key.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || key.Length <= "created".Length + 2)
+        {
+            return false;
+        }
+
+        var stem = key.Substring("created".Length, key.Length - "created".Length - 2);
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return false;
+        }
+
+        alias = char.ToLowerInvariant(stem[0]) + stem[1..] + "Id";
+        return true;
     }
 
     private static IEnumerable<string> GetTokenAliasNames(string key)

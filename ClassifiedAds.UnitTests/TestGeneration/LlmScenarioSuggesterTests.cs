@@ -56,12 +56,15 @@ public class LlmScenarioSuggesterTests
             .Setup(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(LlmSuggestionFeedbackContextResult.Empty);
 
+        var expectationResolver = new ExpectationResolver(
+            new Mock<ILogger<ExpectationResolver>>().Object);
+
         _sut = new LlmScenarioSuggester(
             _promptBuilderMock.Object,
             _n8nServiceMock.Object,
             _llmGatewayServiceMock.Object,
             _feedbackContextServiceMock.Object,
-            new Mock<IExpectationResolver>().Object,
+            expectationResolver,
             _loggerMock.Object);
     }
 
@@ -184,6 +187,45 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestScenariosAsync_Should_NotPadSuccessOnlyGetEndpoints_WithBoundaryNegative()
+    {
+        // Arrange
+        var context = CreateSingleEndpointContext();
+        context.EndpointMetadata[0].HttpMethod = "GET";
+        context.EndpointMetadata[0].Path = "/api/health";
+        context.EndpointMetadata[0].OperationId = "health";
+        context.EndpointMetadata[0].ParameterSchemaPayloads = new List<string>();
+        context.EndpointMetadata[0].ResponseSchemaPayloads = new List<string> { "{\"type\":\"object\"}" };
+        context.EndpointMetadata[0].Responses = new List<ApiEndpointResponseDescriptorDto>
+        {
+            new() { StatusCode = 200, Schema = "{\"type\":\"object\"}" },
+        };
+        context.OrderedEndpoints[0].HttpMethod = "GET";
+        context.OrderedEndpoints[0].Path = "/api/health";
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 50,
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        result.Scenarios.Should().ContainSingle();
+        result.Scenarios[0].SuggestedTestType.Should().Be(TestType.HappyPath);
+        result.Scenarios[0].ExpectedStatusCodes.Should().BeEquivalentTo(new[] { 200 });
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_EmitMethodBasedScenarioTargets_InPromptPayload()
     {
         // Arrange
@@ -211,7 +253,7 @@ public class LlmScenarioSuggesterTests
 
         // Assert
         capturedPayload.Should().NotBeNull();
-        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints need exactly 3 scenarios total");
+        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints need up to 3 scenarios total");
         capturedPayload.PromptConfig.Rules.Should().Contain("POST, PUT, and PATCH endpoints need exactly 10 scenarios total");
         capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target 10 scenarios");
         capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target 3 scenarios");

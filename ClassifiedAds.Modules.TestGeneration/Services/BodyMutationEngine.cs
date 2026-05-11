@@ -15,7 +15,7 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class BodyMutationEngine : IBodyMutationEngine
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -25,7 +25,7 @@ public class BodyMutationEngine : IBodyMutationEngine
     {
         // Only applies to POST/PUT/PATCH. For GET/DELETE/HEAD/OPTIONS → return empty list.
         var method = (context.HttpMethod ?? string.Empty).ToUpperInvariant();
-        if (method is not("POST" or "PUT" or "PATCH"))
+        if (method is not ("POST" or "PUT" or "PATCH"))
         {
             return Array.Empty<BodyMutation>();
         }
@@ -380,6 +380,15 @@ public class BodyMutationEngine : IBodyMutationEngine
 
     private static object GetDefaultValue(ParameterDetailDto param)
     {
+        var normalizedType = (param.DataType ?? "string").ToLowerInvariant();
+        var normalizedFormat = param.Format?.ToLowerInvariant();
+        var normalizedName = param.Name?.ToLowerInvariant() ?? string.Empty;
+
+        if (RequiresUniqueValue(normalizedName, normalizedFormat))
+        {
+            return BuildUniquePlaceholderValue(normalizedName, normalizedFormat);
+        }
+
         if (!string.IsNullOrWhiteSpace(param.DefaultValue))
         {
             return TryParseJsonValue(param.DefaultValue, param.DataType);
@@ -390,16 +399,80 @@ public class BodyMutationEngine : IBodyMutationEngine
             return TryParseJsonValue(param.Examples, param.DataType);
         }
 
-        var normalizedType = (param.DataType ?? "string").ToLowerInvariant();
-        return normalizedType switch
+        if (normalizedType is "integer" or "int" or "long")
         {
-            "integer" or "int" or "long" => 1,
-            "number" or "float" or "double" or "decimal" => 1.0,
-            "boolean" or "bool" => true,
-            "array" => Array.Empty<object>(),
-            "object" => new Dictionary<string, object>(),
-            _ => "sample_value",
+            return 1;
+        }
+
+        if (normalizedType is "number" or "float" or "double" or "decimal")
+        {
+            return 1.0;
+        }
+
+        if (normalizedType is "boolean" or "bool")
+        {
+            return true;
+        }
+
+        if (normalizedType == "array")
+        {
+            return Array.Empty<object>();
+        }
+
+        if (normalizedType == "object")
+        {
+            return new Dictionary<string, object>();
+        }
+
+        return "sample_value";
+    }
+
+    /// <summary>
+    /// Returns true for field names/formats that must carry a unique value per test case
+    /// (email, username, phone, code, slug, etc.). Mirrors the LLM prompt rule 5.
+    /// </summary>
+    private static bool RequiresUniqueValue(string normalizedName, string normalizedFormat)
+    {
+        if (normalizedFormat == "email")
+        {
+            return true;
+        }
+
+        // Heuristic: any field whose name strongly suggests a unique identifier
+        return normalizedName switch
+        {
+            var n when n.Contains("email") => true,
+            var n when n.Contains("username") => true,
+            var n when n.Contains("phone") => true,
+            var n when n.Contains("code") => true,
+            var n when n.Contains("slug") => true,
+            _ => false,
         };
+    }
+
+    /// <summary>
+    /// Builds a {{tcUniqueId}}-based placeholder so the test execution runtime resolves
+    /// it to a unique 8-char hex string per test case.
+    /// </summary>
+    private static string BuildUniquePlaceholderValue(string normalizedName, string normalizedFormat)
+    {
+        if (normalizedFormat == "email" || normalizedName.Contains("email"))
+        {
+            return $"testuser_{{{{tcUniqueId}}}}@example.com";
+        }
+
+        if (normalizedName.Contains("username"))
+        {
+            return $"user_{{{{tcUniqueId}}}}";
+        }
+
+        if (normalizedName.Contains("phone"))
+        {
+            return $"+1202555{{{{tcUniqueId}}}}";
+        }
+
+        // Generic unique placeholder for code/slug etc.
+        return $"UNIQ_{{{{tcUniqueId}}}}";
     }
 
     private static object TryParseJsonValue(string value, string dataType)

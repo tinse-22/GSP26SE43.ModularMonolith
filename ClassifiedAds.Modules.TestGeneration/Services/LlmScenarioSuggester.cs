@@ -27,9 +27,10 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int LeanScenarioTargetPerEndpoint = 5;
-    private const int StandardScenarioTargetPerEndpoint = 15;
+    private const int LeanScenarioTargetPerEndpoint = 3;
+    private const int StandardScenarioTargetPerEndpoint = 10;
     private const int MaxScenarioTargetPerBatch = 20;
+    private const int MaxScenarioTargetPerEndpoint = 30;
 
     private const int MaxBusinessContextLength = 1200;
     private const int MaxFeedbackContextLength = 1200;
@@ -51,8 +52,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 5 scenarios total; POST, PUT, and PATCH endpoints need exactly 15 scenarios total; other methods default to 15 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
-        "   - For GET/DELETE, include the 5 highest-value checks covering happy-path, boundary, and negative cases.\n" +
+        "0. SRS IS THE PRIMARY SOURCE OF TRUTH. When srsContext.requirements[n].testableConstraints is non-empty, those constraints MUST drive the expected outcomes:\n" +
+        "   - Use the constraint's expectedOutcome as the primary expectedStatus code (e.g., \"400\" from \"password >= 6 chars → 400\").\n" +
+        "   - Use the constraint's field name and wording in bodyContains (e.g., \"password\", \"minimum\").\n" +
+        "   - Use the constraint's ruleType to determine jsonPathChecks (e.g., $.success: \"false\" for validation failures).\n" +
+        "   - SRS constraints OVERRIDE Swagger responses and default heuristics. If SRS says 400, expectedStatus MUST be [400], not [200] or [201].\n" +
+        "   - If no testableConstraints, use Swagger errorResponses and then fallback heuristics.\n" +
+        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need up to 3 scenarios total; POST, PUT, and PATCH endpoints need exactly 10 scenarios total; other methods default to 10 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative only when the endpoint contract exposes a real failure or input-mutation surface.\n" +
+        "   - For GET/DELETE, keep only the highest-value checks and avoid success-only Boundary/Negative duplicates.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "3b. If the boundary value equals a valid minimum/maximum per SRS, expectedStatus must be 2xx (success). Use 4xx only when the constraint is violated or when SRS explicitly says the boundary value fails.\n" +
@@ -81,18 +88,26 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
         "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
         "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
-        "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n" +
-        "14. EXPECTATION TOKENS (GENERALIZED): For jsonPathChecks values, use canonical tokens only: \"present\", \"not null\", \"non-empty\", \"string\", \"number\", \"boolean\", \"array\", \"object\", \"uuid\", \"datetime\", or regex:<pattern>. Avoid camelCase tokens like nonEmpty/notEmpty. Do not assert full message strings or session-specific values (token/id/timestamp); use existence/type/regex instead.\n" +
-        "15. AUTH MODE: For Unauthorized/Missing Token tests, set request.headers to include \"X-Test-Auth-Mode\": \"none\" and do NOT send Authorization. For Invalid Token tests, set Authorization to an invalid value and do NOT set X-Test-Auth-Mode.\n" +
-        "16. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
-        "17. For Boundary/Negative, propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload when inferable. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
-        "17b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
-        "18. SRS-CONSTRAINT-DRIVEN: When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
+        "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer, but the SRS MUST take precedence over all other sources.\n" +
+        "14. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
+        "15. For Boundary/Negative, derive expectedStatus from SRS constraints first. If SRS says 400 for password too short, expectedStatus=[400]. If SRS says 409 for duplicate email, expectedStatus=[409]. Propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
+        "15b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
+        "16. SRS-CONSTRAINT-DRIVEN (MANDATORY): When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
         "   - The scenario's endpointId MUST be requirements[n].endpointId (if not null).\n" +
         "   - coveredRequirementCodes MUST include requirements[n].code.\n" +
-        "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
-        "   - Example: constraint='password >= 6 chars → 400' → Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'].\n" +
-        "   - If no testableConstraints, ignore this rule.\n";
+        "   - expectedStatus/bodyContains/jsonPathChecks must mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
+        "   - Example: constraint='password >= 6 chars → 400' → Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'], jsonPathChecks={'$.success':'false'}.\n" +
+        "   - Example: constraint='email format → 400' → Negative test, body={email:'not-an-email'}, expectedStatus=[400], bodyContains=['email','invalid'], jsonPathChecks={'$.success':'false'}.\n" +
+        "   - Example: constraint='email uniqueness → 409' → Negative test, body={email:'{{registeredEmail}}'}, expectedStatus=[409], bodyContains=['already exists'], jsonPathChecks={'$.success':'false'}.\n" +
+        "   - If no testableConstraints, ignore this rule.\n" +
+        "17. EMAIL ISOLATION RULE: Every boundary/negative test that calls a registration endpoint MUST use {{tcUniqueId}} inside the email value. Never reuse an email from a previous scenario unless the test is specifically for 'email already exists'.\n" +
+        "18. FOREIGN-KEY VARIABLE RULE: If a request body or path param references a resource created by another endpoint (e.g. categoryId, userId, orderId), " +
+        "you MUST: (a) use the placeholder {{resourceId}} (e.g. {{categoryId}}) as the field value, AND " +
+        "(b) add a variable extraction rule on the producer scenario (the HappyPath that creates the resource) with " +
+        "variableName='resourceId', extractFrom='ResponseBody', jsonPath='$.data.id' (or '$.id' as fallback), " +
+        "and a second rule with extractFrom='ResponseHeader', headerName='Location', regex='([^/?#]+)$'. " +
+        "This ensures the runtime can extract and pass the ID from the creation response to the consuming test. " +
+        "NEVER leave a foreign-key field as a hardcoded value like '1', '12345', or any random UUID that won't exist at runtime.\n";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -219,6 +234,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         // Step 2: Build prompts and call n8n in batches to avoid output truncation.
         var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
         var endpointBatches = BuildEndpointBatches(orderedSequence, metadataMap);
+        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
+        var srsDocumentContent = context.SrsDocument?.ParsedMarkdown ?? context.SrsDocument?.RawContent;
 
         var allScenarios = new List<LlmSuggestedScenario>();
         var totalTokens = 0;
@@ -294,13 +311,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
 
-            var batchScenarios = ParseScenarios(n8nResponse, context.SrsRequirements);
+            var batchScenarios = ParseScenarios(n8nResponse, endpointContracts, metadataMap, context.SrsRequirements, srsDocumentContent);
             allScenarios.AddRange(batchScenarios);
-
-            if (algorithmProfile.UseFeedbackLoopContext)
-            {
-                await CacheResultsAsync(context, batch, cacheKey, batchScenarios, cancellationToken);
-            }
 
             totalLatencyMs += latencyMs;
             totalTokens += n8nResponse?.TokensUsed ?? 0;
@@ -320,10 +332,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 latencyMs);
         }
 
+        var scenarios = EnsureAdaptiveCoverage(allScenarios, orderedSequence, metadataMap, endpointContracts, context.SrsRequirements, srsDocumentContent);
+
+        if (algorithmProfile.UseFeedbackLoopContext)
+        {
+            await CacheResultsAsync(context, orderedSequence, cacheKey, scenarios, cancellationToken);
+        }
+
         _logger.LogInformation(
             "LLM scenario suggestion complete. TestSuiteId={TestSuiteId}, ScenarioCount={Count}, Model={Model}, TokensUsed={Tokens}, LatencyMs={LatencyMs}, FeedbackFingerprint={FeedbackFingerprint}, CacheKey={CacheKey}",
             context.TestSuiteId,
-            allScenarios.Count,
+            scenarios.Count,
             modelUsed,
             totalTokens,
             totalLatencyMs,
@@ -332,7 +351,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return new LlmScenarioSuggestionResult
         {
-            Scenarios = allScenarios,
+            Scenarios = scenarios,
             LlmModel = modelUsed,
             TokensUsed = totalTokens,
             LatencyMs = totalLatencyMs,
@@ -447,12 +466,18 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 prompt = prompts[i];
             }
 
+            // Filter SRS requirements relevant to this endpoint
+            var endpointSrsReqs = context.SrsRequirements?
+                .Where(r => !r.EndpointId.HasValue || r.EndpointId == orderItem.EndpointId)
+                .ToList() ?? new List<SrsRequirement>();
+
             var promptPayload = BuildEndpointPromptPayload(
                 orderItem,
                 context.Suite,
                 metadata,
                 businessContext,
-                prompt);
+                prompt,
+                endpointSrsReqs);
 
             endpointPayloads.Add(new N8nBoundaryEndpointPayload
             {
@@ -494,17 +519,23 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? context.SrsDocument.ParsedMarkdown
             : context.SrsDocument.RawContent;
 
-        // Truncate to avoid token overflow (~12 000 chars ≈ ~3 000 tokens)
-        const int MaxSrsContentLength = 12_000;
+        // Truncate to avoid token overflow (~20 000 chars ≈ ~5 000 tokens, up from 12 000)
+        // This gives the LLM enough content to understand all validation rules and boundaries
+        const int MaxSrsContentLength = 20_000;
         if (content?.Length > MaxSrsContentLength)
-            content = content.Substring(0, MaxSrsContentLength) + "\n...[truncated]";
+        {
+            // Preserve key sections: validation rules, constraints, boundary, expected responses
+            var sections = SplitSrsIntoSections(content);
+            var prioritized = PrioritizeSrsSections(sections, MaxSrsContentLength);
+            content = string.Join("\n\n", prioritized);
+        }
 
         var requirements = context.SrsRequirements
             .Select(r => new N8nSrsRequirementBrief
             {
                 Code = r.RequirementCode,
                 Title = r.Title,
-                Description = TruncateForPayload(r.Description, 400),
+                Description = TruncateForPayload(r.Description, 600),
                 EndpointId = r.EndpointId,
                 TestableConstraints = DeserializeTestableConstraints(
                     r.RefinedConstraints ?? r.TestableConstraints),
@@ -519,16 +550,123 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         };
     }
 
+    /// <summary>
+    /// Splits SRS content into sections by markdown headers for prioritized truncation.
+    /// </summary>
+    private static List<string> SplitSrsIntoSections(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return new List<string> { content ?? string.Empty };
+
+        var sections = new List<string>();
+        var lines = content.Split('\n');
+        var currentSection = new System.Text.StringBuilder();
+
+        foreach (var line in lines)
+        {
+            if (line.TrimStart().StartsWith("###") || line.TrimStart().StartsWith("##"))
+            {
+                if (currentSection.Length > 0)
+                {
+                    sections.Add(currentSection.ToString().TrimEnd());
+                    currentSection.Clear();
+                }
+            }
+            currentSection.AppendLine(line);
+        }
+
+        if (currentSection.Length > 0)
+        {
+            sections.Add(currentSection.ToString().TrimEnd());
+        }
+
+        return sections.Count <= 1
+            ? new List<string> { content }
+            : sections;
+    }
+
+    /// <summary>
+    /// Prioritizes SRS sections for LLM context: validation rules, constraints, boundary tests,
+    /// expected responses come first. Overview/table-of-contents/appendix come last.
+    /// </summary>
+    private static List<string> PrioritizeSrsSections(List<string> sections, int maxTotalLength)
+    {
+        var highPriority = new List<string>();
+        var mediumPriority = new List<string>();
+        var lowPriority = new List<string>();
+
+        foreach (var section in sections)
+        {
+            var lower = section.ToLowerInvariant();
+            if (lower.Contains("validation") || lower.Contains("constraint") || lower.Contains("rule")
+                || lower.Contains("boundary") || lower.Contains("ràng buộc") || lower.Contains("quy tắc"))
+            {
+                highPriority.Add(section);
+            }
+            else if (lower.Contains("expected") || lower.Contains("response") || lower.Contains("test data")
+                || lower.Contains("expected response") || lower.Contains("điểm kiểm tra"))
+            {
+                mediumPriority.Add(section);
+            }
+            else if (lower.Contains("mục lục") || lower.Contains("table of contents") || lower.Contains("tổng quan")
+                || lower.Contains("overview") || lower.Contains("phụ lục") || lower.Contains("appendix")
+                || lower.Contains("checklist") || lower.Contains("checklist"))
+            {
+                lowPriority.Add(section);
+            }
+            else
+            {
+                // Unclassified defaults to medium
+                mediumPriority.Add(section);
+            }
+        }
+
+        var result = new List<string>();
+        var totalLength = 0;
+        var allPrioritized = highPriority.Concat(mediumPriority).Concat(lowPriority);
+
+        foreach (var section in allPrioritized)
+        {
+            if (totalLength + section.Length > maxTotalLength)
+            {
+                // If this is the first section to exceed, try to include partial
+                if (result.Count == 0)
+                {
+                    var remaining = maxTotalLength - totalLength;
+                    if (remaining > 200)
+                    {
+                        result.Add(section.Length <= remaining
+                            ? section
+                            : section.Substring(0, remaining) + "\n...[truncated]");
+                    }
+                }
+                break;
+            }
+            result.Add(section);
+            totalLength += section.Length + 2; // +2 for newlines
+        }
+
+        return result.Count > 0 ? result : new List<string> { sections[0].Substring(0, Math.Min(sections[0].Length, maxTotalLength)) + "\n...[truncated]" };
+    }
+
     private static N8nPromptPayload BuildEndpointPromptPayload(
         ApiOrderItemModel orderItem,
         TestSuite suite,
         ApiEndpointMetadataDto metadata,
         string businessContext,
-        ObservationConfirmationPrompt prompt)
+        ObservationConfirmationPrompt prompt,
+        IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
         var combinedPrompt = string.IsNullOrWhiteSpace(prompt?.CombinedPrompt)
-            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext)
+            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext, srsRequirements)
             : prompt.CombinedPrompt;
+
+        // If we have SRS requirements with constraints, inject them after the combined prompt
+        var srsConstraintBlock = BuildSrsConstraintBlockForEndpoint(orderItem.EndpointId, srsRequirements);
+        if (!string.IsNullOrWhiteSpace(srsConstraintBlock) && !string.IsNullOrWhiteSpace(prompt?.CombinedPrompt))
+        {
+            combinedPrompt = TruncateForPayload(combinedPrompt + "\n\n" + srsConstraintBlock, MaxCombinedPromptLength);
+        }
 
         return new N8nPromptPayload
         {
@@ -549,9 +687,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ApiOrderItemModel orderItem,
         TestSuite suite,
         ApiEndpointMetadataDto metadata,
-        string businessContext)
+        string businessContext,
+        IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
-        var target = ComputeAdaptiveScenarioTarget(orderItem, metadata);
+        var target = ComputeAdaptiveScenarioTarget(orderItem, metadata, srsRequirements);
         var sb = new StringBuilder();
         sb.AppendLine("# Endpoint Context (Fallback)");
         sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
@@ -560,6 +699,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         sb.AppendLine();
         sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
         sb.AppendLine($"Target scenario count for this endpoint: {target} total scenario(s).");
+
+        // Include SRS constraints first — they are the PRIMARY driver for expected outcomes
+        var srsBlock = BuildSrsConstraintBlockForEndpoint(orderItem.EndpointId, srsRequirements);
+        if (!string.IsNullOrWhiteSpace(srsBlock))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## SRS Validation Rules (PRIMARY SOURCE OF TRUTH)");
+            sb.AppendLine("These rules from the SRS document MUST dictate expected status codes and assertions:");
+            sb.AppendLine(srsBlock);
+        }
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -598,6 +747,57 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Builds a compact SRS constraint block for a specific endpoint, suitable for LLM prompt injection.
+    /// </summary>
+    private static string BuildSrsConstraintBlockForEndpoint(
+        Guid endpointId,
+        IReadOnlyList<SrsRequirement> srsRequirements)
+    {
+        if (srsRequirements == null || srsRequirements.Count == 0)
+            return null;
+
+        var relevant = srsRequirements
+            .Where(r => r.IsReviewed
+                && (!r.EndpointId.HasValue || r.EndpointId == endpointId))
+            .ToList();
+
+        if (relevant.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        foreach (var req in relevant)
+        {
+            var constraints = DeserializeTestableConstraints(
+                req.RefinedConstraints ?? req.TestableConstraints);
+
+            if (constraints.Count == 0)
+                continue;
+
+            sb.AppendLine($"### {req.RequirementCode}: {req.Title}");
+            if (!string.IsNullOrWhiteSpace(req.Description))
+            {
+                sb.AppendLine($"Description: {TruncateForPayload(req.Description, 300)}");
+            }
+
+            foreach (var c in constraints)
+            {
+                var outcome = !string.IsNullOrWhiteSpace(c.ExpectedOutcome)
+                    ? $" → {c.ExpectedOutcome}"
+                    : "";
+                var constraintText = !string.IsNullOrWhiteSpace(c.Constraint)
+                    ? c.Constraint
+                    : "Unknown constraint";
+
+                sb.AppendLine($"- CONSTRAINT: {constraintText}{outcome}");
+                sb.AppendLine($"  ExpectedStatus: {c.ExpectedOutcome ?? "(infer from constraint text)"} | Priority: {c.Priority ?? "Medium"}");
+            }
+            sb.AppendLine();
+        }
+
+        return sb.Length > 0 ? sb.ToString().TrimEnd() : null;
+    }
+
     private static N8nSuggestionPromptConfig BuildSuggestionPromptConfig(
         LlmScenarioSuggestionContext context,
         IReadOnlyList<ObservationConfirmationPrompt> prompts,
@@ -614,7 +814,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ? DefaultSuggestionSystemPrompt
                 : systemPrompt, MaxSystemPromptLength),
             TaskInstruction = TruncateForPayload(
-                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
+                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap, context?.SrsRequirements),
                 MaxTaskInstructionLength),
             Rules = TruncateForPayload(SuggestionRulesBlock, MaxRulesLength),
             ResponseFormat = TruncateForPayload(SuggestionResponseFormatBlock, MaxResponseFormatLength),
@@ -624,7 +824,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private static string BuildSuggestionTaskInstruction(
         TestSuite suite,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
-        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        IReadOnlyList<SrsRequirement> srsRequirements = null)
     {
         var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
         var sb = new StringBuilder();
@@ -634,12 +835,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine("=== COVERAGE TARGET GUIDE (adaptive, not hard cap) ===");
+            sb.AppendLine("=== COVERAGE TARGET GUIDE (adaptive, SRS-driven, not hard cap) ===");
             foreach (var endpoint in orderedEndpoints.OrderBy(x => x.OrderIndex))
             {
                 ApiEndpointMetadataDto metadata = null;
                 metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
-                var target = ComputeAdaptiveScenarioTarget(endpoint, metadata);
+                var target = ComputeAdaptiveScenarioTarget(endpoint, metadata, srsRequirements);
                 var hasBoundarySurface = HasBoundarySurface(endpoint, metadata);
                 var expectedTypes = hasBoundarySurface
                     ? "HappyPath, Boundary, Negative"
@@ -663,7 +864,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private IReadOnlyList<LlmSuggestedScenario> ParseScenarios(
         N8nBoundaryNegativeResponse response,
-        IReadOnlyList<SrsRequirement> srsRequirements = null)
+        IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap = null,
+        IReadOnlyList<SrsRequirement> srsRequirements = null,
+        string srsDocumentContent = null)
     {
         if (response?.Scenarios == null || response.Scenarios.Count == 0)
         {
@@ -682,6 +886,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         foreach (var s in response.Scenarios)
         {
             var parsedType = ParseTestType(s.TestType);
+            ApiEndpointMetadataDto scenarioMetadata = null;
+            metadataMap?.TryGetValue(s.EndpointId, out scenarioMetadata);
 
             // Map requirement codes returned by LLM → GUIDs from our DB.
             var coveredIds = s.CoveredRequirementCodes
@@ -691,8 +897,61 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 .ToList()
                 ?? new List<Guid>();
 
-            var expectedStatuses = s.Expectation?.ExpectedStatus ?? new List<int>();
-            var bodyContains = s.Expectation?.BodyContains;
+            var candidateExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = s.Expectation?.ExpectedStatus ?? new List<int>(),
+                BodyContains = s.Expectation?.BodyContains ?? new List<string>(),
+                BodyNotContains = s.Expectation?.BodyNotContains ?? new List<string>(),
+                JsonPathChecks = s.Expectation?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                HeaderChecks = s.Expectation?.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            };
+
+            var resolvedExpectation = _expectationResolver.Resolve(new GeneratedScenarioContext
+            {
+                EndpointId = s.EndpointId,
+                TestType = parsedType,
+                HttpMethod = s.Request?.HttpMethod,
+                SwaggerResponses = scenarioMetadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+                LlmExpectation = candidateExpectation,
+                SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+                CoveredRequirementIds = coveredIds,
+                PreferredDefaultStatuses = candidateExpectation.ExpectedStatus,
+                SrsDocumentContent = srsDocumentContent,
+            });
+
+            // Log resolution summary: LLM suggested vs final resolved
+            var llmStatusHint = candidateExpectation.ExpectedStatus?.Count > 0
+                ? string.Join(",", candidateExpectation.ExpectedStatus)
+                : "none";
+            var finalStatus = resolvedExpectation?.ExpectedStatusCodes?.Count > 0
+                ? string.Join(",", resolvedExpectation.ExpectedStatusCodes)
+                : "200";
+            var source = resolvedExpectation?.Source.ToString() ?? "Unknown";
+            var reqCode = resolvedExpectation?.RequirementCode ?? "none";
+
+            _logger.LogInformation(
+                "[LlmScenarioSuggester] Scenario='{ScenarioName}' | Type={TestType} | LLM_SuggestedStatus=[{LlmStatus}] | FinalExpectedStatus=[{FinalStatus}] | Source={Source} | ReqCode={ReqCode}",
+                s.ScenarioName,
+                parsedType,
+                llmStatusHint,
+                finalStatus,
+                source,
+                reqCode);
+
+            var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes?.Count > 0
+                ? resolvedExpectation.ExpectedStatusCodes
+                : candidateExpectation.ExpectedStatus?.Count > 0
+                    ? candidateExpectation.ExpectedStatus
+                    : new List<int> { 200 };
+
+            var bodyContains = resolvedExpectation?.BodyContains?.Count > 0
+                ? resolvedExpectation.BodyContains
+                : s.Expectation?.BodyContains;
+
+            bodyContains = NormalizeRegisterBodyContains(
+                bodyContains,
+                s.Request,
+                s.ScenarioName);
 
             var parsedScenario = new LlmSuggestedScenario
             {
@@ -711,20 +970,64 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ExpectedStatusCodes = expectedStatuses,
                 ExpectedBehavior = bodyContains?.FirstOrDefault(),
                 SuggestedBodyContains = bodyContains,
-                SuggestedBodyNotContains = s.Expectation?.BodyNotContains,
-                SuggestedJsonPathChecks = s.Expectation?.JsonPathChecks,
-                SuggestedHeaderChecks = s.Expectation?.HeaderChecks,
+                SuggestedBodyNotContains = resolvedExpectation?.BodyNotContains?.Count > 0
+                    ? resolvedExpectation.BodyNotContains
+                    : s.Expectation?.BodyNotContains,
+                SuggestedJsonPathChecks = resolvedExpectation?.JsonPathChecks?.Count > 0
+                    ? resolvedExpectation.JsonPathChecks
+                    : s.Expectation?.JsonPathChecks,
+                SuggestedHeaderChecks = resolvedExpectation?.HeaderChecks?.Count > 0
+                    ? resolvedExpectation.HeaderChecks
+                    : s.Expectation?.HeaderChecks,
                 Priority = s.Priority,
                 Tags = s.Tags ?? new List<string>(),
                 Variables = s.Variables ?? new List<N8nTestCaseVariable>(),
                 CoveredRequirementIds = coveredIds,
-                ExpectationSource = s.Expectation?.ExpectationSource,
-                RequirementCode = s.Expectation?.RequirementCode,
-                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId,
+                ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
+                RequirementCode = resolvedExpectation?.RequirementCode ?? s.Expectation?.RequirementCode,
+                PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId ?? s.Expectation?.PrimaryRequirementId,
             };
+
+            EndpointRequestContract contract = null;
+            if (endpointContracts != null &&
+                endpointContracts.TryGetValue(parsedScenario.EndpointId, out contract))
+            {
+                parsedScenario = ContractAwareRequestSynthesizer.RepairScenario(parsedScenario, contract.RequestContext);
+
+                if (!IsScenarioContractComplete(parsedScenario, contract, out var missingParts))
+                {
+                    _logger.LogWarning(
+                        "Discarding incomplete LLM scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, Missing={Missing}",
+                        parsedScenario.EndpointId,
+                        parsedScenario.ScenarioName,
+                        string.Join(", ", missingParts));
+                    continue;
+                }
+            }
+
+            parsedScenario.SuggestedJsonPathChecks = ExpectationResolver.ReconcileJsonPathChecksWithStatuses(
+                parsedScenario.SuggestedJsonPathChecks,
+                parsedScenario.ExpectedStatusCodes);
+
+            if (ShouldDiscardReadOnlySuccessOnlyScenario(parsedScenario, scenarioMetadata, contract))
+            {
+                _logger.LogInformation(
+                    "Discarding low-signal read-only scenario. EndpointId={EndpointId}, ScenarioName={ScenarioName}, TestType={TestType}, ExpectedStatus=[{ExpectedStatus}]",
+                    parsedScenario.EndpointId,
+                    parsedScenario.ScenarioName,
+                    parsedScenario.SuggestedTestType,
+                    string.Join(",", parsedScenario.ExpectedStatusCodes ?? new List<int>()));
+                continue;
+            }
 
             scenarios.Add(parsedScenario);
         }
+
+        // === POST-PROCESSING: Email uniqueness enforcement ===
+        scenarios = EnforceEmailUniqueness(scenarios);
+
+        // === POST-PROCESSING: Login-after-register dependency enforcement ===
+        scenarios = EnforceLoginAfterRegisterDependency(scenarios);
 
         return scenarios;
     }
@@ -814,22 +1117,342 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return missingParts.Count == 0;
     }
 
+    /// <summary>
+    /// Enforces deterministic email uniqueness rules aligned with SRS/auth-flow semantics:
+    /// 1) Register-like scenarios should prefer {{tcUniqueId}}-based emails to avoid cross-run collisions.
+    /// 2) Duplicate-email scenarios MUST preserve {{registeredEmail}} so they can assert 409 correctly.
+    /// 3) Emails already containing {{tcUniqueId}} are treated as inherently unique per test execution.
+    /// </summary>
+    private List<LlmSuggestedScenario> EnforceEmailUniqueness(
+        List<LlmSuggestedScenario> scenarios)
+    {
+        if (scenarios == null || scenarios.Count == 0)
+        {
+            return scenarios;
+        }
+
+        var usedLiteralEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var scenario in scenarios)
+        {
+            if (!IsRegisterLikeScenario(scenario))
+            {
+                continue;
+            }
+
+            var email = TryExtractEmailFromBody(scenario.SuggestedBody);
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                continue;
+            }
+
+            if (ShouldKeepRegisteredEmailReference(scenario, email))
+            {
+                continue;
+            }
+
+            if (ContainsTcUniqueIdPlaceholder(email))
+            {
+                continue;
+            }
+
+            var normalizedLiteral = email.Trim().ToLowerInvariant();
+            var normalizedEmail = EnsureTcUniqueIdEmailTemplate(email);
+
+            if (!string.Equals(normalizedEmail, email, StringComparison.Ordinal))
+            {
+                scenario.SuggestedBody = ReplaceEmailInBody(scenario.SuggestedBody, email, normalizedEmail);
+                _logger?.LogInformation(
+                    "[LlmScenarioSuggester] Email uniqueness: normalized register email '{OldEmail}' -> '{NewEmail}' in scenario '{ScenarioName}'",
+                    email,
+                    normalizedEmail,
+                    scenario.ScenarioName);
+            }
+
+            if (!usedLiteralEmails.Add(normalizedLiteral))
+            {
+                _logger?.LogInformation(
+                    "[LlmScenarioSuggester] Email uniqueness: repeated literal register email '{Email}' was converted to tcUniqueId template in scenario '{ScenarioName}'.",
+                    email,
+                    scenario.ScenarioName);
+            }
+        }
+
+        return scenarios;
+    }
+
+    private static bool IsRegisterLikeScenario(LlmSuggestedScenario scenario)
+    {
+        if (scenario == null)
+        {
+            return false;
+        }
+
+        var body = scenario.SuggestedBody;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        var signature = $"{scenario.ScenarioName} {scenario.Description} {body}";
+        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldKeepRegisteredEmailReference(LlmSuggestedScenario scenario, string email)
+    {
+        if (scenario == null || string.IsNullOrWhiteSpace(email))
+        {
+            return false;
+        }
+
+        if (email.Contains("{{registeredEmail}}", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var statusCodes = scenario.ExpectedStatusCodes?.Count > 0
+            ? scenario.ExpectedStatusCodes
+            : new List<int> { scenario.ExpectedStatusCode };
+
+        var scenarioName = scenario.ScenarioName ?? string.Empty;
+        var looksLikeDuplicateCase = scenarioName.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
+            || scenarioName.Contains("already exists", StringComparison.OrdinalIgnoreCase)
+            || scenarioName.Contains("email exists", StringComparison.OrdinalIgnoreCase);
+
+        var expects409 = statusCodes.Any(code => code == 409);
+        var bodyUsesRegisteredRef = (scenario.SuggestedBody ?? string.Empty)
+            .Contains("{{registeredEmail}}", StringComparison.OrdinalIgnoreCase);
+
+        return looksLikeDuplicateCase || (expects409 && bodyUsesRegisteredRef);
+    }
+
+    private static bool ContainsTcUniqueIdPlaceholder(string email)
+    {
+        return !string.IsNullOrWhiteSpace(email)
+            && email.Contains("{{tcUniqueId}}", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnsureTcUniqueIdEmailTemplate(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return email;
+        }
+
+        if (ContainsTcUniqueIdPlaceholder(email)
+            || email.Contains("{{registeredEmail}}", StringComparison.OrdinalIgnoreCase))
+        {
+            return email;
+        }
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex <= 0 || atIndex == email.Length - 1)
+        {
+            return $"testuser_{{{{tcUniqueId}}}}@example.com";
+        }
+
+        var local = email[..atIndex];
+        var domain = email[(atIndex + 1)..];
+
+        return local.Contains("{{tcUniqueId}}", StringComparison.OrdinalIgnoreCase)
+            ? email
+            : $"{local}_{{{{tcUniqueId}}}}@{domain}";
+    }
+
+    /// <summary>
+    /// Ensures login follows register in the scenario sequence.
+    /// If a register HappyPath exists, ensures there's a login scenario that
+    /// uses the registered credentials via variable references.
+    /// </summary>
+    private List<LlmSuggestedScenario> EnforceLoginAfterRegisterDependency(
+        List<LlmSuggestedScenario> scenarios)
+    {
+        if (scenarios == null || scenarios.Count == 0)
+            return scenarios;
+
+        // Find register HappyPath scenarios
+        var registerScenarios = scenarios
+            .Where(s => s.SuggestedTestType == TestType.HappyPath
+                && HasRegisterVariables(s))
+            .ToList();
+
+        if (registerScenarios.Count == 0)
+            return scenarios;
+
+        foreach (var registerScenario in registerScenarios)
+        {
+            var registeredEmail = TryExtractVariable(registerScenario, "registeredEmail");
+            var registeredPassword = TryExtractVariable(registerScenario, "registeredPassword");
+
+            if (string.IsNullOrWhiteSpace(registeredEmail))
+            {
+                registeredEmail = TryExtractEmailFromBody(registerScenario.SuggestedBody);
+            }
+
+            if (string.IsNullOrWhiteSpace(registeredEmail))
+                continue;
+
+            // Check if a login scenario already exists for this register
+            var hasLogin = scenarios.Any(s =>
+                s.SuggestedTestType == TestType.HappyPath
+                && !string.IsNullOrWhiteSpace(s.SuggestedBody)
+                && s.SuggestedBody.Contains("{{registeredEmail}}", StringComparison.OrdinalIgnoreCase));
+
+            if (hasLogin)
+                continue;
+
+            // The login scenario should already have been generated by the LLM.
+            // This method only logs a warning — the actual enforcement is in
+            // the prompt rules that require login after register.
+            _logger?.LogWarning(
+                "[LlmScenarioSuggester] No login scenario found using {{registeredEmail}}. Register scenario: '{ScenarioName}'. Ensure LLM prompt enforces login-after-register rule.");
+        }
+
+        return scenarios;
+    }
+
+    private static string TryExtractEmailFromBody(string bodyJson)
+    {
+        if (string.IsNullOrWhiteSpace(bodyJson)) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(bodyJson);
+            if (doc.RootElement.TryGetProperty("email", out var emailProp)
+                && emailProp.ValueKind == JsonValueKind.String)
+            {
+                return emailProp.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+            // Not valid JSON, try regex
+            var match = Regex.Match(bodyJson, @"""email""\s*:\s*""([^""]+)""", RegexOptions.IgnoreCase);
+            if (match.Success) return match.Groups[1].Value;
+        }
+
+        return null;
+    }
+
+    private static string ReplaceEmailInBody(string bodyJson, string oldEmail, string newEmail)
+    {
+        if (string.IsNullOrWhiteSpace(bodyJson) || string.IsNullOrWhiteSpace(oldEmail))
+            return bodyJson;
+
+        return bodyJson.Replace(oldEmail, newEmail);
+    }
+
+    private static bool HasRegisterVariables(LlmSuggestedScenario scenario)
+    {
+        return scenario.Variables?.Any(v =>
+            string.Equals(v.VariableName, "registeredEmail", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(v.VariableName, "registeredPassword", StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private static string TryExtractVariable(LlmSuggestedScenario scenario, string variableName)
+    {
+        return scenario.Variables?
+            .FirstOrDefault(v => string.Equals(v.VariableName, variableName, StringComparison.OrdinalIgnoreCase))
+            ?.ExtractFrom;
+    }
+
     private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(
         IReadOnlyList<LlmSuggestedScenario> rawScenarios,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
         IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
-        IReadOnlyList<SrsRequirement> srsRequirements)
+        IReadOnlyList<SrsRequirement> srsRequirements,
+        string srsDocumentContent = null)
     {
         if (orderedEndpoints == null || orderedEndpoints.Count == 0)
         {
             return rawScenarios ?? Array.Empty<LlmSuggestedScenario>();
         }
 
-        // Only order the LLM-returned scenarios by endpoint order — no synthetic padding.
+        // Order LLM-returned scenarios by endpoint order, then fill coverage gaps.
         var byEndpoint = (rawScenarios ?? Array.Empty<LlmSuggestedScenario>())
             .GroupBy(x => x.EndpointId)
             .ToDictionary(g => g.Key, g => g.ToList());
+
+        var added = 0;
+
+        foreach (var endpoint in orderedEndpoints.OrderBy(x => x.OrderIndex))
+        {
+            ApiEndpointMetadataDto metadata = null;
+            metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
+
+            if (!byEndpoint.TryGetValue(endpoint.EndpointId, out var endpointScenarios))
+            {
+                endpointScenarios = new List<LlmSuggestedScenario>();
+                byEndpoint[endpoint.EndpointId] = endpointScenarios;
+            }
+
+            var types = endpointScenarios.Select(x => x.SuggestedTestType).ToHashSet();
+            var target = ComputeAdaptiveScenarioTarget(endpoint, metadata, srsRequirements);
+            EndpointRequestContract contract = null;
+            endpointContracts?.TryGetValue(endpoint.EndpointId, out contract);
+            var canAddNegative = CanAddFailureScenario(endpoint, metadata, contract, srsRequirements);
+            var canAddBoundary = CanAddBoundaryScenario(endpoint, metadata, contract, srsRequirements);
+            var hasEndpointScopedSrsConstraints = HasEndpointScopedSrsConstraints(srsRequirements, endpoint.EndpointId);
+            if (!types.Contains(TestType.HappyPath))
+            {
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.HappyPath, endpointScenarios.Count + 1, srsRequirements, srsDocumentContent));
+                types.Add(TestType.HappyPath);
+                added++;
+            }
+
+            if (canAddNegative && !types.Contains(TestType.Negative))
+            {
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Negative, endpointScenarios.Count + 1, srsRequirements, srsDocumentContent));
+                types.Add(TestType.Negative);
+                added++;
+            }
+
+            if (canAddBoundary && !types.Contains(TestType.Boundary))
+            {
+                endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, TestType.Boundary, endpointScenarios.Count + 1, srsRequirements, srsDocumentContent));
+                types.Add(TestType.Boundary);
+                added++;
+            }
+
+            var fillerTypes = new List<TestType>();
+            if (canAddBoundary)
+            {
+                fillerTypes.Add(TestType.Boundary);
+            }
+
+            if (canAddNegative)
+            {
+                fillerTypes.Add(TestType.Negative);
+            }
+
+            if (!hasEndpointScopedSrsConstraints)
+            {
+                var fillerIndex = 0;
+                while (endpointScenarios.Count < target)
+                {
+                    if (fillerTypes.Count == 0)
+                    {
+                        break;
+                    }
+
+                    var nextType = fillerTypes[fillerIndex % fillerTypes.Count];
+                    fillerIndex++;
+                    endpointScenarios.Add(CreateFallbackScenario(endpoint, metadata, contract, nextType, endpointScenarios.Count + 1, srsRequirements, srsDocumentContent));
+                    added++;
+                }
+            }
+        }
+
+        if (added > 0)
+        {
+            _logger.LogInformation(
+                "Adaptive coverage added {AddedCount} fallback scenario(s) across {EndpointCount} endpoint(s).",
+                added,
+                orderedEndpoints.Count);
+        }
 
         return orderedEndpoints
             .OrderBy(x => x.OrderIndex)
@@ -839,12 +1462,148 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             .ToList();
     }
 
-    private static int ComputeAdaptiveScenarioTarget(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
+    private static bool ShouldDiscardReadOnlySuccessOnlyScenario(
+        LlmSuggestedScenario scenario,
+        ApiEndpointMetadataDto metadata,
+        EndpointRequestContract contract)
+    {
+        if (scenario == null || scenario.SuggestedTestType == TestType.HappyPath)
+        {
+            return false;
+        }
+
+        var method = contract?.RequestContext?.HttpMethod ?? metadata?.HttpMethod;
+        if (!IsReadOnlyMethod(method))
+        {
+            return false;
+        }
+
+        var statuses = scenario.ExpectedStatusCodes?.Count > 0
+            ? scenario.ExpectedStatusCodes
+            : new List<int> { scenario.ExpectedStatusCode };
+        if (statuses.Count == 0 || statuses.Any(code => code < 200 || code > 299))
+        {
+            return false;
+        }
+
+        return !HasRequestMutationSurface(contract);
+    }
+
+    private static bool CanAddFailureScenario(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        EndpointRequestContract contract,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         var method = ResolveHttpMethod(endpoint, metadata);
-        return IsLeanScenarioMethod(method)
+        if (HasSwaggerErrorResponses(metadata) ||
+            HasRequestMutationSurface(contract) ||
+            contract?.RequestContext?.RequiresAuth == true ||
+            HasRelevantFailingSrsConstraints(srsRequirements, endpoint?.EndpointId, method))
+        {
+            return true;
+        }
+
+        return !IsReadOnlyMethod(method);
+    }
+
+    private static bool CanAddBoundaryScenario(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        EndpointRequestContract contract,
+        IReadOnlyList<SrsRequirement> srsRequirements)
+    {
+        if (!HasBoundarySurface(endpoint, metadata))
+        {
+            return false;
+        }
+
+        var method = ResolveHttpMethod(endpoint, metadata);
+        if (!IsReadOnlyMethod(method))
+        {
+            return true;
+        }
+
+        return HasRequestMutationSurface(contract)
+            || HasSwaggerErrorResponses(metadata)
+            || HasRelevantFailingSrsConstraints(srsRequirements, endpoint?.EndpointId, method);
+    }
+
+    private static bool HasRequestMutationSurface(EndpointRequestContract contract)
+    {
+        return contract != null &&
+            ((contract.RequiredPathParams?.Count ?? 0) > 0 ||
+             (contract.RequiredQueryParams?.Count ?? 0) > 0);
+    }
+
+    private static bool HasSwaggerErrorResponses(ApiEndpointMetadataDto metadata)
+    {
+        return metadata?.Responses?.Any(response => response.StatusCode >= 400 && response.StatusCode <= 599) == true;
+    }
+
+    private static bool HasRelevantFailingSrsConstraints(
+        IReadOnlyList<SrsRequirement> srsRequirements,
+        Guid? endpointId,
+        string httpMethod)
+    {
+        if (srsRequirements == null || srsRequirements.Count == 0 || !endpointId.HasValue)
+        {
+            return false;
+        }
+
+        return srsRequirements
+            .Where(r => r.EndpointId == endpointId)
+            .SelectMany(r => DeserializeTestableConstraints(r.RefinedConstraints ?? r.TestableConstraints))
+            .Where(c => IsConstraintRelevantToMethod(c, httpMethod))
+            .Any(ConstraintHasFailureOutcome);
+    }
+
+    private static bool HasEndpointScopedSrsConstraints(
+        IReadOnlyList<SrsRequirement> srsRequirements,
+        Guid endpointId)
+    {
+        return srsRequirements?.Any(r => r.EndpointId == endpointId
+            && DeserializeTestableConstraints(r.RefinedConstraints ?? r.TestableConstraints).Any()) == true;
+    }
+
+    private static int ComputeAdaptiveScenarioTarget(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyList<SrsRequirement> srsRequirements = null)
+    {
+        var method = ResolveHttpMethod(endpoint, metadata);
+        var methodBasedTarget = IsLeanScenarioMethod(method)
             ? LeanScenarioTargetPerEndpoint
             : StandardScenarioTargetPerEndpoint;
+
+        if (IsLeanScenarioMethod(method) &&
+            !HasBoundarySurface(endpoint, metadata) &&
+            !HasSwaggerErrorResponses(metadata) &&
+            !HasRelevantFailingSrsConstraints(srsRequirements, endpoint?.EndpointId, method))
+        {
+            return 1;
+        }
+
+        // Prefer endpoint-scoped SRS constraints when available.
+        // This avoids hardcoded method targets inflating fallback scenarios.
+        var endpointId = endpoint?.EndpointId;
+        if (endpointId.HasValue && srsRequirements != null && srsRequirements.Count > 0)
+        {
+            var scopedConstraints = srsRequirements
+                .Where(r => r.EndpointId == endpointId)
+                .SelectMany(r => DeserializeTestableConstraints(r.RefinedConstraints ?? r.TestableConstraints))
+                .Where(c => IsConstraintRelevantToMethod(c, method))
+                .Where(c => c != null)
+                .ToList();
+
+            if (scopedConstraints.Count > 0)
+            {
+                var srsBasedTarget = scopedConstraints.Count + 1;
+                return Math.Min(Math.Max(srsBasedTarget, 1), MaxScenarioTargetPerEndpoint);
+            }
+        }
+
+        return methodBasedTarget;
     }
 
     private static string ResolveHttpMethod(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
@@ -856,6 +1615,58 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     {
         return string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
             || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReadOnlyMethod(string method)
+    {
+        return string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsConstraintRelevantToMethod(SrsTestableConstraintBrief constraint, string method)
+    {
+        if (constraint == null)
+        {
+            return false;
+        }
+
+        if (!IsReadOnlyMethod(method))
+        {
+            return true;
+        }
+
+        return !ConstraintTargetsBodyOnlyField(constraint);
+    }
+
+    private static bool ConstraintTargetsBodyOnlyField(SrsTestableConstraintBrief constraint)
+    {
+        var text = $"{constraint?.Constraint} {constraint?.ExpectedOutcome}".ToLowerInvariant();
+        return text.Contains("email", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("password", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("username", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("phone", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("address", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ConstraintHasFailureOutcome(SrsTestableConstraintBrief constraint)
+    {
+        var statusCodes = ExtractStatusCodes($"{constraint?.ExpectedOutcome} {constraint?.Constraint}");
+        return statusCodes.Any(code => code < 200 || code >= 300);
+    }
+
+    private static List<int> ExtractStatusCodes(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new List<int>();
+        }
+
+        return Regex.Matches(text, @"\b([1-5]\d\d)\b")
+            .Select(match => int.TryParse(match.Groups[1].Value, out var code) ? code : 0)
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList();
     }
 
     private static bool HasBoundarySurface(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
@@ -902,7 +1713,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         EndpointRequestContract contract,
         TestType type,
         int index,
-        IReadOnlyList<SrsRequirement> srsRequirements)
+        IReadOnlyList<SrsRequirement> srsRequirements,
+        string srsDocumentContent = null)
     {
         var method = endpoint?.HttpMethod ?? metadata?.HttpMethod ?? "GET";
         var path = endpoint?.Path ?? metadata?.Path ?? "/";
@@ -939,6 +1751,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             HttpMethod = method,
             SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
             SrsRequirements = srsRequirements ?? Array.Empty<SrsRequirement>(),
+            SrsDocumentContent = srsDocumentContent,
         });
 
         var expectedStatuses = resolvedExpectation?.ExpectedStatusCodes ?? new List<int> { 200 };
