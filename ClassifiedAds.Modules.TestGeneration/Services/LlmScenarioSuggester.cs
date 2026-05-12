@@ -458,10 +458,13 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             var orderItem = orderedEndpoints[i];
             metadataMap.TryGetValue(orderItem.EndpointId, out var metadata);
 
-            context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var businessContext);
+            var businessContext = context.Suite?.EndpointBusinessContexts != null
+                && context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var foundBusinessContext)
+                    ? foundBusinessContext
+                    : null;
 
             ObservationConfirmationPrompt prompt = null;
-            if (i < prompts.Count)
+            if (prompts != null && i < prompts.Count)
             {
                 prompt = prompts[i];
             }
@@ -1794,7 +1797,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         foreach (var endpoint in orderedEndpoints)
         {
             metadataMap.TryGetValue(endpoint.EndpointId, out var metadata);
-            context.EndpointParameterDetails.TryGetValue(endpoint.EndpointId, out var parameterDetails);
+            var parameterDetails = context.EndpointParameterDetails != null
+                && context.EndpointParameterDetails.TryGetValue(endpoint.EndpointId, out var foundParameterDetails)
+                    ? foundParameterDetails
+                    : null;
 
             var requiredPathParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var requiredQueryParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

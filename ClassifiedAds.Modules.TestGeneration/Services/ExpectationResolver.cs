@@ -29,35 +29,30 @@ public sealed class ExpectationResolver : IExpectationResolver
 
     public ResolvedExpectation Resolve(GeneratedScenarioContext context)
     {
-        // LLM already received the full SRS document and endpoint spec — it is the most
-        // context-aware source for assertions and status codes.
-        // Priority: LLM (when it provides valid data) → SRS (for traceability + filling gaps)
-        //           → Swagger (schema-based enrichment) → hardcoded defaults.
-        //
-        // SRS and Swagger are used to:
-        //   (a) Supply SRS traceability (PrimaryRequirementId, RequirementCode)
-        //   (b) Fill bodyContains / jsonPathChecks when LLM left them empty
-        //   (c) Supply status codes ONLY when LLM did not provide any
-
         var llm = TryResolveFromLlm(context);
-        if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
-        {
-            // LLM has explicit, valid status codes — use them as authoritative.
-            // Enrich with SRS traceability and any missing body/jsonPath assertions.
-            return EnrichFromSrsAndSwagger(llm, context);
-        }
-
-        // LLM didn't provide usable status codes (or provided nothing at all).
-        // Fall back to SRS → Swagger → LLM body-only → Default.
         var endpointInfo = !string.IsNullOrWhiteSpace(context.HttpMethod)
             ? $"{context.HttpMethod} (EndpointId={context.EndpointId})"
             : $"EndpointId={context.EndpointId}";
 
         var (srs, srsReason) = TryResolveFromSrs(context);
-        if (srs != null)
+        var swagger = TryResolveFromSwagger(context);
+        if (srs?.HasExplicitSrsStatus == true)
         {
+            if (llm != null)
+            {
+                var merged = MergeSrsWithLlmAndSwagger(srs, llm, context);
+                _logger.LogInformation(
+                    "[ExpectationResolver] SRS override -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | SrsExpectedStatus=[{SrsStatuses}] | LlmExpectedStatus=[{LlmStatuses}]",
+                    endpointInfo,
+                    context.TestType,
+                    merged.RequirementCode,
+                    string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()),
+                    string.Join(",", llm.ExpectedStatusCodes ?? new List<int>()));
+                return merged;
+            }
+
             _logger.LogInformation(
-                "[ExpectationResolver] ✅ SRS → {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | ExpectedStatus=[{Statuses}] | BodyContains=[{BodyContains}] | JsonPathChecks=[{JsonPathChecks}]",
+                "[ExpectationResolver] SRS -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | ExpectedStatus=[{Statuses}] | BodyContains=[{BodyContains}] | JsonPathChecks=[{JsonPathChecks}]",
                 endpointInfo,
                 context.TestType,
                 srs.RequirementCode,
@@ -67,32 +62,47 @@ public sealed class ExpectationResolver : IExpectationResolver
             return srs;
         }
 
-        // Log WHY SRS wasn't used (only if SRS data exists but didn't match)
+        if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
+        {
+            return EnrichFromSrsAndSwagger(llm, context);
+        }
+
+        if (srs != null)
+        {
+            _logger.LogInformation(
+                "[ExpectationResolver] SRS -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | ExpectedStatus=[{Statuses}] | BodyContains=[{BodyContains}] | JsonPathChecks=[{JsonPathChecks}]",
+                endpointInfo,
+                context.TestType,
+                srs.RequirementCode,
+                string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()),
+                string.Join(",", srs.BodyContains ?? new List<string>()),
+                string.Join(", ", (srs.JsonPathChecks ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}:{kv.Value}")));
+            return srs;
+        }
+
         if (!string.IsNullOrWhiteSpace(srsReason))
         {
             _logger.LogWarning(
-                "[ExpectationResolver] ⚠️ SRS SKIPPED → {Endpoint} | TestType={TestType} | Reason: {Reason}",
+                "[ExpectationResolver] SRS skipped -> {Endpoint} | TestType={TestType} | Reason: {Reason}",
                 endpointInfo,
                 context.TestType,
                 srsReason);
         }
 
-        var swagger = TryResolveFromSwagger(context);
         if (swagger != null)
         {
             _logger.LogInformation(
-                "[ExpectationResolver] 🔄 Swagger → {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
+                "[ExpectationResolver] Swagger -> {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
                 endpointInfo,
                 context.TestType,
                 string.Join(",", swagger.ExpectedStatusCodes ?? new List<int>()));
             return swagger;
         }
 
-        // LLM had some assertions but no valid status — return with default status.
         if (llm != null)
         {
             _logger.LogInformation(
-                "[ExpectationResolver] 🤖 LLM → {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
+                "[ExpectationResolver] LLM -> {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
                 endpointInfo,
                 context.TestType,
                 string.Join(",", llm.ExpectedStatusCodes ?? new List<int>()));
@@ -101,12 +111,47 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         var def = BuildDefault(context);
         _logger.LogWarning(
-            "[ExpectationResolver] ❌ DEFAULT (no SRS/Swagger/LLM) → {Endpoint} | TestType={TestType} | HttpMethod={HttpMethod} | FallbackStatus=[{Statuses}] | ⚠️ Missing SRS constraints or Swagger errorResponses!",
+            "[ExpectationResolver] DEFAULT (no SRS/Swagger/LLM) -> {Endpoint} | TestType={TestType} | HttpMethod={HttpMethod} | FallbackStatus=[{Statuses}] | Missing SRS constraints or Swagger errorResponses.",
             endpointInfo,
             context.TestType,
             context.HttpMethod,
             string.Join(",", def.ExpectedStatusCodes ?? new List<int>()));
         return def;
+    }
+
+    private static ResolvedExpectation MergeSrsWithLlmAndSwagger(
+        ResolvedExpectation srs,
+        ResolvedExpectation llm,
+        GeneratedScenarioContext context)
+    {
+        var swagger = srs.ResponseSchema == null ? TryResolveFromSwagger(context) : null;
+        var bodyContains = srs.BodyContains?.Count > 0
+            ? srs.BodyContains
+            : llm.BodyContains?.Count > 0
+                ? llm.BodyContains
+                : swagger?.BodyContains ?? new List<string>();
+        var jsonPathChecks = srs.JsonPathChecks?.Count > 0
+            ? srs.JsonPathChecks
+            : llm.JsonPathChecks?.Count > 0
+                ? llm.JsonPathChecks
+                : swagger?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var bodyNotContains = srs.BodyNotContains?.Count > 0
+            ? srs.BodyNotContains
+            : llm.BodyNotContains ?? new List<string>();
+
+        return new ResolvedExpectation
+        {
+            ExpectedStatusCodes = srs.ExpectedStatusCodes,
+            ResponseSchema = srs.ResponseSchema ?? llm.ResponseSchema ?? swagger?.ResponseSchema,
+            HeaderChecks = llm.HeaderChecks,
+            BodyContains = bodyContains,
+            BodyNotContains = bodyNotContains,
+            JsonPathChecks = jsonPathChecks,
+            MaxResponseTime = llm.MaxResponseTime,
+            Source = ExpectationSource.Srs,
+            PrimaryRequirementId = srs.PrimaryRequirementId ?? llm.PrimaryRequirementId,
+            RequirementCode = srs.RequirementCode ?? llm.RequirementCode,
+        };
     }
 
     /// <summary>
@@ -120,6 +165,15 @@ public sealed class ExpectationResolver : IExpectationResolver
     {
         var (srs, _) = TryResolveFromSrs(context);
         var swagger = llm.ResponseSchema == null ? TryResolveFromSwagger(context) : null;
+        var expectedStatusCodes = llm.ExpectedStatusCodes;
+        if (swagger?.ExpectedStatusCodes?.Count > 0)
+        {
+            expectedStatusCodes = llm.ExpectedStatusCodes?
+                .Union(swagger.ExpectedStatusCodes)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList() ?? swagger.ExpectedStatusCodes;
+        }
 
         // Supplement bodyContains only when LLM provided none.
         var bodyContains = llm.BodyContains?.Count > 0
@@ -142,7 +196,7 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         return new ResolvedExpectation
         {
-            ExpectedStatusCodes = llm.ExpectedStatusCodes,
+            ExpectedStatusCodes = expectedStatusCodes,
             ResponseSchema = llm.ResponseSchema ?? swagger?.ResponseSchema,
             HeaderChecks = llm.HeaderChecks,
             BodyContains = bodyContains,
@@ -235,6 +289,7 @@ public sealed class ExpectationResolver : IExpectationResolver
 
     private static (ResolvedExpectation Result, string SkipReason) TryResolveFromSrs(GeneratedScenarioContext context)
     {
+        var coveredIds = new HashSet<Guid>(context?.CoveredRequirementIds ?? Array.Empty<Guid>());
         var requirements = RankRequirements(context).ToList();
 
         // Phase 1: Try pre-parsed JSON testableConstraints first
@@ -276,6 +331,9 @@ public sealed class ExpectationResolver : IExpectationResolver
                     continue;
                 }
 
+                var hasExplicitSrsStatus = coveredIds.Contains(requirement.Id)
+                    || context?.AllowUncoveredSrsStatusOverride == true;
+
                 var bodyContains = ExtractBodyContains(requirement, constraint, context.TestType);
                 var bodyNotContains = ExtractBodyNotContains(requirement, constraint.Constraint);
                 var srsJsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
@@ -303,6 +361,7 @@ public sealed class ExpectationResolver : IExpectationResolver
                     Source = ExpectationSource.Srs,
                     PrimaryRequirementId = requirement.Id,
                     RequirementCode = requirement.RequirementCode,
+                    HasExplicitSrsStatus = hasExplicitSrsStatus,
                 }, null);
             }
         }
@@ -359,7 +418,11 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         if (statuses.Count == 0)
         {
-            return null;
+            statuses = NormalizeStatuses(context?.PreferredDefaultStatuses?.ToList() ?? new List<int>(), context?.TestType ?? TestType.Negative);
+            if (statuses.Count == 0)
+            {
+                return null;
+            }
         }
 
         var primaryResponse = responses.FirstOrDefault(x => x.StatusCode == statuses[0])
@@ -591,6 +654,11 @@ public sealed class ExpectationResolver : IExpectationResolver
             .Where(code => code >= 100 && code <= 599)
             .Distinct()
             .ToList();
+
+        if (testType == TestType.Boundary)
+        {
+            return filtered;
+        }
 
         if (testType == TestType.HappyPath)
         {

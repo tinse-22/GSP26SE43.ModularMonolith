@@ -45,7 +45,12 @@ public class BoundaryNegativeTestCaseGeneratorTests
         _requestBuilderMock.Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseRequest>(), It.IsAny<ApiOrderItemModel>()))
             .Returns<Guid, N8nTestCaseRequest, ApiOrderItemModel>((id, req, order) => new TestCaseRequest { Id = Guid.NewGuid(), TestCaseId = id, HttpMethod = HttpMethodEnum.GET });
         _expectationBuilderMock.Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
-            .Returns<Guid, N8nTestCaseExpectation>((id, exp) => new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+            .Returns<Guid, N8nTestCaseExpectation>((id, exp) => new TestCaseExpectation
+            {
+                Id = Guid.NewGuid(),
+                TestCaseId = id,
+                ExpectedStatus = JsonSerializer.Serialize(exp?.ExpectedStatus ?? new List<int> { 200 }),
+            });
 
         var materializer = new LlmSuggestionMaterializer(
             _requestBuilderMock.Object,
