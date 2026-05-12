@@ -83,10 +83,13 @@ public class TriggerTestGenerationConsumer : IMessageBusConsumer<TriggerTestGene
             // Resolve webhook URL for logging
             var webhookUrl = _n8nService.GetResolvedWebhookUrl(_payloadBuilder.WebhookName);
 
-            // Update job with webhook info
+            // Mark the job as waiting before invoking n8n. Some workflows POST the callback
+            // before returning their trigger response, so the callback handler must be able
+            // to find a WaitingForCallback job immediately.
             job.WebhookName = _payloadBuilder.WebhookName;
             job.WebhookUrl = webhookUrl;
             job.CallbackUrl = payload.CallbackUrl;
+            job.Status = GenerationJobStatus.WaitingForCallback;
             job.RowVersion = Guid.NewGuid().ToByteArray();
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -102,11 +105,6 @@ public class TriggerTestGenerationConsumer : IMessageBusConsumer<TriggerTestGene
 
             if (result.Success)
             {
-                // Success - update job to WaitingForCallback
-                job.Status = GenerationJobStatus.WaitingForCallback;
-                job.RowVersion = Guid.NewGuid().ToByteArray();
-                await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-
                 _logger.LogInformation(
                     "n8n webhook triggered successfully. JobId={JobId}, TestSuiteId={TestSuiteId}. Waiting for callback.",
                     data.JobId, data.TestSuiteId);

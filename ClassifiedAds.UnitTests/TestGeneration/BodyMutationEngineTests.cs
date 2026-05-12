@@ -674,4 +674,46 @@ public class BodyMutationEngineTests
         missingTitle.MutatedBody.Should().Contain("\"alpha\"");
         missingTitle.MutatedBody.Should().Contain("\"beta\"");
     }
+
+    [Fact]
+    public void GenerateMutations_Should_UseUniquePlaceholder_ForEmailEvenWhenExampleExists()
+    {
+        // Arrange
+        var context = new BodyMutationContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            Path = "/api/auth/register",
+            BodyParameters = new List<ParameterDetailDto>
+            {
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "email",
+                    Location = "Body",
+                    DataType = "string",
+                    Format = "email",
+                    IsRequired = true,
+                    Examples = "\"legacy@example.com\"",
+                },
+                new()
+                {
+                    ParameterId = Guid.NewGuid(),
+                    Name = "password",
+                    Location = "Body",
+                    DataType = "string",
+                    IsRequired = true,
+                },
+            },
+        };
+
+        // Act
+        var mutations = _engine.GenerateMutations(context);
+
+        // Assert
+        var missingPassword = mutations
+            .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "password");
+        missingPassword.MutatedBody.Should().Contain("testuser_{{tcUniqueId}}@example.com");
+        missingPassword.MutatedBody.Should().NotContain("legacy@example.com");
+    }
 }

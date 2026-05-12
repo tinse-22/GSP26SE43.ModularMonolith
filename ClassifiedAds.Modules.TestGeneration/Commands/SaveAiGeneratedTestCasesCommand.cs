@@ -7,11 +7,59 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.TestGeneration.Commands;
+
+/// <summary>
+/// Deserializes a field that may arrive as a JSON string <c>"[201]"</c>
+/// or as a JSON integer/string array <c>[201]</c> or <c>["200","201"]</c>,
+/// always converting to a canonical JSON string such as <c>"[201]"</c>.
+/// </summary>
+internal sealed class JsonArrayOrStringConverter : JsonConverter<string>
+{
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.String:
+                return reader.GetString();
+
+            case JsonTokenType.Number:
+                // single bare integer: 201 → "[201]"
+                return $"[{reader.GetInt32()}]";
+
+            case JsonTokenType.StartArray:
+                var ints = new List<int>();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                {
+                    if (reader.TokenType == JsonTokenType.Number)
+                    {
+                        ints.Add(reader.GetInt32());
+                    }
+                    else if (reader.TokenType == JsonTokenType.String &&
+                             int.TryParse(reader.GetString(), out var n))
+                    {
+                        ints.Add(n);
+                    }
+                }
+
+                return ints.Count > 0
+                    ? $"[{string.Join(",", ints)}]"
+                    : "[200]";
+
+            default:
+                reader.Skip();
+                return null;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value);
+}
 
 /// <summary>Callback payload posted by n8n after LLM test-case generation.</summary>
 public class AiTestCaseRequestDto
@@ -28,6 +76,7 @@ public class AiTestCaseRequestDto
 
 public class AiTestCaseExpectationDto
 {
+    [JsonConverter(typeof(JsonArrayOrStringConverter))]
     public string ExpectedStatus { get; set; } = "[200]";
     public string ResponseSchema { get; set; }
     public string HeaderChecks { get; set; }
@@ -102,6 +151,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex StatusCodeRegex = new(
+        @"\b([1-5]\d\d)\b",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
@@ -165,19 +218,21 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
-            // Build a set of valid SRS requirement IDs for this suite (pre-load to avoid FK violations).
-            var validRequirementIds = new HashSet<Guid>();
+            var requirementsById = new Dictionary<Guid, SrsRequirement>();
             if (suite.SrsDocumentId.HasValue)
             {
                 var requirements = await _srsRequirementRepository.ToListAsync(
                     _srsRequirementRepository.GetQueryableSet()
-                        .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
-                        .Select(x => x.Id));
-                foreach (var id in requirements)
-                {
-                    validRequirementIds.Add(id);
-                }
+                        .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value));
+
+                requirementsById = requirements
+                    .GroupBy(x => x.Id)
+                    .Select(x => x.First())
+                    .ToDictionary(x => x.Id);
+
+                ValidateGeneratedTestCasesAgainstSrs(command.TestCases, requirementsById);
             }
+
             // Replace any previously AI-generated test cases for this suite.
             var existing = await _testCaseRepository.ToListAsync(
                 _testCaseRepository.GetQueryableSet()
@@ -216,7 +271,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     Priority = ParsePriority(dto.Priority),
                     IsEnabled = true,
                     OrderIndex = dto.OrderIndex > 0 ? dto.OrderIndex : orderIdx,
-                    Tags = NormalizeTagsJson(dto.Tags),
+                    Tags = EnsureLlmSourcedTagJson(dto.Tags, ParseTestType(dto.TestType)),
                     Version = 1,
                     LastModifiedById = actorUserId,
                     CreatedDateTime = now,
@@ -315,12 +370,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 {
                     if (reqId == Guid.Empty) continue;
 
-                    if (validRequirementIds.Count > 0 && !validRequirementIds.Contains(reqId))
+                    if (requirementsById.Count > 0 && !requirementsById.ContainsKey(reqId))
                     {
-                        _logger.LogWarning(
-                            "coveredRequirementId {ReqId} for TestCase '{Name}' does not belong to SrsDocumentId={SrsDocumentId}. Skipping link.",
-                            reqId, tc.Name, suite.SrsDocumentId);
-                        continue;
+                        throw new ValidationException(
+                            $"AI-generated test case '{tc.Name}' references coveredRequirementId '{reqId}', but it does not belong to SRS document '{suite.SrsDocumentId}'.");
                     }
 
                     var link = new TestCaseRequirementLink
@@ -526,6 +579,54 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
     }
 
+    /// <summary>
+    /// Ensures the saved test case always carries the "llm-suggested" and "auto-generated" tags
+    /// so that <see cref="VariableResolver.IsLlmSourced"/> returns <c>true</c> and the
+    /// body-normalisation pipeline is skipped at execution time.
+    /// </summary>
+    private static string EnsureLlmSourcedTagJson(string existingTagsJson, TestType testType)
+    {
+        var tags = new List<string>();
+
+        // Deserialise whatever n8n sent (may be null/empty/plain string/JSON array).
+        var normalised = NormalizeTagsJson(existingTagsJson);
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<string>>(normalised, JsonOpts);
+            if (parsed != null)
+            {
+                tags.AddRange(parsed);
+            }
+        }
+        catch { }
+
+        // Add canonical type tag.
+        var typeTag = testType switch
+        {
+            TestType.HappyPath  => "happy-path",
+            TestType.Boundary   => "boundary",
+            TestType.Negative   => "negative",
+            TestType.Security   => "security",
+            TestType.Performance => "performance",
+            _                   => "negative",
+        };
+        if (!tags.Contains(typeTag, StringComparer.OrdinalIgnoreCase))
+        {
+            tags.Add(typeTag);
+        }
+
+        // Ensure markers required by IsLlmSourced.
+        foreach (var required in new[] { "auto-generated", "llm-suggested" })
+        {
+            if (!tags.Contains(required, StringComparer.OrdinalIgnoreCase))
+            {
+                tags.Add(required);
+            }
+        }
+
+        return JsonSerializer.Serialize(tags, JsonOpts);
+    }
+
     private static string NormalizeJsonOrDefault(string value, string fallbackJson)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -612,6 +713,173 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         {
             return null;
         }
+    }
+
+    private static void ValidateGeneratedTestCasesAgainstSrs(
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById)
+    {
+        if (testCases == null || testCases.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < testCases.Count; i++)
+        {
+            var dto = testCases[i];
+            if (dto?.CoveredRequirementIds == null || dto.CoveredRequirementIds.Count == 0)
+            {
+                continue;
+            }
+
+            var expectedStatuses = ParseStatusCodesFromExpectation(dto.Expectation?.ExpectedStatus);
+            foreach (var reqId in dto.CoveredRequirementIds.Where(x => x != Guid.Empty).Distinct())
+            {
+                if (!requirementsById.TryGetValue(reqId, out var requirement))
+                {
+                    throw new ValidationException(
+                        $"AI-generated test case '{dto.Name ?? $"index {i}"}' references coveredRequirementId '{reqId}', but that requirement does not belong to the suite SRS document.");
+                }
+
+                var srsStatuses = ExtractExplicitStatusCodes(requirement);
+                if (srsStatuses.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!expectedStatuses.Intersect(srsStatuses).Any())
+                {
+                    var requirementLabel = string.IsNullOrWhiteSpace(requirement.RequirementCode)
+                        ? requirement.Id.ToString()
+                        : requirement.RequirementCode;
+
+                    throw new ValidationException(
+                        $"AI-generated test case '{dto.Name ?? $"index {i}"}' has expectedStatus [{string.Join(",", expectedStatuses)}], " +
+                        $"but covered SRS requirement '{requirementLabel}' explicitly requires status [{string.Join(",", srsStatuses)}]. " +
+                        "Regenerate the test case so expectation.expectedStatus matches the SRS constraint.");
+                }
+            }
+        }
+    }
+
+    private static List<int> ParseStatusCodesFromExpectation(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return new List<int> { 200 };
+        }
+
+        var trimmed = expectedStatus.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return ParseStatusCodesFromJsonElement(doc.RootElement);
+        }
+        catch
+        {
+            return ParseStatusCodesFromText(trimmed);
+        }
+    }
+
+    private static List<int> ExtractExplicitStatusCodes(SrsRequirement requirement)
+    {
+        var raw = !string.IsNullOrWhiteSpace(requirement?.RefinedConstraints)
+            ? requirement.RefinedConstraints
+            : requirement?.TestableConstraints;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new List<int>();
+        }
+
+        var statuses = new List<int>();
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                    {
+                        statuses.AddRange(ParseStatusCodesFromJsonElement(item));
+                        continue;
+                    }
+
+                    foreach (var propertyName in new[] { "expectedOutcome", "constraint" })
+                    {
+                        if (item.TryGetProperty(propertyName, out var property))
+                        {
+                            statuses.AddRange(ParseStatusCodesFromJsonElement(property));
+                        }
+                    }
+                }
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var propertyName in new[] { "expectedOutcome", "constraint" })
+                {
+                    if (doc.RootElement.TryGetProperty(propertyName, out var property))
+                    {
+                        statuses.AddRange(ParseStatusCodesFromJsonElement(property));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            statuses.AddRange(ParseStatusCodesFromText(raw));
+        }
+
+        return statuses
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
+    }
+
+    private static List<int> ParseStatusCodesFromJsonElement(JsonElement element)
+    {
+        var statuses = new List<int>();
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (element.TryGetInt32(out var code))
+                {
+                    statuses.Add(code);
+                }
+                break;
+            case JsonValueKind.String:
+                statuses.AddRange(ParseStatusCodesFromText(element.GetString()));
+                break;
+            case JsonValueKind.Array:
+                foreach (var child in element.EnumerateArray())
+                {
+                    statuses.AddRange(ParseStatusCodesFromJsonElement(child));
+                }
+                break;
+        }
+
+        return statuses
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
+    }
+
+    private static List<int> ParseStatusCodesFromText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new List<int>();
+        }
+
+        return StatusCodeRegex.Matches(value)
+            .Select(x => int.TryParse(x.Groups[1].Value, out var code) ? code : 0)
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
     }
 
     private static ExtractFrom ParseExtractFrom(string extractFrom)

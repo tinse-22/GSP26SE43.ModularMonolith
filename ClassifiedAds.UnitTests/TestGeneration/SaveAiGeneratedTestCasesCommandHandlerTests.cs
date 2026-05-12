@@ -421,6 +421,12 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
                 new() { Id = reqId1, SrsDocumentId = srsDocId },
                 new() { Id = reqId2, SrsDocumentId = srsDocId },
             }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>
+            {
+                new() { Id = reqId1, SrsDocumentId = srsDocId },
+                new() { Id = reqId2, SrsDocumentId = srsDocId },
+            });
         _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
             .ReturnsAsync(new List<Guid> { reqId1, reqId2 });
 
@@ -456,7 +462,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_SkipInvalidRequirementIds_AndNotCreateLinks()
+    public async Task HandleAsync_Should_RejectInvalidRequirementIds_WhenSuiteHasSrsDoc()
     {
         var srsDocId = Guid.NewGuid();
         var validReqId = Guid.NewGuid();
@@ -472,6 +478,11 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             {
                 new() { Id = validReqId, SrsDocumentId = srsDocId },
             }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>
+            {
+                new() { Id = validReqId, SrsDocumentId = srsDocId },
+            });
         _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
             .ReturnsAsync(new List<Guid> { validReqId });
 
@@ -481,15 +492,66 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         var command = CreateValidCommand();
         command.TestCases[0].CoveredRequirementIds = new List<Guid> { validReqId, invalidReqId };
 
-        await _handler.HandleAsync(command);
+        var act = () => _handler.HandleAsync(command);
 
-        // Only the valid requirement gets a link
-        _linkRepoMock.Verify(x => x.AddAsync(
-            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == validReqId),
-            It.IsAny<CancellationToken>()), Times.Once);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*coveredRequirementId*does not belong*");
 
         _linkRepoMock.Verify(x => x.AddAsync(
-            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == invalidReqId),
+            It.IsAny<TestCaseRequirementLink>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_RejectExpectedStatus_WhenCoveredRequirementHasExplicitDifferentStatus()
+    {
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>
+            {
+                new()
+                {
+                    Id = reqId,
+                    SrsDocumentId = srsDocId,
+                    RequirementCode = "REQ-400",
+                    TestableConstraints = """[{ "constraint": "invalid email -> 400", "expectedOutcome": "400 Bad Request", "priority": "High" }]""",
+                },
+            }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>
+            {
+                new()
+                {
+                    Id = reqId,
+                    SrsDocumentId = srsDocId,
+                    RequirementCode = "REQ-400",
+                    TestableConstraints = """[{ "constraint": "invalid email -> 400", "expectedOutcome": "400 Bad Request", "priority": "High" }]""",
+                },
+            });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Name = "Invalid email should fail";
+        command.TestCases[0].TestType = "Negative";
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { reqId };
+        command.TestCases[0].Expectation = new AiTestCaseExpectationDto
+        {
+            ExpectedStatus = "[200]",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*REQ-400*explicitly requires status [400]*");
+
+        _expectationRepoMock.Verify(x => x.AddAsync(
+            It.IsAny<TestCaseExpectation>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 

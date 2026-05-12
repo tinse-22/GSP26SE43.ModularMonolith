@@ -56,7 +56,7 @@ internal static class TestRunResultsStorage
                 RequestBody = null,
                 QueryParams = new Dictionary<string, string>(),
                 TimeoutMs = 0,
-                ExpectedStatus = null,
+                ExpectedStatus = result.ExpectedStatus,
                 ExpectationSource = result.ExpectationSource,
                 RequirementCode = result.RequirementCode,
                 PrimaryRequirementId = result.PrimaryRequirementId,

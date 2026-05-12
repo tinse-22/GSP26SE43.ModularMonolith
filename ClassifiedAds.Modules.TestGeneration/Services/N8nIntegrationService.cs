@@ -63,7 +63,7 @@ public sealed class N8nTransientException : ValidationException
 
 public class N8nIntegrationService : IN8nIntegrationService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new ()
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -159,8 +159,10 @@ public class N8nIntegrationService : IN8nIntegrationService
 
             if (response.StatusCode == HttpStatusCode.NoContent)
             {
-                _logger.LogError(
-                    "n8n webhook {WebhookName} returned no content. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
+                var statusCode = (int)response.StatusCode;
+
+                _logger.LogWarning(
+                    "n8n webhook {WebhookName} returned no content (204). Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
                     webhookName,
                     response.StatusCode,
                     contentType,
@@ -168,13 +170,20 @@ public class N8nIntegrationService : IN8nIntegrationService
                     stopwatch.ElapsedMilliseconds,
                     requestId);
 
-                throw new ValidationException(
-                    $"n8n webhook '{webhookName}' tra ve HTTP 204 va khong co JSON response.");
+                throw new N8nTransientException(
+                    $"n8n webhook '{webhookName}' tra ve HTTP 204 va khong co JSON response.",
+                    webhookName,
+                    url,
+                    statusCode,
+                    isTimeout: false,
+                    isNetworkError: false);
             }
 
             if (string.IsNullOrWhiteSpace(body))
             {
-                _logger.LogError(
+                var statusCode = (int)response.StatusCode;
+
+                _logger.LogWarning(
                     "n8n webhook {WebhookName} returned an empty response body. Status={Status}, ContentType={ContentType}, ContentLength={ContentLength}, DurationMs={DurationMs}, RequestId={RequestId}",
                     webhookName,
                     response.StatusCode,
@@ -183,8 +192,13 @@ public class N8nIntegrationService : IN8nIntegrationService
                     stopwatch.ElapsedMilliseconds,
                     requestId);
 
-                throw new ValidationException(
-                    $"n8n webhook '{webhookName}' tra ve body rong. He thong dang cho JSON response.");
+                throw new N8nTransientException(
+                    $"n8n webhook '{webhookName}' tra ve body rong (HTTP {statusCode}). He thong se thu fallback.",
+                    webhookName,
+                    url,
+                    statusCode,
+                    isTimeout: false,
+                    isNetworkError: false);
             }
 
             if (!IsJsonContentType(contentType))

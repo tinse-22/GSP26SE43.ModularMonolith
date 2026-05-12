@@ -52,9 +52,12 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "2. testType must be exactly one of: \"HappyPath\", \"Boundary\", \"Negative\".\n" +
         "3. endpointId must match exact UUID from input.\n" +
         "4. Keep execution order aligned with endpoint order (orderIndex unique, 0-based, no duplicates).\n" +
-        "5. Use UNIQUE synthetic data for every generation: emails MUST include a random 4-char suffix (e.g. \"testuser_a3x7@example.com\"). NEVER reuse generic emails like \"test@example.com\".\n" +
+        "5. For ANY field that must be unique across test cases (email, username, code, slug, phone, etc.), " +
+        "embed the placeholder {{tcUniqueId}} as part of the value. The BE resolves this to a unique 8-char hex string per test case at runtime. " +
+        "Examples: email → \"testuser_{{tcUniqueId}}@example.com\", username → \"user_{{tcUniqueId}}\", code → \"CODE_{{tcUniqueId}}\". " +
+        "NEVER use bare random suffixes you invent yourself — always use {{tcUniqueId}} so uniqueness is guaranteed across any project and any field type.\n" +
         "   AUTH FLOW RULES:\n" +
-        "   - Registration HappyPath: use a unique email, add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
+        "   - Registration HappyPath: use \"testuser_{{tcUniqueId}}@example.com\" as email. Add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
         "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
         "   - Negative 'email already exists' / 'duplicate email': MUST use \"{{registeredEmail}}\" in the email field (NOT a new unique email). This ensures the test sends a real already-registered email so the API returns 409.\n" +
         "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +

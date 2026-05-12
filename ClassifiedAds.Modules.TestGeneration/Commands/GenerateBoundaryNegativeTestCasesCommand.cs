@@ -26,9 +26,11 @@ public class GenerateBoundaryNegativeTestCasesCommand : ICommand
 
     public bool ForceRegenerate { get; set; }
 
-    public bool IncludePathMutations { get; set; } = true;
+    /// <summary>false = LLM-only mode (no hardcoded rule-based mutations).</summary>
+    public bool IncludePathMutations { get; set; } = false;
 
-    public bool IncludeBodyMutations { get; set; } = true;
+    /// <summary>false = LLM-only mode (no hardcoded rule-based mutations).</summary>
+    public bool IncludeBodyMutations { get; set; } = false;
 
     public bool IncludeLlmSuggestions { get; set; } = true;
 
@@ -37,7 +39,7 @@ public class GenerateBoundaryNegativeTestCasesCommand : ICommand
 
 public class GenerateBoundaryNegativeTestCasesCommandHandler : ICommandHandler<GenerateBoundaryNegativeTestCasesCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new ()
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,

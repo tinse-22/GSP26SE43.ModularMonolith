@@ -730,9 +730,25 @@ public static class GeneratedTestCaseDependencyEnricher
                     if (producer != null)
                     {
                         var currentValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
-                        var preferredVariableName = TryExtractPlaceholderVariable(currentValue, out var placeholderVariable)
-                            ? placeholderVariable
-                            : null;
+                        var hasPlaceholder = TryExtractPlaceholderVariable(currentValue, out var placeholderVariable);
+                        var preferredVariableName = hasPlaceholder ? placeholderVariable : null;
+                        var producerResourceScore = ScoreProducer(producer, property.Key, consumerPath);
+
+                        // If the value is already a placeholder AND the producer doesn't resource-match
+                        // the token (score < 60), leave it intact so {{categoryId}} is not overwritten
+                        // with {{createdProductId}} when product is the only declared dep.
+                        if (hasPlaceholder && producerResourceScore < 60)
+                        {
+                            var matchingVar = producer.Variables.FirstOrDefault(v =>
+                                string.Equals(v.VariableName, placeholderVariable, StringComparison.OrdinalIgnoreCase));
+                            if (matchingVar != null)
+                            {
+                                EnsureDependency(testCase, producer.TestCaseId);
+                            }
+
+                            continue;
+                        }
+
                         var variableName = EnsureProducerVariable(
                             property.Key,
                             consumerPath,
@@ -797,9 +813,27 @@ public static class GeneratedTestCaseDependencyEnricher
         IReadOnlyList<ProducerCandidate> allCandidates,
         Guid currentTestCaseId)
     {
-        var preferred = dependencyCandidates.Count > 0
-            ? dependencyCandidates
-            : allCandidates.Where(x => x.TestCaseId != currentTestCaseId).ToList();
+        var nonSelf = allCandidates.Where(x => x.TestCaseId != currentTestCaseId).ToList();
+
+        IReadOnlyList<ProducerCandidate> preferred;
+        if (dependencyCandidates.Count > 0)
+        {
+            // If declared deps have at least one resource-match score >= 60,
+            // restrict search to declared deps. Otherwise fall back to allCandidates
+            // so a missing prerequisite (e.g. POST /categories) can supply the value.
+            var bestDepsScore = dependencyCandidates
+                .GroupBy(x => x.TestCaseId)
+                .Select(g => g.First())
+                .Max(x => ScoreProducer(x, token, consumerPath));
+
+            preferred = bestDepsScore >= 60
+                ? (IReadOnlyList<ProducerCandidate>)dependencyCandidates
+                : nonSelf;
+        }
+        else
+        {
+            preferred = nonSelf;
+        }
 
         if (preferred.Count == 0)
         {
@@ -1209,6 +1243,14 @@ public static class GeneratedTestCaseDependencyEnricher
         }
 
         var raw = currentValue?.ToJsonString(JsonOpts)?.Trim('"');
+        if (!string.IsNullOrWhiteSpace(raw) &&
+            raw.Contains("{{", StringComparison.Ordinal) &&
+            raw.Contains("}}", StringComparison.Ordinal) &&
+            !TryExtractPlaceholderVariable(raw, out _))
+        {
+            return false;
+        }
+
         if (TryExtractPlaceholderVariable(raw, out var placeholder))
         {
             return !string.Equals(placeholder, variableName, StringComparison.OrdinalIgnoreCase);

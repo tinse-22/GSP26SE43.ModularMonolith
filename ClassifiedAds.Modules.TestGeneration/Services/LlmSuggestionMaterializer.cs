@@ -57,8 +57,12 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         // Build request from LLM suggestion
         var n8nRequest = new N8nTestCaseRequest
         {
-            HttpMethod = orderItem?.HttpMethod,
-            Url = orderItem?.Path,
+            HttpMethod = string.IsNullOrWhiteSpace(scenario.SuggestedHttpMethod)
+                ? orderItem?.HttpMethod
+                : scenario.SuggestedHttpMethod,
+            Url = string.IsNullOrWhiteSpace(scenario.SuggestedUrl)
+                ? orderItem?.Path
+                : scenario.SuggestedUrl,
             BodyType = scenario.SuggestedBodyType,
             Body = scenario.SuggestedBody,
             PathParams = scenario.SuggestedPathParams,
@@ -118,7 +122,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             TestType = suggestion.TestType,
             Priority = suggestion.Priority,
             IsEnabled = true,
-            Tags = suggestion.SuggestedTags,
+            Tags = EnsureLlmSourcedTag(suggestion.SuggestedTags, suggestion.TestType),
             Version = 1,
             OrderIndex = orderIndex,
         };
@@ -328,6 +332,35 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         };
     }
 
+    /// <summary>
+    /// Ensures the "llm-suggested" tag is present in an existing serialized tags JSON.
+    /// Used as a defensive guard in MaterializeFromSuggestion so that test cases
+    /// created from older suggestions (missing the tag) are still correctly identified
+    /// as LLM-sourced at execution time.
+    /// </summary>
+    internal static string EnsureLlmSourcedTag(string existingTagsJson, TestType testType)
+    {
+        if (!string.IsNullOrWhiteSpace(existingTagsJson)
+            && existingTagsJson.Contains("llm-suggested", StringComparison.OrdinalIgnoreCase))
+        {
+            return existingTagsJson;
+        }
+
+        // Re-serialize with llm-suggested guaranteed.
+        var extraTags = Array.Empty<string>();
+        if (!string.IsNullOrWhiteSpace(existingTagsJson))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<List<string>>(existingTagsJson, JsonOpts);
+                extraTags = parsed?.ToArray() ?? Array.Empty<string>();
+            }
+            catch { }
+        }
+
+        return SerializeTags(testType, "llm-suggested", extraTags);
+    }
+
     internal static string SerializeTags(TestType testType, string source, params string[] extraTags)
     {
         var tags = new List<string>();
@@ -362,6 +395,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             return new N8nTestCaseExpectation();
         }
 
+        var expectedStatus = scenario.GetEffectiveExpectedStatusCodes();
         var bodyContains = scenario.SuggestedBodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
             ?? new List<string>();
 
@@ -374,15 +408,17 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
         return new N8nTestCaseExpectation
         {
-            ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
+            ExpectedStatus = expectedStatus,
             BodyContains = bodyContains,
             BodyNotContains = scenario.SuggestedBodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>(),
             HeaderChecks = scenario.SuggestedHeaderChecks != null
                 ? new Dictionary<string, string>(scenario.SuggestedHeaderChecks, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            JsonPathChecks = scenario.SuggestedJsonPathChecks != null
-                ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            JsonPathChecks = ExpectationResolver.ReconcileJsonPathChecksWithStatuses(
+                scenario.SuggestedJsonPathChecks != null
+                    ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                expectedStatus),
             ExpectationSource = scenario.ExpectationSource,
             RequirementCode = scenario.RequirementCode,
             PrimaryRequirementId = scenario.PrimaryRequirementId,

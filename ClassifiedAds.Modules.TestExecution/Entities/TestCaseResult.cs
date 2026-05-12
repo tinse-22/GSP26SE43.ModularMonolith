@@ -124,6 +124,11 @@ public class TestCaseResult : Entity<Guid>, IAggregateRoot
     /// </summary>
     public bool? ResponseTimePassed { get; set; }
 
+    /// <summary>
+    /// Expected HTTP status codes snapshot (JSON array string, e.g. "[200,201]").
+    /// </summary>
+    public string ExpectedStatus { get; set; }
+
     public string ExpectationSource { get; set; }
 
     public string RequirementCode { get; set; }
