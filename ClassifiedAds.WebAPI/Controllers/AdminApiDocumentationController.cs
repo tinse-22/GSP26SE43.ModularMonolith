@@ -53,15 +53,46 @@ public class AdminApiDocumentationController : ControllerBase
             projectsQuery = projectsQuery.Where(p => p.Status == status.Value);
         }
 
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var trimmed = search.Trim().ToLower();
-            projectsQuery = projectsQuery.Where(p => p.Name.ToLower().Contains(trimmed));
-        }
-
         var projects = await projectsQuery
             .OrderByDescending(p => p.CreatedDateTime)
             .ToListAsync(ct);
+
+        if (projects.Count == 0)
+        {
+            return Ok(new List<AdminApiDocumentationProjectModel>());
+        }
+
+        var users = await _dispatcher.DispatchAsync(new GetUsersQuery { AsNoTracking = true }, ct);
+        var userNameLookup = users.ToDictionary(x => x.Id, x => ResolveUserName(x));
+        var userEmailLookup = users.ToDictionary(x => x.Id, x => ResolveUserEmail(x));
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var trimmed = search.Trim().ToLower();
+            projects = projects
+                .Where(project =>
+                {
+                    var projectName = project.Name?.ToLower() ?? string.Empty;
+                    if (projectName.Contains(trimmed))
+                    {
+                        return true;
+                    }
+
+                    userNameLookup.TryGetValue(project.OwnerId, out var ownerName);
+                    userEmailLookup.TryGetValue(project.OwnerId, out var ownerEmail);
+
+                    var normalizedName = ownerName?.ToLower() ?? string.Empty;
+                    var normalizedEmail = ownerEmail?.ToLower() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(normalizedName) &&
+                        string.IsNullOrWhiteSpace(normalizedEmail))
+                    {
+                        return false;
+                    }
+
+                    return normalizedName.Contains(trimmed) || normalizedEmail.Contains(trimmed);
+                })
+                .ToList();
+        }
 
         if (projects.Count == 0)
         {
@@ -90,9 +121,6 @@ public class AdminApiDocumentationController : ControllerBase
                 .GroupBy(e => e.ApiSpecId)
                 .Select(g => new { SpecId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.SpecId, x => x.Count, ct);
-
-        var users = await _dispatcher.DispatchAsync(new GetUsersQuery { AsNoTracking = true }, ct);
-        var userLookup = users.ToDictionary(x => x.Id, x => ResolveUserName(x));
 
         var specsByProject = specs
             .GroupBy(s => s.ProjectId)
@@ -124,7 +152,8 @@ public class AdminApiDocumentationController : ControllerBase
             {
                 Id = project.Id,
                 OwnerId = project.OwnerId,
-                OwnerName = ResolveUserName(userLookup, project.OwnerId),
+                OwnerName = ResolveUserName(userNameLookup, project.OwnerId),
+                OwnerEmail = ResolveUserEmail(userEmailLookup, project.OwnerId),
                 Name = project.Name,
                 Description = project.Description,
                 BaseUrl = project.BaseUrl,
@@ -166,5 +195,20 @@ public class AdminApiDocumentationController : ControllerBase
         }
 
         return "Unknown";
+    }
+
+    private static string ResolveUserEmail(User user)
+    {
+        return string.IsNullOrWhiteSpace(user.Email) ? string.Empty : user.Email;
+    }
+
+    private static string ResolveUserEmail(Dictionary<Guid, string> lookup, Guid userId)
+    {
+        if (lookup != null && lookup.TryGetValue(userId, out var owner))
+        {
+            return owner ?? string.Empty;
+        }
+
+        return string.Empty;
     }
 }
