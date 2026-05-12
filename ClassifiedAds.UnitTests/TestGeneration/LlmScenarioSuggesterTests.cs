@@ -69,7 +69,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_ReturnCachedResults_WhenCacheHit()
+    public async Task SuggestScenariosAsync_Should_IgnoreCache_WhenCacheHit()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -85,21 +85,21 @@ public class LlmScenarioSuggesterTests
 
         SetupCacheHit(EndpointId1, cachedScenarios1);
         SetupCacheHit(EndpointId2, cachedScenarios2);
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
 
         // Act
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.FromCache.Should().BeTrue();
-        result.Scenarios.Should().HaveCount(2);
-        result.Scenarios[0].ScenarioName.Should().Be("Cached scenario 1");
-        result.Scenarios[1].ScenarioName.Should().Be("Cached scenario 2");
+        result.FromCache.Should().BeFalse();
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Null email on login");
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Invalid page number");
 
-        // n8n should NOT be called when cache hits
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
     }
 
     [Fact]
@@ -592,7 +592,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_SetFromCacheTrue_WhenCacheUsed()
+    public async Task SuggestScenariosAsync_Should_EnforceFreshN8nCall_WhenCacheExists()
     {
         // Arrange: single endpoint, all cached
         var context = CreateSingleEndpointContext();
@@ -603,26 +603,27 @@ public class LlmScenarioSuggesterTests
             new() { EndpointId = EndpointId1, ScenarioName = "Negative invalid format" },
         };
         SetupCacheHit(EndpointId1, cachedScenarios);
+        SetupPromptBuilder(1);
+        SetupN8nReturnsScenarios();
 
         // Act
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.FromCache.Should().BeTrue();
-        result.Scenarios.Should().HaveCount(2);
-        result.LlmModel.Should().BeNull();
-        result.TokensUsed.Should().BeNull();
-        result.LatencyMs.Should().BeNull();
+        result.FromCache.Should().BeFalse();
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Null email on login");
+        result.LlmModel.Should().Be("gpt-4o");
+        result.TokensUsed.Should().Be(1200);
+        result.LatencyMs.Should().NotBeNull();
 
-        // Verify no n8n call and no interaction saved
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
 
         _llmGatewayServiceMock.Verify(
             x => x.SaveInteractionAsync(It.IsAny<SaveLlmInteractionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
     }
 
     [Fact]
@@ -674,7 +675,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_ProduceDeterministicCacheKey()
+    public async Task SuggestScenariosAsync_Should_SkipCacheLookup()
     {
         // Arrange — two identical contexts should produce the same cache key
         var context1 = CreateDefaultContext();
@@ -698,9 +699,8 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        // Assert — all captured keys should be identical (deterministic)
-        capturedKeys.Should().HaveCountGreaterThanOrEqualTo(2);
-        capturedKeys.Distinct().Should().ContainSingle("all cache keys should be identical");
+        // Assert — generate requests intentionally bypass cache lookup so n8n sees fresh context.
+        capturedKeys.Should().BeEmpty();
     }
 
     [Fact]
@@ -760,8 +760,7 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        capturedKeys.Should().HaveCount(2);
-        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+        capturedKeys.Should().BeEmpty();
     }
 
     [Fact]
@@ -795,8 +794,7 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context);
         await _sut.SuggestScenariosAsync(context);
 
-        capturedKeys.Should().HaveCount(2);
-        capturedKeys[0].Should().NotBe(capturedKeys[1]);
+        capturedKeys.Should().BeEmpty();
     }
 
     [Fact]
@@ -819,8 +817,7 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        capturedKeys.Should().HaveCount(2);
-        capturedKeys[0].Should().Be(capturedKeys[1]);
+        capturedKeys.Should().BeEmpty();
     }
 
     [Fact]
@@ -1243,10 +1240,9 @@ public class LlmScenarioSuggesterTests
         // Act
         await _sut.SuggestScenariosAsync(context);
 
-        // Assert — rules should contain new Rule 13, 15c, 16
-        capturedPayload.PromptConfig.Rules.Should().Contain("errorResponses");
-        capturedPayload.PromptConfig.Rules.Should().Contain("SCHEMA-DRIVEN");
-        capturedPayload.PromptConfig.Rules.Should().Contain("SRS-CONSTRAINT-DRIVEN");
+        // Assert — compact rules still keep the server-side SRS precedence contract up front.
+        capturedPayload.PromptConfig.Rules.Should().Contain("SRS IS THE PRIMARY SOURCE OF TRUTH");
+        capturedPayload.PromptConfig.Rules.Should().Contain("SRS constraints OVERRIDE");
     }
 
     #endregion

@@ -121,7 +121,11 @@ internal static class ContractAwareRequestSynthesizer
                 : repair.BodyType;
         }
 
-        scenario.Variables = MergeVariables(scenario.Variables, repair.Variables);
+        if (scenario.Variables == null || scenario.Variables.Count == 0)
+        {
+            scenario.Variables = repair.Variables;
+        }
+
         return scenario;
     }
 

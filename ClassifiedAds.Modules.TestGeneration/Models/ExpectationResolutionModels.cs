@@ -34,6 +34,8 @@ public sealed class ResolvedExpectation
     public Guid? PrimaryRequirementId { get; init; }
 
     public string RequirementCode { get; init; }
+
+    public bool HasExplicitSrsStatus { get; init; }
 }
 
 public sealed class GeneratedScenarioContext
@@ -68,4 +70,6 @@ public sealed class GeneratedScenarioContext
     /// mutations should use the email SRS constraint.
     /// </summary>
     public string TargetFieldName { get; init; }
+
+    public bool AllowUncoveredSrsStatusOverride { get; init; }
 }
