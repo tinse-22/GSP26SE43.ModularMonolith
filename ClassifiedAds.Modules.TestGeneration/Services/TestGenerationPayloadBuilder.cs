@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -48,72 +49,25 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
     private const string UnifiedRulesBlock =
         "=== RULES ===\n" +
-        "1. For EACH endpoint, generate at least: 1 HappyPath + 1 Boundary + 1 Negative.\n" +
-        "2. testType must be exactly one of: \"HappyPath\", \"Boundary\", \"Negative\".\n" +
-        "3. endpointId must match exact UUID from input.\n" +
-        "4. Keep execution order aligned with endpoint order (orderIndex unique, 0-based, no duplicates).\n" +
-        "5. For ANY field that must be unique across test cases (email, username, code, slug, phone, etc.), " +
-        "embed the placeholder {{tcUniqueId}} as part of the value. The BE resolves this to a unique 8-char hex string per test case at runtime. " +
-        "Examples: email → \"testuser_{{tcUniqueId}}@example.com\", username → \"user_{{tcUniqueId}}\", code → \"CODE_{{tcUniqueId}}\". " +
-        "NEVER use bare random suffixes you invent yourself — always use {{tcUniqueId}} so uniqueness is guaranteed across any project and any field type.\n" +
-        "   AUTH FLOW RULES:\n" +
-        "   - Registration HappyPath: use \"testuser_{{tcUniqueId}}@example.com\" as email. Add variable extraction rules to capture the email and password used (variableName: \"registeredEmail\", \"registeredPassword\", extractFrom: \"RequestBody\").\n" +
-        "   - Login HappyPath: use \"{{registeredEmail}}\" and \"{{registeredPassword}}\" from the registration step so the chain works when no email confirmation is required.\n" +
-        "   - Negative 'email already exists' / 'duplicate email': MUST use \"{{registeredEmail}}\" in the email field (NOT a new unique email). This ensures the test sends a real already-registered email so the API returns 409.\n" +
-        "   - If the execution environment provides {{testEmail}} and {{testPassword}}, those override for pre-confirmed accounts (users who need email confirmation can set these).\n" +
-        "6. request.body must be stringified JSON or null.\n" +
-        "7. expectation.expectedStatus must be an array of integers.\n" +
-        "8. HappyPath expectedStatus should prefer 2xx. Boundary/Negative should prefer 4xx (or 401/403/404 where appropriate).\n" +
-        "9. Return complete request/expectation objects for each test case.\n" +
-        "10. If srsRequirements are provided in the input, populate coveredRequirementIds for each test case with the UUIDs of the requirements that the test case validates. Use an empty array if none apply.\n" +
-        "11. SRS CONSTRAINT RULE: When srsRequirements are provided, the expectation (expectedStatus, responseSchema, bodyContains, jsonPathChecks) MUST be derived from the requirement's effectiveConstraints field. " +
-        "Do NOT fabricate expectations that contradict effectiveConstraints.\n" +
-        "12. CONFIDENCE + AMBIGUITY RULE: If a requirement has confidenceScore < 0.6 or a non-empty ambiguities array, include a mappingRationale on the test case explaining what assumptions were made. " +
-        "Set traceabilityScore to the requirement's confidenceScore (or 0.5 if null).\n" +
-        "13. TRACABILITY SCORE RULE: For well-specified requirements (confidenceScore >= 0.6, no unresolved ambiguities), set traceabilityScore = 0.9 or higher.";
+        "1. Generate exactly 3 test cases per endpoint unless the contract makes one impossible: 1 HappyPath, 1 Boundary, 1 Negative.\n" +
+        "2. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
+        "3. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
+        "4. For unique fields (email, username, code, slug, phone, name), use {{tcUniqueId}}. Do not invent random suffixes.\n" +
+        "5. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}}.\n" +
+        "6. request.body must be a serialized JSON string or null. expectation.expectedStatus must be an integer array.\n" +
+        "7. HappyPath should prefer 2xx; Boundary/Negative should prefer contract-backed 4xx/401/403/404.\n" +
+        "8. If srsRequirements are present, derive expectation and coveredRequirementIds from effectiveConstraints. Avoid contradicting SRS constraints.\n" +
+        "9. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
-        "Return ONLY this JSON structure:\n" +
-        "{\n" +
-        "  \"testCases\": [\n" +
-        "    {\n" +
-        "      \"endpointId\": \"<exact UUID>\",\n" +
-        "      \"name\": \"<short descriptive name>\",\n" +
-        "      \"description\": \"<one sentence>\",\n" +
-        "      \"testType\": \"HappyPath|Boundary|Negative\",\n" +
-        "      \"priority\": \"Critical|High|Medium|Low\",\n" +
-        "      \"orderIndex\": 0,\n" +
-        "      \"tags\": [\"happy-path\"],\n" +
-        "      \"request\": {\n" +
-        "        \"httpMethod\": \"GET|POST|PUT|DELETE|PATCH\",\n" +
-        "        \"url\": \"/path\",\n" +
-        "        \"headers\": {},\n" +
-        "        \"pathParams\": {},\n" +
-        "        \"queryParams\": {},\n" +
-        "        \"bodyType\": \"None|JSON|FormData|UrlEncoded|Raw\",\n" +
-        "        \"body\": \"<serialized JSON string or null>\",\n" +
-        "        \"timeout\": 30000\n" +
-        "      },\n" +
-        "      \"expectation\": {\n" +
-        "        \"expectedStatus\": [200],\n" +
-        "        \"responseSchema\": null,\n" +
-        "        \"headerChecks\": {},\n" +
-        "        \"bodyContains\": [],\n" +
-        "        \"bodyNotContains\": [],\n" +
-        "        \"jsonPathChecks\": {},\n" +
-        "        \"maxResponseTime\": null\n" +
-        "      },\n" +
-        "      \"variables\": [],\n" +
-        "      \"coveredRequirementIds\": [\"<requirement-uuid-1>\", \"<requirement-uuid-2>\"],\n" +
-        "      \"traceabilityScore\": 0.95,\n" +
-        "      \"mappingRationale\": \"<one-sentence explanation of why this test validates the linked requirements>\"\n" +
-        "    }\n" +
-        "  ],\n" +
-        "  \"model\": \"<model name>\",\n" +
-        "  \"tokensUsed\": 0,\n" +
-        "  \"reasoning\": \"<brief note>\"\n" +
-        "}";
+        "Return ONLY raw JSON: {\"testCases\":[{\"endpointId\":\"<uuid>\",\"name\":\"<short>\",\"description\":\"<one sentence>\",\"testType\":\"HappyPath|Boundary|Negative\",\"priority\":\"Critical|High|Medium|Low\",\"orderIndex\":0,\"tags\":[\"happy-path\"],\"request\":{\"httpMethod\":\"GET|POST|PUT|DELETE|PATCH\",\"url\":\"/path\",\"headers\":{},\"pathParams\":{},\"queryParams\":{},\"bodyType\":\"None|JSON|FormData|UrlEncoded|Raw\",\"body\":\"<serialized JSON or null>\",\"timeout\":30000},\"expectation\":{\"expectedStatus\":[200],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null},\"variables\":[],\"coveredRequirementIds\":[],\"traceabilityScore\":0.95,\"mappingRationale\":\"<why this validates linked requirements>\"}],\"model\":\"<model>\",\"tokensUsed\":0,\"reasoning\":\"<brief>\"}";
+
+    private static readonly JsonSerializerOptions CompactJsonOptions = new ()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false,
+    };
 
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestOrderProposal, Guid> _proposalRepository;
@@ -194,6 +148,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         var callbackUrl = string.IsNullOrWhiteSpace(beBaseUrl)
             ? string.Empty
             : $"{beBaseUrl}/api/test-suites/{suite.Id}/test-cases/from-ai";
+        var compactEndpointBusinessContexts = CompactEndpointBusinessContexts(suite.EndpointBusinessContexts);
 
         var metadataByEndpointId = new Dictionary<Guid, ApiEndpointMetadataDto>();
         var promptByEndpointId = new Dictionary<Guid, ObservationConfirmationPrompt>();
@@ -236,14 +191,18 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             TestSuiteId = suite.Id,
             TestSuiteName = suite.Name,
             SpecificationId = suite.ApiSpecId ?? Guid.Empty,
-            PromptConfig = BuildUnifiedPromptConfig(suite, promptByEndpointId),
+            Model = string.IsNullOrWhiteSpace(_n8nOptions.GenerationModel)
+                ? "gpt-4.1-mini"
+                : _n8nOptions.GenerationModel,
+            MaxOutputTokens = ComputeMaxOutputTokens(appliedOrder.Count),
+            PreferJsonObjectResponse = true,
+            PromptConfig = BuildUnifiedPromptConfig(suite, promptByEndpointId, _n8nOptions.GenerationMaxBusinessContextLength),
             Endpoints = appliedOrder.Select(x =>
             {
                 metadataByEndpointId.TryGetValue(x.EndpointId, out var metadata);
                 promptByEndpointId.TryGetValue(x.EndpointId, out var prompt);
                 var businessContext = string.Empty;
-                if (suite.EndpointBusinessContexts != null
-                    && suite.EndpointBusinessContexts.TryGetValue(x.EndpointId, out var contextValue))
+                if (compactEndpointBusinessContexts.TryGetValue(x.EndpointId, out var contextValue))
                 {
                     businessContext = contextValue;
                 }
@@ -260,12 +219,12 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     IsAuthRelated = x.IsAuthRelated,
                     BusinessContext = businessContext,
                     Prompt = BuildEndpointPromptPayload(x, suite, metadata, businessContext, prompt),
-                    ParameterSchemaPayloads = metadata?.ParameterSchemaPayloads?.ToList() ?? new List<string>(),
-                    ResponseSchemaPayloads = metadata?.ResponseSchemaPayloads?.ToList() ?? new List<string>(),
+                    ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
+                    ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
                 };
             }).ToList(),
-            EndpointBusinessContexts = suite.EndpointBusinessContexts ?? new Dictionary<Guid, string>(),
-            GlobalBusinessRules = suite.GlobalBusinessRules,
+            EndpointBusinessContexts = compactEndpointBusinessContexts,
+            GlobalBusinessRules = TruncateForPayload(suite.GlobalBusinessRules, _n8nOptions.GenerationMaxBusinessContextLength),
             CallbackUrl = callbackUrl,
             CallbackApiKey = callbackApiKey,
         };
@@ -278,38 +237,49 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
                     .OrderBy(x => x.DisplayOrder));
 
+            var maxRequirementCount = _n8nOptions.GenerationMaxSrsRequirementCount <= 0
+                ? 30
+                : _n8nOptions.GenerationMaxSrsRequirementCount;
+            var maxSrsFieldLength = _n8nOptions.GenerationMaxSrsFieldLength <= 0
+                ? 700
+                : _n8nOptions.GenerationMaxSrsFieldLength;
+
             payload.SrsRequirements = requirements
+                .Take(maxRequirementCount)
                 .Select(r => new N8nSrsRequirement
                 {
                     Id = r.Id,
                     Code = r.RequirementCode,
-                    Title = r.Title,
-                    Description = r.Description,
+                    Title = TruncateForPayload(r.Title, maxSrsFieldLength),
+                    Description = TruncateForPayload(r.Description, maxSrsFieldLength),
                     RequirementType = r.RequirementType.ToString(),
-                    EffectiveConstraints = !string.IsNullOrWhiteSpace(r.RefinedConstraints)
-                        ? r.RefinedConstraints
-                        : r.TestableConstraints,
-                    Assumptions = r.Assumptions,
-                    Ambiguities = r.Ambiguities,
+                    EffectiveConstraints = TruncateForPayload(
+                        !string.IsNullOrWhiteSpace(r.RefinedConstraints)
+                            ? r.RefinedConstraints
+                            : r.TestableConstraints,
+                        maxSrsFieldLength),
+                    Assumptions = TruncateForPayload(r.Assumptions, maxSrsFieldLength),
+                    Ambiguities = TruncateForPayload(r.Ambiguities, maxSrsFieldLength),
                     ConfidenceScore = r.RefinedConfidenceScore ?? r.ConfidenceScore,
                 })
                 .ToList();
 
             _logger.LogInformation(
-                "Included {Count} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
-                payload.SrsRequirements.Count, suite.Id, suite.SrsDocumentId);
+                "Included {Count}/{TotalCount} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
+                payload.SrsRequirements.Count, requirements.Count, suite.Id, suite.SrsDocumentId);
         }
 
         _logger.LogInformation(
-            "Built test generation payload. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, CallbackUrl={CallbackUrl}",
-            suite.Id, appliedOrder.Count, callbackUrl);
+            "Built test generation payload. TestSuiteId={TestSuiteId}, EndpointCount={EndpointCount}, Model={Model}, MaxOutputTokens={MaxOutputTokens}, CallbackUrl={CallbackUrl}",
+            suite.Id, appliedOrder.Count, payload.Model, payload.MaxOutputTokens, callbackUrl);
 
         return payload;
     }
 
     private static N8nUnifiedPromptConfig BuildUnifiedPromptConfig(
         TestSuite suite,
-        IReadOnlyDictionary<Guid, ObservationConfirmationPrompt> promptByEndpointId)
+        IReadOnlyDictionary<Guid, ObservationConfirmationPrompt> promptByEndpointId,
+        int maxBusinessContextLength)
     {
         var systemPrompt = promptByEndpointId.Values
             .Select(x => x?.SystemPrompt)
@@ -319,14 +289,14 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         {
             SystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
                 ? DefaultUnifiedSystemPrompt
-                : systemPrompt,
-            TaskInstruction = BuildUnifiedTaskInstruction(suite),
+                : TruncateForPayload(systemPrompt, 900),
+            TaskInstruction = BuildUnifiedTaskInstruction(suite, maxBusinessContextLength),
             Rules = UnifiedRulesBlock,
             ResponseFormat = UnifiedResponseFormatBlock,
         };
     }
 
-    private static string BuildUnifiedTaskInstruction(TestSuite suite)
+    private static string BuildUnifiedTaskInstruction(TestSuite suite, int maxBusinessContextLength)
     {
         var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
         var sb = new StringBuilder();
@@ -337,13 +307,13 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             sb.AppendLine();
             sb.AppendLine();
             sb.AppendLine("=== GLOBAL BUSINESS RULES ===");
-            sb.Append(suite.GlobalBusinessRules);
+            sb.Append(TruncateForPayload(suite.GlobalBusinessRules, maxBusinessContextLength));
         }
 
         return sb.ToString();
     }
 
-    private static Models.N8nPromptPayload BuildEndpointPromptPayload(
+    private Models.N8nPromptPayload BuildEndpointPromptPayload(
         ApiOrderItemModel orderItem,
         TestSuite suite,
         ApiEndpointMetadataDto metadata,
@@ -356,17 +326,115 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
         return new Models.N8nPromptPayload
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
-                ? DefaultUnifiedSystemPrompt
-                : prompt.SystemPrompt,
-            CombinedPrompt = combinedPrompt,
-            ObservationPrompt = string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
-                ? combinedPrompt
-                : prompt.ObservationPrompt,
-            ConfirmationPromptTemplate = string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
-                ? "Validate constraints strictly from provided API details and business rules; output only valid JSON."
-                : prompt.ConfirmationPromptTemplate,
+            SystemPrompt = TruncateForPayload(
+                string.IsNullOrWhiteSpace(prompt?.SystemPrompt)
+                    ? DefaultUnifiedSystemPrompt
+                    : prompt.SystemPrompt,
+                900),
+            CombinedPrompt = TruncateForPayload(combinedPrompt, _n8nOptions.GenerationMaxPromptLength),
+            ObservationPrompt = TruncateForPayload(
+                string.IsNullOrWhiteSpace(prompt?.ObservationPrompt)
+                    ? combinedPrompt
+                    : prompt.ObservationPrompt,
+                _n8nOptions.GenerationMaxPromptLength),
+            ConfirmationPromptTemplate = TruncateForPayload(
+                string.IsNullOrWhiteSpace(prompt?.ConfirmationPromptTemplate)
+                    ? "Validate constraints strictly from provided API details and business rules; output only valid JSON."
+                    : prompt.ConfirmationPromptTemplate,
+                700),
         };
+    }
+
+    private int ComputeMaxOutputTokens(int endpointCount)
+    {
+        var minTokens = _n8nOptions.GenerationMinOutputTokens <= 0
+            ? 2048
+            : _n8nOptions.GenerationMinOutputTokens;
+        var maxTokens = _n8nOptions.GenerationMaxOutputTokens <= 0
+            ? 4096
+            : _n8nOptions.GenerationMaxOutputTokens;
+        var perEndpoint = _n8nOptions.GenerationOutputTokensPerEndpoint <= 0
+            ? 768
+            : _n8nOptions.GenerationOutputTokensPerEndpoint;
+
+        var computed = minTokens + Math.Max(endpointCount - 1, 0) * perEndpoint;
+        return Math.Clamp(computed, minTokens, maxTokens);
+    }
+
+    private Dictionary<Guid, string> CompactEndpointBusinessContexts(IReadOnlyDictionary<Guid, string> contexts)
+    {
+        if (contexts == null || contexts.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        return contexts
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .ToDictionary(
+                x => x.Key,
+                x => TruncateForPayload(x.Value, _n8nOptions.GenerationMaxBusinessContextLength));
+    }
+
+    private List<string> CompactSchemaPayloads(IEnumerable<string> schemaPayloads)
+    {
+        if (schemaPayloads == null)
+        {
+            return new List<string>();
+        }
+
+        var maxCount = _n8nOptions.GenerationMaxSchemaPayloadCountPerKind;
+        if (maxCount <= 0)
+        {
+            return new List<string>();
+        }
+
+        var maxLength = _n8nOptions.GenerationMaxSchemaPayloadLength <= 0
+            ? 1200
+            : _n8nOptions.GenerationMaxSchemaPayloadLength;
+
+        return schemaPayloads
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(maxCount)
+            .Select(x => TruncateForPayload(CompactJsonOrText(x), maxLength))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+    }
+
+    private static string CompactJsonOrText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            return JsonSerializer.Serialize(document.RootElement, CompactJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return trimmed.Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+    }
+
+    private static string TruncateForPayload(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        if (maxLength <= 0)
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength
+            ? trimmed
+            : trimmed[..maxLength];
     }
 
     private static string BuildFallbackCombinedPrompt(

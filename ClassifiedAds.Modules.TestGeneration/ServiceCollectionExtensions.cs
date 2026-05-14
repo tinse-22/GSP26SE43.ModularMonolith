@@ -118,10 +118,23 @@ public static class TestGenerationServiceCollectionExtensions
             options.BaseUrl = n8n.BaseUrl ?? string.Empty;
             options.ApiKey = n8n.ApiKey ?? string.Empty;
             options.TimeoutSeconds = n8n.TimeoutSeconds <= 0 ? 600 : n8n.TimeoutSeconds;
+            options.LlmSuggestionTimeoutSeconds = n8n.LlmSuggestionTimeoutSeconds <= 0 ? 90 : n8n.LlmSuggestionTimeoutSeconds;
             options.Webhooks = n8n.Webhooks ?? new System.Collections.Generic.Dictionary<string, string>();
             options.BeBaseUrl = n8n.BeBaseUrl ?? string.Empty;
             options.CallbackApiKey = n8n.CallbackApiKey ?? string.Empty;
             options.UseDotnetIntegrationWorkflowForGeneration = n8n.UseDotnetIntegrationWorkflowForGeneration;
+            options.GenerationModel = string.IsNullOrWhiteSpace(n8n.GenerationModel)
+                ? "gpt-4.1-mini"
+                : n8n.GenerationModel;
+            options.GenerationMaxOutputTokens = n8n.GenerationMaxOutputTokens <= 0 ? 4096 : n8n.GenerationMaxOutputTokens;
+            options.GenerationMinOutputTokens = n8n.GenerationMinOutputTokens <= 0 ? 2048 : n8n.GenerationMinOutputTokens;
+            options.GenerationOutputTokensPerEndpoint = n8n.GenerationOutputTokensPerEndpoint <= 0 ? 768 : n8n.GenerationOutputTokensPerEndpoint;
+            options.GenerationMaxSchemaPayloadCountPerKind = n8n.GenerationMaxSchemaPayloadCountPerKind < 0 ? 0 : n8n.GenerationMaxSchemaPayloadCountPerKind;
+            options.GenerationMaxSchemaPayloadLength = n8n.GenerationMaxSchemaPayloadLength <= 0 ? 800 : n8n.GenerationMaxSchemaPayloadLength;
+            options.GenerationMaxPromptLength = n8n.GenerationMaxPromptLength <= 0 ? 1200 : n8n.GenerationMaxPromptLength;
+            options.GenerationMaxBusinessContextLength = n8n.GenerationMaxBusinessContextLength <= 0 ? 700 : n8n.GenerationMaxBusinessContextLength;
+            options.GenerationMaxSrsRequirementCount = n8n.GenerationMaxSrsRequirementCount <= 0 ? 15 : n8n.GenerationMaxSrsRequirementCount;
+            options.GenerationMaxSrsFieldLength = n8n.GenerationMaxSrsFieldLength <= 0 ? 500 : n8n.GenerationMaxSrsFieldLength;
         });
 
         var n8nTimeoutSeconds = settings.N8nIntegration?.TimeoutSeconds > 0
@@ -155,9 +168,11 @@ public static class TestGenerationServiceCollectionExtensions
             options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(effectiveTotalTimeoutSeconds);
             options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(Math.Max(effectiveAttemptTimeoutSeconds * 2, 1200));
 
-            // Light retry for transient network/webhook failures.
+            // LLM webhooks are expensive POST calls. Polly requires MaxRetryAttempts >= 1,
+            // so disable retry via ShouldHandle instead of using an invalid retry count.
             options.Retry.MaxRetryAttempts = 1;
-            options.Retry.Delay = System.TimeSpan.FromSeconds(2);
+            options.Retry.ShouldHandle = static _ => PredicateResult.False();
+            options.Retry.Delay = System.TimeSpan.FromSeconds(1);
             options.Retry.BackoffType = DelayBackoffType.Constant;
         });
 

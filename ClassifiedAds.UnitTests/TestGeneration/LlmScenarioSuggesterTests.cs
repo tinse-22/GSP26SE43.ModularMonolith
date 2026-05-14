@@ -69,7 +69,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_IgnoreCache_WhenCacheHit()
+    public async Task SuggestScenariosAsync_Should_UseCache_WhenAllEndpointsHaveCacheHit()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -85,21 +85,18 @@ public class LlmScenarioSuggesterTests
 
         SetupCacheHit(EndpointId1, cachedScenarios1);
         SetupCacheHit(EndpointId2, cachedScenarios2);
-        SetupPromptBuilder(2);
-        SetupN8nReturnsScenarios();
-
         // Act
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.FromCache.Should().BeFalse();
-        result.Scenarios.Should().Contain(x => x.ScenarioName == "Null email on login");
-        result.Scenarios.Should().Contain(x => x.ScenarioName == "Invalid page number");
+        result.FromCache.Should().BeTrue();
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Cached scenario 1");
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Cached scenario 2");
 
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
     }
 
     [Fact]
@@ -589,10 +586,23 @@ public class LlmScenarioSuggesterTests
         result.Scenarios.Should().HaveCountGreaterThanOrEqualTo(4);
         result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1);
         result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId2);
+
+        _n8nServiceMock.Verify(
+            x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions,
+                It.IsAny<N8nBoundaryNegativePayload>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _llmGatewayServiceMock.Verify(
+            x => x.CacheSuggestionsAsync(
+                It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_EnforceFreshN8nCall_WhenCacheExists()
+    public async Task SuggestScenariosAsync_Should_ReturnCachedResult_WhenCacheExists()
     {
         // Arrange: single endpoint, all cached
         var context = CreateSingleEndpointContext();
@@ -603,27 +613,22 @@ public class LlmScenarioSuggesterTests
             new() { EndpointId = EndpointId1, ScenarioName = "Negative invalid format" },
         };
         SetupCacheHit(EndpointId1, cachedScenarios);
-        SetupPromptBuilder(1);
-        SetupN8nReturnsScenarios();
-
         // Act
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.FromCache.Should().BeFalse();
-        result.Scenarios.Should().Contain(x => x.ScenarioName == "Null email on login");
-        result.LlmModel.Should().Be("gpt-4o");
-        result.TokensUsed.Should().Be(1200);
-        result.LatencyMs.Should().NotBeNull();
+        result.FromCache.Should().BeTrue();
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Boundary null input");
+        result.Scenarios.Should().Contain(x => x.ScenarioName == "Negative invalid format");
 
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
 
         _llmGatewayServiceMock.Verify(
             x => x.SaveInteractionAsync(It.IsAny<SaveLlmInteractionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
     }
 
     [Fact]
@@ -675,7 +680,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_SkipCacheLookup()
+    public async Task SuggestScenariosAsync_Should_UseStableCacheKey_ForIdenticalContexts()
     {
         // Arrange — two identical contexts should produce the same cache key
         var context1 = CreateDefaultContext();
@@ -699,8 +704,8 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        // Assert — generate requests intentionally bypass cache lookup so n8n sees fresh context.
-        capturedKeys.Should().BeEmpty();
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys.Should().OnlyContain(x => x == capturedKeys[0]);
     }
 
     [Fact]
@@ -760,7 +765,8 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        capturedKeys.Should().BeEmpty();
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys.Should().OnlyHaveUniqueItems();
     }
 
     [Fact]
@@ -794,11 +800,12 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context);
         await _sut.SuggestScenariosAsync(context);
 
-        capturedKeys.Should().BeEmpty();
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys.Should().OnlyHaveUniqueItems();
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenEndpointOrderChanges()
+    public async Task SuggestScenariosAsync_Should_KeepCacheKeyStable_WhenDependencyAwareOrderingNormalizesEndpointOrder()
     {
         var context1 = CreateDefaultContext();
         var context2 = CreateDefaultContext();
@@ -817,7 +824,8 @@ public class LlmScenarioSuggesterTests
         await _sut.SuggestScenariosAsync(context1);
         await _sut.SuggestScenariosAsync(context2);
 
-        capturedKeys.Should().BeEmpty();
+        capturedKeys.Should().HaveCount(2);
+        capturedKeys.Should().OnlyContain(x => x == capturedKeys[0]);
     }
 
     [Fact]
