@@ -11,6 +11,8 @@ public class AdminApiDocumentationProjectModel
 
     public string OwnerName { get; set; }
 
+    public string OwnerEmail { get; set; }
+
     public string Name { get; set; }
 
     public string Description { get; set; }
