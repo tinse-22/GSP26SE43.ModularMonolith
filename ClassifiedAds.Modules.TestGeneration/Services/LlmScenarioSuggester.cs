@@ -32,8 +32,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private const int MaxScenarioTargetPerBatch = 20;
     private const int MaxScenarioTargetPerEndpoint = 30;
 
-    private const int MaxBusinessContextLength = 1200;
-    private const int MaxFeedbackContextLength = 1200;
+    private const int MaxBusinessContextLength = 800; // Reduced from 1200
+    private const int MaxFeedbackContextLength = 800; // Reduced from 1200
     private const int MaxSystemPromptLength = 1200;
     private const int MaxCombinedPromptLength = 5000;
     private const int MaxObservationPromptLength = 3000;
@@ -41,8 +41,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private const int MaxTaskInstructionLength = 5000;
     private const int MaxRulesLength = 4500;
     private const int MaxResponseFormatLength = 2500;
-    private const int MaxSchemaPayloadCountPerKind = 2;
-    private const int MaxSchemaPayloadLength = 2500;
+    private const int MaxSchemaPayloadCountPerKind = 1; // Reduced from 2
+    private const int MaxSchemaPayloadLength = 1500; // Reduced from 2500
     private const int MaxParameterDetailCount = 16;
     private const int MaxParameterDefaultValueLength = 200;
 
@@ -202,9 +202,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? await BuildFeedbackContextSafeAsync(context, orderedSequence, cancellationToken)
             : LlmSuggestionFeedbackContextResult.Empty;
 
-        var useCacheLookup = false;
+        var useCacheLookup = !context.BypassCache;
         _logger.LogInformation(
-            "Skipping LLM suggestion cache lookup. Fresh n8n call is enforced for every generate request. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}",
+            useCacheLookup
+                ? "LLM suggestion cache lookup enabled. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}"
+                : "Skipping LLM suggestion cache lookup because bypass was requested. TestSuiteId={TestSuiteId}, BypassCache={BypassCache}, UseFeedbackLoopContext={UseFeedbackLoopContext}",
             context.TestSuiteId,
             context.BypassCache,
             algorithmProfile.UseFeedbackLoopContext);
@@ -330,6 +332,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 n8nResponse?.Model,
                 n8nResponse?.TokensUsed,
                 latencyMs);
+
+            if (usedLocalFallback)
+            {
+                _logger.LogWarning(
+                    "Stopping remaining n8n scenario batches after transient failure. Local adaptive coverage will synthesize missing scenarios. TestSuiteId={TestSuiteId}, CompletedBatch={BatchIndex}/{BatchCount}",
+                    context.TestSuiteId,
+                    batchIndex + 1,
+                    endpointBatches.Count);
+                break;
+            }
         }
 
         var scenarios = EnsureAdaptiveCoverage(allScenarios, orderedSequence, metadataMap, endpointContracts, context.SrsRequirements, srsDocumentContent);
@@ -522,17 +534,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ? context.SrsDocument.ParsedMarkdown
             : context.SrsDocument.RawContent;
 
-        // Truncate to avoid token overflow (~20 000 chars ≈ ~5 000 tokens, up from 12 000)
-        // This gives the LLM enough content to understand all validation rules and boundaries
-        const int MaxSrsContentLength = 20_000;
-        if (content?.Length > MaxSrsContentLength)
-        {
-            // Preserve key sections: validation rules, constraints, boundary, expected responses
-            var sections = SplitSrsIntoSections(content);
-            var prioritized = PrioritizeSrsSections(sections, MaxSrsContentLength);
-            content = string.Join("\n\n", prioritized);
-        }
-
         var requirements = context.SrsRequirements
             .Select(r => new N8nSrsRequirementBrief
             {
@@ -544,6 +545,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     r.RefinedConstraints ?? r.TestableConstraints),
             })
             .ToList();
+
+        // Structured requirements already carry the testable constraints n8n needs.
+        // Avoid sending the full SRS again; this was inflating 2-endpoint prompts to 60KB+.
+        const int MaxSrsContentLength = 4_000;
+        if (requirements.Count > 0)
+        {
+            content = null;
+        }
+        else if (content?.Length > MaxSrsContentLength)
+        {
+            var sections = SplitSrsIntoSections(content);
+            var prioritized = PrioritizeSrsSections(sections, MaxSrsContentLength);
+            content = string.Join("\n\n", prioritized);
+        }
 
         return new N8nSrsContext
         {

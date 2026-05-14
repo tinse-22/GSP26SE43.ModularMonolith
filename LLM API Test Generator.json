@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "jsCode": "// â”€â”€ Parse payload tá»« BE â”€â”€\n// BE gá»­i: { provider, model, prompt, context }\nconst rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nif (!body.prompt) {\n  throw new Error('Payload thiáº¿u trÆ°á»ng prompt.');\n}\n\nreturn [{\n  json: {\n    provider:   body.provider ?? 'N8n',\n    model:      body.model    ?? 'llama-3.3-70b-versatile',\n    userPrompt: body.prompt,\n    context:    body.context  ?? ''\n  }\n}];"
+        "jsCode": "// ── Parse payload từ BE ──\n// BE gửi: { provider, model, prompt, context }\nconst rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nif (!body.prompt) {\n  throw new Error('Payload thiếu trường prompt.');\n}\n\nreturn [{\n  json: {\n    provider:   body.provider ?? 'N8n',\n    model:      body.model    ?? 'llama-3.3-70b-versatile',\n    userPrompt: body.prompt,\n    context:    body.context  ?? ''\n  }\n}];"
       },
       "id": "2db886df-f169-440a-bfad-ed1a0312bee8",
       "name": "Parse Input",
@@ -16,7 +16,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// â”€â”€ Parse LLM response â”€â”€\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM tráº£ vá» response rá»—ng.');\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars\nfunction fixJsonStrings(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixJsonStrings(cleaned);\n\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Fallback: AI khÃ´ng tráº£ JSON, wrap raw text\n  parsed = {\n    summaryVi: rawContent.substring(0, 500),\n    possibleCauses: ['KhÃ´ng thá»ƒ parse response tá»« AI'],\n    suggestedNextActions: ['Kiá»ƒm tra láº¡i request vÃ  response cá»§a test case'],\n    confidence: 'low',\n  };\n}\n\n// Validate required fields\nif (!parsed.summaryVi) {\n  parsed.summaryVi = rawContent.substring(0, 300);\n}\n\nreturn [{\n  json: {\n    summaryVi:            String(parsed.summaryVi ?? ''),\n    possibleCauses:       Array.isArray(parsed.possibleCauses)       ? parsed.possibleCauses       : [],\n    suggestedNextActions: Array.isArray(parsed.suggestedNextActions) ? parsed.suggestedNextActions : [],\n    confidence:           String(parsed.confidence ?? 'medium'),\n    model:                String(parsed.model      ?? 'llama-3.3-70b-versatile'),\n    tokensUsed:           Number(parsed.tokensUsed ?? 0)\n  }\n}];"
+        "jsCode": "// ── Parse LLM response ──\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM trả về response rỗng.');\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars\nfunction fixJsonStrings(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixJsonStrings(cleaned);\n\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Fallback: AI không trả JSON, wrap raw text\n  parsed = {\n    summaryVi: rawContent.substring(0, 500),\n    possibleCauses: ['Không thể parse response từ AI'],\n    suggestedNextActions: ['Kiểm tra lại request và response của test case'],\n    confidence: 'low',\n  };\n}\n\n// Validate required fields\nif (!parsed.summaryVi) {\n  parsed.summaryVi = rawContent.substring(0, 300);\n}\n\nreturn [{\n  json: {\n    summaryVi:            String(parsed.summaryVi ?? ''),\n    possibleCauses:       Array.isArray(parsed.possibleCauses)       ? parsed.possibleCauses       : [],\n    suggestedNextActions: Array.isArray(parsed.suggestedNextActions) ? parsed.suggestedNextActions : [],\n    confidence:           String(parsed.confidence ?? 'medium'),\n    model:                String(parsed.model      ?? 'llama-3.3-70b-versatile'),\n    tokensUsed:           Number(parsed.tokensUsed ?? 0)\n  }\n}];"
       },
       "id": "ce36d20a-afa0-496f-baf1-09a8a184e678",
       "name": "Parse Explain Response",
@@ -64,7 +64,7 @@
         "promptType": "define",
         "text": "={{ $json.userPrompt }}",
         "options": {
-          "systemMessage": "You are an expert API testing engineer and debugger. Analyze the failed API test case and provide a clear explanation in Vietnamese.\n\nYou MUST respond with ONLY a raw JSON object â€” no markdown, no code fences, no text outside JSON.\n\nRequired JSON structure:\n{\n  \"summaryVi\": \"<1-2 cÃ¢u tÃ³m táº¯t nguyÃªn nhÃ¢n tháº¥t báº¡i báº±ng tiáº¿ng Viá»‡t>\",\n  \"possibleCauses\": [\"<cause 1>\", \"<cause 2>\"],\n  \"suggestedNextActions\": [\"<action 1>\", \"<action 2>\"],\n  \"confidence\": \"high|medium|low\",\n  \"model\": \"<model name>\",\n  \"tokensUsed\": 0\n}"
+          "systemMessage": "You are an expert API testing engineer and debugger. Analyze the failed API test case and provide a clear explanation in Vietnamese.\n\nYou MUST respond with ONLY a raw JSON object — no markdown, no code fences, no text outside JSON.\n\nRequired JSON structure:\n{\n  \"summaryVi\": \"<1-2 câu tóm tắt nguyên nhân thất bại bằng tiếng Việt>\",\n  \"possibleCauses\": [\"<cause 1>\", \"<cause 2>\"],\n  \"suggestedNextActions\": [\"<action 1>\", \"<action 2>\"],\n  \"confidence\": \"high|medium|low\",\n  \"model\": \"<model name>\",\n  \"tokensUsed\": 0\n}"
         }
       },
       "id": "fa769137-6642-4490-8834-a085557f2a50",
@@ -98,21 +98,21 @@
     },
     {
       "parameters": {
-        "model": "deepseek-v4-pro",
+        "model": "llama-3.3-70b-versatile",
         "options": {}
       },
-      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
       "position": [
-        928,
-        416
+        2400,
+        1824
       ],
       "id": "fcaeaefc-23f3-40be-8e7a-f67330483a8c",
-      "name": "DeepSeek Chat Model",
+      "name": "Groq Chat Model4",
       "credentials": {
-        "deepSeekApi": {
-          "id": "3oNSdsNhLPNIonwL",
-          "name": "DeepSeek account"
+        "groqApi": {
+          "id": "VTKxCOCM2hfPcoNP",
+          "name": "Groq account"
         }
       }
     },
@@ -135,7 +135,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const { rawContent, endpoints, projectContext } = $input.first().json;\n\nif (!rawContent) {\n  throw new Error('SRS document has no text content. Please ensure the document has text before triggering analysis.');\n}\n\nconst endpointBlock = endpoints.length > 0\n  ? [\n      '=== AVAILABLE API ENDPOINTS (from linked Test Suite) ===',\n      endpoints.map(ep => `- [${ep.endpointId}] ${ep.method} ${ep.path}${ep.summary ? ' â€” ' + ep.summary : ''}`).join('\\n'),\n      'Map each requirement to the most relevant endpoint path when possible.'\n    ].join('\\n')\n  : '=== API ENDPOINTS: none provided â€” skip endpoint mapping ===';\n\nconst systemPrompt = `You are an expert software requirements analyst specialized in extracting testable requirements from Software Requirements Specification (SRS) documents.\nYour task is to:\n1. Parse the SRS document and extract EVERY distinct requirement.\n2. Classify each requirement by type: functional, non-functional, security, performance, or constraint.\n3. Identify testable constraints (boundary values, expected status codes, validation rules).\n4. Detect ambiguities and formulate clarification questions for unclear requirements.\n5. Assign a confidence score (0.0â€“1.0) based on how clear and complete the requirement is.\n6. Map requirements to API endpoints when endpoint context is available.\n\nIMPORTANT OUTPUT RULES:\n- Return ONLY valid JSON â€” no markdown fences, no commentary.\n- Every requirement MUST have: requirementCode, title, description, type, testableConstraints, assumptions, ambiguities, confidenceScore.\n- testableConstraints MUST be a JSON array string: [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]\n- assumptions and ambiguities MUST be JSON array strings: [\"...\", \"...\"]\n- type MUST be one of: functional, non-functional, security, performance, constraint\n- For each ambiguity, also include a clarificationQuestion entry in the top-level clarificationQuestions array.`;\n\nconst userPrompt = [\n  `=== SRS DOCUMENT CONTENT ===`,\n  rawContent.trim(),\n  '',\n  endpointBlock,\n  projectContext ? `=== PROJECT CONTEXT ===\\n${projectContext}` : '',\n  `=== TASK ===`,\n  `Extract all requirements from the SRS document above.`,\n  `For each requirement provide:`,\n  `- requirementCode: string (e.g. REQ-001, REQ-002, ...)`,\n  `- title: string (concise title)`,\n  `- description: string (full description)`,\n  `- type: \"functional\" | \"non-functional\" | \"security\" | \"performance\" | \"constraint\"`,\n  `- testableConstraints: JSON array string [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]`,\n  `- assumptions: JSON array string [\"...\"]`,\n  `- ambiguities: JSON array string [\"...\"]`,\n  `- confidenceScore: float 0.0â€“1.0`,\n  `- mappedEndpointPath: string | null (match to provided endpoints if applicable)`,\n  '',\n  `Also provide a top-level clarificationQuestions array for every detected ambiguity:`,\n  `- requirementCode: string (matches the requirement)`,\n  `- ambiguitySource: string (the ambiguous text)`,\n  `- question: string (clear question to ask the user)`,\n  `- isCritical: boolean (true if this ambiguity BLOCKS test generation)`,\n  `- suggestedOptions: JSON array string [\"option1\", \"option2\"] | null`,\n  '',\n  `Return JSON in this exact format:`,\n  `{`,\n  `  \"requirements\": [...],`,\n  `  \"clarificationQuestions\": [...],`,\n  `  \"model\": \"llama-3.3-70b-versatile\",`,\n  `  \"tokensUsed\": 0`,\n  `}`\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+        "jsCode": "const { rawContent, endpoints, projectContext } = $input.first().json;\n\nif (!rawContent) {\n  throw new Error('SRS document has no text content. Please ensure the document has text before triggering analysis.');\n}\n\nconst endpointBlock = endpoints.length > 0\n  ? [\n      '=== AVAILABLE API ENDPOINTS (from linked Test Suite) ===',\n      endpoints.map(ep => `- [${ep.endpointId}] ${ep.method} ${ep.path}${ep.summary ? ' — ' + ep.summary : ''}`).join('\\n'),\n      'Map each requirement to the most relevant endpoint path when possible.'\n    ].join('\\n')\n  : '=== API ENDPOINTS: none provided — skip endpoint mapping ===';\n\nconst systemPrompt = `You are an expert software requirements analyst specialized in extracting testable requirements from Software Requirements Specification (SRS) documents.\nYour task is to:\n1. Parse the SRS document and extract EVERY distinct requirement.\n2. Classify each requirement by type: functional, non-functional, security, performance, or constraint.\n3. Identify testable constraints (boundary values, expected status codes, validation rules).\n4. Detect ambiguities and formulate clarification questions for unclear requirements.\n5. Assign a confidence score (0.0–1.0) based on how clear and complete the requirement is.\n6. Map requirements to API endpoints when endpoint context is available.\n\nIMPORTANT OUTPUT RULES:\n- Return ONLY valid JSON — no markdown fences, no commentary.\n- Every requirement MUST have: requirementCode, title, description, type, testableConstraints, assumptions, ambiguities, confidenceScore.\n- testableConstraints MUST be a JSON array string: [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]\n- assumptions and ambiguities MUST be JSON array strings: [\"...\", \"...\"]\n- type MUST be one of: functional, non-functional, security, performance, constraint\n- For each ambiguity, also include a clarificationQuestion entry in the top-level clarificationQuestions array.`;\n\nconst userPrompt = [\n  `=== SRS DOCUMENT CONTENT ===`,\n  rawContent.trim(),\n  '',\n  endpointBlock,\n  projectContext ? `=== PROJECT CONTEXT ===\\n${projectContext}` : '',\n  `=== TASK ===`,\n  `Extract all requirements from the SRS document above.`,\n  `For each requirement provide:`,\n  `- requirementCode: string (e.g. REQ-001, REQ-002, ...)`,\n  `- title: string (concise title)`,\n  `- description: string (full description)`,\n  `- type: \"functional\" | \"non-functional\" | \"security\" | \"performance\" | \"constraint\"`,\n  `- testableConstraints: JSON array string [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]`,\n  `- assumptions: JSON array string [\"...\"]`,\n  `- ambiguities: JSON array string [\"...\"]`,\n  `- confidenceScore: float 0.0–1.0`,\n  `- mappedEndpointPath: string | null (match to provided endpoints if applicable)`,\n  '',\n  `Also provide a top-level clarificationQuestions array for every detected ambiguity:`,\n  `- requirementCode: string (matches the requirement)`,\n  `- ambiguitySource: string (the ambiguous text)`,\n  `- question: string (clear question to ask the user)`,\n  `- isCritical: boolean (true if this ambiguity BLOCKS test generation)`,\n  `- suggestedOptions: JSON array string [\"option1\", \"option2\"] | null`,\n  '',\n  `Return JSON in this exact format:`,\n  `{`,\n  `  \"requirements\": [...],`,\n  `  \"clarificationQuestions\": [...],`,\n  `  \"model\": \"llama-3.3-70b-versatile\",`,\n  `  \"tokensUsed\": 0`,\n  `}`\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
       },
       "id": "f0181b63-1c91-4dd2-b44a-d5a858aa0537",
       "name": "Prepare Analysis Prompt",
@@ -353,28 +353,19 @@
     },
     {
       "parameters": {
-        "jsCode": "const { promptConfig, endpoints, algorithmProfile, srsContext } = $input.first().json;\n\nconst promptBlocks = endpoints\n  .map((ep, i) => {\n    const combined = String(ep?.prompt?.combinedPrompt || '').trim();\n    if (!combined) {\n      throw new Error(`Endpoint ${i + 1} (ID=${ep?.endpointId || 'unknown'}) is missing prompt.combinedPrompt from BE.`);\n    }\n\n    return [\n      `### Endpoint ${i + 1} [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}`,\n      combined\n    ].join('\\n');\n  });\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nif (!systemPrompt || !taskInstruction || !rules || !responseFormat) {\n  throw new Error('promptConfig from BE is incomplete. Required: systemPrompt, taskInstruction, rules, responseFormat.');\n}\n\nconst enabledFlags = Object.entries(algorithmProfile || {})\n  .filter(([, value]) => value === true)\n  .map(([key]) => `- ${key}`);\n\nconst algorithmGuidance = enabledFlags.length > 0\n  ? [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      enabledFlags.join('\\n'),\n      'Apply these generation strategies while producing scenarios.'\n    ].join('\\n')\n  : [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      '- none',\n      'Use promptConfig instructions as the primary strategy.'\n    ].join('\\n');\n\nlet srsSection = '';\nif (srsContext && (srsContext.content || (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0))) {\n  const parts = [`=== SRS DOCUMENT: ${srsContext.documentTitle || 'Untitled'} ===`];\n  if (srsContext.content) { parts.push(srsContext.content); }\n  if (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0) {\n    parts.push('--- REQUIREMENTS ---');\n    for (const req of srsContext.requirements) {\n      parts.push(`[${req.code}] ${req.title}`);\n      if (req.endpointId) { parts.push(`EndpointId: ${req.endpointId}`); }\n      if (Array.isArray(req.testableConstraints) && req.testableConstraints.length > 0) {\n        parts.push('Constraints:');\n        for (const c of req.testableConstraints) {\n          const constraint = String(c?.constraint || '').trim();\n          if (!constraint) continue;\n          const outcome = String(c?.expectedOutcome || '').trim();\n          const priority = String(c?.priority || '').trim();\n          const extras = [outcome ? `expectedOutcome=${outcome}` : null, priority ? `priority=${priority}` : null].filter(Boolean).join(', ');\n          parts.push(`- ${constraint}${extras ? ` (${extras})` : ''}`);\n        }\n      }\n      const description = String(req.description || '').trim();\n      if (description) { parts.push(description); }\n      parts.push('');\n    }\n  }\n  srsSection = parts.join('\\n');\n}\n\nconst userPrompt = [\n  taskInstruction,\n  algorithmGuidance,\n  ...(srsSection ? ['=== SRS REQUIREMENTS (align generated scenarios to these) ===', srsSection] : []),\n  '=== BE GENERATED ENDPOINT PROMPTS (PRIMARY INPUT) ===',\n  promptBlocks.join('\\n\\n'),\n  rules,\n  responseFormat\n].join('\\n\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+        "promptType": "define",
+        "text": "={{ $json.userPrompt }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
       },
-      "id": "a2200ec7-3dbe-4526-96be-6f7849a1e303",
-      "name": "Prepare Boundary Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "865df7e1-ecfe-44ab-af84-7637f92985b8",
+      "name": "AI Agent (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
       "position": [
-        720,
-        -112
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Äoáº¡n mÃ£ parse LLM vÃ  xá»­ lÃ½ tÃ­nh duy nháº¥t Ä‘Ã£ Ä‘Æ°á»£c giá»¯ nguyÃªn nhÆ° cá»§a báº¡n\n// [Dá»¯ liá»‡u mÃ£ Parse Boundary Response cá»§a báº¡n á»Ÿ Ä‘Ã¢y...]\n\nconst response = $input.first().json;\nconst rawContent = response?.output ?? response?.choices?.[0]?.message?.content ?? null;\nif (!rawContent) throw new Error('LLM tra ve response rong.');\n\n// (Logic cleanup JSON...)\nlet cleaned = String(rawContent).trim();\n// ... lÆ°á»£c bá» bá»›t Ä‘á»ƒ trÃ¡nh quÃ¡ dÃ i nhÆ°ng logic giá»¯ nguyÃªn cá»§a báº¡n ...\n\nreturn [{ json: { scenarios: [], model: 'parsed', tokensUsed: 0 } }]; // Placeholder"
-      },
-      "id": "d0415286-2d09-417b-8676-20843a731083",
-      "name": "Parse Boundary Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1200,
-        -112
+        2400,
+        1536
       ]
     },
     {
@@ -384,13 +375,13 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "5d1da9aa-c6e0-4941-bcbb-364061ca2e19",
-      "name": "Webhook2",
+      "id": "efd083e6-9118-4f94-8871-a272cefb3ae1",
+      "name": "Webhook4",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        240,
-        -112
+        1680,
+        1536
       ],
       "webhookId": "generate-llm-suggestions"
     },
@@ -398,30 +389,39 @@
       "parameters": {
         "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nconst endpoints = body.endpoints;\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload must contain non-empty endpoints array.');\n}\n\nconst promptConfig = body.promptConfig ?? {};\nif (!promptConfig.systemPrompt || !String(promptConfig.systemPrompt).trim()) {\n  throw new Error('Payload missing promptConfig.systemPrompt from BE.');\n}\nif (!promptConfig.taskInstruction || !String(promptConfig.taskInstruction).trim()) {\n  throw new Error('Payload missing promptConfig.taskInstruction from BE.');\n}\nif (!promptConfig.rules || !String(promptConfig.rules).trim()) {\n  throw new Error('Payload missing promptConfig.rules from BE.');\n}\nif (!promptConfig.responseFormat || !String(promptConfig.responseFormat).trim()) {\n  throw new Error('Payload missing promptConfig.responseFormat from BE.');\n}\n\nconst algorithmProfile = body.algorithmProfile ?? {};\n\nreturn [{\n  json: {\n    testSuiteId: body.testSuiteId ?? '',\n    promptConfig,\n    algorithmProfile,\n    srsContext: body.srsContext ?? null,\n    endpoints\n  }\n}];"
       },
-      "id": "2949aa98-03ca-4115-b4ad-009a6427be91",
-      "name": "Parse Input2",
+      "id": "8d8fe4b0-d030-45eb-828b-e5d854458097",
+      "name": "Parse Input4",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        -112
+        1920,
+        1536
       ]
     },
     {
       "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.userPrompt }}",
-        "options": {
-          "systemMessage": "={{ $json.systemPrompt }}"
-        }
+        "jsCode": "const { promptConfig, endpoints, algorithmProfile, srsContext } = $input.first().json;\n\nconst promptBlocks = endpoints\n  .map((ep, i) => {\n    const combined = String(ep?.prompt?.combinedPrompt || '').trim();\n    if (!combined) {\n      throw new Error(`Endpoint ${i + 1} (ID=${ep?.endpointId || 'unknown'}) is missing prompt.combinedPrompt from BE.`);\n    }\n\n    return [\n      `### Endpoint ${i + 1} [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}`,\n      combined\n    ].join('\\n');\n  });\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nif (!systemPrompt || !taskInstruction || !rules || !responseFormat) {\n  throw new Error('promptConfig from BE is incomplete. Required: systemPrompt, taskInstruction, rules, responseFormat.');\n}\n\nconst enabledFlags = Object.entries(algorithmProfile || {})\n  .filter(([, value]) => value === true)\n  .map(([key]) => `- ${key}`);\n\nconst algorithmGuidance = enabledFlags.length > 0\n  ? [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      enabledFlags.join('\\n'),\n      'Apply these generation strategies while producing scenarios.'\n    ].join('\\n')\n  : [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      '- none',\n      'Use promptConfig instructions as the primary strategy.'\n    ].join('\\n');\n\n// Build SRS section when BE provides it\nlet srsSection = '';\nif (srsContext && (srsContext.content || (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0))) {\n  const parts = [`=== SRS DOCUMENT: ${srsContext.documentTitle || 'Untitled'} ===`];\n  if (srsContext.content) { parts.push(srsContext.content); }\n  if (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0) {\n    parts.push('--- REQUIREMENTS ---');\n    for (const req of srsContext.requirements) {\n      parts.push(`[${req.code}] ${req.title}`);\n      if (req.endpointId) {\n        parts.push(`EndpointId: ${req.endpointId}`);\n      }\n      if (Array.isArray(req.testableConstraints) && req.testableConstraints.length > 0) {\n        parts.push('Constraints:');\n        for (const c of req.testableConstraints) {\n          const constraint = String(c?.constraint || '').trim();\n          if (!constraint) continue;\n          const outcome = String(c?.expectedOutcome || '').trim();\n          const priority = String(c?.priority || '').trim();\n          const extras = [\n            outcome ? `expectedOutcome=${outcome}` : null,\n            priority ? `priority=${priority}` : null\n          ].filter(Boolean).join(', ');\n          parts.push(`- ${constraint}${extras ? ` (${extras})` : ''}`);\n        }\n      }\n      const description = String(req.description || '').trim();\n      if (description) {\n        parts.push(description);\n      }\n      parts.push('');\n    }\n  }\n  srsSection = parts.join('\\n');\n}\n\nconst userPrompt = [\n  taskInstruction,\n  algorithmGuidance,\n  ...(srsSection ? ['=== SRS REQUIREMENTS (align generated scenarios to these) ===', srsSection] : []),\n  '=== BE GENERATED ENDPOINT PROMPTS (PRIMARY INPUT) ===',\n  promptBlocks.join('\\n\\n'),\n  rules,\n  responseFormat\n].join('\\n\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
       },
-      "id": "7e461b90-8a4e-4975-a08a-03cee333144d",
-      "name": "AI Agent (Gemini)2",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
+      "id": "e14329b6-efbd-41de-9450-f7a7df0a4a4e",
+      "name": "Prepare Boundary Prompt1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        960,
-        -112
+        2160,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safety net: if LLM didn't use {{tcUniqueId}} in fields that need uniqueness, patch them.\n// Generic — works for any field name / any project / any domain. No URL-pattern matching.\nfunction patchBodyForUniqueness(body) {\n  if (!body || typeof body !== 'string') return body;\n  let obj;\n  try { obj = JSON.parse(body); } catch { return body; }\n  let changed = false;\n\n  // Regex for a valid email address (\\\\w = \\w in JS inside JSON string)\n  const emailRe = /^([\\w.+-]+)@([\\w.-]+)$/;\n  // Field names that typically require a unique value per run\n  const uniqueFieldRe = /^(email|username|user_name|user|name|code|slug|phone|mobile|ref|reference|sku|handle|login|nickname|tag)$/i;\n\n  function walk(node) {\n    if (!node || typeof node !== 'object') return;\n    for (const key of Object.keys(node)) {\n      const val = node[key];\n      if (typeof val === 'string') {\n        const p = patchValue(key, val);\n        if (p !== val) { node[key] = p; changed = true; }\n      } else if (typeof val === 'object') { walk(val); }\n    }\n  }\n\n  function patchValue(key, val) {\n    // Already a placeholder — VariableResolver will handle it\n    if (val.includes('{{')) return val;\n    // Already uniquified (ends with _xxxxxxxx 8-char hex)\n    if (/_[a-f0-9]{8}$/.test(val.toLowerCase())) return val;\n\n    // Email fields: patch local part with _{{tcUniqueId}} suffix\n    const emailMatch = val.match(emailRe);\n    if (emailMatch) {\n      const local = emailMatch[1].toLowerCase();\n      const domain = emailMatch[2];\n      // Only patch if it looks synthetic (not a real runtime value from a prior test)\n      const looksStatic = /^(test|user|demo|sample|qa|auto|register|new|admin|foo|bar|fake|dummy|temp)/.test(local)\n        || domain.startsWith('example.') || domain === 'test.com' || domain === 'mailtest.com';\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare email \"' + val + '\" in field \"' + key + '\"');\n        return local + '_{{tcUniqueId}}@' + domain;\n      }\n      return val;\n    }\n\n    // Non-email unique fields: append _{{tcUniqueId}} if value looks like a static placeholder\n    if (uniqueFieldRe.test(key)) {\n      const looksStatic = /^(test|user|demo|sample|qa|auto|my|new|admin|foo|bar|fake|dummy|temp|default)[_-]?/.test(val.toLowerCase());\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare unique field \"' + key + '\" value \"' + val + '\"');\n        return val + '_{{tcUniqueId}}';\n      }\n    }\n    return val;\n  }\n\n  walk(obj);\n  return changed ? JSON.stringify(obj) : body;\n}\n\n// ━━━ Parse LLM response ━━━\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM tra ve response rong. Keys: ' + Object.keys(response || {}).join(', '));\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\n// Extract JSON object boundary\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\n// Fix trailing commas before ] or }\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars inside strings\nfunction fixControlChars(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixControlChars(cleaned);\n\n// Close unclosed brackets (handles LLM truncation)\ncleaned = cleaned.replace(/,\\s*$/, '');\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\n// ── Fallback: extract individual complete scenario objects ──\n// Used when primary JSON.parse fails (e.g. unescaped quotes mid-string,\n// truncated JSON with partial object at end, etc.)\nfunction extractCompleteScenarios(text) {\n  const arrM = text.match(/\"scenarios\"\\s*:\\s*\\[/);\n  if (!arrM) throw new Error('Khong tim thay mang scenarios trong JSON.');\n  const arrStart = arrM.index + arrM[0].length;\n  let depth = 0, objStart = -1;\n  const items = [];\n  let i = arrStart;\n  while (i < text.length) {\n    const c = text[i];\n    // Skip over string literals to avoid false bracket-depth counting\n    if (c === '\"') {\n      i++;\n      while (i < text.length) {\n        if (text[i] === '\\\\') { i += 2; continue; }\n        if (text[i] === '\"') break;\n        i++;\n      }\n      i++;\n      continue;\n    }\n    if (c === '{') {\n      if (depth === 0) objStart = i;\n      depth++;\n    } else if (c === '}') {\n      depth--;\n      if (depth === 0 && objStart !== -1) {\n        const objText = text.slice(objStart, i + 1);\n        try {\n          const obj = JSON.parse(fixControlChars(objText));\n          items.push(obj);\n        } catch (_) { /* skip malformed individual objects */ }\n        objStart = -1;\n      }\n    } else if (c === ']' && depth === 0) {\n      break;\n    }\n    i++;\n  }\n  if (items.length === 0) throw new Error('Khong trich xuat duoc scenario nao hop le.');\n  return { scenarios: items, model: 'unknown', tokensUsed: 0 };\n}\n\n// ── Primary parse → fallback extractor ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e1) {\n  try {\n    parsed = extractCompleteScenarios(cleaned);\n    // Log recovery info (visible in n8n execution log)\n    console.warn('[ParseBoundaryResponse] Used fallback extractor, recovered ' + parsed.scenarios.length + ' scenarios. Primary JSON.parse error: ' + e1.message.substring(0, 120));\n  } catch (e2) {\n    throw new Error('Khong parse duoc JSON tu LLM. Error: ' + e1.message + '\\nRaw (800): ' + cleaned.substring(0, 800));\n  }\n}\n\nconst scenarios = parsed?.scenarios;\nif (!Array.isArray(scenarios) || scenarios.length === 0) {\n  throw new Error('LLM response thieu mang scenarios hoac rong.');\n}\n\n// Normalize scenarios\nscenarios.forEach((s, i) => {\n  if (!s?.endpointId) throw new Error('Scenario index ' + i + ' thieu endpointId.');\n  s.scenarioName = String(s.scenarioName ?? ('Scenario ' + (i + 1)));\n  s.description  = String(s.description  ?? '');\n  // Respect whatever testType the LLM returned; only fall back when truly absent\n  const rawType = String(s.testType ?? '').trim();\n  const normType = rawType.replace(/[_\\s-]/g, '').toLowerCase();\n  s.testType = normType === 'happypath' ? 'HappyPath' : normType === 'boundary' ? 'Boundary' : normType === 'negative' ? 'Negative' : (rawType || 'Negative');\n  s.priority     = String(s.priority     ?? 'Medium');\n  s.tags         = Array.isArray(s.tags) ? s.tags : [];\n  s.variables    = Array.isArray(s.variables) ? s.variables : [];\n  s.coveredRequirementCodes = Array.isArray(s.coveredRequirementCodes)\n    ? s.coveredRequirementCodes.map(String).filter(c => c.trim())\n    : [];\n\n  s.request = s.request ?? {};\n  s.request.httpMethod  = String(s.request.httpMethod ?? 'GET');\n  s.request.url         = String(s.request.url        ?? '/');\n  s.request.bodyType    = String(s.request.bodyType   ?? 'None');\n  s.request.timeout     = Number(s.request.timeout    ?? 30000);\n  s.request.headers     = s.request.headers     ?? null;\n  s.request.pathParams  = s.request.pathParams  ?? null;\n  s.request.queryParams = s.request.queryParams ?? null;\n  if (s.request.body !== null && s.request.body !== undefined && typeof s.request.body !== 'string') {\n    s.request.body = JSON.stringify(s.request.body);\n  }\n\n  s.expectation = s.expectation ?? {};\n  if (!Array.isArray(s.expectation.expectedStatus)) {\n    s.expectation.expectedStatus = [400];\n  }\n  s.expectation.bodyContains    = s.expectation.bodyContains    ?? null;\n  s.expectation.bodyNotContains = s.expectation.bodyNotContains ?? null;\n  s.expectation.jsonPathChecks  = (s.expectation.jsonPathChecks && typeof s.expectation.jsonPathChecks === 'object' && Object.keys(s.expectation.jsonPathChecks).length > 0)\n    ? s.expectation.jsonPathChecks\n    : null;\n});\n\nfunction normalizeExpectationToken(value) {\n  if (value === null || value === undefined) return value;\n  if (typeof value !== 'string') return value;\n  const raw = value.trim();\n  if (!raw) return value;\n  const lower = raw.toLowerCase();\n  const collapsed = lower.replace(/[\\s_-]+/g, '');\n  if (collapsed === 'nonempty' || collapsed === 'notempty' || collapsed === 'nonblank' || collapsed === 'notblank') {\n    return 'non-empty';\n  }\n  if (collapsed === 'notnull' || collapsed === 'nonnull') {\n    return 'not null';\n  }\n  if (collapsed === 'exists' || collapsed === 'exist' || collapsed === 'present') {\n    return 'present';\n  }\n  if (lower.startsWith('type:') || lower.startsWith('type=')) {\n    const t = lower.slice(5).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  if (lower.startsWith('format:') || lower.startsWith('format=')) {\n    const t = lower.slice(7).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  return value;\n}\n\nfunction normalizeJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n  for (const path of Object.keys(checks)) {\n    if (typeof checks[path] === 'string') {\n      checks[path] = normalizeExpectationToken(checks[path]);\n    }\n  }\n}\nscenarios.forEach(normalizeJsonPathChecks);\n\n// Apply uniqueness safety net to all scenario bodies\nscenarios.forEach(s => { s.request.body = patchBodyForUniqueness(s.request.body); });\n\n// Sync jsonPathChecks with body: if LLM used different email/unique-field values in\n// assertions vs body (common LLM inconsistency), override assertions to match the body.\n// Also apply patchBodyForUniqueness to bare values inside jsonPathChecks.\nfunction syncJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n\n  // Extract top-level string fields from the (already-patched) request body\n  let bodyFields = {};\n  if (s.request?.body && typeof s.request.body === 'string') {\n    try { bodyFields = JSON.parse(s.request.body); } catch { bodyFields = {}; }\n  }\n\n  // Regex: path ends with a known unique field name (case-insensitive)\n  const uniquePathRe = /(?:^|\\.)(?:email|username|user_name|name|code|slug|phone|mobile|ref|sku|handle|login|nickname)$/i;\n\n  const is4xx = Array.isArray(s.expectation.expectedStatus)\n    && s.expectation.expectedStatus.every(c => c >= 400);\n\n  for (const path of Object.keys(checks)) {\n    if (!uniquePathRe.test(path)) continue;\n\n    // For tests that expect only 4xx (error responses): remove assertions on data fields\n    // because the API won't return the created resource.\n    if (is4xx) {\n      delete checks[path];\n      continue;\n    }\n\n    // For 2xx tests: ensure assertion value matches the body field value so they use the\n    // same {{tcUniqueId}} expansion. Determine body field name from the path tail.\n    const fieldMatch = path.match(/([\\w_]+)$/i);\n    if (!fieldMatch) continue;\n    const fieldName = Object.keys(bodyFields).find(\n      k => k.toLowerCase() === fieldMatch[1].toLowerCase()\n    );\n    if (fieldName && typeof bodyFields[fieldName] === 'string') {\n      checks[path] = bodyFields[fieldName];\n    } else {\n      // No matching body field — apply patchBodyForUniqueness logic to the assertion value\n      const curVal = checks[path];\n      if (typeof curVal === 'string') {\n        checks[path] = patchBodyForUniqueness(JSON.stringify({ _v: curVal })).replace(/^\\{\"_v\":\"?|\"?\\}$/g, '') || curVal;\n      }\n    }\n  }\n\n  // Remove empty jsonPathChecks\n  if (Object.keys(checks).length === 0) s.expectation.jsonPathChecks = null;\n}\nscenarios.forEach(syncJsonPathChecks);\n\nreturn [{\n  json: {\n    scenarios,\n    model:      parsed.model      ?? 'unknown',\n    tokensUsed: parsed.tokensUsed ?? 0\n  }\n}];"
+      },
+      "id": "6ac59ad8-e3c6-4e70-b942-5e91b0d5b0c5",
+      "name": "Parse Boundary Response1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        1536
       ]
     },
     {
@@ -430,433 +430,17 @@
         "responseBody": "={{ $json }}",
         "options": {}
       },
-      "id": "6489fdf6-6452-45fa-9554-231e8d09c512",
-      "name": "Respond to Webhook1",
+      "id": "0720ca1a-df4d-481c-ab0d-7f14b65c8da5",
+      "name": "Respond to Webhook4",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1440,
-        -112
-      ]
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "generate-test-cases-unified",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "unified-0001-0001-0001-000000000001",
-      "name": "Webhook Generate Test Cases Unified",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        -1456,
-        -528
-      ],
-      "webhookId": "generate-test-cases-unified"
-    },
-    {
-      "parameters": {
-        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nconst endpoints = body.endpoints;\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload must contain non-empty endpoints array.');\n}\n\nconst promptConfig = body.promptConfig ?? {};\nfor (const key of ['systemPrompt', 'taskInstruction', 'rules', 'responseFormat']) {\n  if (!promptConfig[key] || !String(promptConfig[key]).trim()) {\n    throw new Error('Payload missing promptConfig.' + key + ' from BE.');\n  }\n}\n\nconst callbackUrl = String(body.callbackUrl ?? '').trim();\nif (!callbackUrl || !callbackUrl.startsWith('http')) {\n  throw new Error('callbackUrl is missing or invalid. Check Modules:TestGeneration:N8nIntegration:BeBaseUrl.');\n}\n\nreturn [{\n  json: {\n    testSuiteId: body.testSuiteId ?? '',\n    testSuiteName: body.testSuiteName ?? '',\n    specificationId: body.specificationId ?? '',\n    promptConfig,\n    endpoints,\n    srsRequirements: Array.isArray(body.srsRequirements) ? body.srsRequirements : [],\n    endpointBusinessContexts: body.endpointBusinessContexts ?? {},\n    globalBusinessRules: body.globalBusinessRules ?? '',\n    callbackUrl,\n    callbackApiKey: String(body.callbackApiKey ?? '')\n  }\n}];"
-      },
-      "id": "unified-0002-0002-0002-000000000002",
-      "name": "Parse Unified Input",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -1216,
-        -528
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst promptConfig = input.promptConfig;\nconst endpoints = input.endpoints;\nconst srsRequirements = input.srsRequirements;\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nconst endpointBlocks = endpoints.map((ep, i) => {\n  const prompt = ep.prompt ?? {};\n  const schemas = [];\n  if (Array.isArray(ep.parameterSchemaPayloads) && ep.parameterSchemaPayloads.length > 0) {\n    schemas.push('Parameter schemas:\\n' + ep.parameterSchemaPayloads.join('\\n'));\n  }\n  if (Array.isArray(ep.responseSchemaPayloads) && ep.responseSchemaPayloads.length > 0) {\n    schemas.push('Response schemas:\\n' + ep.responseSchemaPayloads.join('\\n'));\n  }\n  return [\n    '### Endpoint ' + (i + 1),\n    'endpointId: ' + ep.endpointId,\n    'method: ' + ep.httpMethod,\n    'path: ' + ep.path,\n    'operationId: ' + (ep.operationId ?? ''),\n    'orderIndex: ' + (ep.orderIndex ?? i),\n    'dependsOnEndpointIds: ' + JSON.stringify(ep.dependsOnEndpointIds ?? []),\n    'reasonCodes: ' + JSON.stringify(ep.reasonCodes ?? []),\n    'isAuthRelated: ' + Boolean(ep.isAuthRelated),\n    ep.businessContext ? 'businessContext: ' + ep.businessContext : '',\n    prompt.combinedPrompt ? 'combinedPrompt:\\n' + prompt.combinedPrompt : '',\n    prompt.observationPrompt ? 'observationPrompt:\\n' + prompt.observationPrompt : '',\n    prompt.confirmationPromptTemplate ? 'confirmationPromptTemplate:\\n' + prompt.confirmationPromptTemplate : '',\n    ...schemas\n  ].filter(Boolean).join('\\n');\n}).join('\\n\\n');\n\nconst srsBlock = srsRequirements.length > 0\n  ? srsRequirements.map((req, i) => [\n      '### Requirement ' + (i + 1),\n      'id: ' + req.id,\n      'code: ' + (req.code ?? ''),\n      'title: ' + (req.title ?? ''),\n      'type: ' + (req.requirementType ?? ''),\n      'description: ' + (req.description ?? ''),\n      'effectiveConstraints: ' + (req.effectiveConstraints ?? ''),\n      'assumptions: ' + (req.assumptions ?? ''),\n      'ambiguities: ' + (req.ambiguities ?? ''),\n      'confidenceScore: ' + (req.confidenceScore ?? '')\n    ].join('\\n')).join('\\n\\n')\n  : 'No SRS requirements were provided. coveredRequirementIds must be an empty array.';\n\nconst userPrompt = [\n  taskInstruction,\n  '=== SRS REQUIREMENTS: SOURCE OF TRUTH ===',\n  srsBlock,\n  'Use only requirement ids from this SRS section in coveredRequirementIds. If a requirement has explicit status codes in effectiveConstraints, expectation.expectedStatus must include the matching status code.',\n  '=== ORDERED ENDPOINTS ===',\n  endpointBlocks,\n  rules,\n  responseFormat\n].join('\\n\\n');\nreturn [{ json: { ...input, systemPrompt, userPrompt } }];"
-      },
-      "id": "unified-0003-0003-0003-000000000003",
-      "name": "Prepare Unified Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -976,
-        -528
-      ]
-    },
-    {
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.userPrompt }}",
-        "options": {
-          "systemMessage": "={{ $json.systemPrompt }}"
-        }
-      },
-      "id": "unified-0004-0004-0004-000000000004",
-      "name": "AI Agent Generate Unified Tests",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
-      "position": [
-        -736,
-        -528
-      ]
-    },
-    {
-      "parameters": {
-        "options": {}
-      },
-      "id": "unified-0005-0005-0005-000000000005",
-      "name": "Google Gemini Chat Model Unified",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-      "typeVersion": 1.1,
-      "position": [
-        -736,
-        -320
-      ],
-      "credentials": {
-        "googlePalmApi": {
-          "id": "iSvjtYEsFVBSveHN",
-          "name": "Google Gemini(PaLM) Api account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst rawContent = response?.output ?? response?.choices?.[0]?.message?.content ?? null;\nif (!rawContent) throw new Error('LLM returned empty output.');\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fence = String.fromCharCode(96).repeat(3);\nconst fenced = new RegExp(fence + '(?:json)?\\\\s*([\\\\s\\\\S]*?)\\\\s*' + fence, 'i').exec(cleaned);\nif (fenced?.[1]) cleaned = fenced[1].trim();\nif (cleaned.startsWith(fence)) cleaned = cleaned.replace(new RegExp('^' + fence + '(?:json)?\\\\s*', 'i'), '').replace(new RegExp('\\\\s*' + fence + '$', 'i'), '').trim();\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace = cleaned.lastIndexOf('}');\nif (firstBrace >= 0 && lastBrace > firstBrace) cleaned = cleaned.slice(firstBrace, lastBrace + 1);\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\nlet parsed;\ntry { parsed = JSON.parse(cleaned); } catch (e) { throw new Error('Cannot parse LLM JSON: ' + e.message + '. Raw: ' + cleaned.substring(0, 800)); }\nconst sourceCases = Array.isArray(parsed.testCases) ? parsed.testCases : [];\nif (sourceCases.length === 0) throw new Error('LLM response must contain non-empty testCases array.');\nconst validEndpointIds = new Set($('Parse Unified Input').first().json.endpoints.map(ep => String(ep.endpointId).toLowerCase()));\nconst validRequirementIds = new Set($('Parse Unified Input').first().json.srsRequirements.map(req => String(req.id).toLowerCase()));\nconst asArray = (value) => Array.isArray(value) ? value : (value === undefined || value === null ? [] : [value]);\nconst asObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};\nconst asStatusArray = (value) => asArray(value).map(Number).filter(n => Number.isInteger(n) && n >= 100 && n <= 599);\nconst asNullableString = (value) => value === undefined || value === null ? null : (typeof value === 'string' ? value : JSON.stringify(value));\nconst testCases = sourceCases.map((tc, i) => {\n  const endpointId = String(tc.endpointId ?? '').trim();\n  if (!endpointId || !validEndpointIds.has(endpointId.toLowerCase())) throw new Error('testCases[' + i + '].endpointId must match an endpointId from the BE payload.');\n  const coveredRequirementIds = asArray(tc.coveredRequirementIds).map(String).map(x => x.trim()).filter(Boolean);\n  for (const reqId of coveredRequirementIds) {\n    if (!validRequirementIds.has(reqId.toLowerCase())) throw new Error('testCases[' + i + '].coveredRequirementIds contains unknown SRS requirement id ' + reqId + '.');\n  }\n  const request = tc.request ?? {};\n  const expectation = tc.expectation ?? {};\n  const expectedStatus = asStatusArray(expectation.expectedStatus);\n  if (expectedStatus.length === 0) throw new Error('testCases[' + i + '].expectation.expectedStatus must contain at least one HTTP status code.');\n  const requestBody = request.body === undefined || request.body === null ? null : (typeof request.body === 'string' ? request.body : JSON.stringify(request.body));\n  return {\n    endpointId,\n    name: String(tc.name ?? ('Generated test case ' + (i + 1))),\n    description: String(tc.description ?? ''),\n    testType: String(tc.testType ?? 'HappyPath'),\n    priority: String(tc.priority ?? 'Medium'),\n    orderIndex: Number.isInteger(Number(tc.orderIndex)) ? Number(tc.orderIndex) : i,\n    tags: JSON.stringify(asArray(tc.tags).map(String)),\n    request: {\n      httpMethod: String(request.httpMethod ?? 'GET'),\n      url: String(request.url ?? '/'),\n      headers: JSON.stringify(asObject(request.headers)),\n      pathParams: JSON.stringify(asObject(request.pathParams)),\n      queryParams: JSON.stringify(asObject(request.queryParams)),\n      bodyType: String(request.bodyType ?? 'None'),\n      body: requestBody,\n      timeout: Number(request.timeout ?? 30000)\n    },\n    expectation: {\n      expectedStatus,\n      responseSchema: asNullableString(expectation.responseSchema),\n      headerChecks: JSON.stringify(asObject(expectation.headerChecks)),\n      bodyContains: JSON.stringify(asArray(expectation.bodyContains).map(String)),\n      bodyNotContains: JSON.stringify(asArray(expectation.bodyNotContains).map(String)),\n      jsonPathChecks: JSON.stringify(asObject(expectation.jsonPathChecks)),\n      maxResponseTime: expectation.maxResponseTime ?? null\n    },\n    variables: asArray(tc.variables),\n    coveredRequirementIds,\n    traceabilityScore: typeof tc.traceabilityScore === 'number' ? tc.traceabilityScore : null,\n    mappingRationale: tc.mappingRationale ? String(tc.mappingRationale) : ''\n  };\n});\ntestCases.sort((a, b) => a.orderIndex - b.orderIndex);\ntestCases.forEach((tc, i) => { tc.orderIndex = i; });\nconst input = $('Parse Unified Input').first().json;\nreturn [{ json: { callbackUrl: input.callbackUrl, callbackApiKey: input.callbackApiKey, testCases } }];"
-      },
-      "id": "unified-0006-0006-0006-000000000006",
-      "name": "Parse Unified Test Cases",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -496,
-        -528
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.callbackUrl }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "x-callback-api-key",
-              "value": "={{ $json.callbackApiKey }}"
-            },
-            {
-              "name": "ngrok-skip-browser-warning",
-              "value": "true"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ testCases: $json.testCases }) }}",
-        "options": {
-          "timeout": 30000,
-          "response": {
-            "response": {
-              "neverError": false
-            }
-          }
-        }
-      },
-      "id": "unified-0007-0007-0007-000000000007",
-      "name": "POST Unified Callback",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -256,
-        -528
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: \"callback-posted\", testCases: $(\"Parse Unified Test Cases\").first().json.testCases.length }) }}",
-        "options": {
-          "responseCode": 200,
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          }
-        }
-      },
-      "id": "unified-0008-0008-0008-000000000008",
-      "name": "Respond Unified Trigger",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        -16,
-        -528
+        2880,
+        1536
       ]
     }
   ],
-  "pinData": {
-    "Webhook2": [
-      {
-        "json": {
-          "headers": {
-            "host": "tinem226.app.n8n.cloud",
-            "content-length": "46557",
-            "accept-encoding": "gzip, br",
-            "cdn-loop": "cloudflare; loops=1; subreqs=1",
-            "cf-connecting-ip": "171.251.234.94",
-            "cf-ew-via": "15",
-            "cf-ipcountry": "VN",
-            "cf-ray": "9f92105f0d38a047-SIN",
-            "cf-visitor": "{\"scheme\":\"https\"}",
-            "cf-worker": "n8n.cloud",
-            "content-type": "application/json; charset=utf-8",
-            "traceparent": "00-edb3ac692842b65bd80bc773ecf29504-e6d8e58beadc6cad-01",
-            "x-forwarded-for": "171.251.234.94, 162.158.170.74",
-            "x-forwarded-host": "tinem226.app.n8n.cloud",
-            "x-forwarded-port": "443",
-            "x-forwarded-proto": "https",
-            "x-forwarded-server": "traefik-prod-users-gwc-75-6c7789cbbb-tcjrf",
-            "x-is-trusted": "yes",
-            "x-real-ip": "171.251.234.94",
-            "x-request-id": "a43b7252996c4e00aaaf731d98ac9700"
-          },
-          "params": {},
-          "query": {},
-          "body": {
-            "testSuiteId": "6ac23f12-01c5-4cfa-a592-a805894a716b",
-            "testSuiteName": "sfdggsdfg",
-            "globalBusinessRules": "",
-            "srsContext": {
-              "documentTitle": "SRS",
-              "content": "# TÃ i Liá»‡u Kiá»ƒm Thá»­ API - Test Requirements Document\r\n\r\n> **Dá»± Ã¡n:** API Äá»“ Ãn Tá»‘t Nghiá»‡p  \r\n> **Base URL:** `http://localhost:5000/api`  \r\n> **Swagger UI:** `http://localhost:5000/api-docs`  \r\n> **PhiÃªn báº£n tÃ i liá»‡u:** 1.0  \r\n> **NgÃ y táº¡o:** 26/04/2026\r\n\r\n---\r\n\r\n## Má»¥c Lá»¥c\r\n\r\n1. [Tá»•ng Quan Há»‡ Thá»‘ng](#1-tá»•ng-quan-há»‡-thá»‘ng)\r\n2. [HÆ°á»›ng Dáº«n Thiáº¿t Láº­p MÃ´i TrÆ°á»ng Test](#2-hÆ°á»›ng-dáº«n-thiáº¿t-láº­p-mÃ´i-trÆ°á»ng-test)\r\n3. [Quy Æ¯á»›c Chung & Format Response](#3-quy-Æ°á»›c-chung--format-response)\r\n4. [TC-SYS: Kiá»ƒm Thá»­ Health Check](#4-tc-sys-kiá»ƒm-thá»­-health-check)\r\n5. [TC-AUTH: Kiá»ƒm Thá»­ XÃ¡c Thá»±c](#5-tc-auth-kiá»ƒm-thá»­-xÃ¡c-thá»±c)\r\n6. [TC-CAT: Kiá»ƒm Thá»­ Danh Má»¥c (Categories)](#6-tc-cat-kiá»ƒm-thá»­-danh-má»¥c-categories)\r\n7. [TC-PROD: Kiá»ƒm Thá»­ Sáº£n Pháº©m (Products)](#7-tc-prod-kiá»ƒm-thá»­-sáº£n-pháº©m-products)\r\n8. [TC-SEC: Kiá»ƒm Thá»­ Báº£o Máº­t](#8-tc-sec-kiá»ƒm-thá»­-báº£o-máº­t)\r\n9. [Dá»¯ Liá»‡u Test Máº«u (Test Data)](#9-dá»¯-liá»‡u-test-máº«u-test-data)\r\n10. [Checklist Tá»•ng Há»£p](#10-checklist-tá»•ng-há»£p)\r\n\r\n---\r\n\r\n## 1. Tá»•ng Quan Há»‡ Thá»‘ng\r\n\r\n### Danh SÃ¡ch Endpoint\r\n\r\n| NhÃ³m       | Method | Endpoint              | MÃ´ táº£                  | XÃ¡c thá»±c            |\r\n| ---------- | ------ | --------------------- | ---------------------- | ------------------- |\r\n| System     | GET    | `/api/health`         | Kiá»ƒm tra server        | KhÃ´ng               |\r\n| Auth       | POST   | `/api/auth/register`  | ÄÄƒng kÃ½ tÃ i khoáº£n      | KhÃ´ng               |\r\n| Auth       | POST   | `/api/auth/login`     | ÄÄƒng nháº­p              | KhÃ´ng               |\r\n| Categories | GET    | `/api/categories`     | Láº¥y danh sÃ¡ch danh má»¥c | KhÃ´ng               |\r\n| Categories | POST   | `/api/categories`     | Táº¡o danh má»¥c má»›i       | **CÃ³ (Bearer JWT)** |\r\n| Categories | PUT    | `/api/categories/:id` | Cáº­p nháº­t danh má»¥c      | **CÃ³ (Bearer JWT)** |\r\n| Categories | DELETE | `/api/categories/:id` | XÃ³a danh má»¥c           | **CÃ³ (Bearer JWT)** |\r\n| Products   | GET    | `/api/products`       | Láº¥y danh sÃ¡ch sáº£n pháº©m | KhÃ´ng               |\r\n| Products   | POST   | `/api/products`       | Táº¡o sáº£n pháº©m má»›i       | **CÃ³ (Bearer JWT)** |\r\n| Products   | PUT    | `/api/products/:id`   | Cáº­p nháº­t sáº£n pháº©m      | **CÃ³ (Bearer JWT)** |\r\n| Products   | DELETE | `/api/products/:id`   | XÃ³a sáº£n pháº©m           | **CÃ³ (Bearer JWT)** |\r\n\r\n### RÃ ng Buá»™c Dá»¯ Liá»‡u (Validation Rules)\r\n\r\n| Entity   | Field         | Quy táº¯c                                                            |\r\n| -------- | ------------- | ------------------------------------------------------------------ |\r\n| User     | `email`       | Äá»‹nh dáº¡ng email há»£p lá»‡, duy nháº¥t trong há»‡ thá»‘ng, tá»± Ä‘á»™ng lowercase |\r\n| User     | `password`    | Tá»‘i thiá»ƒu 6 kÃ½ tá»±                                                  |\r\n| Category | `name`        | Tá»‘i thiá»ƒu 1 kÃ½ tá»±, duy nháº¥t trong há»‡ thá»‘ng                         |\r\n| Category | `description` | Tuá»³ chá»n (optional), chuá»—i kÃ½ tá»±                                   |\r\n| Product  | `name`        | Tá»‘i thiá»ƒu 1 kÃ½ tá»±                                                  |\r\n| Product  | `price`       | Sá»‘ khÃ´ng Ã¢m (>= 0)                                                 |\r\n| Product  | `stock`       | Sá»‘ nguyÃªn khÃ´ng Ã¢m (>= 0)                                          |\r\n| Product  | `categoryId`  | MongoDB ObjectId há»£p lá»‡, pháº£i tá»“n táº¡i trong DB                     |\r\n\r\n---\r\n\r\n## 2. HÆ°á»›ng Dáº«n Thiáº¿t Láº­p MÃ´i TrÆ°á»ng Test\r\n\r\n### CÃ i Ä‘áº·t\r\n\r\n```\r\n1. Clone project vÃ  cÃ i dependencies: npm install\r\n2. Táº¡o file .env vá»›i cÃ¡c biáº¿n:\r\n   - MONGODB_URI=mongodb://localhost:27017/graduation_project\r\n   - JWT_SECRET=your_secret_key\r\n   - JWT_EXPIRES_IN=1d\r\n   - PORT=5000\r\n3. Khá»Ÿi Ä‘á»™ng server: npm run dev\r\n4. XÃ¡c nháº­n server cháº¡y: GET http://localhost:5000/api/health\r\n```\r\n\r\n### CÃ´ng Cá»¥ Gá»£i Ã\r\n\r\n- **Postman** hoáº·c **Insomnia** Ä‘á»ƒ gá»­i HTTP request\r\n- **Swagger UI** táº¡i `http://localhost:5000/api-docs` Ä‘á»ƒ xem API docs\r\n- **MongoDB Compass** Ä‘á»ƒ kiá»ƒm tra dá»¯ liá»‡u trong DB\r\n\r\n### Láº¥y Token Äá»ƒ Test CÃ¡c API CÃ³ Auth\r\n\r\n```\r\n1. Gá»i POST /api/auth/login vá»›i tÃ i khoáº£n há»£p lá»‡\r\n2. Láº¥y giÃ¡ trá»‹ \"token\" tá»« response body\r\n3. Vá»›i má»—i request cáº§n auth, thÃªm header:\r\n   Authorization: Bearer <token_vá»«a_láº¥y>\r\n```\r\n\r\n---\r\n\r\n## 3. Quy Æ¯á»›c Chung & Format Response\r\n\r\n### Response ThÃ nh CÃ´ng\r\n\r\n```json\r\n{\r\n  \"success\": true,\r\n  \"message\": \"MÃ´ táº£ káº¿t quáº£\",\r\n  \"data\": { ... }\r\n}\r\n```\r\n\r\n### Response Lá»—i\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"MÃ´ táº£ lá»—i\"\r\n}\r\n```\r\n\r\n### Response Lá»—i Validation (Zod)\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Validation failed\",\r\n  \"errors\": {\r\n    \"fieldErrors\": { \"email\": [\"Invalid email\"] },\r\n    \"formErrors\": []\r\n  }\r\n}\r\n```\r\n\r\n### HTTP Status Code Sá»­ Dá»¥ng\r\n\r\n| Code | Ã nghÄ©a                            |\r\n| ---- | ---------------------------------- |\r\n| 200  | ThÃ nh cÃ´ng                         |\r\n| 201  | Táº¡o má»›i thÃ nh cÃ´ng                 |\r\n| 400  | Dá»¯ liá»‡u Ä‘áº§u vÃ o khÃ´ng há»£p lá»‡       |\r\n| 401  | ChÆ°a xÃ¡c thá»±c / token khÃ´ng há»£p lá»‡ |\r\n| 404  | KhÃ´ng tÃ¬m tháº¥y tÃ i nguyÃªn          |\r\n| 409  | Xung Ä‘á»™t dá»¯ liá»‡u (Ä‘Ã£ tá»“n táº¡i)      |\r\n| 500  | Lá»—i server                         |\r\n\r\n---\r\n\r\n## 4. TC-SYS: Kiá»ƒm Thá»­ Health Check\r\n\r\n### TC-SYS-001: Kiá»ƒm tra server Ä‘ang hoáº¡t Ä‘á»™ng\r\n\r\n|               |                                            |\r\n| ------------- | ------------------------------------------ |\r\n| **Endpoint**  | `GET /api/health`                          |\r\n| **MÃ´ táº£**     | XÃ¡c nháº­n server Ä‘ang hoáº¡t Ä‘á»™ng bÃ¬nh thÆ°á»ng |\r\n| **Äiá»u kiá»‡n** | Server Ä‘ang cháº¡y                           |\r\n\r\n**Request:**\r\n\r\n```\r\nGET http://localhost:5000/api/health\r\n```\r\n\r\n**Expected Response (200 OK):**\r\n\r\n```json\r\n{\r\n  \"status\": \"success\",\r\n  \"message\": \"Server is healthy\",\r\n  \"timestamp\": \"2026-04-26T00:00:00.000Z\"\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 200\r\n- [ ] `status` = `\"success\"`\r\n- [ ] `message` = `\"Server is healthy\"`\r\n- [ ] `timestamp` cÃ³ Ä‘á»‹nh dáº¡ng ISO 8601\r\n\r\n---\r\n\r\n### TC-SYS-002: Gá»i route khÃ´ng tá»“n táº¡i\r\n\r\n|              |                                     |\r\n| ------------ | ----------------------------------- |\r\n| **Endpoint** | `GET /api/nonexistent`              |\r\n| **MÃ´ táº£**    | Gá»i Ä‘áº¿n route khÃ´ng Ä‘Æ°á»£c Ä‘á»‹nh nghÄ©a |\r\n\r\n**Request:**\r\n\r\n```\r\nGET http://localhost:5000/api/nonexistent\r\n```\r\n\r\n**Expected Response (404 Not Found):**\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Route not found\"\r\n}\r\n```\r\n\r\n---\r\n\r\n## 5. TC-AUTH: Kiá»ƒm Thá»­ XÃ¡c Thá»±c\r\n\r\n### 5.1 ÄÄƒng KÃ½ (Register)\r\n\r\n**Endpoint:** `POST /api/auth/register`  \r\n**Headers:** `Content-Type: application/json`\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-001: ÄÄƒng kÃ½ thÃ nh cÃ´ng\r\n\r\n|               |                                      |\r\n| ------------- | ------------------------------------ |\r\n| **Loáº¡i test** | Happy Path                           |\r\n| **MÃ´ táº£**     | ÄÄƒng kÃ½ vá»›i email vÃ  password há»£p lá»‡ |\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"tester01@example.com\",\r\n  \"password\": \"123456\"\r\n}\r\n```\r\n\r\n**Expected Response (201 Created):**\r\n\r\n```json\r\n{\r\n  \"success\": true,\r\n  \"message\": \"User registered successfully\",\r\n  \"data\": {\r\n    \"id\": \"<mongodb_objectid>\",\r\n    \"email\": \"tester01@example.com\",\r\n    \"createdAt\": \"<timestamp>\"\r\n  }\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 201\r\n- [ ] `success` = `true`\r\n- [ ] `data.email` trÃ¹ng vá»›i email Ä‘Ã£ Ä‘Äƒng kÃ½ (lowercase)\r\n- [ ] `data.id` lÃ  MongoDB ObjectId há»£p lá»‡\r\n- [ ] `data` **KHÃ”NG** chá»©a trÆ°á»ng `password`\r\n- [ ] `data.createdAt` cÃ³ giÃ¡ trá»‹ timestamp\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-002: ÄÄƒng kÃ½ vá»›i email Ä‘Ã£ tá»“n táº¡i\r\n\r\n|               |                                                    |\r\n| ------------- | -------------------------------------------------- |\r\n| **Loáº¡i test** | Negative - Duplicate                               |\r\n| **Äiá»u kiá»‡n** | Email `tester01@example.com` Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½ trÆ°á»›c |\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"tester01@example.com\",\r\n  \"password\": \"abcdef\"\r\n}\r\n```\r\n\r\n**Expected Response (409 Conflict):**\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Email already exists\"\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 409\r\n- [ ] `success` = `false`\r\n- [ ] Message Ä‘Ãºng: `\"Email already exists\"`\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-003: Email khÃ´ng há»£p lá»‡\r\n\r\n|               |                       |\r\n| ------------- | --------------------- |\r\n| **Loáº¡i test** | Negative - Validation |\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"not-an-email\",\r\n  \"password\": \"123456\"\r\n}\r\n```\r\n\r\n**Expected Response (400 Bad Request):**\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Validation failed\",\r\n  \"errors\": {\r\n    \"fieldErrors\": {\r\n      \"email\": [\"Invalid email\"]\r\n    },\r\n    \"formErrors\": []\r\n  }\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 400\r\n- [ ] `errors.fieldErrors.email` cÃ³ chá»©a thÃ´ng bÃ¡o lá»—i\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-004: Password quÃ¡ ngáº¯n (dÆ°á»›i 6 kÃ½ tá»±)\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"newuser@example.com\",\r\n  \"password\": \"123\"\r\n}\r\n```\r\n\r\n**Expected Response (400 Bad Request):**\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Validation failed\",\r\n  \"errors\": {\r\n    \"fieldErrors\": {\r\n      \"password\": [\"String must contain at least 6 character(s)\"]\r\n    },\r\n    \"formErrors\": []\r\n  }\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 400\r\n- [ ] `errors.fieldErrors.password` cÃ³ chá»©a thÃ´ng bÃ¡o lá»—i\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-005: Thiáº¿u trÆ°á»ng báº¯t buá»™c\r\n\r\n**Test 5a - Thiáº¿u email:**\r\n\r\n```json\r\n{\r\n  \"password\": \"123456\"\r\n}\r\n```\r\n\r\n**Test 5b - Thiáº¿u password:**\r\n\r\n```json\r\n{\r\n  \"email\": \"newuser@example.com\"\r\n}\r\n```\r\n\r\n**Test 5c - Body rá»—ng:**\r\n\r\n```json\r\n{}\r\n```\r\n\r\n**Expected:** Táº¥t cáº£ tráº£ vá» 400, `message` = `\"Validation failed\"`, `errors.fieldErrors` chá»©a thÃ´ng bÃ¡o trÆ°á»ng bá»‹ thiáº¿u.\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-006: Email dáº¡ng chá»¯ hoa (case-insensitive)\r\n\r\n|           |                                              |\r\n| --------- | -------------------------------------------- |\r\n| **MÃ´ táº£** | Há»‡ thá»‘ng tá»± Ä‘á»™ng chuyá»ƒn email sang lowercase |\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"UPPER@EXAMPLE.COM\",\r\n  \"password\": \"123456\"\r\n}\r\n```\r\n\r\n**Expected Response (201):**  \r\n`data.email` = `\"upper@example.com\"` (Ä‘Ã£ lowercase)\r\n\r\n---\r\n\r\n#### TC-AUTH-REG-007: Dá»¯ liá»‡u biÃªn (Boundary)\r\n\r\n| Test                         | Email                 | Password   | Expected        |\r\n| ---------------------------- | --------------------- | ---------- | --------------- |\r\n| Password Ä‘Ãºng 6 kÃ½ tá»±        | `boundary01@test.com` | `123456`   | 201 Created     |\r\n| Password 5 kÃ½ tá»±             | `boundary02@test.com` | `12345`    | 400 Bad Request |\r\n| Password ráº¥t dÃ i (100 kÃ½ tá»±) | `boundary03@test.com` | `a` \\* 100 | 201 Created     |\r\n\r\n---\r\n\r\n### 5.2 ÄÄƒng Nháº­p (Login)\r\n\r\n**Endpoint:** `POST /api/auth/login`  \r\n**Headers:** `Content-Type: application/json`\r\n\r\n---\r\n\r\n#### TC-AUTH-LOG-001: ÄÄƒng nháº­p thÃ nh cÃ´ng\r\n\r\n|               |                                                  |\r\n| ------------- | ------------------------------------------------ |\r\n| **Loáº¡i test** | Happy Path                                       |\r\n| **Äiá»u kiá»‡n** | TÃ i khoáº£n `tester01@example.com` Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½ |\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"tester01@example.com\",\r\n  \"password\": \"123456\"\r\n}\r\n```\r\n\r\n**Expected Response (200 OK):**\r\n\r\n```json\r\n{\r\n  \"success\": true,\r\n  \"message\": \"Login successful\",\r\n  \"data\": {\r\n    \"token\": \"<jwt_token_string>\"\r\n  }\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 200\r\n- [ ] `success` = `true`\r\n- [ ] `data.token` lÃ  chuá»—i JWT (format: `xxxxx.yyyyy.zzzzz`)\r\n- [ ] Token cÃ³ thá»ƒ decode vÃ  chá»©a `userId`, `email`\r\n\r\n---\r\n\r\n#### TC-AUTH-LOG-002: Sai password\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\r\n  \"email\": \"tester01@example.com\",\r\n  \"password\": \"wrongpassword\"\r\n}\r\n```\r\n\r\n**Expected Response (401 Unauthorized):**\r\n\r\n```json\r\n{\r\n  \"success\": false,\r\n  \"message\": \"Invalid email or password\"\r\n}\r\n```\r\n\r\n**Äiá»ƒm kiá»ƒm tra:**\r\n\r\n- [ ] Status code = 401\r\n- [ ] ThÃ´ng bÃ¡o lá»—i **khÃ´ng tiáº¿t lá»™** email Ä‘Ãºng/sai hay password Ä‘Ãºng/sai (trÃ¡nh enumeration)\r\n\r\n---\r\n\r\n#### TC-AUTH-LOG-003: Email khÃ´ng tá»“n táº¡i\r\n\r\n**Request Body:**\r\n\r\n```json\r\n{\n...[truncated]",
-              "requirements": [
-                {
-                  "code": "REQ-002",
-                  "title": "User Registration",
-                  "description": "The system should allow users to register with a valid email and password.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "email is valid and unique",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    },
-                    {
-                      "constraint": "password is at least 6 characters long",
-                      "expectedOutcome": null,
-                      "priority": "Medium"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-001",
-                  "title": "System Health Check",
-                  "description": "The system should have a health check endpoint that returns a success message when the server is running.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "status code = 200",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    },
-                    {
-                      "constraint": "response body contains 'Server is healthy'",
-                      "expectedOutcome": null,
-                      "priority": "Medium"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-003",
-                  "title": "User Login",
-                  "description": "The system should allow registered users to log in with their email and password.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "email and password are correct",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    },
-                    {
-                      "constraint": "token is returned in the response body",
-                      "expectedOutcome": null,
-                      "priority": "Medium"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-004",
-                  "title": "Category Creation",
-                  "description": "The system should allow users to create categories with a name and description.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "category name is unique",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    },
-                    {
-                      "constraint": "category description is optional",
-                      "expectedOutcome": null,
-                      "priority": "Low"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-005",
-                  "title": "Product Creation",
-                  "description": "The system should allow users to create products with a name, price, stock, and category.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "product name is unique",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    },
-                    {
-                      "constraint": "price is a non-negative number",
-                      "expectedOutcome": null,
-                      "priority": "Medium"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-006",
-                  "title": "Security - Password Hashing",
-                  "description": "The system should hash user passwords before storing them in the database.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "passwords are hashed before storage",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    }
-                  ],
-                  "endpointId": null
-                },
-                {
-                  "code": "REQ-007",
-                  "title": "Security - Token Expiration",
-                  "description": "The system should expire tokens after a certain period of inactivity.",
-                  "testableConstraints": [
-                    {
-                      "constraint": "tokens expire after a certain period of inactivity",
-                      "expectedOutcome": null,
-                      "priority": "High"
-                    }
-                  ],
-                  "endpointId": null
-                }
-              ]
-            },
-            "algorithmProfile": {
-              "useObservationConfirmationPrompting": true,
-              "useDependencyAwareOrdering": true,
-              "useSchemaRelationshipAnalysis": true,
-              "useSemanticTokenMatching": true,
-              "useFeedbackLoopContext": true
-            },
-            "promptConfig": {
-              "systemPrompt": "You are a precise API test engineer. Your task is to generate test expectations for API endpoints based on TWO sources:\r\n1. The OpenAPI specification provided (primary source).\r\n2. User-provided business rules (supplementary source, if any).\r\n\r\nRULES:\r\n- For spec-based constraints: only generate constraints DIRECTLY supported by the specification text.\r\n- For business-rule constraints: generate constraints based on user-provided rules. Mark these with source 'business_rule'.\r\n- Do NOT infer or assume constraints not stated in the spec or business rules.\r\n- Each constraint MUST reference the specific source that supports it.\r\n- Output constraints as structured JSON objects.\r\n- If examples are provided in the spec, cross-check your constraints against them.\r\n\r\nOUTPUT FORMAT (JSON array):\r\n[\r\n  {\r\n    \"field\": \"response.body.id\",\r\n    \"constraint\": \"must be a non-empty string\",\r\n    \"type\": \"type_check|value_check|presence_check|format_check|range_check|relationship_check|business_rule_check\",\r\n    \"source\": \"spec|business_rule\",\r\n    \"evidence\": \"Schema defines id as { type: string, format: uuid }\",\r\n    \"confidence\": \"high|medium\",\r\n    \"assertion\": \"expect(response.body.id).toBeTyp",
-              "taskInstruction": "Generate happy-path, boundary, and negative test scenarios for this ordered REST API sequence (suite: sfdggsdfg).\r\n\r\n=== COVERAGE TARGET GUIDE (adaptive, not hard cap) ===\r\n- [8] GET /api/products: target 5 scenarios, prioritize HappyPath, Negative.\r\n- [9] DELETE /api/categories/{id}: target 5 scenarios, prioritize HappyPath, Boundary, Negative.\r\n- [10] DELETE /api/products/{id}: target 5 scenarios, prioritize HappyPath, Boundary, Negative.",
-              "rules": "=== RULES ===\n1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 5 scenarios total; POST, PUT, and PATCH endpoints need exactly 15 scenarios total; other methods default to 15 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n   - For GET/DELETE, include the 5 highest-value checks covering happy-path, boundary, and negative cases.\n2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n3b. If the boundary value equals a valid minimum/maximum per SRS, expectedStatus must be 2xx (success). Use 4xx only when the constraint is violated or when SRS explicitly says the boundary value fails.\n4. Negative: invalid type, missing required field, wrong auth, forbidden access, not found.\n5. DYNAMIC DATA â€” MANDATORY rules for all test types and all API domains:\n   a) UNIQUENESS: For ANY field that must be unique per run (email, username, code, slug, phone, name, sku, ref, etc.), embed {{tcUniqueId}} in the value. The BE resolves {{tcUniqueId}} to a fresh 8-char hex per execution. Use regardless of API type: email â†’ \"user_{{tcUniqueId}}@yourdomain.com\", username â†’ \"user_{{tcUniqueId}}\", productCode â†’ \"PROD_{{tcUniqueId}}\". NEVER invent your own suffixes â€” always use {{tcUniqueId}}.\n   b) CROSS-TEST VARIABLES: The execution engine AUTOMATICALLY extracts ALL primitive fields from every successful (2xx) POST/PUT/PATCH request body into a shared variable bag, keyed by exact field name. Downstream tests reference them as {{fieldName}} directly. If a prior register test sent {email, password, name}, then {{email}}, {{password}}, {{name}} are all available. If a prior create-product test sent {name, price}, then {{name}}, {{price}} are available. Semantic aliases: {{registeredEmail}} = {{email}} from first register, {{registeredPassword}} = {{password}} from first register.\n   c) RESPONSE IDs: Engine also auto-extracts IDs from successful response bodies (e.g. {{productId}}, {{orderId}} from $.data.id). Add explicit 'variables' rules only when you need a non-standard path.\n   d) FLOW CHAINS (apply to ALL API types, not just auth):\n      - HappyPath create/register: use {{tcUniqueId}} for all unique fields. No explicit variable rules needed for primitive request body fields.\n      - HappyPath login/get/update: use {{fieldName}} from the prior successful test (e.g. {{email}}, {{name}}, {{productId}}). Do NOT hardcode values.\n      - Negative 'duplicate value' tests: use {{<fieldName>}} matching the conflicting field (e.g. {{email}} for duplicate email, {{name}} for duplicate product name) â€” NOT a new unique value.\n      - Negative 'not found' tests: use \"nonexistent_{{tcUniqueId}}\" to guarantee the value does not exist.\n      - Tests needing a prior resource ID: use {{<resource>Id}} (e.g. {{productId}}, {{orderId}}, {{userId}}).\n6. endpointId must be the EXACT UUID from input.\n7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n8. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n9. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n14. EXPECTATION TOKENS (GENERALIZED): For jsonPathChecks values, use canonical tokens only: \"present\", \"not null\", \"non-empty\", \"string\", \"number\", \"boolean\", \"array\", \"object\", \"uuid\", \"datetime\", or regex:<pattern>. Avoid camelCase tokens like nonEmpty/notEmpty. Do not assert full message strings or session-specific values (token/id/timestamp); use existence/type/regex instead.\n15. AUTH MODE: For Unauthorized/Missing Token tests, set request.headers to include \"X-Test-Auth-Mode\": \"none\" and do NOT send Authorization. For Invalid",
-              "responseFormat": "=== RESPONSE FORMAT ===\nReturn ONLY this JSON structure:\n{\n  \"scenarios\": [\n    {\n      \"endpointId\": \"<exact UUID>\",\n      \"scenarioName\": \"<short name e.g. 'Missing required field: email'>\",\n      \"description\": \"<one sentence>\",\n      \"testType\": \"HappyPath|Boundary|Negative\",\n      \"priority\": \"High|Medium|Low\",\n      \"tags\": [\"boundary\"],\n      \"request\": {\n        \"httpMethod\": \"<GET|POST|PUT|DELETE|PATCH>\",\n        \"url\": \"<path>\",\n        \"headers\": null,\n        \"pathParams\": {},\n        \"queryParams\": {},\n        \"bodyType\": \"None|JSON|FormData|UrlEncoded|Raw\",\n        \"body\": \"<serialized request payload or null>\",\n        \"timeout\": 30000\n      },\n      \"expectation\": {\n        \"expectedStatus\": [400],\n        \"bodyContains\": [\"error\", \"required\"],\n        \"bodyNotContains\": null,\n        \"jsonPathChecks\": {\"$.success\": \"false\"}\n      },\n      \"coveredRequirementCodes\": [\"REQ-001\"],\n      \"variables\": []\n    }\n  ],\n  \"model\": \"<model name>\",\n  \"tokensUsed\": 0\n}"
-            },
-            "endpoints": [
-              {
-                "endpointId": "10b60524-8d5a-4a44-a79f-3b224fe960c0",
-                "httpMethod": "GET",
-                "path": "/api/products",
-                "operationId": null,
-                "orderIndex": 8,
-                "businessContext": "",
-                "feedbackContext": "",
-                "prompt": {
-                  "systemPrompt": "You are a precise API test engineer. Your task is to generate test expectations for API endpoints based on TWO sources:\r\n1. The OpenAPI specification provided (primary source).\r\n2. User-provided business rules (supplementary source, if any).\r\n\r\nRULES:\r\n- For spec-based constraints: only generate constraints DIRECTLY supported by the specification text.\r\n- For business-rule constraints: generate constraints based on user-provided rules. Mark these with source 'business_rule'.\r\n- Do NOT infer or assume constraints not stated in the spec or business rules.\r\n- Each constraint MUST reference the specific source that supports it.\r\n- Output constraints as structured JSON objects.\r\n- If examples are provided in the spec, cross-check your constraints against them.\r\n\r\nOUTPUT FORMAT (JSON array):\r\n[\r\n  {\r\n    \"field\": \"response.body.id\",\r\n    \"constraint\": \"must be a non-empty string\",\r\n    \"type\": \"type_check|value_check|presence_check|format_check|range_check|relationship_check|business_rule_check\",\r\n    \"source\": \"spec|business_rule\",\r\n    \"evidence\": \"Schema defines id as { type: string, format: uuid }\",\r\n    \"confidence\": \"high|medium\",\r\n    \"assertion\": \"expect(response.body.id).toBeTyp",
-                  "combinedPrompt": "# Generate Test Expectations for API Endpoint\r\n\r\nFollow this two-step process to generate ACCURATE test expectations:\r\n\r\n## Step 1: Observe\r\nRead the API specification below carefully. List ALL constraints you can find about the response.\r\nLook for: types, formats, required fields, enums, ranges, patterns, relationships.\r\nAlso check for any user-provided business rules listed in the spec block below.\r\n\r\n## Step 2: Confirm\r\nFor EACH constraint from Step 1:\r\n- Find the EXACT text in the spec that supports it.\r\n- If examples exist, verify consistency.\r\n- REMOVE any constraint you cannot directly back with spec evidence.\r\n- Only keep constraints relevant to happy-path (2xx) testing.\r\n\r\n## Step 3: Output\r\nOutput ONLY confirmed constraints as a JSON array (see system prompt for format).\r\n\r\n---\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** GET\r\n**Path:** /api/products\r\n\r\n### Responses\r\n- **200**: Products list",
-                  "observationPrompt": "# Phase 1: Observation\r\n\r\nAnalyze the following API endpoint specification and list ALL testable constraints you observe.\r\nFor each constraint, note:\r\n1. Which field/property it applies to\r\n2. What the constraint is (type, format, required, range, etc.)\r\n3. Where in the spec you found it\r\n\r\nFocus on these categories:\r\n- **Type checks**: field types (string, number, boolean, array, object)\r\n- **Format checks**: specific formats (uuid, date-time, email, uri)\r\n- **Presence checks**: required fields that must be in the response\r\n- **Value checks**: specific values, enums, patterns\r\n- **Range checks**: min/max for numbers, minLength/maxLength for strings\r\n- **Relationship checks**: relationships between fields (e.g., createdAt <= updatedAt)\r\n- **Business rule checks**: constraints from user-provided business rules (if any)\r\n\r\nList ALL constraints, even obvious ones. Do NOT filter yet.\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** GET\r\n**Path:** /api/products\r\n\r\n### Responses\r\n- **200**: Products list",
-                  "confirmationPromptTemplate": "# Phase 2: Confirmation\r\n\r\nYou previously identified the following constraints for `GET /api/products`:\r\n\r\n{OBSERVATION_RESULTS}\r\n\r\nNow CONFIRM each constraint:\r\n\r\nFor each constraint:\r\n1. **Find evidence**: Quote the EXACT text from the spec that supports this constraint.\r\n2. **Cross-check examples**: If the spec includes examples, verify the constraint is consistent with them.\r\n3. **Verify applicability**: Is this constraint for a happy-path (2xx) test case?\r\n4. **Decision**: KEEP or REMOVE. Remove if:\r\n   - No direct evidence in the spec or business rules (you inferred it)\r\n   - Contradicted by examples\r\n   - Only applies to error cases (4xx/5xx)\r\n   - Too implementation-specific (e.g., response time)\r\n\r\nOutput ONLY confirmed constraints in the JSON format specified in the system prompt.\r\nSet confidence to 'high' if evidence is explicit, 'medium' if based on schema type inference."
-                },
-                "parameterSchemaPayloads": [],
-                "responseSchemaPayloads": [],
-                "parameterDetails": [],
-                "errorResponses": {}
-              },
-              {
-                "endpointId": "8d1f97b8-4a67-4c1f-bccf-76f5d561994e",
-                "httpMethod": "DELETE",
-                "path": "/api/categories/{id}",
-                "operationId": null,
-                "orderIndex": 9,
-                "businessContext": "",
-                "feedbackContext": "",
-                "prompt": {
-                  "systemPrompt": "You are a precise API test engineer. Your task is to generate test expectations for API endpoints based on TWO sources:\r\n1. The OpenAPI specification provided (primary source).\r\n2. User-provided business rules (supplementary source, if any).\r\n\r\nRULES:\r\n- For spec-based constraints: only generate constraints DIRECTLY supported by the specification text.\r\n- For business-rule constraints: generate constraints based on user-provided rules. Mark these with source 'business_rule'.\r\n- Do NOT infer or assume constraints not stated in the spec or business rules.\r\n- Each constraint MUST reference the specific source that supports it.\r\n- Output constraints as structured JSON objects.\r\n- If examples are provided in the spec, cross-check your constraints against them.\r\n\r\nOUTPUT FORMAT (JSON array):\r\n[\r\n  {\r\n    \"field\": \"response.body.id\",\r\n    \"constraint\": \"must be a non-empty string\",\r\n    \"type\": \"type_check|value_check|presence_check|format_check|range_check|relationship_check|business_rule_check\",\r\n    \"source\": \"spec|business_rule\",\r\n    \"evidence\": \"Schema defines id as { type: string, format: uuid }\",\r\n    \"confidence\": \"high|medium\",\r\n    \"assertion\": \"expect(response.body.id).toBeTyp",
-                  "combinedPrompt": "# Generate Test Expectations for API Endpoint\r\n\r\nFollow this two-step process to generate ACCURATE test expectations:\r\n\r\n## Step 1: Observe\r\nRead the API specification below carefully. List ALL constraints you can find about the response.\r\nLook for: types, formats, required fields, enums, ranges, patterns, relationships.\r\nAlso check for any user-provided business rules listed in the spec block below.\r\n\r\n## Step 2: Confirm\r\nFor EACH constraint from Step 1:\r\n- Find the EXACT text in the spec that supports it.\r\n- If examples exist, verify consistency.\r\n- REMOVE any constraint you cannot directly back with spec evidence.\r\n- Only keep constraints relevant to happy-path (2xx) testing.\r\n\r\n## Step 3: Output\r\nOutput ONLY confirmed constraints as a JSON array (see system prompt for format).\r\n\r\n---\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** DELETE\r\n**Path:** /api/categories/{id}\r\n\r\n### Parameters\r\n- **id** (in: path, required: True)\r\n  Description: type=string\r\n  Schema: `{\"type\": \"string\"}`\r\n\r\n### Request Body Schema\r\n```json\r\n{\"type\": \"string\"}\r\n```\r\n\r\n### Responses\r\n- **200**: Category deleted\r\n\r\n\n\n## Cross-Endpoint Context\r\n\r\nThis endpoint is tested AFTER the following endpoints (in order):\r\n- `GET /api/products` (no description)\r\n\r\nConsider data produced by previous endpoints when generating expectations.\r\nFor example, if POST /users was called before GET /users/{id}, the response should match the created user.",
-                  "observationPrompt": "# Phase 1: Observation\r\n\r\nAnalyze the following API endpoint specification and list ALL testable constraints you observe.\r\nFor each constraint, note:\r\n1. Which field/property it applies to\r\n2. What the constraint is (type, format, required, range, etc.)\r\n3. Where in the spec you found it\r\n\r\nFocus on these categories:\r\n- **Type checks**: field types (string, number, boolean, array, object)\r\n- **Format checks**: specific formats (uuid, date-time, email, uri)\r\n- **Presence checks**: required fields that must be in the response\r\n- **Value checks**: specific values, enums, patterns\r\n- **Range checks**: min/max for numbers, minLength/maxLength for strings\r\n- **Relationship checks**: relationships between fields (e.g., createdAt <= updatedAt)\r\n- **Business rule checks**: constraints from user-provided business rules (if any)\r\n\r\nList ALL constraints, even obvious ones. Do NOT filter yet.\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** DELETE\r\n**Path:** /api/categories/{id}\r\n\r\n### Parameters\r\n- **id** (in: path, required: True)\r\n  Description: type=string\r\n  Schema: `{\"type\": \"string\"}`\r\n\r\n### Request Body Schema\r\n```json\r\n{\"type\": \"string\"}\r\n```\r\n\r\n### Responses\r\n- **200**: Category deleted\r\n\r\n\n\n## Cross-Endpoint Context\r\n\r\nThis endpoint is tested AFTER the following endpoints (in order):\r\n- `GET /api/products` (no description)\r\n\r\nConsider data produced by previous endpoints when generating expectations.\r\nFor example, if POST /users was called before GET /users/{id}, the response should match the created user.",
-                  "confirmationPromptTemplate": "# Phase 2: Confirmation\r\n\r\nYou previously identified the following constraints for `DELETE /api/categories/{id}`:\r\n\r\n{OBSERVATION_RESULTS}\r\n\r\nNow CONFIRM each constraint:\r\n\r\nFor each constraint:\r\n1. **Find evidence**: Quote the EXACT text from the spec that supports this constraint.\r\n2. **Cross-check examples**: If the spec includes examples, verify the constraint is consistent with them.\r\n3. **Verify applicability**: Is this constraint for a happy-path (2xx) test case?\r\n4. **Decision**: KEEP or REMOVE. Remove if:\r\n   - No direct evidence in the spec or business rules (you inferred it)\r\n   - Contradicted by examples\r\n   - Only applies to error cases (4xx/5xx)\r\n   - Too implementation-specific (e.g., response time)\r\n\r\nOutput ONLY confirmed constraints in the JSON format specified in the system prompt.\r\nSet confidence to 'high' if evidence is explicit, 'medium' if based on schema type inference."
-                },
-                "parameterSchemaPayloads": [
-                  "{\"type\": \"string\"}"
-                ],
-                "responseSchemaPayloads": [],
-                "parameterDetails": [
-                  {
-                    "name": "id",
-                    "location": "Path",
-                    "dataType": "string",
-                    "format": null,
-                    "isRequired": true,
-                    "defaultValue": ""
-                  }
-                ],
-                "errorResponses": {}
-              },
-              {
-                "endpointId": "0f3b7eff-f997-4f87-8a6c-3d2eb0837eac",
-                "httpMethod": "DELETE",
-                "path": "/api/products/{id}",
-                "operationId": null,
-                "orderIndex": 10,
-                "businessContext": "",
-                "feedbackContext": "",
-                "prompt": {
-                  "systemPrompt": "You are a precise API test engineer. Your task is to generate test expectations for API endpoints based on TWO sources:\r\n1. The OpenAPI specification provided (primary source).\r\n2. User-provided business rules (supplementary source, if any).\r\n\r\nRULES:\r\n- For spec-based constraints: only generate constraints DIRECTLY supported by the specification text.\r\n- For business-rule constraints: generate constraints based on user-provided rules. Mark these with source 'business_rule'.\r\n- Do NOT infer or assume constraints not stated in the spec or business rules.\r\n- Each constraint MUST reference the specific source that supports it.\r\n- Output constraints as structured JSON objects.\r\n- If examples are provided in the spec, cross-check your constraints against them.\r\n\r\nOUTPUT FORMAT (JSON array):\r\n[\r\n  {\r\n    \"field\": \"response.body.id\",\r\n    \"constraint\": \"must be a non-empty string\",\r\n    \"type\": \"type_check|value_check|presence_check|format_check|range_check|relationship_check|business_rule_check\",\r\n    \"source\": \"spec|business_rule\",\r\n    \"evidence\": \"Schema defines id as { type: string, format: uuid }\",\r\n    \"confidence\": \"high|medium\",\r\n    \"assertion\": \"expect(response.body.id).toBeTyp",
-                  "combinedPrompt": "# Generate Test Expectations for API Endpoint\r\n\r\nFollow this two-step process to generate ACCURATE test expectations:\r\n\r\n## Step 1: Observe\r\nRead the API specification below carefully. List ALL constraints you can find about the response.\r\nLook for: types, formats, required fields, enums, ranges, patterns, relationships.\r\nAlso check for any user-provided business rules listed in the spec block below.\r\n\r\n## Step 2: Confirm\r\nFor EACH constraint from Step 1:\r\n- Find the EXACT text in the spec that supports it.\r\n- If examples exist, verify consistency.\r\n- REMOVE any constraint you cannot directly back with spec evidence.\r\n- Only keep constraints relevant to happy-path (2xx) testing.\r\n\r\n## Step 3: Output\r\nOutput ONLY confirmed constraints as a JSON array (see system prompt for format).\r\n\r\n---\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** DELETE\r\n**Path:** /api/products/{id}\r\n\r\n### Parameters\r\n- **id** (in: path, required: True)\r\n  Description: type=string\r\n  Schema: `{\"type\": \"string\"}`\r\n\r\n### Request Body Schema\r\n```json\r\n{\"type\": \"string\"}\r\n```\r\n\r\n### Responses\r\n- **200**: Product deleted\r\n\r\n\n\n## Cross-Endpoint Context\r\n\r\nThis endpoint is tested AFTER the following endpoints (in order):\r\n- `GET /api/products` (no description)\r\n- `DELETE /api/categories/{id}` (no description)\r\n\r\nConsider data produced by previous endpoints when generating expectations.\r\nFor example, if POST /users was called before GET /users/{id}, the response should match the created user.",
-                  "observationPrompt": "# Phase 1: Observation\r\n\r\nAnalyze the following API endpoint specification and list ALL testable constraints you observe.\r\nFor each constraint, note:\r\n1. Which field/property it applies to\r\n2. What the constraint is (type, format, required, range, etc.)\r\n3. Where in the spec you found it\r\n\r\nFocus on these categories:\r\n- **Type checks**: field types (string, number, boolean, array, object)\r\n- **Format checks**: specific formats (uuid, date-time, email, uri)\r\n- **Presence checks**: required fields that must be in the response\r\n- **Value checks**: specific values, enums, patterns\r\n- **Range checks**: min/max for numbers, minLength/maxLength for strings\r\n- **Relationship checks**: relationships between fields (e.g., createdAt <= updatedAt)\r\n- **Business rule checks**: constraints from user-provided business rules (if any)\r\n\r\nList ALL constraints, even obvious ones. Do NOT filter yet.\r\n\r\n## API Endpoint Specification\r\n\r\n**Method:** DELETE\r\n**Path:** /api/products/{id}\r\n\r\n### Parameters\r\n- **id** (in: path, required: True)\r\n  Description: type=string\r\n  Schema: `{\"type\": \"string\"}`\r\n\r\n### Request Body Schema\r\n```json\r\n{\"type\": \"string\"}\r\n```\r\n\r\n### Responses\r\n- **200**: Product deleted\r\n\r\n\n\n## Cross-Endpoint Context\r\n\r\nThis endpoint is tested AFTER the following endpoints (in order):\r\n- `GET /api/products` (no description)\r\n- `DELETE /api/categories/{id}` (no description)\r\n\r\nConsider data produced by previous endpoints when generating expectations.\r\nFor example, if POST /users was called before GET /users/{id}, the response should match the created user.",
-                  "confirmationPromptTemplate": "# Phase 2: Confirmation\r\n\r\nYou previously identified the following constraints for `DELETE /api/products/{id}`:\r\n\r\n{OBSERVATION_RESULTS}\r\n\r\nNow CONFIRM each constraint:\r\n\r\nFor each constraint:\r\n1. **Find evidence**: Quote the EXACT text from the spec that supports this constraint.\r\n2. **Cross-check examples**: If the spec includes examples, verify the constraint is consistent with them.\r\n3. **Verify applicability**: Is this constraint for a happy-path (2xx) test case?\r\n4. **Decision**: KEEP or REMOVE. Remove if:\r\n   - No direct evidence in the spec or business rules (you inferred it)\r\n   - Contradicted by examples\r\n   - Only applies to error cases (4xx/5xx)\r\n   - Too implementation-specific (e.g., response time)\r\n\r\nOutput ONLY confirmed constraints in the JSON format specified in the system prompt.\r\nSet confidence to 'high' if evidence is explicit, 'medium' if based on schema type inference."
-                },
-                "parameterSchemaPayloads": [
-                  "{\"type\": \"string\"}"
-                ],
-                "responseSchemaPayloads": [],
-                "parameterDetails": [
-                  {
-                    "name": "id",
-                    "location": "Path",
-                    "dataType": "string",
-                    "format": null,
-                    "isRequired": true,
-                    "defaultValue": ""
-                  }
-                ],
-                "errorResponses": {}
-              }
-            ]
-          },
-          "webhookUrl": "https://tinem226.app.n8n.cloud/webhook/generate-llm-suggestions",
-          "executionMode": "production"
-        },
-        "pairedItem": {
-          "item": 0
-        }
-      }
-    ]
-  },
+  "pinData": {},
   "connections": {
     "Parse Input": {
       "main": [
@@ -913,9 +497,15 @@
         ]
       ]
     },
-    "DeepSeek Chat Model": {
+    "Groq Chat Model4": {
       "ai_languageModel": [
-        []
+        [
+          {
+            "node": "AI Agent (Gemini)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
       ]
     },
     "Webhook": {
@@ -1052,141 +642,58 @@
     },
     "Google Gemini Chat Model": {
       "ai_languageModel": [
-        [
-          {
-            "node": "AI Agent (Gemini)2",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
-    "Prepare Boundary Prompt": {
+    "AI Agent (Gemini)": {
       "main": [
         [
           {
-            "node": "AI Agent (Gemini)2",
+            "node": "Parse Boundary Response1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Boundary Response": {
+    "Webhook4": {
       "main": [
         [
           {
-            "node": "Respond to Webhook1",
+            "node": "Parse Input4",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Webhook2": {
+    "Parse Input4": {
       "main": [
         [
           {
-            "node": "Parse Input2",
+            "node": "Prepare Boundary Prompt1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Input2": {
+    "Prepare Boundary Prompt1": {
       "main": [
         [
           {
-            "node": "Prepare Boundary Prompt",
+            "node": "AI Agent (Gemini)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent (Gemini)2": {
+    "Parse Boundary Response1": {
       "main": [
         [
           {
-            "node": "Parse Boundary Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Webhook Generate Test Cases Unified": {
-      "main": [
-        [
-          {
-            "node": "Parse Unified Input",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Unified Input": {
-      "main": [
-        [
-          {
-            "node": "Prepare Unified Prompt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Unified Prompt": {
-      "main": [
-        [
-          {
-            "node": "AI Agent Generate Unified Tests",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Google Gemini Chat Model Unified": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "AI Agent Generate Unified Tests",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AI Agent Generate Unified Tests": {
-      "main": [
-        [
-          {
-            "node": "Parse Unified Test Cases",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Unified Test Cases": {
-      "main": [
-        [
-          {
-            "node": "POST Unified Callback",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "POST Unified Callback": {
-      "main": [
-        [
-          {
-            "node": "Respond Unified Trigger",
+            "node": "Respond to Webhook4",
             "type": "main",
             "index": 0
           }
@@ -1199,7 +706,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "8503204f-3128-4e95-ac0e-f1b3e8a84c4b",
+  "versionId": "b6762a4a-2581-458f-be69-2cffb96e5b9c",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "c8303d773e04f734681461843d2c1ac65903f7fb8c55a3f01d55581364ff0b9c"
