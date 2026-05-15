@@ -232,6 +232,7 @@ public class ImportCurlCommandHandler : ICommandHandler<ImportCurlCommand>
                     Name = "body",
                     Location = ParameterLocation.Body,
                     DataType = parseResult.ContentType ?? "application/x-www-form-urlencoded",
+                    ContentType = parseResult.ContentType ?? "application/x-www-form-urlencoded",
                     Schema = normalizedBody,
                     IsRequired = true,
                 }, ct);

@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
@@ -44,5 +45,117 @@ public class ExpectationResolverTests
         result.PrimaryRequirementId.Should().Be(requirementId);
         result.RequirementCode.Should().Be("REQ-400");
         result.BodyContains.Should().Contain("email");
+    }
+
+    [Fact]
+    public void Resolve_Should_FilterUnsupportedLlmStatuses_ToDocumentedOpenApiResponses()
+    {
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.Negative,
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new() { StatusCode = 200, Schema = "{}" },
+                new() { StatusCode = 400, Schema = "{}" },
+                new() { StatusCode = 401, Schema = "{}" },
+            },
+            LlmExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 422 },
+            },
+        });
+
+        result.ExpectedStatusCodes.Should().Equal(400);
+    }
+
+    [Fact]
+    public void Resolve_Should_NotStrictlyAssertOptionalSuccessFields_FromOpenApiAlone()
+    {
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.HappyPath,
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new()
+                {
+                    StatusCode = 200,
+                    Schema = """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "success": { "type": "boolean" },
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "token": { "type": "string" }
+                          }
+                        }
+                      }
+                    }
+                    """,
+                },
+            },
+        });
+
+        result.ExpectedStatusCodes.Should().Equal(200);
+        result.BodyContains.Should().BeEmpty();
+        result.JsonPathChecks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Resolve_Should_AssertSrsRequiredToken_WhenOpenApiContainsTokenField()
+    {
+        var requirementId = Guid.NewGuid();
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.HappyPath,
+            CoveredRequirementIds = new List<Guid> { requirementId },
+            SrsRequirements = new List<SrsRequirement>
+            {
+                new()
+                {
+                    Id = requirementId,
+                    RequirementCode = "REQ-LOGIN",
+                    Title = "Login",
+                    Description = "Token is returned in the response.",
+                },
+            },
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new()
+                {
+                    StatusCode = 200,
+                    Schema = """
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "token": { "type": "string" }
+                          }
+                        }
+                      }
+                    }
+                    """,
+                },
+            },
+        });
+
+        result.ExpectedStatusCodes.Should().Equal(200);
+        result.JsonPathChecks.Should().ContainKey("$.data.token");
+        result.JsonPathChecks["$.data.token"].Should().Be("exists");
     }
 }
