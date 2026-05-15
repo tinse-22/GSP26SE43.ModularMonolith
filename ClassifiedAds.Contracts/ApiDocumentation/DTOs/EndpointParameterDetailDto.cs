@@ -41,6 +41,11 @@ public class ParameterDetailDto
     /// </summary>
     public string Format { get; set; }
 
+    /// <summary>
+    /// Request body media type when Location is Body.
+    /// </summary>
+    public string ContentType { get; set; }
+
     public bool IsRequired { get; set; }
 
     public string DefaultValue { get; set; }

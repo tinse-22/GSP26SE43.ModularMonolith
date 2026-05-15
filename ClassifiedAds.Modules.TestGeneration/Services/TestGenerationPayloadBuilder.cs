@@ -49,15 +49,17 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
     private const string UnifiedRulesBlock =
         "=== RULES ===\n" +
-        "1. Generate exactly 3 test cases per endpoint unless the contract makes one impossible: 1 HappyPath, 1 Boundary, 1 Negative.\n" +
-        "2. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
-        "3. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
-        "4. For unique fields (email, username, code, slug, phone, name), use {{tcUniqueId}}. Do not invent random suffixes.\n" +
-        "5. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}}.\n" +
-        "6. request.body must be a serialized JSON string or null. expectation.expectedStatus must be an integer array.\n" +
-        "7. HappyPath should prefer 2xx; Boundary/Negative should prefer contract-backed 4xx/401/403/404.\n" +
-        "8. If srsRequirements are present, derive expectation and coveredRequirementIds from effectiveConstraints. Avoid contradicting SRS constraints.\n" +
-        "9. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
+        "1. OpenAPI is the structural contract: method, path, parameters, request fields/types/content type, required fields, constraints, documented response statuses, and response/error schemas.\n" +
+        "2. SRS is the business source for endpoint-relevant scenario intent, meaningful test data, semantic behavior, and requirement coverage. SRS must not invent fields or undocumented statuses.\n" +
+        "3. Generate up to 3 scenarios for GET/DELETE and up to 10 for POST/PUT/PATCH. Always include one HappyPath when executable. Add Boundary/Negative only when supported by OpenAPI or endpoint-relevant SRS; do not pad duplicates.\n" +
+        "4. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
+        "5. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
+        "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes.\n" +
+        "7. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword plus email/password from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}} or {{email}}.\n" +
+        "8. request.body must be a serialized JSON string or null using exact OpenAPI field names. request.bodyType must match the OpenAPI content type.\n" +
+        "9. expectation.expectedStatus must use documented OpenAPI responses. If an SRS business rule has no compatible documented status, omit that scenario.\n" +
+        "10. coveredRequirementIds may include only endpoint-relevant direct/partial SRS requirements; dependency requirements are setup context only.\n" +
+        "11. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -75,6 +77,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IObservationConfirmationPromptBuilder _promptBuilder;
     private readonly IApiTestOrderService _apiTestOrderService;
+    private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly N8nIntegrationOptions _n8nOptions;
     private readonly ILogger<TestGenerationPayloadBuilder> _logger;
 
@@ -87,6 +90,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         IApiEndpointMetadataService endpointMetadataService,
         IObservationConfirmationPromptBuilder promptBuilder,
         IApiTestOrderService apiTestOrderService,
+        IEndpointRequirementMapper requirementMapper,
         IOptions<N8nIntegrationOptions> n8nOptions,
         ILogger<TestGenerationPayloadBuilder> logger)
     {
@@ -96,6 +100,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         _endpointMetadataService = endpointMetadataService;
         _promptBuilder = promptBuilder;
         _apiTestOrderService = apiTestOrderService;
+        _requirementMapper = requirementMapper;
         _n8nOptions = n8nOptions.Value;
         _logger = logger;
     }
@@ -221,6 +226,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     Prompt = BuildEndpointPromptPayload(x, suite, metadata, businessContext, prompt),
                     ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
                     ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
+                    ParameterDetails = BuildParameterDetails(metadata),
                 };
             }).ToList(),
             EndpointBusinessContexts = compactEndpointBusinessContexts,
@@ -244,9 +250,14 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 ? 700
                 : _n8nOptions.GenerationMaxSrsFieldLength;
 
+            var matchesByRequirementId = BuildRequirementMatchesByRequirementId(metadataByEndpointId, requirements);
             payload.SrsRequirements = requirements
+                .Where(r => matchesByRequirementId.ContainsKey(r.Id))
                 .Take(maxRequirementCount)
-                .Select(r => new N8nSrsRequirement
+                .Select(r =>
+                {
+                    var matches = matchesByRequirementId[r.Id];
+                    return new N8nSrsRequirement
                 {
                     Id = r.Id,
                     Code = r.RequirementCode,
@@ -261,6 +272,17 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     Assumptions = TruncateForPayload(r.Assumptions, maxSrsFieldLength),
                     Ambiguities = TruncateForPayload(r.Ambiguities, maxSrsFieldLength),
                     ConfidenceScore = r.RefinedConfidenceScore ?? r.ConfidenceScore,
+                    EndpointIds = matches
+                        .Where(m => m.IsCoverable)
+                        .Select(m => m.EndpointId)
+                        .Distinct()
+                        .ToList(),
+                    DependencyEndpointIds = matches
+                        .Where(m => m.Relevance == RequirementRelevance.Dependency)
+                        .Select(m => m.EndpointId)
+                        .Distinct()
+                        .ToList(),
+                    };
                 })
                 .ToList();
 
@@ -294,6 +316,43 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             Rules = UnifiedRulesBlock,
             ResponseFormat = UnifiedResponseFormatBlock,
         };
+    }
+
+    private Dictionary<Guid, List<EndpointRequirementMatchSummary>> BuildRequirementMatchesByRequirementId(
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        IReadOnlyList<SrsRequirement> requirements)
+    {
+        var result = new Dictionary<Guid, List<EndpointRequirementMatchSummary>>();
+        if (metadataByEndpointId == null || metadataByEndpointId.Count == 0 || requirements == null || requirements.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var endpoint in metadataByEndpointId.Values)
+        {
+            var matches = _requirementMapper.MapRequirementsToEndpoint(endpoint, requirements);
+            foreach (var match in matches.Where(m => m.IsCoverable || (m.Relevance == RequirementRelevance.Dependency && m.Confidence != RequirementMatchConfidence.Low)))
+            {
+                if (match.Requirement == null)
+                {
+                    continue;
+                }
+
+                if (!result.TryGetValue(match.Requirement.Id, out var list))
+                {
+                    list = new List<EndpointRequirementMatchSummary>();
+                    result[match.Requirement.Id] = list;
+                }
+
+                list.Add(new EndpointRequirementMatchSummary
+                {
+                    EndpointId = endpoint.EndpointId,
+                    Relevance = match.Relevance,
+                });
+            }
+        }
+
+        return result;
     }
 
     private static string BuildUnifiedTaskInstruction(TestSuite suite, int maxBusinessContextLength)
@@ -400,6 +459,32 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             .ToList();
     }
 
+    private static List<Models.N8nParameterDetail> BuildParameterDetails(ApiEndpointMetadataDto metadata)
+    {
+        if (metadata?.Parameters == null || metadata.Parameters.Count == 0)
+        {
+            return new List<Models.N8nParameterDetail>();
+        }
+
+        return metadata.Parameters
+            .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Name))
+            .OrderByDescending(p => p.IsRequired)
+            .ThenBy(p => p.Location)
+            .ThenBy(p => p.Name)
+            .Take(20)
+            .Select(p => new Models.N8nParameterDetail
+            {
+                Name = p.Name,
+                Location = p.Location,
+                DataType = p.DataType,
+                Format = p.Format,
+                ContentType = p.ContentType,
+                IsRequired = p.IsRequired,
+                DefaultValue = TruncateForPayload(p.DefaultValue, 160),
+            })
+            .ToList();
+    }
+
     private static string CompactJsonOrText(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -449,7 +534,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         sb.AppendLine($"Path: {orderItem?.Path ?? metadata?.Path ?? "/"}");
         sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
         sb.AppendLine();
-        sb.AppendLine("Generate mixed test cases (HappyPath, Boundary, Negative) for this endpoint.");
+        sb.AppendLine("Generate mixed test cases (HappyPath, Boundary, Negative) for this endpoint when supported by OpenAPI and endpoint-relevant SRS. OpenAPI is the structural frame; SRS is business intent.");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -486,5 +571,14 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         }
 
         return sb.ToString();
+    }
+
+    private sealed class EndpointRequirementMatchSummary
+    {
+        public Guid EndpointId { get; init; }
+
+        public RequirementRelevance Relevance { get; init; }
+
+        public bool IsCoverable => Relevance is RequirementRelevance.Direct or RequirementRelevance.Partial;
     }
 }

@@ -388,6 +388,7 @@ public class UploadApiSpecificationCommandHandler : ICommandHandler<UploadApiSpe
             Location = location,
             DataType = parsedParameter.DataType ?? "string",
             Format = parsedParameter.Format,
+            ContentType = parsedParameter.ContentType,
             IsRequired = parsedParameter.IsRequired || location == ParameterLocation.Path,
             DefaultValue = parsedParameter.DefaultValue,
             Schema = parsedParameter.Schema,

@@ -1,5 +1,6 @@
 using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -59,7 +60,7 @@ public class ContractAwareRequestSynthesizerTests
         result.BodyType.Should().Be("JSON");
         using var document = JsonDocument.Parse(result.Body);
         var root = document.RootElement;
-        root.GetProperty("email").GetString().Should().Be("testuser_{{tcUniqueId}}@example.com");
+        root.GetProperty("email").GetString().Should().Be("user_{{tcUniqueId}}@yourdomain.com");
         root.GetProperty("password").GetString().Should().Be("StrongPass1!");
         root.GetProperty("role").GetString().Should().Be("admin");
         root.GetProperty("status").GetString().Should().Be("draft");
@@ -135,8 +136,8 @@ public class ContractAwareRequestSynthesizerTests
 
         using var document = JsonDocument.Parse(result.Body);
         var root = document.RootElement;
-        root.GetProperty("email").GetString().Should().Be("testuser_{{tcUniqueId}}@example.com");
-        root.GetProperty("password").GetString().Should().Be("{{runUniquePassword}}");
+        root.GetProperty("email").GetString().Should().Be("user_{{tcUniqueId}}@yourdomain.com");
+        root.GetProperty("password").GetString().Should().Be("Password123");
         root.GetProperty("price").GetDecimal().Should().BeGreaterThan(0);
         root.GetProperty("quantity").GetInt32().Should().BeGreaterThan(0);
     }
@@ -195,6 +196,72 @@ public class ContractAwareRequestSynthesizerTests
         var root = document.RootElement;
         root.GetProperty("name").GetString().Should().NotBeNullOrWhiteSpace();
         root.GetProperty("status").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Theory]
+    [InlineData("application/json", "JSON")]
+    [InlineData("multipart/form-data", "FormData")]
+    [InlineData("application/x-www-form-urlencoded", "UrlEncoded")]
+    [InlineData("text/plain", "Raw")]
+    public void BuildRequestData_Should_UseOpenApiContentType_AsBodyTypeFrame(string contentType, string expectedBodyType)
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/products",
+            RequiresBody = true,
+            RequestContentType = contentType,
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" }
+              }
+            }
+            """,
+        };
+
+        var result = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.HappyPath);
+
+        result.BodyType.Should().Be(expectedBodyType);
+    }
+
+    [Fact]
+    public void RepairScenario_Should_PruneFieldsNotDeclaredByOpenApiSchema()
+    {
+        var scenario = new LlmSuggestedScenario
+        {
+            SuggestedTestType = TestType.HappyPath,
+            SuggestedBody = """{"email":"test@example.com","password":"Password123","invented":true}""",
+        };
+
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/auth/login",
+            RequiresBody = true,
+            RequestContentType = "application/json",
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["email", "password"],
+              "properties": {
+                "email": { "type": "string", "format": "email" },
+                "password": { "type": "string", "minLength": 6 }
+              }
+            }
+            """,
+        };
+
+        ContractAwareRequestSynthesizer.RepairScenario(scenario, context);
+
+        using var document = JsonDocument.Parse(scenario.SuggestedBody);
+        var root = document.RootElement;
+        root.TryGetProperty("invented", out _).Should().BeFalse();
+        root.TryGetProperty("email", out _).Should().BeTrue();
+        root.TryGetProperty("password", out _).Should().BeTrue();
+        scenario.SuggestedBodyType.Should().Be("JSON");
     }
 
     [Fact]
