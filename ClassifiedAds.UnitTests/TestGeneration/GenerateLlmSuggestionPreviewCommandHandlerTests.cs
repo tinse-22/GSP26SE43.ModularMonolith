@@ -198,7 +198,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_SetBypassCache_WhenForceRefreshEnabled()
+    public async Task HandleAsync_Should_KeepCacheLookup_WhenForceRefreshEnabled()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
@@ -223,7 +223,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         await _handler.HandleAsync(command);
 
         capturedContext.Should().NotBeNull();
-        capturedContext.BypassCache.Should().BeTrue();
+        capturedContext.BypassCache.Should().BeFalse();
     }
 
     [Fact]

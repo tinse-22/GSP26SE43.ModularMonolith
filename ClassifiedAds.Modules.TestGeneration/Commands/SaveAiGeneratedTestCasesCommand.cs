@@ -151,6 +151,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         @"(?<![A-Za-z])(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)(?![A-Za-z])",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex StatusCodeRegex = new(
+        @"\b([1-5]\d\d)\b",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
@@ -214,19 +218,21 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
-            // Build a set of valid SRS requirement IDs for this suite (pre-load to avoid FK violations).
-            var validRequirementIds = new HashSet<Guid>();
+            var requirementsById = new Dictionary<Guid, SrsRequirement>();
             if (suite.SrsDocumentId.HasValue)
             {
                 var requirements = await _srsRequirementRepository.ToListAsync(
                     _srsRequirementRepository.GetQueryableSet()
-                        .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
-                        .Select(x => x.Id));
-                foreach (var id in requirements)
-                {
-                    validRequirementIds.Add(id);
-                }
+                        .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value));
+
+                requirementsById = requirements
+                    .GroupBy(x => x.Id)
+                    .Select(x => x.First())
+                    .ToDictionary(x => x.Id);
+
+                ValidateGeneratedTestCasesAgainstSrs(command.TestCases, requirementsById);
             }
+
             // Replace any previously AI-generated test cases for this suite.
             var existing = await _testCaseRepository.ToListAsync(
                 _testCaseRepository.GetQueryableSet()
@@ -364,12 +370,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 {
                     if (reqId == Guid.Empty) continue;
 
-                    if (validRequirementIds.Count > 0 && !validRequirementIds.Contains(reqId))
+                    if (requirementsById.Count > 0 && !requirementsById.ContainsKey(reqId))
                     {
-                        _logger.LogWarning(
-                            "coveredRequirementId {ReqId} for TestCase '{Name}' does not belong to SrsDocumentId={SrsDocumentId}. Skipping link.",
-                            reqId, tc.Name, suite.SrsDocumentId);
-                        continue;
+                        throw new ValidationException(
+                            $"AI-generated test case '{tc.Name}' references coveredRequirementId '{reqId}', but it does not belong to SRS document '{suite.SrsDocumentId}'.");
                     }
 
                     var link = new TestCaseRequirementLink
@@ -709,6 +713,173 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         {
             return null;
         }
+    }
+
+    private static void ValidateGeneratedTestCasesAgainstSrs(
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById)
+    {
+        if (testCases == null || testCases.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < testCases.Count; i++)
+        {
+            var dto = testCases[i];
+            if (dto?.CoveredRequirementIds == null || dto.CoveredRequirementIds.Count == 0)
+            {
+                continue;
+            }
+
+            var expectedStatuses = ParseStatusCodesFromExpectation(dto.Expectation?.ExpectedStatus);
+            foreach (var reqId in dto.CoveredRequirementIds.Where(x => x != Guid.Empty).Distinct())
+            {
+                if (!requirementsById.TryGetValue(reqId, out var requirement))
+                {
+                    throw new ValidationException(
+                        $"AI-generated test case '{dto.Name ?? $"index {i}"}' references coveredRequirementId '{reqId}', but that requirement does not belong to the suite SRS document.");
+                }
+
+                var srsStatuses = ExtractExplicitStatusCodes(requirement);
+                if (srsStatuses.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!expectedStatuses.Intersect(srsStatuses).Any())
+                {
+                    var requirementLabel = string.IsNullOrWhiteSpace(requirement.RequirementCode)
+                        ? requirement.Id.ToString()
+                        : requirement.RequirementCode;
+
+                    throw new ValidationException(
+                        $"AI-generated test case '{dto.Name ?? $"index {i}"}' has expectedStatus [{string.Join(",", expectedStatuses)}], " +
+                        $"but covered SRS requirement '{requirementLabel}' explicitly requires status [{string.Join(",", srsStatuses)}]. " +
+                        "Regenerate the test case so expectation.expectedStatus matches the SRS constraint.");
+                }
+            }
+        }
+    }
+
+    private static List<int> ParseStatusCodesFromExpectation(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return new List<int> { 200 };
+        }
+
+        var trimmed = expectedStatus.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return ParseStatusCodesFromJsonElement(doc.RootElement);
+        }
+        catch
+        {
+            return ParseStatusCodesFromText(trimmed);
+        }
+    }
+
+    private static List<int> ExtractExplicitStatusCodes(SrsRequirement requirement)
+    {
+        var raw = !string.IsNullOrWhiteSpace(requirement?.RefinedConstraints)
+            ? requirement.RefinedConstraints
+            : requirement?.TestableConstraints;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new List<int>();
+        }
+
+        var statuses = new List<int>();
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                    {
+                        statuses.AddRange(ParseStatusCodesFromJsonElement(item));
+                        continue;
+                    }
+
+                    foreach (var propertyName in new[] { "expectedOutcome", "constraint" })
+                    {
+                        if (item.TryGetProperty(propertyName, out var property))
+                        {
+                            statuses.AddRange(ParseStatusCodesFromJsonElement(property));
+                        }
+                    }
+                }
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var propertyName in new[] { "expectedOutcome", "constraint" })
+                {
+                    if (doc.RootElement.TryGetProperty(propertyName, out var property))
+                    {
+                        statuses.AddRange(ParseStatusCodesFromJsonElement(property));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            statuses.AddRange(ParseStatusCodesFromText(raw));
+        }
+
+        return statuses
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
+    }
+
+    private static List<int> ParseStatusCodesFromJsonElement(JsonElement element)
+    {
+        var statuses = new List<int>();
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (element.TryGetInt32(out var code))
+                {
+                    statuses.Add(code);
+                }
+                break;
+            case JsonValueKind.String:
+                statuses.AddRange(ParseStatusCodesFromText(element.GetString()));
+                break;
+            case JsonValueKind.Array:
+                foreach (var child in element.EnumerateArray())
+                {
+                    statuses.AddRange(ParseStatusCodesFromJsonElement(child));
+                }
+                break;
+        }
+
+        return statuses
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
+    }
+
+    private static List<int> ParseStatusCodesFromText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new List<int>();
+        }
+
+        return StatusCodeRegex.Matches(value)
+            .Select(x => int.TryParse(x.Groups[1].Value, out var code) ? code : 0)
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .OrderBy(code => code)
+            .ToList();
     }
 
     private static ExtractFrom ParseExtractFrom(string extractFrom)

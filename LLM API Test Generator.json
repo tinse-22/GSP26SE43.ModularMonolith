@@ -1,0 +1,716 @@
+{
+  "name": "LLM API Test Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ── Parse payload từ BE ──\n// BE gửi: { provider, model, prompt, context }\nconst rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nif (!body.prompt) {\n  throw new Error('Payload thiếu trường prompt.');\n}\n\nreturn [{\n  json: {\n    provider:   body.provider ?? 'N8n',\n    model:      body.model    ?? 'llama-3.3-70b-versatile',\n    userPrompt: body.prompt,\n    context:    body.context  ?? ''\n  }\n}];"
+      },
+      "id": "2db886df-f169-440a-bfad-ed1a0312bee8",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Parse LLM response ──\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM trả về response rỗng.');\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars\nfunction fixJsonStrings(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixJsonStrings(cleaned);\n\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Fallback: AI không trả JSON, wrap raw text\n  parsed = {\n    summaryVi: rawContent.substring(0, 500),\n    possibleCauses: ['Không thể parse response từ AI'],\n    suggestedNextActions: ['Kiểm tra lại request và response của test case'],\n    confidence: 'low',\n  };\n}\n\n// Validate required fields\nif (!parsed.summaryVi) {\n  parsed.summaryVi = rawContent.substring(0, 300);\n}\n\nreturn [{\n  json: {\n    summaryVi:            String(parsed.summaryVi ?? ''),\n    possibleCauses:       Array.isArray(parsed.possibleCauses)       ? parsed.possibleCauses       : [],\n    suggestedNextActions: Array.isArray(parsed.suggestedNextActions) ? parsed.suggestedNextActions : [],\n    confidence:           String(parsed.confidence ?? 'medium'),\n    model:                String(parsed.model      ?? 'llama-3.3-70b-versatile'),\n    tokensUsed:           Number(parsed.tokensUsed ?? 0)\n  }\n}];"
+      },
+      "id": "ce36d20a-afa0-496f-baf1-09a8a184e678",
+      "name": "Parse Explain Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c4e62452-edd6-426e-933a-bc98640e5da7",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "explain-failure",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6e55c255-648f-418d-b2aa-48a8944ea24e",
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1456,
+        304
+      ],
+      "webhookId": "explain-failure"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userPrompt }}",
+        "options": {
+          "systemMessage": "You are an expert API testing engineer and debugger. Analyze the failed API test case and provide a clear explanation in Vietnamese.\n\nYou MUST respond with ONLY a raw JSON object — no markdown, no code fences, no text outside JSON.\n\nRequired JSON structure:\n{\n  \"summaryVi\": \"<1-2 câu tóm tắt nguyên nhân thất bại bằng tiếng Việt>\",\n  \"possibleCauses\": [\"<cause 1>\", \"<cause 2>\"],\n  \"suggestedNextActions\": [\"<action 1>\", \"<action 2>\"],\n  \"confidence\": \"high|medium|low\",\n  \"model\": \"<model name>\",\n  \"tokensUsed\": 0\n}"
+        }
+      },
+      "id": "fa769137-6642-4490-8834-a085557f2a50",
+      "name": "AI Agent (Gemini)1",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -976,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -976,
+        512
+      ],
+      "id": "a7d86ee1-da15-45d8-9289-b31157a86b8f",
+      "name": "Groq Chat Model1",
+      "credentials": {
+        "groqApi": {
+          "id": "VTKxCOCM2hfPcoNP",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        1824
+      ],
+      "id": "fcaeaefc-23f3-40be-8e7a-f67330483a8c",
+      "name": "Groq Chat Model4",
+      "credentials": {
+        "groqApi": {
+          "id": "VTKxCOCM2hfPcoNP",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-srs",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "01ec4f47-8ffa-475f-9be3-3c270854ab37",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        992
+      ],
+      "webhookId": "analyze-srs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { rawContent, endpoints, projectContext } = $input.first().json;\n\nif (!rawContent) {\n  throw new Error('SRS document has no text content. Please ensure the document has text before triggering analysis.');\n}\n\nconst endpointBlock = endpoints.length > 0\n  ? [\n      '=== AVAILABLE API ENDPOINTS (from linked Test Suite) ===',\n      endpoints.map(ep => `- [${ep.endpointId}] ${ep.method} ${ep.path}${ep.summary ? ' — ' + ep.summary : ''}`).join('\\n'),\n      'Map each requirement to the most relevant endpoint path when possible.'\n    ].join('\\n')\n  : '=== API ENDPOINTS: none provided — skip endpoint mapping ===';\n\nconst systemPrompt = `You are an expert software requirements analyst specialized in extracting testable requirements from Software Requirements Specification (SRS) documents.\nYour task is to:\n1. Parse the SRS document and extract EVERY distinct requirement.\n2. Classify each requirement by type: functional, non-functional, security, performance, or constraint.\n3. Identify testable constraints (boundary values, expected status codes, validation rules).\n4. Detect ambiguities and formulate clarification questions for unclear requirements.\n5. Assign a confidence score (0.0–1.0) based on how clear and complete the requirement is.\n6. Map requirements to API endpoints when endpoint context is available.\n\nIMPORTANT OUTPUT RULES:\n- Return ONLY valid JSON — no markdown fences, no commentary.\n- Every requirement MUST have: requirementCode, title, description, type, testableConstraints, assumptions, ambiguities, confidenceScore.\n- testableConstraints MUST be a JSON array string: [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]\n- assumptions and ambiguities MUST be JSON array strings: [\"...\", \"...\"]\n- type MUST be one of: functional, non-functional, security, performance, constraint\n- For each ambiguity, also include a clarificationQuestion entry in the top-level clarificationQuestions array.`;\n\nconst userPrompt = [\n  `=== SRS DOCUMENT CONTENT ===`,\n  rawContent.trim(),\n  '',\n  endpointBlock,\n  projectContext ? `=== PROJECT CONTEXT ===\\n${projectContext}` : '',\n  `=== TASK ===`,\n  `Extract all requirements from the SRS document above.`,\n  `For each requirement provide:`,\n  `- requirementCode: string (e.g. REQ-001, REQ-002, ...)`,\n  `- title: string (concise title)`,\n  `- description: string (full description)`,\n  `- type: \"functional\" | \"non-functional\" | \"security\" | \"performance\" | \"constraint\"`,\n  `- testableConstraints: JSON array string [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]`,\n  `- assumptions: JSON array string [\"...\"]`,\n  `- ambiguities: JSON array string [\"...\"]`,\n  `- confidenceScore: float 0.0–1.0`,\n  `- mappedEndpointPath: string | null (match to provided endpoints if applicable)`,\n  '',\n  `Also provide a top-level clarificationQuestions array for every detected ambiguity:`,\n  `- requirementCode: string (matches the requirement)`,\n  `- ambiguitySource: string (the ambiguous text)`,\n  `- question: string (clear question to ask the user)`,\n  `- isCritical: boolean (true if this ambiguity BLOCKS test generation)`,\n  `- suggestedOptions: JSON array string [\"option1\", \"option2\"] | null`,\n  '',\n  `Return JSON in this exact format:`,\n  `{`,\n  `  \"requirements\": [...],`,\n  `  \"clarificationQuestions\": [...],`,\n  `  \"model\": \"llama-3.3-70b-versatile\",`,\n  `  \"tokensUsed\": 0`,\n  `}`\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+      },
+      "id": "f0181b63-1c91-4dd2-b44a-d5a858aa0537",
+      "name": "Prepare Analysis Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userPrompt }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "515c7e91-0230-4b23-9979-1ada1698d64d",
+      "name": "AI Agent (Groq)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        880,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        880,
+        1200
+      ],
+      "id": "3be246fd-34e3-4e7a-a995-78042358ac1b",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "VTKxCOCM2hfPcoNP",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM returned empty response. Keys: ' + Object.keys(response || {}).join(', '));\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\nfunction fixJsonStrings(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixJsonStrings(cleaned);\n\ncleaned = cleaned.replace(/,\\s*$/, '');\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error('Cannot parse JSON from LLM. Error: ' + e.message + '\\nRaw (800): ' + cleaned.substring(0, 800));\n}\n\nconst requirements = parsed?.requirements;\nif (!Array.isArray(requirements) || requirements.length === 0) {\n  throw new Error('LLM response missing requirements array or empty.');\n}\n\nconst clarificationQuestions = Array.isArray(parsed?.clarificationQuestions)\n  ? parsed.clarificationQuestions\n  : [];\n\nconst validTypes = ['functional', 'non-functional', 'security', 'performance', 'constraint'];\nconst asJsonArrayString = (v, def) => {\n  if (v === null || v === undefined) return def;\n  if (typeof v === 'string') {\n    const s = v.trim();\n    if (!s) return def;\n    try { JSON.parse(s); return s; } catch { return JSON.stringify([s]); }\n  }\n  if (Array.isArray(v)) return JSON.stringify(v);\n  return def;\n};\n\nrequirements.forEach((r, i) => {\n  if (!r.requirementCode) r.requirementCode = `REQ-${String(i + 1).padStart(3, '0')}`;\n  if (!r.title) throw new Error(`Requirement index ${i} missing title.`);\n  if (!r.description) r.description = r.title;\n  r.type = validTypes.includes(String(r.type).toLowerCase())\n    ? String(r.type).toLowerCase()\n    : 'functional';\n  r.testableConstraints = asJsonArrayString(r.testableConstraints, '[]');\n  r.assumptions = asJsonArrayString(r.assumptions, '[]');\n  r.ambiguities = asJsonArrayString(r.ambiguities, '[]');\n  r.confidenceScore = typeof r.confidenceScore === 'number'\n    ? Math.min(1, Math.max(0, r.confidenceScore))\n    : 0.7;\n  r.mappedEndpointPath = r.mappedEndpointPath ?? null;\n});\n\nclarificationQuestions.forEach((q, i) => {\n  if (!q.requirementCode) throw new Error(`ClarificationQuestion index ${i} missing requirementCode.`);\n  if (!q.question) throw new Error(`ClarificationQuestion index ${i} missing question.`);\n  q.ambiguitySource = q.ambiguitySource ?? q.question;\n  q.isCritical = q.isCritical === true;\n  q.suggestedOptions = asJsonArrayString(q.suggestedOptions, null);\n});\n\nreturn [{\n  json: {\n    requirements,\n    clarificationQuestions,\n    model: parsed.model ?? 'llama-3.3-70b-versatile',\n    tokensUsed: parsed.tokensUsed ?? 0\n  }\n}];"
+      },
+      "id": "05444cce-699b-4e97-8c97-64e115218e8a",
+      "name": "Parse Analysis Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nif (!body.srsDocumentId) {\n  throw new Error('Payload missing srsDocumentId.');\n}\nif (!body.jobId) {\n  throw new Error('Payload missing jobId.');\n}\n\nconst rawContent = (body.rawContent && String(body.rawContent).trim())\n  ? String(body.rawContent).trim()\n  : '';\n\nconst endpoints = Array.isArray(body.endpoints) ? body.endpoints : [];\n\nreturn [{\n  json: {\n    srsDocumentId: body.srsDocumentId,\n    jobId: body.jobId,\n    rawContent,\n    projectContext: body.projectContext ?? '',\n    endpoints\n  }\n}];"
+      },
+      "id": "a2202a6d-3532-41f5-b8c0-660bd2f7075f",
+      "name": "Parse Input1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { requirements: $json.requirements, clarificationQuestions: $json.clarificationQuestions } }}",
+        "options": {}
+      },
+      "id": "64906168-8922-421e-b4b4-a3fb282f19b7",
+      "name": "Respond to Webhook2",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { requirementsToRefine } = $input.first().json;\n\nconst reqBlocks = requirementsToRefine.map((req, i) => {\n  const answers = Array.isArray(req.userAnswers) && req.userAnswers.length > 0\n    ? req.userAnswers.map((a, j) =>\n        `  Q${j + 1}: ${a.question}\\n  Ambiguity: ${a.ambiguitySource ?? 'N/A'}\\n  User Answer: ${a.userAnswer}`\n      ).join('\\n\\n')\n    : '  (no clarification answers provided)';\n\n  return [\n    `--- Requirement ${i + 1}: ${req.requirementCode} ---`,\n    `Original Description: ${req.originalDescription ?? ''}`,\n    `Existing Testable Constraints: ${req.existingTestableConstraints ?? '[]'}`,\n    `Existing Ambiguities: ${req.existingAmbiguities ?? '[]'}`,\n    `Original Confidence Score: ${req.originalConfidenceScore ?? 0}`,\n    ``,\n    `User Clarification Answers:`,\n    answers\n  ].join('\\n');\n}).join('\\n\\n');\n\nconst systemPrompt = `You are an expert software requirements analyst. Your task is to REFINE existing software requirements based on user-provided clarification answers.\\n\\nFor each requirement:\\n1. Incorporate the user answers into updated, more precise testable constraints.\\n2. Remove ambiguities that have been resolved by the user answers.\\n3. Produce a refinementSummary explaining what changed and why.\\n4. Re-calculate the confidenceScore (0.0-1.0) - it should increase after clarification.\\n\\nIMPORTANT OUTPUT RULES:\\n- Return ONLY valid JSON - no markdown fences, no commentary.\\n- refinedConstraints MUST be a JSON array string: [{\"constraint\": \"...\", \"priority\": \"High|Medium|Low\"}]\\n- refinedConfidenceScore MUST be a float 0.0-1.0, and typically HIGHER than the original.\\n- Each refined requirement MUST include: requirementId, requirementCode, refinedConstraints, refinedConfidenceScore, refinementSummary.`;\n\nconst userPrompt = [\n  `=== REQUIREMENTS TO REFINE ===`,\n  reqBlocks,\n  ``,\n  `=== TASK ===`,\n  `Refine each requirement using the user clarification answers above.`,\n  `Return JSON in this exact format:`,\n  `{`,\n  `  \"refinedRequirements\": [`,\n  `    {`,\n  `      \"requirementId\": \"<guid from input>\",`,\n  `      \"requirementCode\": \"REQ-001\",`,\n  `      \"refinedConstraints\": \"[{\\\\\"constraint\\\\\": \\\\\"...\\\\\", \\\\\"priority\\\\\": \\\\\"High\\\\\"}]\",`,\n  `      \"refinedConfidenceScore\": 0.95,`,\n  `      \"refinementSummary\": \"Explanation of what was clarified and updated.\"`,\n  `    }`,\n  `  ],`,\n  `  \"model\": \"llama-3.3-70b-versatile\",`,\n  `  \"tokensUsed\": 0`,\n  `}`\n].join('\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+      },
+      "id": "069a50ae-919d-439c-b969-d28ea3f908e4",
+      "name": "Prepare Refinement Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -944,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM returned empty response. Keys: ' + Object.keys(response || {}).join(', '));\n}\n\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\nfunction fixJsonStrings(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixJsonStrings(cleaned);\n\ncleaned = cleaned.replace(/,\\s*$/, '');\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error('Cannot parse JSON from LLM. Error: ' + e.message + '\\nRaw (800): ' + cleaned.substring(0, 800));\n}\n\nconst refinedRequirements = parsed?.refinedRequirements;\nif (!Array.isArray(refinedRequirements) || refinedRequirements.length === 0) {\n  throw new Error('LLM response missing refinedRequirements array or empty.');\n}\n\nconst asJsonArrayString = (v, def) => {\n  if (v === null || v === undefined) return def;\n  if (typeof v === 'string') {\n    const s = v.trim();\n    if (!s) return def;\n    try { JSON.parse(s); return s; } catch { return JSON.stringify([s]); }\n  }\n  if (Array.isArray(v)) return JSON.stringify(v);\n  return def;\n};\n\nrefinedRequirements.forEach((r, i) => {\n  if (!r.requirementId) throw new Error(`RefinedRequirement index ${i} missing requirementId.`);\n  if (!r.requirementCode) throw new Error(`RefinedRequirement index ${i} missing requirementCode.`);\n  r.refinedConstraints = asJsonArrayString(r.refinedConstraints, '[]');\n  r.refinedConfidenceScore = typeof r.refinedConfidenceScore === 'number'\n    ? Math.min(1, Math.max(0, r.refinedConfidenceScore))\n    : 0.85;\n  r.refinementSummary = r.refinementSummary ?? '';\n});\n\nreturn [{\n  json: {\n    refinedRequirements,\n    model: parsed.model ?? 'llama-3.3-70b-versatile',\n    tokensUsed: parsed.tokensUsed ?? 0\n  }\n}];"
+      },
+      "id": "c989a5ba-f900-44ff-a364-db244e61fe21",
+      "name": "Parse Refinement Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "refine-srs-requirements",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2a5c39fd-69fb-49e8-ba32-60f7ff937619",
+      "name": "Webhook3",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1424,
+        848
+      ],
+      "webhookId": "refine-srs-requirements"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nif (!body.srsDocumentId) {\n  throw new Error('Payload missing srsDocumentId.');\n}\nif (!body.jobId) {\n  throw new Error('Payload missing jobId.');\n}\nif (!Array.isArray(body.requirementsToRefine) || body.requirementsToRefine.length === 0) {\n  throw new Error('Payload missing requirementsToRefine array.');\n}\n\nreturn [{\n  json: {\n    srsDocumentId: body.srsDocumentId,\n    jobId: body.jobId,\n    requirementsToRefine: body.requirementsToRefine\n  }\n}];"
+      },
+      "id": "af083975-4ecb-46a9-8f1d-80ac2f9c6695",
+      "name": "Parse Input3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1184,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userPrompt }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "e850a167-26ef-4c45-8394-cc755faa3a7c",
+      "name": "AI Agent (Groq)1",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -704,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -704,
+        1056
+      ],
+      "id": "537d06d4-baf2-421a-9985-35a059288178",
+      "name": "Groq Chat Model3",
+      "credentials": {
+        "groqApi": {
+          "id": "VTKxCOCM2hfPcoNP",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { refinedRequirements: $json.refinedRequirements } }}",
+        "options": {}
+      },
+      "id": "96621f55-c1ce-425b-a2e0-c186a3e73b7b",
+      "name": "Respond to Webhook3",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        784,
+        320
+      ],
+      "id": "b2c09ac7-8aec-4a2c-8ea2-6094bc98ae82",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "iSvjtYEsFVBSveHN",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userPrompt }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "865df7e1-ecfe-44ab-af84-7637f92985b8",
+      "name": "AI Agent (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2400,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-llm-suggestions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "efd083e6-9118-4f94-8871-a272cefb3ae1",
+      "name": "Webhook4",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        1536
+      ],
+      "webhookId": "generate-llm-suggestions"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nconst endpoints = body.endpoints;\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload must contain non-empty endpoints array.');\n}\n\nconst promptConfig = body.promptConfig ?? {};\nif (!promptConfig.systemPrompt || !String(promptConfig.systemPrompt).trim()) {\n  throw new Error('Payload missing promptConfig.systemPrompt from BE.');\n}\nif (!promptConfig.taskInstruction || !String(promptConfig.taskInstruction).trim()) {\n  throw new Error('Payload missing promptConfig.taskInstruction from BE.');\n}\nif (!promptConfig.rules || !String(promptConfig.rules).trim()) {\n  throw new Error('Payload missing promptConfig.rules from BE.');\n}\nif (!promptConfig.responseFormat || !String(promptConfig.responseFormat).trim()) {\n  throw new Error('Payload missing promptConfig.responseFormat from BE.');\n}\n\nconst algorithmProfile = body.algorithmProfile ?? {};\n\nreturn [{\n  json: {\n    testSuiteId: body.testSuiteId ?? '',\n    promptConfig,\n    algorithmProfile,\n    srsContext: body.srsContext ?? null,\n    endpoints\n  }\n}];"
+      },
+      "id": "8d8fe4b0-d030-45eb-828b-e5d854458097",
+      "name": "Parse Input4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { promptConfig, endpoints, algorithmProfile, srsContext } = $input.first().json;\n\nconst promptBlocks = endpoints\n  .map((ep, i) => {\n    const combined = String(ep?.prompt?.combinedPrompt || '').trim();\n    if (!combined) {\n      throw new Error(`Endpoint ${i + 1} (ID=${ep?.endpointId || 'unknown'}) is missing prompt.combinedPrompt from BE.`);\n    }\n\n    return [\n      `### Endpoint ${i + 1} [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}`,\n      combined\n    ].join('\\n');\n  });\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nif (!systemPrompt || !taskInstruction || !rules || !responseFormat) {\n  throw new Error('promptConfig from BE is incomplete. Required: systemPrompt, taskInstruction, rules, responseFormat.');\n}\n\nconst enabledFlags = Object.entries(algorithmProfile || {})\n  .filter(([, value]) => value === true)\n  .map(([key]) => `- ${key}`);\n\nconst algorithmGuidance = enabledFlags.length > 0\n  ? [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      enabledFlags.join('\\n'),\n      'Apply these generation strategies while producing scenarios.'\n    ].join('\\n')\n  : [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      '- none',\n      'Use promptConfig instructions as the primary strategy.'\n    ].join('\\n');\n\n// Build SRS section when BE provides it\nlet srsSection = '';\nif (srsContext && (srsContext.content || (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0))) {\n  const parts = [`=== SRS DOCUMENT: ${srsContext.documentTitle || 'Untitled'} ===`];\n  if (srsContext.content) { parts.push(srsContext.content); }\n  if (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0) {\n    parts.push('--- REQUIREMENTS ---');\n    for (const req of srsContext.requirements) {\n      parts.push(`[${req.code}] ${req.title}`);\n      if (req.endpointId) {\n        parts.push(`EndpointId: ${req.endpointId}`);\n      }\n      if (Array.isArray(req.testableConstraints) && req.testableConstraints.length > 0) {\n        parts.push('Constraints:');\n        for (const c of req.testableConstraints) {\n          const constraint = String(c?.constraint || '').trim();\n          if (!constraint) continue;\n          const outcome = String(c?.expectedOutcome || '').trim();\n          const priority = String(c?.priority || '').trim();\n          const extras = [\n            outcome ? `expectedOutcome=${outcome}` : null,\n            priority ? `priority=${priority}` : null\n          ].filter(Boolean).join(', ');\n          parts.push(`- ${constraint}${extras ? ` (${extras})` : ''}`);\n        }\n      }\n      const description = String(req.description || '').trim();\n      if (description) {\n        parts.push(description);\n      }\n      parts.push('');\n    }\n  }\n  srsSection = parts.join('\\n');\n}\n\nconst userPrompt = [\n  taskInstruction,\n  algorithmGuidance,\n  ...(srsSection ? ['=== SRS REQUIREMENTS (align generated scenarios to these) ===', srsSection] : []),\n  '=== BE GENERATED ENDPOINT PROMPTS (PRIMARY INPUT) ===',\n  promptBlocks.join('\\n\\n'),\n  rules,\n  responseFormat\n].join('\\n\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+      },
+      "id": "e14329b6-efbd-41de-9450-f7a7df0a4a4e",
+      "name": "Prepare Boundary Prompt1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safety net: if LLM didn't use {{tcUniqueId}} in fields that need uniqueness, patch them.\n// Generic — works for any field name / any project / any domain. No URL-pattern matching.\nfunction patchBodyForUniqueness(body) {\n  if (!body || typeof body !== 'string') return body;\n  let obj;\n  try { obj = JSON.parse(body); } catch { return body; }\n  let changed = false;\n\n  // Regex for a valid email address (\\\\w = \\w in JS inside JSON string)\n  const emailRe = /^([\\w.+-]+)@([\\w.-]+)$/;\n  // Field names that typically require a unique value per run\n  const uniqueFieldRe = /^(email|username|user_name|user|name|code|slug|phone|mobile|ref|reference|sku|handle|login|nickname|tag)$/i;\n\n  function walk(node) {\n    if (!node || typeof node !== 'object') return;\n    for (const key of Object.keys(node)) {\n      const val = node[key];\n      if (typeof val === 'string') {\n        const p = patchValue(key, val);\n        if (p !== val) { node[key] = p; changed = true; }\n      } else if (typeof val === 'object') { walk(val); }\n    }\n  }\n\n  function patchValue(key, val) {\n    // Already a placeholder — VariableResolver will handle it\n    if (val.includes('{{')) return val;\n    // Already uniquified (ends with _xxxxxxxx 8-char hex)\n    if (/_[a-f0-9]{8}$/.test(val.toLowerCase())) return val;\n\n    // Email fields: patch local part with _{{tcUniqueId}} suffix\n    const emailMatch = val.match(emailRe);\n    if (emailMatch) {\n      const local = emailMatch[1].toLowerCase();\n      const domain = emailMatch[2];\n      // Only patch if it looks synthetic (not a real runtime value from a prior test)\n      const looksStatic = /^(test|user|demo|sample|qa|auto|register|new|admin|foo|bar|fake|dummy|temp)/.test(local)\n        || domain.startsWith('example.') || domain === 'test.com' || domain === 'mailtest.com';\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare email \"' + val + '\" in field \"' + key + '\"');\n        return local + '_{{tcUniqueId}}@' + domain;\n      }\n      return val;\n    }\n\n    // Non-email unique fields: append _{{tcUniqueId}} if value looks like a static placeholder\n    if (uniqueFieldRe.test(key)) {\n      const looksStatic = /^(test|user|demo|sample|qa|auto|my|new|admin|foo|bar|fake|dummy|temp|default)[_-]?/.test(val.toLowerCase());\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare unique field \"' + key + '\" value \"' + val + '\"');\n        return val + '_{{tcUniqueId}}';\n      }\n    }\n    return val;\n  }\n\n  walk(obj);\n  return changed ? JSON.stringify(obj) : body;\n}\n\n// ━━━ Parse LLM response ━━━\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM tra ve response rong. Keys: ' + Object.keys(response || {}).join(', '));\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\n// Extract JSON object boundary\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\n// Fix trailing commas before ] or }\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars inside strings\nfunction fixControlChars(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixControlChars(cleaned);\n\n// Close unclosed brackets (handles LLM truncation)\ncleaned = cleaned.replace(/,\\s*$/, '');\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\n// ── Fallback: extract individual complete scenario objects ──\n// Used when primary JSON.parse fails (e.g. unescaped quotes mid-string,\n// truncated JSON with partial object at end, etc.)\nfunction extractCompleteScenarios(text) {\n  const arrM = text.match(/\"scenarios\"\\s*:\\s*\\[/);\n  if (!arrM) throw new Error('Khong tim thay mang scenarios trong JSON.');\n  const arrStart = arrM.index + arrM[0].length;\n  let depth = 0, objStart = -1;\n  const items = [];\n  let i = arrStart;\n  while (i < text.length) {\n    const c = text[i];\n    // Skip over string literals to avoid false bracket-depth counting\n    if (c === '\"') {\n      i++;\n      while (i < text.length) {\n        if (text[i] === '\\\\') { i += 2; continue; }\n        if (text[i] === '\"') break;\n        i++;\n      }\n      i++;\n      continue;\n    }\n    if (c === '{') {\n      if (depth === 0) objStart = i;\n      depth++;\n    } else if (c === '}') {\n      depth--;\n      if (depth === 0 && objStart !== -1) {\n        const objText = text.slice(objStart, i + 1);\n        try {\n          const obj = JSON.parse(fixControlChars(objText));\n          items.push(obj);\n        } catch (_) { /* skip malformed individual objects */ }\n        objStart = -1;\n      }\n    } else if (c === ']' && depth === 0) {\n      break;\n    }\n    i++;\n  }\n  if (items.length === 0) throw new Error('Khong trich xuat duoc scenario nao hop le.');\n  return { scenarios: items, model: 'unknown', tokensUsed: 0 };\n}\n\n// ── Primary parse → fallback extractor ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e1) {\n  try {\n    parsed = extractCompleteScenarios(cleaned);\n    // Log recovery info (visible in n8n execution log)\n    console.warn('[ParseBoundaryResponse] Used fallback extractor, recovered ' + parsed.scenarios.length + ' scenarios. Primary JSON.parse error: ' + e1.message.substring(0, 120));\n  } catch (e2) {\n    throw new Error('Khong parse duoc JSON tu LLM. Error: ' + e1.message + '\\nRaw (800): ' + cleaned.substring(0, 800));\n  }\n}\n\nconst scenarios = parsed?.scenarios;\nif (!Array.isArray(scenarios) || scenarios.length === 0) {\n  throw new Error('LLM response thieu mang scenarios hoac rong.');\n}\n\n// Normalize scenarios\nscenarios.forEach((s, i) => {\n  if (!s?.endpointId) throw new Error('Scenario index ' + i + ' thieu endpointId.');\n  s.scenarioName = String(s.scenarioName ?? ('Scenario ' + (i + 1)));\n  s.description  = String(s.description  ?? '');\n  // Respect whatever testType the LLM returned; only fall back when truly absent\n  const rawType = String(s.testType ?? '').trim();\n  const normType = rawType.replace(/[_\\s-]/g, '').toLowerCase();\n  s.testType = normType === 'happypath' ? 'HappyPath' : normType === 'boundary' ? 'Boundary' : normType === 'negative' ? 'Negative' : (rawType || 'Negative');\n  s.priority     = String(s.priority     ?? 'Medium');\n  s.tags         = Array.isArray(s.tags) ? s.tags : [];\n  s.variables    = Array.isArray(s.variables) ? s.variables : [];\n  s.coveredRequirementCodes = Array.isArray(s.coveredRequirementCodes)\n    ? s.coveredRequirementCodes.map(String).filter(c => c.trim())\n    : [];\n\n  s.request = s.request ?? {};\n  s.request.httpMethod  = String(s.request.httpMethod ?? 'GET');\n  s.request.url         = String(s.request.url        ?? '/');\n  s.request.bodyType    = String(s.request.bodyType   ?? 'None');\n  s.request.timeout     = Number(s.request.timeout    ?? 30000);\n  s.request.headers     = s.request.headers     ?? null;\n  s.request.pathParams  = s.request.pathParams  ?? null;\n  s.request.queryParams = s.request.queryParams ?? null;\n  if (s.request.body !== null && s.request.body !== undefined && typeof s.request.body !== 'string') {\n    s.request.body = JSON.stringify(s.request.body);\n  }\n\n  s.expectation = s.expectation ?? {};\n  if (!Array.isArray(s.expectation.expectedStatus)) {\n    s.expectation.expectedStatus = [400];\n  }\n  s.expectation.bodyContains    = s.expectation.bodyContains    ?? null;\n  s.expectation.bodyNotContains = s.expectation.bodyNotContains ?? null;\n  s.expectation.jsonPathChecks  = (s.expectation.jsonPathChecks && typeof s.expectation.jsonPathChecks === 'object' && Object.keys(s.expectation.jsonPathChecks).length > 0)\n    ? s.expectation.jsonPathChecks\n    : null;\n});\n\nfunction normalizeExpectationToken(value) {\n  if (value === null || value === undefined) return value;\n  if (typeof value !== 'string') return value;\n  const raw = value.trim();\n  if (!raw) return value;\n  const lower = raw.toLowerCase();\n  const collapsed = lower.replace(/[\\s_-]+/g, '');\n  if (collapsed === 'nonempty' || collapsed === 'notempty' || collapsed === 'nonblank' || collapsed === 'notblank') {\n    return 'non-empty';\n  }\n  if (collapsed === 'notnull' || collapsed === 'nonnull') {\n    return 'not null';\n  }\n  if (collapsed === 'exists' || collapsed === 'exist' || collapsed === 'present') {\n    return 'present';\n  }\n  if (lower.startsWith('type:') || lower.startsWith('type=')) {\n    const t = lower.slice(5).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  if (lower.startsWith('format:') || lower.startsWith('format=')) {\n    const t = lower.slice(7).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  return value;\n}\n\nfunction normalizeJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n  for (const path of Object.keys(checks)) {\n    if (typeof checks[path] === 'string') {\n      checks[path] = normalizeExpectationToken(checks[path]);\n    }\n  }\n}\nscenarios.forEach(normalizeJsonPathChecks);\n\n// Apply uniqueness safety net to all scenario bodies\nscenarios.forEach(s => { s.request.body = patchBodyForUniqueness(s.request.body); });\n\n// Sync jsonPathChecks with body: if LLM used different email/unique-field values in\n// assertions vs body (common LLM inconsistency), override assertions to match the body.\n// Also apply patchBodyForUniqueness to bare values inside jsonPathChecks.\nfunction syncJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n\n  // Extract top-level string fields from the (already-patched) request body\n  let bodyFields = {};\n  if (s.request?.body && typeof s.request.body === 'string') {\n    try { bodyFields = JSON.parse(s.request.body); } catch { bodyFields = {}; }\n  }\n\n  // Regex: path ends with a known unique field name (case-insensitive)\n  const uniquePathRe = /(?:^|\\.)(?:email|username|user_name|name|code|slug|phone|mobile|ref|sku|handle|login|nickname)$/i;\n\n  const is4xx = Array.isArray(s.expectation.expectedStatus)\n    && s.expectation.expectedStatus.every(c => c >= 400);\n\n  for (const path of Object.keys(checks)) {\n    if (!uniquePathRe.test(path)) continue;\n\n    // For tests that expect only 4xx (error responses): remove assertions on data fields\n    // because the API won't return the created resource.\n    if (is4xx) {\n      delete checks[path];\n      continue;\n    }\n\n    // For 2xx tests: ensure assertion value matches the body field value so they use the\n    // same {{tcUniqueId}} expansion. Determine body field name from the path tail.\n    const fieldMatch = path.match(/([\\w_]+)$/i);\n    if (!fieldMatch) continue;\n    const fieldName = Object.keys(bodyFields).find(\n      k => k.toLowerCase() === fieldMatch[1].toLowerCase()\n    );\n    if (fieldName && typeof bodyFields[fieldName] === 'string') {\n      checks[path] = bodyFields[fieldName];\n    } else {\n      // No matching body field — apply patchBodyForUniqueness logic to the assertion value\n      const curVal = checks[path];\n      if (typeof curVal === 'string') {\n        checks[path] = patchBodyForUniqueness(JSON.stringify({ _v: curVal })).replace(/^\\{\"_v\":\"?|\"?\\}$/g, '') || curVal;\n      }\n    }\n  }\n\n  // Remove empty jsonPathChecks\n  if (Object.keys(checks).length === 0) s.expectation.jsonPathChecks = null;\n}\nscenarios.forEach(syncJsonPathChecks);\n\nreturn [{\n  json: {\n    scenarios,\n    model:      parsed.model      ?? 'unknown',\n    tokensUsed: parsed.tokensUsed ?? 0\n  }\n}];"
+      },
+      "id": "6ac59ad8-e3c6-4e70-b942-5e91b0d5b0c5",
+      "name": "Parse Boundary Response1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "0720ca1a-df4d-481c-ab0d-7f14b65c8da5",
+      "name": "Respond to Webhook4",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        1536
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Gemini)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Explain Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Gemini)1": {
+      "main": [
+        [
+          {
+            "node": "Parse Explain Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Gemini)1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Gemini)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Input1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analysis Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Groq)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Groq)": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Groq)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input1": {
+      "main": [
+        [
+          {
+            "node": "Prepare Analysis Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Refinement Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Groq)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Refinement Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook3": {
+      "main": [
+        [
+          {
+            "node": "Parse Input3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input3": {
+      "main": [
+        [
+          {
+            "node": "Prepare Refinement Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Groq)1": {
+      "main": [
+        [
+          {
+            "node": "Parse Refinement Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Groq)1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        []
+      ]
+    },
+    "AI Agent (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Parse Boundary Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook4": {
+      "main": [
+        [
+          {
+            "node": "Parse Input4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input4": {
+      "main": [
+        [
+          {
+            "node": "Prepare Boundary Prompt1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Boundary Prompt1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Boundary Response1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b6762a4a-2581-458f-be69-2cffb96e5b9c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c8303d773e04f734681461843d2c1ac65903f7fb8c55a3f01d55581364ff0b9c"
+  },
+  "id": "lk0U33vamPTSQ5vz",
+  "tags": []
+}

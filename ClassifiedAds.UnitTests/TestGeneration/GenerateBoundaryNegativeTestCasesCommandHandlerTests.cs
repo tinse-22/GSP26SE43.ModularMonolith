@@ -35,6 +35,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
     private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
     private readonly Mock<IRepository<TestCaseChangeLog, Guid>> _changeLogRepoMock;
     private readonly Mock<IRepository<TestSuiteVersion, Guid>> _versionRepoMock;
+    private readonly Mock<IRepository<SrsDocument, Guid>> _srsDocumentRepoMock;
+    private readonly Mock<IRepository<SrsRequirement, Guid>> _srsRequirementRepoMock;
     private readonly Mock<IApiTestOrderGateService> _gateServiceMock;
     private readonly Mock<IBoundaryNegativeTestCaseGenerator> _generatorMock;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionMock;
@@ -51,6 +53,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
         _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
         _changeLogRepoMock = new Mock<IRepository<TestCaseChangeLog, Guid>>();
         _versionRepoMock = new Mock<IRepository<TestSuiteVersion, Guid>>();
+        _srsDocumentRepoMock = new Mock<IRepository<SrsDocument, Guid>>();
+        _srsRequirementRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
         _gateServiceMock = new Mock<IApiTestOrderGateService>();
         _generatorMock = new Mock<IBoundaryNegativeTestCaseGenerator>();
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
@@ -60,6 +64,10 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
         _variableRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<TestCaseVariable>().AsQueryable());
         _variableRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestCaseVariable>>()))
             .ReturnsAsync(new List<TestCaseVariable>());
+        _srsDocumentRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<SrsDocument>().AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet()).Returns(new List<SrsRequirement>().AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>());
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -77,8 +85,8 @@ public class GenerateBoundaryNegativeTestCasesCommandHandlerTests
             _variableRepoMock.Object,
             _changeLogRepoMock.Object,
             _versionRepoMock.Object,
-            new Mock<IRepository<SrsDocument, Guid>>().Object,
-            new Mock<IRepository<SrsRequirement, Guid>>().Object,
+            _srsDocumentRepoMock.Object,
+            _srsRequirementRepoMock.Object,
             _gateServiceMock.Object,
             _generatorMock.Object,
             _subscriptionMock.Object,

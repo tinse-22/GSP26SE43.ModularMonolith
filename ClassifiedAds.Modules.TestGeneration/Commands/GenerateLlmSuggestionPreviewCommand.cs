@@ -165,7 +165,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             SpecificationId = command.SpecificationId,
             EndpointParameterDetails = endpointParameterDetails.ToDictionary(x => x.EndpointId),
             AlgorithmProfile = command.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
-            BypassCache = command.ForceRefresh,
+            BypassCache = false,
             SrsDocument = srsDocument,
             SrsRequirements = srsRequirements,
         };

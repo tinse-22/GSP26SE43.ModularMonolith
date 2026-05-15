@@ -168,6 +168,9 @@ public class N8nGenerateTestsPayload
     public Guid TestSuiteId { get; set; }
     public string TestSuiteName { get; set; } = string.Empty;
     public Guid SpecificationId { get; set; }
+    public string Model { get; set; } = "gpt-4.1-mini";
+    public int MaxOutputTokens { get; set; } = 4096;
+    public bool PreferJsonObjectResponse { get; set; } = true;
     public N8nUnifiedPromptConfig PromptConfig { get; set; } = new();
     public List<N8nOrderedEndpoint> Endpoints { get; set; } = new();
     public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
