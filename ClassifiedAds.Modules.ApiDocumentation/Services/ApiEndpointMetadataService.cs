@@ -253,10 +253,11 @@ public class ApiEndpointMetadataService : IApiEndpointMetadataService
                         Location = p.Location.ToString(),
                         IsRequired = p.IsRequired,
                         DataType = p.DataType,
-                        Format = p.Format,
-                        Schema = p.Schema,
-                        DefaultValue = p.DefaultValue,
-                        Examples = p.Examples,
+                    Format = p.Format,
+                    ContentType = p.ContentType,
+                    Schema = p.Schema,
+                    DefaultValue = p.DefaultValue,
+                    Examples = p.Examples,
                     }).ToList()
                     : Array.Empty<ApiEndpointParameterDescriptorDto>(),
                 Responses = endpointResponsesById.TryGetValue(endpoint.Id, out var responseEntities)

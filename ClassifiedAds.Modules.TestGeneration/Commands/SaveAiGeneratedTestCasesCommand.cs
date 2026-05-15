@@ -1,7 +1,10 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Models;
+using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -155,8 +158,16 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         @"\b([1-5]\d\d)\b",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly ProposalStatus[] ActiveProposalStatuses =
+    {
+        ProposalStatus.Approved,
+        ProposalStatus.ModifiedAndApproved,
+        ProposalStatus.Applied,
+    };
+
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<TestCase, Guid> _testCaseRepository;
+    private readonly IRepository<TestCaseDependency, Guid> _testCaseDependencyRepository;
     private readonly IRepository<TestCaseRequest, Guid> _testCaseRequestRepository;
     private readonly IRepository<TestCaseExpectation, Guid> _testCaseExpectationRepository;
     private readonly IRepository<TestCaseVariable, Guid> _testCaseVariableRepository;
@@ -164,11 +175,16 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly IRepository<TestCaseRequirementLink, Guid> _linkRepository;
     private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
+    private readonly IRepository<TestOrderProposal, Guid> _proposalRepository;
+    private readonly IApiTestOrderService _apiTestOrderService;
+    private readonly IApiEndpointMetadataService _apiEndpointMetadataService;
+    private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly ILogger<SaveAiGeneratedTestCasesCommandHandler> _logger;
 
     public SaveAiGeneratedTestCasesCommandHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<TestCase, Guid> testCaseRepository,
+        IRepository<TestCaseDependency, Guid> testCaseDependencyRepository,
         IRepository<TestCaseRequest, Guid> testCaseRequestRepository,
         IRepository<TestCaseExpectation, Guid> testCaseExpectationRepository,
         IRepository<TestCaseVariable, Guid> testCaseVariableRepository,
@@ -176,10 +192,15 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         IRepository<TestGenerationJob, Guid> jobRepository,
         IRepository<TestCaseRequirementLink, Guid> linkRepository,
         IRepository<SrsRequirement, Guid> srsRequirementRepository,
+        IRepository<TestOrderProposal, Guid> proposalRepository,
+        IApiTestOrderService apiTestOrderService,
+        IApiEndpointMetadataService apiEndpointMetadataService,
+        IEndpointRequirementMapper requirementMapper,
         ILogger<SaveAiGeneratedTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
         _testCaseRepository = testCaseRepository;
+        _testCaseDependencyRepository = testCaseDependencyRepository;
         _testCaseRequestRepository = testCaseRequestRepository;
         _testCaseExpectationRepository = testCaseExpectationRepository;
         _testCaseVariableRepository = testCaseVariableRepository;
@@ -187,6 +208,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         _jobRepository = jobRepository;
         _linkRepository = linkRepository;
         _srsRequirementRepository = srsRequirementRepository;
+        _proposalRepository = proposalRepository;
+        _apiTestOrderService = apiTestOrderService;
+        _apiEndpointMetadataService = apiEndpointMetadataService;
+        _requirementMapper = requirementMapper;
         _logger = logger;
     }
 
@@ -230,7 +255,16 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     .Select(x => x.First())
                     .ToDictionary(x => x.Id);
 
-                ValidateGeneratedTestCasesAgainstSrs(command.TestCases, requirementsById);
+                var endpointRequirementMap = await BuildEndpointRequirementMapAsync(
+                    suite,
+                    command.TestCases,
+                    requirementsById,
+                    ct);
+
+                ValidateGeneratedTestCasesAgainstSrs(
+                    command.TestCases,
+                    requirementsById,
+                    endpointRequirementMap);
             }
 
             // Replace any previously AI-generated test cases for this suite.
@@ -297,6 +331,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         CreatedDateTime = now,
                     };
                     await _testCaseRequestRepository.AddAsync(req, ct);
+                    testCase.Request = req;
                 }
 
                 if (dto.Expectation is not null)
@@ -315,6 +350,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         CreatedDateTime = now,
                     };
                     await _testCaseExpectationRepository.AddAsync(exp, ct);
+                    testCase.Expectation = exp;
                 }
 
                 // Persist variable extraction rules from LLM
@@ -339,10 +375,29 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                             DefaultValue = v.DefaultValue,
                         };
                         await _testCaseVariableRepository.AddAsync(variable, ct);
+                        testCase.Variables.Add(variable);
                     }
                 }
 
                 orderIdx++;
+            }
+
+            var approvedOrder = await LoadApprovedOrderAsync(command.TestSuiteId, ct);
+            if (approvedOrder.Count > 0)
+            {
+                var enrichment = GeneratedTestCaseDependencyEnricher.Enrich(persistedTestCases, approvedOrder);
+
+                foreach (var dependency in persistedTestCases.SelectMany(x => x.Dependencies))
+                {
+                    dependency.CreatedDateTime = now;
+                    await _testCaseDependencyRepository.AddAsync(dependency, ct);
+                }
+
+                foreach (var producerVariable in enrichment.ExistingProducerVariablesToPersist)
+                {
+                    producerVariable.CreatedDateTime = now;
+                    await _testCaseVariableRepository.AddAsync(producerVariable, ct);
+                }
             }
 
             // Insert traceability links for test cases that reported coveredRequirementIds.
@@ -715,9 +770,79 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
     }
 
+    private async Task<Dictionary<Guid, HashSet<Guid>>> BuildEndpointRequirementMapAsync(
+        TestSuite suite,
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<Guid, HashSet<Guid>>();
+        if (suite?.ApiSpecId is not Guid specificationId ||
+            specificationId == Guid.Empty ||
+            testCases == null ||
+            testCases.Count == 0 ||
+            requirementsById == null ||
+            requirementsById.Count == 0)
+        {
+            return result;
+        }
+
+        var endpointIds = testCases
+            .Select(x => x?.EndpointId)
+            .Where(x => x.HasValue && x.Value != Guid.Empty)
+            .Select(x => x.Value)
+            .Distinct()
+            .ToList();
+
+        if (endpointIds.Count == 0)
+        {
+            return result;
+        }
+
+        var endpoints = await _apiEndpointMetadataService.GetEndpointMetadataAsync(
+            specificationId,
+            endpointIds,
+            cancellationToken);
+
+        foreach (var endpoint in endpoints ?? Array.Empty<Contracts.ApiDocumentation.DTOs.ApiEndpointMetadataDto>())
+        {
+            var coverableRequirementIds = _requirementMapper
+                .MapRequirementsToEndpoint(endpoint, requirementsById.Values.ToList())
+                .Where(x => x.IsCoverable)
+                .Select(x => x.Requirement?.Id ?? Guid.Empty)
+                .Where(x => x != Guid.Empty)
+                .ToHashSet();
+
+            result[endpoint.EndpointId] = coverableRequirementIds;
+        }
+
+        return result;
+    }
+
+    private async Task<IReadOnlyList<ApiOrderItemModel>> LoadApprovedOrderAsync(
+        Guid testSuiteId,
+        CancellationToken cancellationToken)
+    {
+        var proposal = await _proposalRepository.FirstOrDefaultAsync(
+            _proposalRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == testSuiteId
+                    && ActiveProposalStatuses.Contains(x.Status)
+                    && x.AppliedOrder != null)
+                .OrderByDescending(x => x.ProposalNumber));
+
+        if (proposal == null)
+        {
+            return Array.Empty<ApiOrderItemModel>();
+        }
+
+        return _apiTestOrderService.DeserializeOrderJson(proposal.AppliedOrder) ??
+               Array.Empty<ApiOrderItemModel>();
+    }
+
     private static void ValidateGeneratedTestCasesAgainstSrs(
         IReadOnlyList<AiGeneratedTestCaseDto> testCases,
-        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById)
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById,
+        IReadOnlyDictionary<Guid, HashSet<Guid>> endpointRequirementMap)
     {
         if (testCases == null || testCases.Count == 0)
         {
@@ -732,7 +857,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 continue;
             }
 
-            var expectedStatuses = ParseStatusCodesFromExpectation(dto.Expectation?.ExpectedStatus);
+            var validRequirementIds = new List<Guid>();
             foreach (var reqId in dto.CoveredRequirementIds.Where(x => x != Guid.Empty).Distinct())
             {
                 if (!requirementsById.TryGetValue(reqId, out var requirement))
@@ -741,24 +866,18 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         $"AI-generated test case '{dto.Name ?? $"index {i}"}' references coveredRequirementId '{reqId}', but that requirement does not belong to the suite SRS document.");
                 }
 
-                var srsStatuses = ExtractExplicitStatusCodes(requirement);
-                if (srsStatuses.Count == 0)
+                if (dto.EndpointId.HasValue &&
+                    endpointRequirementMap != null &&
+                    endpointRequirementMap.TryGetValue(dto.EndpointId.Value, out var relevantIds) &&
+                    !relevantIds.Contains(reqId))
                 {
                     continue;
                 }
 
-                if (!expectedStatuses.Intersect(srsStatuses).Any())
-                {
-                    var requirementLabel = string.IsNullOrWhiteSpace(requirement.RequirementCode)
-                        ? requirement.Id.ToString()
-                        : requirement.RequirementCode;
-
-                    throw new ValidationException(
-                        $"AI-generated test case '{dto.Name ?? $"index {i}"}' has expectedStatus [{string.Join(",", expectedStatuses)}], " +
-                        $"but covered SRS requirement '{requirementLabel}' explicitly requires status [{string.Join(",", srsStatuses)}]. " +
-                        "Regenerate the test case so expectation.expectedStatus matches the SRS constraint.");
-                }
+                validRequirementIds.Add(reqId);
             }
+
+            dto.CoveredRequirementIds = validRequirementIds;
         }
     }
 

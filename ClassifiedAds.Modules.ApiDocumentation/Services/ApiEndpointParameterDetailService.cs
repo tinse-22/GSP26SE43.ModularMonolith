@@ -88,6 +88,7 @@ public class ApiEndpointParameterDetailService : IApiEndpointParameterDetailServ
                         Location = p.Location.ToString(),
                         DataType = p.DataType,
                         Format = p.Format,
+                        ContentType = p.ContentType,
                         IsRequired = p.IsRequired,
                         DefaultValue = p.DefaultValue,
                         Schema = p.Schema,

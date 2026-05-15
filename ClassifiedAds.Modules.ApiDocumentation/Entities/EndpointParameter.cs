@@ -34,6 +34,11 @@ public class EndpointParameter : Entity<Guid>, IAggregateRoot
     public string Format { get; set; }
 
     /// <summary>
+    /// Request body media type for body parameters.
+    /// </summary>
+    public string ContentType { get; set; }
+
+    /// <summary>
     /// Whether this parameter is required.
     /// </summary>
     public bool IsRequired { get; set; }

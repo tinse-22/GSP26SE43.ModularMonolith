@@ -26,6 +26,7 @@ public class TestGenerationPayloadBuilderTests
         var suiteId = Guid.NewGuid();
         var proposalId = Guid.NewGuid();
         var srsDocumentId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
         var endpointId = Guid.NewGuid();
         var requirementId = Guid.NewGuid();
 
@@ -35,6 +36,7 @@ public class TestGenerationPayloadBuilderTests
             {
                 Id = suiteId,
                 Name = "Suite with SRS",
+                ApiSpecId = specId,
                 SrsDocumentId = srsDocumentId,
             },
         });
@@ -80,13 +82,53 @@ public class TestGenerationPayloadBuilderTests
                 },
             });
 
+        var metadataService = new Mock<IApiEndpointMetadataService>();
+        metadataService
+            .Setup(x => x.GetEndpointMetadataAsync(
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/register",
+                    OperationId = "register",
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            ContentType = "application/json",
+                            Schema = """
+                            {
+                              "type": "object",
+                              "properties": {
+                                "email": { "type": "string", "format": "email" },
+                                "password": { "type": "string", "minLength": 6 }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                },
+            });
+        var promptBuilder = new Mock<IObservationConfirmationPromptBuilder>();
+        promptBuilder
+            .Setup(x => x.BuildForSequence(It.IsAny<IReadOnlyList<EndpointPromptContext>>()))
+            .Returns(new List<ObservationConfirmationPrompt>());
+
         var builder = new TestGenerationPayloadBuilder(
             suiteRepo.Object,
             proposalRepo.Object,
             requirementRepo.Object,
-            new Mock<IApiEndpointMetadataService>().Object,
-            new Mock<IObservationConfirmationPromptBuilder>().Object,
+            metadataService.Object,
+            promptBuilder.Object,
             orderService.Object,
+            new EndpointRequirementMapper(),
             Options.Create(new N8nIntegrationOptions
             {
                 BeBaseUrl = "http://localhost:5099",
@@ -199,6 +241,7 @@ public class TestGenerationPayloadBuilderTests
             metadataService.Object,
             promptBuilder.Object,
             orderService.Object,
+            new EndpointRequirementMapper(),
             Options.Create(new N8nIntegrationOptions
             {
                 BeBaseUrl = "http://localhost:5099",

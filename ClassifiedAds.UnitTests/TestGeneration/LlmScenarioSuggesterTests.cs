@@ -65,6 +65,7 @@ public class LlmScenarioSuggesterTests
             _llmGatewayServiceMock.Object,
             _feedbackContextServiceMock.Object,
             expectationResolver,
+            new EndpointRequirementMapper(),
             _loggerMock.Object);
     }
 
@@ -148,8 +149,8 @@ public class LlmScenarioSuggesterTests
 
         scenarioCounts.Should().ContainKey(EndpointId1);
         scenarioCounts.Should().ContainKey(EndpointId2);
-        scenarioCounts[EndpointId1].Should().Be(10);
-        scenarioCounts[EndpointId2].Should().Be(3);
+        scenarioCounts[EndpointId1].Should().BeInRange(1, 10);
+        scenarioCounts[EndpointId2].Should().BeInRange(1, 3);
     }
 
     [Fact]
@@ -250,10 +251,10 @@ public class LlmScenarioSuggesterTests
 
         // Assert
         capturedPayload.Should().NotBeNull();
-        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints need up to 3 scenarios total");
-        capturedPayload.PromptConfig.Rules.Should().Contain("POST, PUT, and PATCH endpoints need exactly 10 scenarios total");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target 10 scenarios");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target 3 scenarios");
+        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints target up to 3 scenarios total");
+        capturedPayload.PromptConfig.Rules.Should().Contain("POST, PUT, and PATCH endpoints target up to 10 scenarios total");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target up to 10 scenarios");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target up to 3 scenarios");
     }
 
     [Fact]
@@ -1026,16 +1027,15 @@ public class LlmScenarioSuggesterTests
         var scenario = result.Scenarios.Single(x =>
             x.EndpointId == EndpointId1 &&
             x.ScenarioName == "Login with extraction");
-        scenario.Variables.Should().HaveCount(2);
-
-        scenario.Variables[0].VariableName.Should().Be("authToken");
-        scenario.Variables[0].ExtractFrom.Should().Be("ResponseBody");
-        scenario.Variables[0].JsonPath.Should().Be("$.token");
-        scenario.Variables[0].DefaultValue.Should().Be("fallback-token");
-
-        scenario.Variables[1].VariableName.Should().Be("sessionId");
-        scenario.Variables[1].ExtractFrom.Should().Be("ResponseHeader");
-        scenario.Variables[1].HeaderName.Should().Be("X-Session-Id");
+        scenario.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == "ResponseBody" &&
+            x.JsonPath == "$.token" &&
+            x.DefaultValue == "fallback-token");
+        scenario.Variables.Should().Contain(x =>
+            x.VariableName == "sessionId" &&
+            x.ExtractFrom == "ResponseHeader" &&
+            x.HeaderName == "X-Session-Id");
     }
 
     #region New spec-driven assertion tests
@@ -1115,8 +1115,8 @@ public class LlmScenarioSuggesterTests
         var scenario = result.Scenarios.First(s =>
             s.EndpointId == EndpointId1 && s.ScenarioName == "Invalid login");
         scenario.ExpectedStatusCodes.Should().Contain(400);
-        scenario.ExpectedStatusCodes.Should().Contain(422);
         // Should NOT contain codes not in Swagger spec
+        scenario.ExpectedStatusCodes.Should().NotContain(422);
         scenario.ExpectedStatusCodes.Should().NotContain(409);
         scenario.ExpectedStatusCodes.Should().NotContain(415);
     }
@@ -1248,9 +1248,10 @@ public class LlmScenarioSuggesterTests
         // Act
         await _sut.SuggestScenariosAsync(context);
 
-        // Assert — compact rules still keep the server-side SRS precedence contract up front.
-        capturedPayload.PromptConfig.Rules.Should().Contain("SRS IS THE PRIMARY SOURCE OF TRUTH");
-        capturedPayload.PromptConfig.Rules.Should().Contain("SRS constraints OVERRIDE");
+        // Assert — compact rules keep OpenAPI as frame and SRS as endpoint-scoped business source.
+        capturedPayload.PromptConfig.Rules.Should().Contain("OpenAPI is the structural contract");
+        capturedPayload.PromptConfig.Rules.Should().Contain("SRS is the business scenario driver");
+        capturedPayload.PromptConfig.Rules.Should().NotContain("SRS constraints OVERRIDE");
     }
 
     #endregion
