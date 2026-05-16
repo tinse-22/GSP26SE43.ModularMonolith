@@ -61,15 +61,6 @@
       "ORDER_CONFIRMATION_REQUIRED",
       "CONCURRENCY_CONFLICT"
     ],
-    "GeneratePreviewSourceResponse": [
-      "local-draft"
-    ],
-    "RefinementStatusResponse": [
-      "pending",
-      "succeeded",
-      "failed",
-      "cancelled"
-    ],
     "GenerationJobStatusResponse": [
       "Queued",
       "Triggering",
@@ -163,26 +154,17 @@
         "defaultValue: string?"
       ]
     },
-    "GenerateLlmSuggestionPreviewResultModel": {
+    "GenerateLlmSuggestionsAcceptedResponse": {
       "properties": [
+        "jobId: Guid",
         "testSuiteId: Guid",
-        "totalSuggestions: int",
-        "endpointsCovered: int",
-        "llmModel: string?",
-        "llmTokensUsed: int?",
-        "fromCache: bool",
-        "source: string? currently local-draft",
-        "refinementStatus: string? pending | succeeded | failed | cancelled",
-        "refinementJobId: Guid?",
-        "generatedAt: DateTimeOffset",
-        "suggestions: LlmSuggestionModel[]"
+        "mode: string currently callback",
+        "message: string"
       ],
       "notes": [
-        "Response 201 van hop le ngay ca khi totalSuggestions = 0.",
-        "source = local-draft va llmModel = local-draft la expected success path, khong phai loi.",
-        "refinementStatus = pending nghia la BE da tao background refinement job va FE nen poll generation-status bang refinementJobId.",
-        "suggestions[] trong generate response la draft co the review ngay; currentUserFeedback va feedbackSummary hien tai thuong null.",
-        "Khi refinement job Completed, FE phai refetch GET /llm-suggestions de lay refined suggestions va rowVersion moi."
+        "Response 202 khong kem suggestion rows.",
+        "FE dung jobId de poll generation-status.",
+        "Suggestions chi xuat hien sau khi n8n callback hoan tat va job thanh Completed."
       ]
     },
     "GenerationJobStatusDto": {
@@ -343,11 +325,8 @@
       "query": [],
       "requestBody": "GenerateLlmSuggestionPreviewRequest",
       "response": {
-        "status": 201,
-        "body": "GenerateLlmSuggestionPreviewResultModel",
-        "headers": [
-          "Location: /api/test-suites/{suiteId}/llm-suggestions"
-        ]
+        "status": 202,
+        "body": "GenerateLlmSuggestionsAcceptedResponse"
       },
       "problemCases": [
         "400 ValidationProblemDetails khi body malformed JSON hoac property type khong bind duoc.",
@@ -356,11 +335,10 @@
         "409 ProblemDetails voi reasonCode=ORDER_CONFIRMATION_REQUIRED khi suite chua co approved API order."
       ],
       "notes": [
-        "Current implementation tra local draft nhanh, persist durable preview rows, va start async n8n refinement job.",
-        "forceRefresh=true supersede cac row Pending cu truoc khi tao draft moi.",
-        "Neu LLM pipeline tra ve 0 scenario thi response van la 201 voi totalSuggestions = 0 va suggestions = [].",
-        "Current generate path set cacheKey = null tren tung suggestion row.",
-        "Neu response co refinementJobId, FE poll GET /api/test-suites/{suiteId}/generation-status?jobId={refinementJobId}."
+        "Current implementation queue async n8n generation va khong tao local draft.",
+        "forceRefresh=true supersede cac row Pending cu truoc khi queue job moi.",
+        "FE poll GET /api/test-suites/{suiteId}/generation-status?jobId={jobId}.",
+        "Suggestions duoc persist sau callback n8n, khong phai trong response generate."
       ]
     },
     {
@@ -384,10 +362,10 @@
         "404 khi jobId khong ton tai hoac job khong thuoc suite/user hien tai."
       ],
       "notes": [
-        "Poll route nay sau POST /llm-suggestions/generate neu response co refinementJobId.",
+        "Poll route nay sau POST /llm-suggestions/generate bang jobId trong response 202.",
         "Terminal statuses: Completed, Failed, Cancelled.",
         "Khi Completed, refetch GET /llm-suggestions.",
-        "Khi Failed/Cancelled, giu draft hien tai va cho user review hoac regenerate voi forceRefresh=true."
+        "Khi Failed/Cancelled, hien loi va cho user regenerate voi forceRefresh=true."
       ]
     },
     {
@@ -472,8 +450,8 @@
     }
   ],
   "runtimeRules": [
-    "Generate preview now returns local draft first and starts async n8n refinement in background.",
-    "forceRefresh supersedes durable Pending suggestions before creating a new local draft.",
+    "Generate preview now returns 202 Accepted and starts async n8n generation in background.",
+    "forceRefresh supersedes durable Pending suggestions before queueing a new job.",
     "Owner check dua tren suite.CreatedById, khong dua tren reviewedById hay feedback user id.",
     "Current generate path luon tao SuggestionType = BoundaryNegative va ReviewStatus = Pending.",
     "Current generate path set CacheKey = null tren entity du model van expose field nay.",
@@ -484,7 +462,7 @@
     "Invalid reviewStatus/testType filter hien tai bi ignore trong list route.",
     "Review reject khong tang suite version va khong tao TestCase.",
     "Review approve/modify tao TestCase, TestCaseChangeLog, TestSuiteVersion, va tang suite.Version.",
-    "Generate preview check quota MaxLlmCallsPerMonth truoc khi tao draft/refinement job; approve/modify check quota MaxTestCasesPerSuite truoc materialize.",
+    "Generate preview check quota MaxLlmCallsPerMonth truoc khi tao generation job; approve/modify check quota MaxTestCasesPerSuite truoc materialize.",
     "Callback endpoint /api/test-generation/llm-suggestions/callback/{jobId} la n8n-only, FE khong goi route nay.",
     "Feedback write endpoint va bulk-review endpoint cung nam trong LlmSuggestionsController nhung khong nam trong file contract FE-15 nay."
   ],
@@ -493,53 +471,33 @@
       "specificationId": "a467dd28-4a77-45a2-8f34-8be8900db1d8",
       "forceRefresh": false
     },
-    "generatePreview201": {
+    "generatePreview202": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
       "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
-      "totalSuggestions": 2,
-      "endpointsCovered": 2,
-      "llmModel": "local-draft",
-      "llmTokensUsed": null,
-      "fromCache": false,
-      "source": "local-draft",
-      "refinementStatus": "pending",
-      "refinementJobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
-      "generatedAt": "2026-03-28T09:15:00Z",
-      "suggestions": [
-        {
-          "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
-          "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
-          "endpointId": "59d71e6f-23db-46e5-8de2-05f3fe62c179",
-          "cacheKey": null,
-          "displayOrder": 0,
-          "suggestionType": "BoundaryNegative",
-          "testType": "Negative",
-          "suggestedName": "POST /api/auth/register - email already exists",
-          "suggestedDescription": "Gui duplicated email va ky vong backend tra validation failure.",
-          "suggestedRequest": "{\"httpMethod\":\"POST\",\"url\":\"/api/auth/register\",\"headers\":{\"Content-Type\":\"application/json\"},\"pathParams\":{},\"queryParams\":{},\"bodyType\":null,\"body\":\"{\\\"email\\\":\\\"taken@example.com\\\",\\\"password\\\":\\\"Secret123!\\\"}\",\"timeout\":null}",
-          "suggestedExpectation": "{\"expectedStatus\":[400],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[\"email\"],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null}",
-          "suggestedVariables": [],
-          "suggestedTags": [
-            "negative",
-            "auto-generated",
-            "llm-suggested",
-            "validation"
-          ],
-          "priority": "High",
-          "reviewStatus": "Pending",
-          "reviewedById": null,
-          "reviewedAt": null,
-          "reviewNotes": null,
-          "modifiedContent": null,
-          "appliedTestCaseId": null,
-          "llmModel": "local-draft",
-          "tokensUsed": null,
-          "createdDateTime": "2026-03-28T09:15:00Z",
-          "updatedDateTime": null,
-          "rowVersion": "AQIDBAUGBwg=",
-          "currentUserFeedback": null,
-          "feedbackSummary": null
-        }
-      ]
+      "mode": "callback",
+      "message": "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Suggestions sẽ xuất hiện sau khi callback hoàn tất."
+    },
+    "generationStatusWaitingForCallback200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "WaitingForCallback",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": null,
+      "testCasesGenerated": null,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
+    },
+    "generationStatusCompleted200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "Completed",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": "2026-05-16T06:16:30Z",
+      "testCasesGenerated": 6,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
     },
     "generationStatusWaitingForCallback200": {
       "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
@@ -733,10 +691,10 @@
     }
   },
   "relatedNotes": [
-    "Neu FE vua goi POST /generate thanh cong, dung suggestions[] trong 201 response de render draft ngay.",
-    "Neu response co refinementJobId, poll GET /generation-status?jobId=... den khi Completed/Failed/Cancelled.",
-    "Khi Completed, refetch GET /llm-suggestions de lay refined suggestions moi.",
-    "Neu Failed, draft van dung duoc; khong tu dong goi lai POST /generate trong loop.",
+    "Sau POST /generate thanh cong, dung jobId trong response 202 de poll generation-status.",
+    "Khong render suggestion moi truoc khi job Completed.",
+    "Khi Completed, refetch GET /llm-suggestions de lay suggestions moi.",
+    "Neu Failed, hien loi va cho user regenerate; khong tu dong goi lai POST /generate trong loop.",
     "Neu FE muon cho user edit nested request/expectation/variables, hay hydrate editor state tu chuoi JSON trong suggestedRequest/suggestedExpectation truoc.",
     "Feedback write va bulk review da ton tai o runtime hien tai, nhung nen duoc handoff rieng theo FE-16 va FE-17."
   ]

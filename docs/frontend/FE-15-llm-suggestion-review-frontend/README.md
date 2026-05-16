@@ -29,7 +29,7 @@ Runtime frontend-facing hien tai cua FE-15 tap trung vao 4 endpoint core tren `L
 
 Sau cap nhat async refinement ngay 2026-05-16, FE-15 generate preview co them 1 endpoint poll status tren `TestOrderController`:
 
-- `GET /api/test-suites/{suiteId}/generation-status?jobId={refinementJobId}`
+- `GET /api/test-suites/{suiteId}/generation-status?jobId={jobId}`
 
 Callback moi `POST /api/test-generation/llm-suggestions/callback/{jobId}` chi danh cho n8n, FE khong goi route nay.
 
@@ -52,17 +52,17 @@ Thu muc nay chi cover API surface core cho preview, list, detail, va single-item
 ## 3. Files trong thu muc nay
 
 - `llm-suggestions-api.json`: contract frontend-facing cho FE-15 tren `LlmSuggestionsController`
-- `ASYNC-REFINEMENT-FE-FLOW.md`: flow FE moi cho local draft + n8n refine nen + polling status
+- `ASYNC-REFINEMENT-FE-FLOW.md`: flow FE moi cho async n8n generation + polling status
 
 ## 4. Nhung diem FE de noi sai
 
-1. `POST /generate` khong con la request cho n8n/DeepSeek 6 phut. No tra local draft nhanh, persist durable `LlmSuggestion` rows, va tra `refinementJobId` de FE poll.
-2. `POST /generate` khong tao `TestCase` rows. No chi tao preview rows voi `reviewStatus = Pending`.
-3. `POST /generate` luon tra `201 Created`, ke ca khi `totalSuggestions = 0`.
-4. `Location` header cua `201` hien tro ve list route `/api/test-suites/{suiteId}/llm-suggestions`, khong tro ve mot batch resource rieng.
+1. `POST /generate` la async start endpoint. No tao job, queue n8n, va tra `202 Accepted` voi `jobId`.
+2. `POST /generate` khong tao `TestCase` rows va cung khong tao `LlmSuggestion` rows truoc callback n8n.
+3. FE khong co suggestion moi de review cho den khi generation job `Completed`.
+4. Response `202` khong co `Location` header tro ve suggestion resource.
 5. `forceRefresh = false` va con bat ky suggestion `Pending` nao trong suite se tra `400`, khong phai `409`.
-6. `forceRefresh = true` chi supersede bo `Pending` hien tai; no khong ep backend bo qua raw cache cua FE-06. Vi vay response van co the `fromCache = true`.
-7. Generate preview van check `MaxLlmCallsPerMonth` truoc khi tao preview/refinement job.
+6. `forceRefresh = true` supersede bo `Pending` hien tai ngay truoc khi queue job moi.
+7. Generate preview van check `MaxLlmCallsPerMonth` truoc khi tao job.
 8. Generate preview yeu cau suite da co approved API order. Neu gate fail backend tra `409 ORDER_CONFIRMATION_REQUIRED`.
 9. Generate preview hien tai chi sinh `suggestionType = BoundaryNegative`. FE-15 runtime chua mo mot happy-path preview flow rieng.
 10. `GET /llm-suggestions` chi co 3 filter: `reviewStatus`, `testType`, `endpointId`. Khong co pagination, search, hay `suggestionType` filter.
@@ -79,12 +79,12 @@ Thu muc nay chi cover API surface core cho preview, list, detail, va single-item
 21. `Approve` retry sau khi suggestion da duoc materialize la idempotent. Backend tra `200` suggestion hien tai thay vi tao duplicate `TestCase`.
 22. `Approve` va `Modify` tao real `TestCase`, `TestCaseChangeLog`, `TestSuiteVersion`, va set `appliedTestCaseId`. `Reject` chi doi review state.
 23. Non-owner access hien dang map thanh `400 ProblemDetails` do ValidationException, khong phai `403`.
-24. `currentUserFeedback` va `feedbackSummary` chi duoc hydrate o list/detail query. Generate/review response hien tai thuong tra `null` cho 2 field nay du model van co field.
+24. `currentUserFeedback` va `feedbackSummary` chi duoc hydrate o list/detail query. Review response hien tai thuong tra `null` cho 2 field nay du model van co field.
 25. Generate preview co archived guard; list/detail/review hien tai khong them archived guard rieng trong handler.
-26. `source = "local-draft"` va `llmModel = "local-draft"` la ket qua hop le, khong phai loi.
-27. `refinementStatus = "pending"` nghia la n8n dang refine nen. FE phai render draft ngay va poll `/generation-status`.
-28. Khi job status thanh `Completed`, FE phai refetch `GET /llm-suggestions` de lay refined suggestions va rowVersion moi.
-29. Khi job status thanh `Failed`, FE giu draft hien tai va cho user review hoac regenerate voi `forceRefresh=true`.
+26. Generate path FE-15 khong con tra `local-draft`.
+27. Sau `202 Accepted`, FE phai poll `/generation-status?jobId=...`.
+28. Khi job status thanh `Completed`, FE phai refetch `GET /llm-suggestions` de lay suggestions va rowVersion moi.
+29. Khi job status thanh `Failed`, FE hien loi va cho regenerate voi `forceRefresh=true`; khong co draft moi de review.
 
 ## 5. Filter, param, sort hien tai
 
@@ -93,7 +93,7 @@ Thu muc nay chi cover API surface core cho preview, list, detail, va single-item
   - body: `specificationId`, `forceRefresh`, `algorithmProfile`
 - `GET /api/test-suites/{suiteId}/generation-status`
   - query required khi poll async LLM suggestion refine: `jobId`
-  - server co the fallback latest job theo suite neu bo `jobId`, nhung FE nen luon truyen `refinementJobId` de tranh lay nham job generate test cases khac
+  - server co the fallback latest job theo suite neu bo `jobId`, nhung FE nen luon truyen `jobId` de tranh lay nham job generate test cases khac
 - `GET /api/test-suites/{suiteId}/llm-suggestions`
   - query optional: `reviewStatus`, `testType`, `endpointId`
   - khong co pagination
@@ -109,11 +109,10 @@ Thu muc nay chi cover API surface core cho preview, list, detail, va single-item
 1. Truoc khi mo FE-15 review screen, dam bao suite da qua FE-05A va co approved API order.
 2. Khi vao man hinh review, goi `GET /llm-suggestions` de lay suggestion set hien tai.
 3. Neu list rong va user muon sinh preview moi, goi `POST /generate`.
-4. Render draft ngay tu response `POST /generate` hoac refetch `GET /llm-suggestions`.
-5. Neu response co `refinementJobId`, poll `GET /generation-status?jobId={refinementJobId}`.
-6. Trong luc poll, khong block toan man hinh; hien badge `Refining...`.
-7. Khi job `Completed`, refetch `GET /llm-suggestions` de lay refined suggestions moi.
-8. Khi job `Failed` hoac `Cancelled`, giu draft va cho user review/regenerate.
+4. Nhan `jobId` tu response `202 Accepted`, sau do poll `GET /generation-status?jobId={jobId}`.
+5. Trong luc poll, hien trang thai dang generate; chua render suggestion moi de review.
+6. Khi job `Completed`, refetch `GET /llm-suggestions` de lay suggestions moi.
+7. Khi job `Failed` hoac `Cancelled`, hien loi va cho user regenerate.
 9. Neu user can payload day du hoac rowVersion moi nhat cho 1 item, goi `GET /llm-suggestions/{suggestionId}` truoc khi review.
 10. Khi user approve/reject/modify, luon gui `rowVersion` moi nhat tu list/detail.
 11. Sau review thanh cong, update local row hoac refetch list. Neu action la approve/modify va response co `appliedTestCaseId`, FE co the deeplink sang man hinh test case neu can.
@@ -127,5 +126,5 @@ Thu muc nay chi cover API surface core cho preview, list, detail, va single-item
 - Disable double-click khi review de tranh gui duplicate mutation cung `rowVersion`.
 - Neu FE cho edit `request`, `expectation`, hoac `variables`, hay gui full block da sua thay vi patch tung field con.
 - Hien ro badge `reviewStatus`, `testType`, `priority`, `llmModel`, `tokensUsed`, `reviewedAt`, va `appliedTestCaseId`.
-- Hien them badge refinement theo `source`, `refinementStatus`, va job status poll.
+- Hien trang thai generation theo job status poll.
 - Co the tan dung `currentUserFeedback`/`feedbackSummary` de render read-only metadata ngay tu FE-15, nhung write action cho feedback nen theo tai lieu FE-16.
