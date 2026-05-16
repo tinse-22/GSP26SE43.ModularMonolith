@@ -28,7 +28,7 @@ public class GenerateLlmSuggestionPreviewCommand : ICommand
     public Guid SpecificationId { get; set; }
     public bool ForceRefresh { get; set; }
     public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
-    public GenerateLlmSuggestionPreviewResultModel Result { get; set; }
+    public Guid JobId { get; set; }
 }
 
 public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<GenerateLlmSuggestionPreviewCommand>
@@ -42,7 +42,6 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
     private readonly ILlmScenarioSuggester _llmSuggester;
-    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
     private readonly IMessageBus _messageBus;
     private readonly N8nIntegrationOptions _n8nOptions;
@@ -58,7 +57,6 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
         ILlmScenarioSuggester llmSuggester,
-        ILlmSuggestionPreviewPersistenceService persistenceService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
         IMessageBus messageBus,
         IOptions<N8nIntegrationOptions> n8nOptions,
@@ -73,7 +71,6 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
         _llmSuggester = llmSuggester;
-        _persistenceService = persistenceService;
         _subscriptionLimitService = subscriptionLimitService;
         _messageBus = messageBus;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
@@ -119,16 +116,34 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         }
 
         // 5) Check existing pending suggestions
+        var existingPending = await _suggestionRepository.ToListAsync(
+            _suggestionRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == command.TestSuiteId
+                    && x.ReviewStatus == ReviewStatus.Pending));
+
         if (!command.ForceRefresh)
         {
-            var existingPending = await _suggestionRepository.ToListAsync(
-                _suggestionRepository.GetQueryableSet()
-                    .Where(x => x.TestSuiteId == command.TestSuiteId
-                        && x.ReviewStatus == ReviewStatus.Pending));
-
             ValidationException.Requires(
                 existingPending.Count == 0,
                 "Đã có suggestion preview đang chờ review. Sử dụng ForceRefresh=true để tạo mới.");
+        }
+        else
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var existing in existingPending)
+            {
+                existing.ReviewStatus = ReviewStatus.Superseded;
+                existing.ReviewedById = command.CurrentUserId;
+                existing.ReviewedAt = now;
+                existing.UpdatedDateTime = now;
+                existing.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suggestionRepository.UpdateAsync(existing, cancellationToken);
+            }
+
+            if (existingPending.Count > 0)
+            {
+                await _suggestionRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            }
         }
 
         // 6) Build contract-rich LLM context (metadata + parameter details)
@@ -194,62 +209,12 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         await _jobRepository.AddAsync(job, cancellationToken);
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        var llmResult = await _llmSuggester.SuggestLocalDraftAsync(llmContext, cancellationToken);
-
-        if (llmResult.Scenarios.Count == 0)
-        {
-            command.Result = new GenerateLlmSuggestionPreviewResultModel
-            {
-                TestSuiteId = command.TestSuiteId,
-                TotalSuggestions = 0,
-                EndpointsCovered = 0,
-                LlmModel = llmResult.LlmModel,
-                LlmTokensUsed = llmResult.TokensUsed,
-                FromCache = llmResult.FromCache,
-                Source = "local-draft",
-                RefinementStatus = ToRefinementStatus(job.Status),
-                RefinementJobId = job.Id,
-                GeneratedAt = DateTimeOffset.UtcNow,
-                Suggestions = new List<LlmSuggestionModel>(),
-            };
-            await QueueRefinementAsync(job, llmContext, cancellationToken);
-            return;
-        }
-
-        var suggestions = await _persistenceService.ReplacePendingSuggestionsAsync(
-            suite,
-            approvedOrder,
-            llmResult,
-            command.CurrentUserId,
-            cancellationToken);
-
+        command.JobId = job.Id;
         await QueueRefinementAsync(job, llmContext, cancellationToken);
 
-        var now = DateTimeOffset.UtcNow;
-        command.Result = new GenerateLlmSuggestionPreviewResultModel
-        {
-            TestSuiteId = command.TestSuiteId,
-            TotalSuggestions = suggestions.Count,
-            EndpointsCovered = suggestions
-                .Where(s => s.EndpointId.HasValue)
-                .Select(s => s.EndpointId.Value)
-                .Distinct()
-                .Count(),
-            LlmModel = llmResult.LlmModel,
-            LlmTokensUsed = llmResult.TokensUsed,
-            FromCache = llmResult.FromCache,
-            Source = "local-draft",
-            RefinementStatus = ToRefinementStatus(job.Status),
-            RefinementJobId = job.Id,
-            GeneratedAt = now,
-            Suggestions = suggestions.Select(LlmSuggestionModel.FromEntity).ToList(),
-        };
-
         _logger.LogInformation(
-            "Local LLM suggestion preview generated. TestSuiteId={TestSuiteId}, TotalSuggestions={Total}, " +
-            "EndpointsCovered={Covered}, RefinementJobId={RefinementJobId}, RefinementStatus={RefinementStatus}, ActorUserId={UserId}",
-            command.TestSuiteId, suggestions.Count,
-            command.Result.EndpointsCovered, job.Id, job.Status, command.CurrentUserId);
+            "Queued LLM suggestion generation. TestSuiteId={TestSuiteId}, JobId={JobId}, RefinementStatus={RefinementStatus}, ActorUserId={UserId}",
+            command.TestSuiteId, job.Id, job.Status, command.CurrentUserId);
     }
 
     private async Task QueueRefinementAsync(
@@ -316,12 +281,4 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             : $"{baseUrl}/api/test-generation/llm-suggestions/callback/{jobId}";
     }
 
-    private static string ToRefinementStatus(GenerationJobStatus status) =>
-        status switch
-        {
-            GenerationJobStatus.Completed => "succeeded",
-            GenerationJobStatus.Failed => "failed",
-            GenerationJobStatus.Cancelled => "cancelled",
-            _ => "pending",
-        };
 }

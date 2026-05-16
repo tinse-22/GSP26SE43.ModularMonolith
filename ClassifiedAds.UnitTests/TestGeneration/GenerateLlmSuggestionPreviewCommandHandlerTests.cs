@@ -17,7 +17,6 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -26,8 +25,7 @@ namespace ClassifiedAds.UnitTests.TestGeneration;
 /// <summary>
 /// Unit tests for GenerateLlmSuggestionPreviewCommandHandler.
 /// Verifies input validation, ownership, gate check, subscription limits,
-/// pending-suggestion guard, LLM call, supersede logic, entity persistence,
-/// usage tracking, and result model construction.
+/// pending-suggestion guard and async refinement job creation.
 /// </summary>
 public class GenerateLlmSuggestionPreviewCommandHandlerTests
 {
@@ -40,7 +38,6 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     private readonly Mock<IApiEndpointMetadataService> _endpointMetadataServiceMock;
     private readonly Mock<IApiEndpointParameterDetailService> _endpointParameterDetailServiceMock;
     private readonly Mock<ILlmScenarioSuggester> _llmSuggesterMock;
-    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionMock;
     private readonly Mock<IMessageBus> _messageBusMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
@@ -57,7 +54,6 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
         _endpointParameterDetailServiceMock = new Mock<IApiEndpointParameterDetailService>();
         _llmSuggesterMock = new Mock<ILlmScenarioSuggester>();
-        _persistenceService = new LlmSuggestionPreviewPersistenceService(_suggestionRepoMock.Object);
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
         _messageBusMock = new Mock<IMessageBus>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -105,7 +101,6 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             _endpointMetadataServiceMock.Object,
             _endpointParameterDetailServiceMock.Object,
             _llmSuggesterMock.Object,
-            _persistenceService,
             _subscriptionMock.Object,
             _messageBusMock.Object,
             Options.Create(new N8nIntegrationOptions
@@ -194,7 +189,6 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         SetupGateApproved();
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
-        SetupLlmSuggesterReturnsEmpty();
 
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
@@ -223,14 +217,14 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
 
         LlmScenarioSuggestionContext capturedContext = null;
         _llmSuggesterMock
-            .Setup(x => x.SuggestLocalDraftAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
-            .Callback<LlmScenarioSuggestionContext, CancellationToken>((ctx, _) => capturedContext = ctx)
-            .ReturnsAsync(new LlmScenarioSuggestionResult
-            {
-                Scenarios = Array.Empty<LlmSuggestedScenario>(),
-                LlmModel = "gpt-4",
-                TokensUsed = 0,
-            });
+            .Setup(x => x.BuildAsyncRefinementPayloadAsync(
+                It.IsAny<LlmScenarioSuggestionContext>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<LlmScenarioSuggestionContext, Guid, string, string, CancellationToken>((ctx, _, _, _, _) => capturedContext = ctx)
+            .ReturnsAsync(new N8nBoundaryNegativePayload());
 
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
@@ -252,14 +246,14 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
 
         LlmScenarioSuggestionContext capturedContext = null;
         _llmSuggesterMock
-            .Setup(x => x.SuggestLocalDraftAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
-            .Callback<LlmScenarioSuggestionContext, CancellationToken>((ctx, _) => capturedContext = ctx)
-            .ReturnsAsync(new LlmScenarioSuggestionResult
-            {
-                Scenarios = Array.Empty<LlmSuggestedScenario>(),
-                LlmModel = "gpt-4",
-                TokensUsed = 0,
-            });
+            .Setup(x => x.BuildAsyncRefinementPayloadAsync(
+                It.IsAny<LlmScenarioSuggestionContext>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<LlmScenarioSuggestionContext, Guid, string, string, CancellationToken>((ctx, _, _, _, _) => capturedContext = ctx)
+            .ReturnsAsync(new N8nBoundaryNegativePayload());
 
         var command = CreateValidCommand();
         command.ForceRefresh = true;
@@ -303,28 +297,32 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_ReturnEmptyResult_WhenNoScenariosGenerated()
+    public async Task HandleAsync_Should_CreateQueuedJob_WithoutPersistingSuggestions()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
         SetupGateApproved();
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
-        SetupLlmSuggesterReturnsEmpty();
-
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
 
-        command.Result.Should().NotBeNull();
-        command.Result.TotalSuggestions.Should().Be(0);
-        command.Result.Suggestions.Should().BeEmpty();
-        command.Result.TestSuiteId.Should().Be(command.TestSuiteId);
+        command.JobId.Should().NotBe(Guid.Empty);
+        _suggestionRepoMock.Verify(
+            x => x.AddAsync(It.IsAny<LlmSuggestion>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _messageBusMock.Verify(
+            x => x.SendAsync(
+                It.IsAny<TriggerLlmSuggestionRefinementMessage>(),
+                It.IsAny<MetaData>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ────────────────────────────── Success path tests ──────────────────────────
 
     [Fact]
-    public async Task HandleAsync_Should_SupersedeExistingSuggestions()
+    public async Task HandleAsync_Should_SupersedeExistingSuggestions_WhenForceRefreshEnabled()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
@@ -347,14 +345,10 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _suggestionRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<LlmSuggestion>>()))
             .ReturnsAsync(existingPending);
 
-        var scenarios = CreateScenarios(1);
-        SetupLlmSuggesterReturns(scenarios);
-
         var command = CreateValidCommand();
         command.ForceRefresh = true;
         await _handler.HandleAsync(command);
 
-        // Verify existing pending suggestions were updated to Superseded
         _suggestionRepoMock.Verify(
             x => x.UpdateAsync(
                 It.Is<LlmSuggestion>(s => s.ReviewStatus == ReviewStatus.Superseded),
@@ -363,80 +357,53 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_PersistNewSuggestionEntities()
+    public async Task HandleAsync_Should_NotPersistSuggestionEntities_BeforeCallback()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
         SetupGateApproved();
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
-
-        var scenarios = CreateScenarios(3);
-        SetupLlmSuggesterReturns(scenarios);
 
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
 
         _suggestionRepoMock.Verify(
             x => x.AddAsync(It.IsAny<LlmSuggestion>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(3));
+            Times.Never);
 
         _unitOfWorkMock.Verify(
             x => x.SaveChangesAsync(It.IsAny<CancellationToken>()),
-            Times.Exactly(3));
+            Times.Exactly(2));
     }
 
     [Fact]
-    public async Task HandleAsync_Should_PersistFullExpectedStatusList_FromScenario()
+    public async Task HandleAsync_Should_NotCallLocalDraftSuggester()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
         SetupGateApproved();
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
-
-        var scenario = new LlmSuggestedScenario
-        {
-            EndpointId = Guid.NewGuid(),
-            ScenarioName = "Validation should reject request",
-            Description = "Scenario with multiple acceptable error statuses",
-            SuggestedTestType = TestType.Negative,
-            ExpectedStatusCode = 400,
-            ExpectedStatusCodes = new List<int> { 400, 422 },
-            ExpectedBehavior = "validation",
-        };
-
-        LlmSuggestion persistedSuggestion = null;
-        _suggestionRepoMock.Setup(x => x.AddAsync(It.IsAny<LlmSuggestion>(), It.IsAny<CancellationToken>()))
-            .Callback<LlmSuggestion, CancellationToken>((suggestion, _) => persistedSuggestion = suggestion)
-            .Returns(Task.CompletedTask);
-
-        SetupLlmSuggesterReturns(new List<LlmSuggestedScenario> { scenario });
 
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
 
-        persistedSuggestion.Should().NotBeNull();
-
-        var expectation = JsonSerializer.Deserialize<N8nTestCaseExpectation>(
-            persistedSuggestion.SuggestedExpectation,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-        expectation.Should().NotBeNull();
-        expectation.ExpectedStatus.Should().Equal(400, 422);
+        _llmSuggesterMock.Verify(
+            x => x.SuggestLocalDraftAsync(
+                It.IsAny<LlmScenarioSuggestionContext>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task HandleAsync_Should_NotIncrementLlmUsage_WhenReturningLocalDraft()
+    public async Task HandleAsync_Should_NotIncrementLlmUsage_BeforeCallback()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
         SetupGateApproved();
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
-
-        var scenarios = CreateScenarios(2);
-        SetupLlmSuggesterReturns(scenarios, fromCache: false);
 
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
@@ -450,7 +417,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_NotIncrementLlmUsage_WhenFromCache()
+    public async Task HandleAsync_Should_ReturnJobId()
     {
         var suite = CreateSuite();
         SetupSuiteFound(suite);
@@ -458,80 +425,10 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         SetupSubscriptionAllowed();
         SetupNoPendingSuggestions();
 
-        var scenarios = CreateScenarios(2);
-        SetupLlmSuggesterReturns(scenarios, fromCache: true);
-
         var command = CreateValidCommand();
         await _handler.HandleAsync(command);
 
-        _subscriptionMock.Verify(
-            x => x.IncrementUsageAsync(It.IsAny<IncrementUsageRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleAsync_Should_NotIncrementLlmUsage_WhenUsingLocalFallback()
-    {
-        var suite = CreateSuite();
-        SetupSuiteFound(suite);
-        SetupGateApproved();
-        SetupSubscriptionAllowed();
-        SetupNoPendingSuggestions();
-
-        var scenarios = CreateScenarios(2);
-        SetupLlmSuggesterReturns(scenarios, fromCache: false, usedLocalFallback: true);
-
-        var command = CreateValidCommand();
-        await _handler.HandleAsync(command);
-
-        _subscriptionMock.Verify(
-            x => x.IncrementUsageAsync(It.IsAny<IncrementUsageRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleAsync_Should_ReturnCorrectResultModel()
-    {
-        var suite = CreateSuite();
-        SetupSuiteFound(suite);
-        SetupGateApproved();
-        SetupSubscriptionAllowed();
-        SetupNoPendingSuggestions();
-
-        var endpointId1 = Guid.NewGuid();
-        var endpointId2 = Guid.NewGuid();
-        var scenarios = new List<LlmSuggestedScenario>
-        {
-            new()
-            {
-                EndpointId = endpointId1,
-                ScenarioName = "Scenario A",
-                Description = "Test boundary A",
-                SuggestedTestType = TestType.Boundary,
-                ExpectedStatusCode = 400,
-            },
-            new()
-            {
-                EndpointId = endpointId2,
-                ScenarioName = "Scenario B",
-                Description = "Test negative B",
-                SuggestedTestType = TestType.Negative,
-                ExpectedStatusCode = 422,
-            },
-        };
-        SetupLlmSuggesterReturns(scenarios, fromCache: false);
-
-        var command = CreateValidCommand();
-        await _handler.HandleAsync(command);
-
-        command.Result.Should().NotBeNull();
-        command.Result.TotalSuggestions.Should().Be(2);
-        command.Result.TestSuiteId.Should().Be(DefaultSuiteId);
-        command.Result.EndpointsCovered.Should().Be(2);
-        command.Result.LlmModel.Should().Be("gpt-4");
-        command.Result.LlmTokensUsed.Should().Be(1500);
-        command.Result.FromCache.Should().BeFalse();
-        command.Result.Suggestions.Should().HaveCount(2);
+        command.JobId.Should().NotBe(Guid.Empty);
     }
 
     #region Helpers
@@ -650,53 +547,6 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             .Returns(existingList.AsQueryable());
         _suggestionRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<LlmSuggestion>>()))
             .ReturnsAsync(existingList);
-    }
-
-    private void SetupLlmSuggesterReturns(
-        IReadOnlyList<LlmSuggestedScenario> scenarios,
-        bool fromCache = false,
-        bool usedLocalFallback = false)
-    {
-        _llmSuggesterMock.Setup(x => x.SuggestLocalDraftAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LlmScenarioSuggestionResult
-            {
-                Scenarios = scenarios,
-                LlmModel = "gpt-4",
-                TokensUsed = 1500,
-                FromCache = fromCache,
-                UsedLocalFallback = usedLocalFallback,
-            });
-    }
-
-    private void SetupLlmSuggesterReturnsEmpty()
-    {
-        _llmSuggesterMock.Setup(x => x.SuggestLocalDraftAsync(It.IsAny<LlmScenarioSuggestionContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LlmScenarioSuggestionResult
-            {
-                Scenarios = Array.Empty<LlmSuggestedScenario>(),
-                LlmModel = "gpt-4",
-                TokensUsed = 0,
-                FromCache = false,
-                UsedLocalFallback = false,
-            });
-    }
-
-    private static List<LlmSuggestedScenario> CreateScenarios(int count)
-    {
-        return Enumerable.Range(0, count)
-            .Select(i => new LlmSuggestedScenario
-            {
-                EndpointId = Guid.NewGuid(),
-                ScenarioName = $"Scenario {i}",
-                Description = $"Description for scenario {i}",
-                SuggestedTestType = i % 2 == 0 ? TestType.Boundary : TestType.Negative,
-                ExpectedStatusCode = 400,
-                ExpectedBehavior = "Bad request",
-                Priority = "High",
-                Tags = new List<string> { "llm-suggested" },
-                Variables = new List<N8nTestCaseVariable>(),
-            })
-            .ToList();
     }
 
     #endregion

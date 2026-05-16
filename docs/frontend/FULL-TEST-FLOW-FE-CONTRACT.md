@@ -12,7 +12,7 @@ Tai lieu nay la flow FE nen bam khi noi cac API test generation hien tai. Muc ti
   - `POST /api/test-generation/llm-suggestions/callback/{jobId}`
 - Moi mutation co `rowVersion` thi FE phai gui rowVersion moi nhat tu response gan nhat.
 - Khi endpoint generate tra `202 Accepted`, FE phai poll `GET /api/test-suites/{suiteId}/generation-status?jobId={jobId}`.
-- Khi endpoint LLM suggestion generate tra `source=local-draft`, FE phai render draft ngay, khong coi do la loi.
+- Endpoint LLM suggestion generate hien la async start endpoint; FE chi nhan `jobId`, khong nhan draft de review.
 
 ## 1. Required IDs FE phai co truoc
 
@@ -26,7 +26,7 @@ FE can co cac id sau tu cac man hinh truoc:
 | `endpointIds[]` | selected endpoints | proposal scope/order |
 | `proposalId` | order proposal response | reorder/approve/reject |
 | `proposal.rowVersion` | proposal response moi nhat | reorder/approve/reject |
-| `refinementJobId` | LLM suggestion generate response | poll n8n refinement |
+| `jobId` | LLM suggestion generate response | poll n8n generation |
 | `jobId` | generate tests response | poll full test generation |
 | `suggestionId` + `suggestion.rowVersion` | suggestion list/detail | review approve/reject/modify |
 
@@ -197,7 +197,7 @@ Important:
 
 Dung flow nay neu FE muon user review LLM-suggested boundary/negative scenarios truoc khi materialize thanh test cases.
 
-### 3.1 Generate draft + start async refinement
+### 3.1 Start async LLM suggestion generation
 
 ```http
 POST /api/test-suites/{suiteId}/llm-suggestions/generate
@@ -225,38 +225,28 @@ Required values:
 - `forceRefresh`: optional bool, default `false`.
 - `algorithmProfile`: optional. If FE does not have toggles, omit it or send defaults.
 
-Response `201 Created`: `GenerateLlmSuggestionPreviewResultModel`.
+Response `202 Accepted`: `GenerateTestsAcceptedResponse`.
 
 Values FE must read:
 
 ```json
 {
+  "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
   "testSuiteId": "7f081164-ba5d-455e-9bdd-150acbf105fa",
-  "totalSuggestions": 3,
-  "endpointsCovered": 3,
-  "llmModel": "local-draft",
-  "llmTokensUsed": null,
-  "fromCache": false,
-  "source": "local-draft",
-  "refinementStatus": "pending",
-  "refinementJobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
-  "generatedAt": "2026-05-16T06:10:00Z",
-  "suggestions": []
+  "mode": "callback",
+  "message": "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Suggestions sẽ xuất hiện sau khi callback hoàn tất."
 }
 ```
 
 FE rules:
 
-- Render draft suggestions immediately from `suggestions`.
-- If `suggestions` is empty but `totalSuggestions > 0`, call `GET /llm-suggestions` to get persisted rows.
-- If `refinementJobId` exists, start polling generation status.
-- Do not treat `local-draft` as error.
-- Do not show a 6-minute blocking spinner.
+- Start polling generation status with `jobId`.
+- Do not render new suggestion review UI before the job completes.
 
 ### 3.2 Poll LLM refinement job
 
 ```http
-GET /api/test-suites/{suiteId}/generation-status?jobId={refinementJobId}
+GET /api/test-suites/{suiteId}/generation-status?jobId={jobId}
 ```
 
 Response values:
@@ -283,7 +273,7 @@ Status handling:
 | `Triggering` | show `Sending to n8n`, poll again in 2-3s |
 | `WaitingForCallback` | show `Refining`, poll again in 5s |
 | `Completed` | stop poll, call `GET /llm-suggestions?reviewStatus=Pending` |
-| `Failed` | stop poll, keep draft, show `Refine failed`, allow regenerate |
+| `Failed` | stop poll, show generation failed, allow regenerate |
 | `Cancelled` | stop poll, keep current suggestions |
 
 Always pass `jobId`. If FE omits `jobId`, backend may return latest job for suite, which can be a different generation job.
@@ -543,7 +533,7 @@ Use detail route when opening editor/debug view so FE has full request, expectat
 | `404` | suite/proposal/job/suggestion/test case not found | refetch parent screen; disable current action |
 | `409 ORDER_CONFIRMATION_REQUIRED` | order gate not approved | navigate to order proposal approval screen |
 | `409 CONCURRENCY_CONFLICT` | stale rowVersion | refetch latest proposal/suggestion and retry |
-| poll `Failed` | n8n trigger/callback failed | keep draft/current list; allow retry |
+| poll `Failed` | n8n trigger/callback failed | keep current list; allow retry |
 
 ## 7. FE state machine summary
 
@@ -555,8 +545,7 @@ Select suite/spec/endpoints
   -> GET order-gate-status
   -> if review-first:
        POST llm-suggestions/generate
-       render source=local-draft
-       poll generation-status(refinementJobId)
+       poll generation-status(jobId)
        on Completed -> GET llm-suggestions
        user reviews suggestions
        approved suggestions create TestCase rows
@@ -572,7 +561,7 @@ Select suite/spec/endpoints
 - Do not call callback endpoints from browser.
 - Do not omit `jobId` when polling `/generation-status`.
 - Do not wait for n8n inside `POST /llm-suggestions/generate`.
-- Do not treat `llmModel=local-draft` as failed generation.
+- Do not render suggestion review UI before the generation job is completed.
 - Do not reuse stale `rowVersion` after reorder/approve/review response.
 - Do not assume `activeProposalStatus` is string; in gate status it can be numeric.
 - Do not send invalid enum casing for display filters unless FE intentionally wants backend to ignore the filter.

@@ -490,7 +490,7 @@ Do not claim a non-docs code task is fully analyzed if GitNexus was available bu
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GSP26SE43.ModularMonolith** (19108 symbols, 55112 relationships, 241 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GSP26SE43.ModularMonolith** (19248 symbols, 55594 relationships, 270 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -528,25 +528,5 @@ This project is indexed by GitNexus as **GSP26SE43.ModularMonolith** (19108 symb
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Work in the Services area (1108 symbols) | `.claude/skills/generated/services/SKILL.md` |
-| Work in the TestGeneration area (904 symbols) | `.claude/skills/generated/testgeneration/SKILL.md` |
-| Work in the TestExecution area (431 symbols) | `.claude/skills/generated/testexecution/SKILL.md` |
-| Work in the Commands area (246 symbols) | `.claude/skills/generated/commands/SKILL.md` |
-| Work in the ApiDocumentation area (243 symbols) | `.claude/skills/generated/apidocumentation/SKILL.md` |
-| Work in the Subscription area (211 symbols) | `.claude/skills/generated/subscription/SKILL.md` |
-| Work in the Controllers area (201 symbols) | `.claude/skills/generated/controllers/SKILL.md` |
-| Work in the Queries area (200 symbols) | `.claude/skills/generated/queries/SKILL.md` |
-| Work in the Models area (107 symbols) | `.claude/skills/generated/models/SKILL.md` |
-| Work in the Persistence area (63 symbols) | `.claude/skills/generated/persistence/SKILL.md` |
-| Work in the ResultPattern area (55 symbols) | `.claude/skills/generated/resultpattern/SKILL.md` |
-| Work in the Entities area (52 symbols) | `.claude/skills/generated/entities/SKILL.md` |
-| Work in the Identity area (49 symbols) | `.claude/skills/generated/identity/SKILL.md` |
-| Work in the Messaging area (48 symbols) | `.claude/skills/generated/messaging/SKILL.md` |
-| Work in the ClassifiedAds.Modules.Identity area (39 symbols) | `.claude/skills/generated/classifiedads-modules-identity/SKILL.md` |
-| Work in the LlmAssistant area (39 symbols) | `.claude/skills/generated/llmassistant/SKILL.md` |
-| Work in the ConfigurationOptions area (36 symbols) | `.claude/skills/generated/configurationoptions/SKILL.md` |
-| Work in the TestReporting area (34 symbols) | `.claude/skills/generated/testreporting/SKILL.md` |
-| Work in the ResultMapping area (25 symbols) | `.claude/skills/generated/resultmapping/SKILL.md` |
-| Work in the HostedServices area (22 symbols) | `.claude/skills/generated/hostedservices/SKILL.md` |
 
 <!-- gitnexus:end -->
