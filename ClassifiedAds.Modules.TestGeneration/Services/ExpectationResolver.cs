@@ -36,7 +36,7 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         var (srs, srsReason) = TryResolveFromSrs(context);
         var swagger = TryResolveFromSwagger(context);
-        if (srs?.HasExplicitSrsStatus == true)
+        if (srs?.HasExplicitSrsStatus == true && CanUseSrsStatusOverride(srs, context, swagger))
         {
             if (llm != null)
             {
@@ -62,22 +62,28 @@ public sealed class ExpectationResolver : IExpectationResolver
             return ConstrainToOpenApi(srs, context);
         }
 
-        if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
-        {
-            return ConstrainToOpenApi(EnrichFromSrsAndSwagger(llm, context), context);
-        }
-
-        if (srs != null)
+        if (srs?.HasExplicitSrsStatus == true)
         {
             _logger.LogInformation(
-                "[ExpectationResolver] SRS -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | ExpectedStatus=[{Statuses}] | BodyContains=[{BodyContains}] | JsonPathChecks=[{JsonPathChecks}]",
+                "[ExpectationResolver] SRS skipped -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | SrsExpectedStatus=[{SrsStatuses}] | Reason: status is not compatible with HTTP method or documented responses.",
                 endpointInfo,
                 context.TestType,
                 srs.RequirementCode,
-                string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()),
-                string.Join(",", srs.BodyContains ?? new List<string>()),
-                string.Join(", ", (srs.JsonPathChecks ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}:{kv.Value}")));
-            return ConstrainToOpenApi(srs, context);
+                string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()));
+        }
+        else if (srs != null)
+        {
+            _logger.LogInformation(
+                "[ExpectationResolver] SRS supplement -> {Endpoint} | TestType={TestType} | ReqCode={ReqCode} | SrsExpectedStatus=[{SrsStatuses}] | Reason: requirement is not covered by this scenario, so SRS status will not override LLM/Swagger/default.",
+                endpointInfo,
+                context.TestType,
+                srs.RequirementCode,
+                string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()));
+        }
+
+        if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
+        {
+            return ConstrainToOpenApi(EnrichFromSrsAndSwagger(llm, context), context);
         }
 
         if (!string.IsNullOrWhiteSpace(srsReason))
@@ -118,6 +124,45 @@ public sealed class ExpectationResolver : IExpectationResolver
             context.HttpMethod,
             string.Join(",", def.ExpectedStatusCodes ?? new List<int>()));
         return ConstrainToOpenApi(def, context);
+    }
+
+    private static bool CanUseSrsStatusOverride(
+        ResolvedExpectation srs,
+        GeneratedScenarioContext context,
+        ResolvedExpectation swagger)
+    {
+        if (srs?.ExpectedStatusCodes?.Count > 0 != true)
+        {
+            return false;
+        }
+
+        var method = context?.HttpMethod?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            return true;
+        }
+
+        var hasCreatedStatus = srs.ExpectedStatusCodes.Contains(201);
+        if (!hasCreatedStatus)
+        {
+            return true;
+        }
+
+        if (method is "GET" or "HEAD" or "OPTIONS" or "DELETE")
+        {
+            return false;
+        }
+
+        if (method == "PUT" &&
+            context?.SwaggerResponses?.Count > 0 == true &&
+            !context.SwaggerResponses.Any(response => response.StatusCode == 201))
+        {
+            return false;
+        }
+
+        return swagger?.ExpectedStatusCodes?.Contains(201) == true ||
+               context?.SwaggerResponses?.Count > 0 != true ||
+               method == "POST";
     }
 
     private static ResolvedExpectation MergeSrsWithLlmAndSwagger(

@@ -1219,6 +1219,58 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public void ParseRefinementResponse_Should_KeepLlmExpectedStatus_WhenSrsRequirementIsNotCoverableForEndpoint()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        context.SrsRequirements = new List<SrsRequirement>
+        {
+            new()
+            {
+                Id = Guid.NewGuid(),
+                RequirementCode = "REQ-003",
+                IsReviewed = true,
+                TestableConstraints = """[{ "constraint": "resource is created -> 201", "expectedOutcome": "201 Created", "priority": "High" }]""",
+            },
+        };
+
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Model = "gpt-4o",
+            TokensUsed = 100,
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = EndpointId2,
+                    ScenarioName = "List users succeeds",
+                    TestType = "HappyPath",
+                    Priority = "Medium",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "GET",
+                        Url = "/api/users",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 200 },
+                    },
+                    CoveredRequirementCodes = new List<string> { "REQ-003" },
+                },
+            },
+        };
+
+        // Act
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        // Assert
+        var scenario = result.Scenarios.Should().ContainSingle().Subject;
+        scenario.EndpointId.Should().Be(EndpointId2);
+        scenario.ExpectedStatusCodes.Should().Equal(200);
+        scenario.CoveredRequirementIds.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_RepairJsonPathChecks_WhenLlmLeftEmpty()
     {
         // Arrange
