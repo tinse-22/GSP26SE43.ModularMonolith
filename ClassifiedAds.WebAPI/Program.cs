@@ -370,7 +370,13 @@ if (!messageBusOptions.RabbitMQ.RoutingKeys.ContainsKey(nameof(TriggerTestGenera
     messageBusOptions.RabbitMQ.RoutingKeys[nameof(TriggerTestGenerationMessage)] = "classifiedadds_testgeneration_trigger";
 }
 
+if (!messageBusOptions.RabbitMQ.RoutingKeys.ContainsKey(nameof(TriggerLlmSuggestionRefinementMessage)))
+{
+    messageBusOptions.RabbitMQ.RoutingKeys[nameof(TriggerLlmSuggestionRefinementMessage)] = "classifiedadds_llm_suggestion_refinement";
+}
+
 services.AddMessageBusSender<TriggerTestGenerationMessage>(messageBusOptions);
+services.AddMessageBusSender<TriggerLlmSuggestionRefinementMessage>(messageBusOptions);
 
 services.AddHostedServicesNotificationModule();
 services.AddHostedServicesApiDocumentationModule();

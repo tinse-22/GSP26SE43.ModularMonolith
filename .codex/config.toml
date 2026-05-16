@@ -1,3 +1,10 @@
+[mcp_servers.agentmemory]
+command = "cmd"
+args = ["/c", "agentmemory.cmd", "mcp", "--tools", "all"]
+
+[mcp_servers.agentmemory.env]
+AGENTMEMORY_URL = "http://localhost:3111"
+
 [mcp_servers.gitnexus]
-command = "npx"
-args = ["-y", "gitnexus@latest", "mcp"]
+command = "cmd"
+args = ["/c", "gitnexus.cmd", "mcp"]
