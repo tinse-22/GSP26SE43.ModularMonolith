@@ -127,7 +127,7 @@ public class LlmScenarioSuggesterTests
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.AtLeast(2));
     }
 
     [Fact]
@@ -150,11 +150,11 @@ public class LlmScenarioSuggesterTests
         scenarioCounts.Should().ContainKey(EndpointId1);
         scenarioCounts.Should().ContainKey(EndpointId2);
         scenarioCounts[EndpointId1].Should().BeInRange(1, 10);
-        scenarioCounts[EndpointId2].Should().BeInRange(1, 3);
+        scenarioCounts[EndpointId2].Should().BeInRange(1, 10);
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_TargetThreeScenarios_ForDeleteEndpoints()
+    public async Task SuggestScenariosAsync_Should_NotAddFallback_ForDeleteEndpoints()
     {
         // Arrange
         var context = CreateSingleEndpointContext();
@@ -180,12 +180,11 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.Scenarios.Should().HaveCount(3);
-        result.Scenarios.Should().OnlyContain(x => x.EndpointId == EndpointId1);
+        result.Scenarios.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_NotPadSuccessOnlyGetEndpoints_WithBoundaryNegative()
+    public async Task SuggestScenariosAsync_Should_NotAddFallback_ForSuccessOnlyGetEndpoints()
     {
         // Arrange
         var context = CreateSingleEndpointContext();
@@ -218,9 +217,7 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.Scenarios.Should().ContainSingle();
-        result.Scenarios[0].SuggestedTestType.Should().Be(TestType.HappyPath);
-        result.Scenarios[0].ExpectedStatusCodes.Should().BeEquivalentTo(new[] { 200 });
+        result.Scenarios.Should().BeEmpty();
     }
 
     [Fact]
@@ -251,10 +248,9 @@ public class LlmScenarioSuggesterTests
 
         // Assert
         capturedPayload.Should().NotBeNull();
-        capturedPayload.PromptConfig.Rules.Should().Contain("GET and DELETE endpoints target up to 3 scenarios total");
-        capturedPayload.PromptConfig.Rules.Should().Contain("POST, PUT, and PATCH endpoints target up to 10 scenarios total");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target up to 10 scenarios");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target up to 3 scenarios");
+        capturedPayload.PromptConfig.Rules.Should().Contain("produce 4-10 scenarios total");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target 4-10 scenarios");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target 4-10 scenarios");
     }
 
     [Fact]
@@ -420,7 +416,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_HandleEmptyN8nResponse()
+    public async Task SuggestScenariosAsync_Should_ReturnEmpty_WhenN8nResponseIsEmpty()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -442,10 +438,7 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.Scenarios.Should().HaveCountGreaterThanOrEqualTo(4);
-        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1 && x.SuggestedTestType == TestType.HappyPath);
-        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1 && x.SuggestedTestType == TestType.Boundary);
-        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId2 && x.SuggestedTestType == TestType.Negative);
+        result.Scenarios.Should().BeEmpty();
         result.FromCache.Should().BeFalse();
         result.LlmModel.Should().Be("gpt-4o");
     }
@@ -463,7 +456,24 @@ public class LlmScenarioSuggesterTests
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new N8nBoundaryNegativeResponse
             {
-                Scenarios = new List<N8nSuggestedScenario>(),
+                Scenarios = new List<N8nSuggestedScenario>
+                {
+                    new()
+                    {
+                        EndpointId = EndpointId1,
+                        ScenarioName = "Login happy path",
+                        Description = "Login with valid credentials",
+                        TestType = "HappyPath",
+                        Priority = "High",
+                        Request = new N8nTestCaseRequest
+                        {
+                            HttpMethod = "POST",
+                            Url = "/api/auth/login",
+                            BodyType = "None",
+                            Body = null,
+                        },
+                    },
+                },
                 Model = "gpt-4o",
                 TokensUsed = 42,
             });
@@ -514,7 +524,24 @@ public class LlmScenarioSuggesterTests
                 It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new N8nBoundaryNegativeResponse
             {
-                Scenarios = new List<N8nSuggestedScenario>(),
+                Scenarios = new List<N8nSuggestedScenario>
+                {
+                    new()
+                    {
+                        EndpointId = EndpointId1,
+                        ScenarioName = "Create pet",
+                        Description = "Create a pet with valid data",
+                        TestType = "HappyPath",
+                        Priority = "High",
+                        Request = new N8nTestCaseRequest
+                        {
+                            HttpMethod = "POST",
+                            Url = "/pet",
+                            BodyType = "None",
+                            Body = null,
+                        },
+                    },
+                },
                 Model = "gpt-4o",
                 TokensUsed = 32,
             });
@@ -560,7 +587,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_FallbackLocally_WhenN8nFailureIsTransient()
+    public async Task SuggestScenariosAsync_Should_PropagateTransientN8nError()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -579,14 +606,10 @@ public class LlmScenarioSuggesterTests
                 false));
 
         // Act
-        var result = await _sut.SuggestScenariosAsync(context);
+        var act = () => _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.UsedLocalFallback.Should().BeTrue();
-        result.LlmModel.Should().Be("local-fallback");
-        result.Scenarios.Should().HaveCountGreaterThanOrEqualTo(4);
-        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId1);
-        result.Scenarios.Should().Contain(x => x.EndpointId == EndpointId2);
+        await act.Should().ThrowAsync<N8nTransientException>();
 
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
@@ -599,7 +622,77 @@ public class LlmScenarioSuggesterTests
             x => x.CacheSuggestionsAsync(
                 It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<string>(),
                 It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_SplitBatchAndRetry_WhenTransientTimeoutOccurs()
+    {
+        // Arrange
+        var context = CreateDefaultContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+        var callCount = 0;
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .Returns<string, N8nBoundaryNegativePayload, CancellationToken>((_, payload, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    throw new N8nTransientException(
+                        "timeout",
+                        N8nWebhookNames.GenerateLlmSuggestions,
+                        "https://example.test/webhook/generate-llm-suggestions",
+                        524,
+                        true,
+                        false);
+                }
+
+                var scenarios = payload.Endpoints
+                    .Select(ep => new N8nSuggestedScenario
+                    {
+                        EndpointId = ep.EndpointId,
+                        ScenarioName = $"Retry scenario {ep.EndpointId}",
+                        Description = "Generated after split retry",
+                        TestType = "Negative",
+                        Priority = "High",
+                        Request = new N8nTestCaseRequest
+                        {
+                            HttpMethod = ep.HttpMethod,
+                            Url = ep.Path,
+                            BodyType = "None",
+                        },
+                        Expectation = new N8nTestCaseExpectation
+                        {
+                            ExpectedStatus = new List<int> { 400 },
+                        },
+                    })
+                    .ToList();
+
+                return Task.FromResult(new N8nBoundaryNegativeResponse
+                {
+                    Scenarios = scenarios,
+                    Model = "gpt-4o",
+                    TokensUsed = 100,
+                });
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        result.Scenarios.Should().HaveCount(2);
+        result.Scenarios.Select(x => x.EndpointId).Should().BeEquivalentTo(new[] { EndpointId1, EndpointId2 });
+
+        _n8nServiceMock.Verify(
+            x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions,
+                It.IsAny<N8nBoundaryNegativePayload>(),
+                It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
     }
 
     [Fact]
