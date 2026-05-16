@@ -38,6 +38,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
     private readonly Mock<IApiEndpointMetadataService> _endpointMetadataServiceMock;
     private readonly Mock<IApiEndpointParameterDetailService> _endpointParameterDetailServiceMock;
     private readonly Mock<ILlmScenarioSuggester> _llmSuggesterMock;
+    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionMock;
     private readonly Mock<IMessageBus> _messageBusMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
@@ -54,6 +55,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
         _endpointParameterDetailServiceMock = new Mock<IApiEndpointParameterDetailService>();
         _llmSuggesterMock = new Mock<ILlmScenarioSuggester>();
+        _persistenceService = new LlmSuggestionPreviewPersistenceService(_suggestionRepoMock.Object);
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
         _messageBusMock = new Mock<IMessageBus>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
@@ -101,6 +103,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             _endpointMetadataServiceMock.Object,
             _endpointParameterDetailServiceMock.Object,
             _llmSuggesterMock.Object,
+            _persistenceService,
             _subscriptionMock.Object,
             _messageBusMock.Object,
             Options.Create(new N8nIntegrationOptions

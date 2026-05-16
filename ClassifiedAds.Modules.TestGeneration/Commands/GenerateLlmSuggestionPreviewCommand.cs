@@ -42,6 +42,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
     private readonly ILlmScenarioSuggester _llmSuggester;
+    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
     private readonly IMessageBus _messageBus;
     private readonly N8nIntegrationOptions _n8nOptions;
@@ -57,6 +58,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
         ILlmScenarioSuggester llmSuggester,
+        ILlmSuggestionPreviewPersistenceService persistenceService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
         IMessageBus messageBus,
         IOptions<N8nIntegrationOptions> n8nOptions,
@@ -71,6 +73,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
         _llmSuggester = llmSuggester;
+        _persistenceService = persistenceService;
         _subscriptionLimitService = subscriptionLimitService;
         _messageBus = messageBus;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
