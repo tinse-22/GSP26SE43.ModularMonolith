@@ -21,6 +21,7 @@ public class N8nGeneratedTestCase
     public Guid EndpointId { get; set; }
     public string Name { get; set; }
     public string Description { get; set; }
+    public string TestType { get; set; }
     public string Priority { get; set; }
     public List<string> Tags { get; set; } = new();
     public N8nTestCaseRequest Request { get; set; }
