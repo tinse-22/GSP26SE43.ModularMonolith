@@ -42,6 +42,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
     private readonly ILlmScenarioSuggester _llmSuggester;
+    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
     private readonly IMessageBus _messageBus;
     private readonly N8nIntegrationOptions _n8nOptions;
@@ -57,6 +58,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
         ILlmScenarioSuggester llmSuggester,
+        ILlmSuggestionPreviewPersistenceService persistenceService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
         IMessageBus messageBus,
         IOptions<N8nIntegrationOptions> n8nOptions,
@@ -71,6 +73,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
         _llmSuggester = llmSuggester;
+        _persistenceService = persistenceService;
         _subscriptionLimitService = subscriptionLimitService;
         _messageBus = messageBus;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
@@ -281,4 +284,76 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             : $"{baseUrl}/api/test-generation/llm-suggestions/callback/{jobId}";
     }
 
+    private async Task QueueRefinementAsync(
+        TestGenerationJob job,
+        LlmScenarioSuggestionContext llmContext,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var callbackUrl = BuildCallbackUrl(job.Id);
+            var payload = await _llmSuggester.BuildAsyncRefinementPayloadAsync(
+                llmContext,
+                job.Id,
+                callbackUrl,
+                _n8nOptions.CallbackApiKey ?? string.Empty,
+                cancellationToken);
+
+            job.CallbackUrl = callbackUrl;
+            job.Status = GenerationJobStatus.Queued;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            await _messageBus.SendAsync(
+                new TriggerLlmSuggestionRefinementMessage
+                {
+                    JobId = job.Id,
+                    TestSuiteId = job.TestSuiteId,
+                    TriggeredById = job.TriggeredById,
+                    WebhookName = N8nWebhookNames.GenerateLlmSuggestions,
+                    CallbackUrl = callbackUrl,
+                    Payload = payload,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                },
+                new MetaData
+                {
+                    CreationDateTime = DateTimeOffset.UtcNow,
+                    EnqueuedDateTime = DateTimeOffset.UtcNow,
+                    MessageId = job.Id.ToString(),
+                },
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            job.Status = GenerationJobStatus.Failed;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            job.ErrorMessage = $"Không thể queue n8n refinement: {ex.Message}";
+            job.ErrorDetails = ex.ToString();
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogError(
+                ex,
+                "Failed to queue async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                job.Id,
+                job.TestSuiteId);
+        }
+    }
+
+    private string BuildCallbackUrl(Guid jobId)
+    {
+        var baseUrl = _n8nOptions.BeBaseUrl?.TrimEnd('/');
+        return string.IsNullOrWhiteSpace(baseUrl)
+            ? $"/api/test-generation/llm-suggestions/callback/{jobId}"
+            : $"{baseUrl}/api/test-generation/llm-suggestions/callback/{jobId}";
+    }
+
+    private static string ToRefinementStatus(GenerationJobStatus status) =>
+        status switch
+        {
+            GenerationJobStatus.Completed => "succeeded",
+            GenerationJobStatus.Failed => "failed",
+            GenerationJobStatus.Cancelled => "cancelled",
+            _ => "pending",
+        };
 }

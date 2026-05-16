@@ -499,6 +499,28 @@
       "errorMessage": null,
       "webhookName": "generate-llm-suggestions"
     },
+    "generationStatusWaitingForCallback200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "WaitingForCallback",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": null,
+      "testCasesGenerated": null,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
+    },
+    "generationStatusCompleted200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "Completed",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": "2026-05-16T06:16:30Z",
+      "testCasesGenerated": 6,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
+    },
     "listSuggestions200": [
       {
         "id": "8acbca9f-27f7-467a-bd4a-4c3b3f8f1455",
