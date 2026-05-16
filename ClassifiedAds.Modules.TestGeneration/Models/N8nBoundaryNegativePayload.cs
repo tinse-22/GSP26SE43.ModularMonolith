@@ -73,6 +73,14 @@ public class N8nBoundaryNegativePayload
 
     public string TestSuiteName { get; set; }
 
+    public Guid? RefinementJobId { get; set; }
+
+    /// <summary>BE endpoint n8n should POST refined LLM suggestions back to.</summary>
+    public string CallbackUrl { get; set; }
+
+    /// <summary>Sent by n8n in the x-callback-api-key header when posting callback results.</summary>
+    public string CallbackApiKey { get; set; }
+
     public string GlobalBusinessRules { get; set; }
 
     /// <summary>

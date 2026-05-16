@@ -1,9 +1,9 @@
 {
   "$schema": "frontend-api-contract",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "documentId": "fe-15-llm-suggestions-api",
-  "validatedAgainstCodebaseOn": "2026-03-28",
-  "controller": "LlmSuggestionsController",
+  "validatedAgainstCodebaseOn": "2026-05-16",
+  "controller": "LlmSuggestionsController + TestOrderController + LlmSuggestionRefinementCallbackController",
   "baseRoute": "/api/test-suites/{suiteId}/llm-suggestions",
   "authentication": {
     "required": true,
@@ -11,6 +11,7 @@
   },
   "permissions": {
     "GenerateLlmSuggestionPreview": "Permission:GenerateBoundaryNegativeTestCases",
+    "GetGenerationStatus": "Permission:GenerateTestCases",
     "GetLlmSuggestions": "Permission:GetTestCases",
     "GetLlmSuggestionDetail": "Permission:GetTestCases",
     "ReviewLlmSuggestion": "Permission:UpdateTestCase"
@@ -60,6 +61,23 @@
       "ORDER_CONFIRMATION_REQUIRED",
       "CONCURRENCY_CONFLICT"
     ],
+    "GeneratePreviewSourceResponse": [
+      "local-draft"
+    ],
+    "RefinementStatusResponse": [
+      "pending",
+      "succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "GenerationJobStatusResponse": [
+      "Queued",
+      "Triggering",
+      "WaitingForCallback",
+      "Completed",
+      "Failed",
+      "Cancelled"
+    ],
     "ValidationMessageSnippets": [
       "ForceRefresh=true",
       "RowVersion la bat buoc",
@@ -75,7 +93,8 @@
       "contentType": "application/json",
       "properties": [
         "specificationId: Guid",
-        "forceRefresh: bool default false"
+        "forceRefresh: bool default false",
+        "algorithmProfile: GenerationAlgorithmProfile? optional"
       ],
       "notes": [
         "specificationId la bat buoc; Guid rong se bi runtime validation reject.",
@@ -152,13 +171,36 @@
         "llmModel: string?",
         "llmTokensUsed: int?",
         "fromCache: bool",
+        "source: string? currently local-draft",
+        "refinementStatus: string? pending | succeeded | failed | cancelled",
+        "refinementJobId: Guid?",
         "generatedAt: DateTimeOffset",
         "suggestions: LlmSuggestionModel[]"
       ],
       "notes": [
         "Response 201 van hop le ngay ca khi totalSuggestions = 0.",
-        "fromCache = true nghia la raw LLM scenario cache cua FE-06 duoc reuse.",
-        "suggestions[] trong generate response duoc map tu entity raw; currentUserFeedback va feedbackSummary hien tai thuong null."
+        "source = local-draft va llmModel = local-draft la expected success path, khong phai loi.",
+        "refinementStatus = pending nghia la BE da tao background refinement job va FE nen poll generation-status bang refinementJobId.",
+        "suggestions[] trong generate response la draft co the review ngay; currentUserFeedback va feedbackSummary hien tai thuong null.",
+        "Khi refinement job Completed, FE phai refetch GET /llm-suggestions de lay refined suggestions va rowVersion moi."
+      ]
+    },
+    "GenerationJobStatusDto": {
+      "properties": [
+        "jobId: Guid",
+        "testSuiteId: Guid",
+        "status: string enum = Queued | Triggering | WaitingForCallback | Completed | Failed | Cancelled",
+        "queuedAt: DateTimeOffset",
+        "triggeredAt: DateTimeOffset?",
+        "completedAt: DateTimeOffset?",
+        "testCasesGenerated: int?",
+        "errorMessage: string?",
+        "webhookName: string?"
+      ],
+      "notes": [
+        "Dung chung TestGenerationJob status endpoint.",
+        "Cho LLM suggestion refinement, testCasesGenerated la so refined suggestions da persist khi Completed.",
+        "FE nen truyen jobId thay vi lay latest job theo suite de tranh nham voi job generate test cases khac."
       ]
     },
     "LlmSuggestionModel": {
@@ -314,10 +356,38 @@
         "409 ProblemDetails voi reasonCode=ORDER_CONFIRMATION_REQUIRED khi suite chua co approved API order."
       ],
       "notes": [
-        "Current implementation la synchronous request-response va persist durable preview rows.",
-        "forceRefresh=true supersede cac row Pending cu nhung khong force live LLM call.",
+        "Current implementation tra local draft nhanh, persist durable preview rows, va start async n8n refinement job.",
+        "forceRefresh=true supersede cac row Pending cu truoc khi tao draft moi.",
         "Neu LLM pipeline tra ve 0 scenario thi response van la 201 voi totalSuggestions = 0 va suggestions = [].",
-        "Current generate path set cacheKey = null tren tung suggestion row."
+        "Current generate path set cacheKey = null tren tung suggestion row.",
+        "Neu response co refinementJobId, FE poll GET /api/test-suites/{suiteId}/generation-status?jobId={refinementJobId}."
+      ]
+    },
+    {
+      "name": "GetGenerationStatusForLlmSuggestionRefinement",
+      "method": "GET",
+      "path": "/api/test-suites/{suiteId}/generation-status",
+      "controller": "TestOrderController",
+      "pathParams": [
+        "suiteId: Guid"
+      ],
+      "query": [
+        "jobId: Guid required for FE polling"
+      ],
+      "response": {
+        "status": 200,
+        "body": "GenerationJobStatusDto"
+      },
+      "problemCases": [
+        "400 ProblemDetails khi jobId va suiteId deu rong; FE binh thuong khong gap vi route da co suiteId.",
+        "400 ProblemDetails cho non-owner access.",
+        "404 khi jobId khong ton tai hoac job khong thuoc suite/user hien tai."
+      ],
+      "notes": [
+        "Poll route nay sau POST /llm-suggestions/generate neu response co refinementJobId.",
+        "Terminal statuses: Completed, Failed, Cancelled.",
+        "Khi Completed, refetch GET /llm-suggestions.",
+        "Khi Failed/Cancelled, giu draft hien tai va cho user review hoac regenerate voi forceRefresh=true."
       ]
     },
     {
@@ -402,8 +472,8 @@
     }
   ],
   "runtimeRules": [
-    "Generate preview reuse ILlmScenarioSuggester cua FE-06, bao gom raw cache 24h va feedback fingerprint trong cache key.",
-    "forceRefresh hien tai khong co co che bypass raw cache; no chi supersede durable Pending suggestions.",
+    "Generate preview now returns local draft first and starts async n8n refinement in background.",
+    "forceRefresh supersedes durable Pending suggestions before creating a new local draft.",
     "Owner check dua tren suite.CreatedById, khong dua tren reviewedById hay feedback user id.",
     "Current generate path luon tao SuggestionType = BoundaryNegative va ReviewStatus = Pending.",
     "Current generate path set CacheKey = null tren entity du model van expose field nay.",
@@ -414,7 +484,8 @@
     "Invalid reviewStatus/testType filter hien tai bi ignore trong list route.",
     "Review reject khong tang suite version va khong tao TestCase.",
     "Review approve/modify tao TestCase, TestCaseChangeLog, TestSuiteVersion, va tang suite.Version.",
-    "Generate preview check quota MaxLlmCallsPerMonth truoc cache/live pipeline; approve/modify check quota MaxTestCasesPerSuite truoc materialize.",
+    "Generate preview check quota MaxLlmCallsPerMonth truoc khi tao draft/refinement job; approve/modify check quota MaxTestCasesPerSuite truoc materialize.",
+    "Callback endpoint /api/test-generation/llm-suggestions/callback/{jobId} la n8n-only, FE khong goi route nay.",
     "Feedback write endpoint va bulk-review endpoint cung nam trong LlmSuggestionsController nhung khong nam trong file contract FE-15 nay."
   ],
   "samples": {
@@ -426,9 +497,12 @@
       "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
       "totalSuggestions": 2,
       "endpointsCovered": 2,
-      "llmModel": "deepseek-chat",
-      "llmTokensUsed": 312,
+      "llmModel": "local-draft",
+      "llmTokensUsed": null,
       "fromCache": false,
+      "source": "local-draft",
+      "refinementStatus": "pending",
+      "refinementJobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
       "generatedAt": "2026-03-28T09:15:00Z",
       "suggestions": [
         {
@@ -457,8 +531,8 @@
           "reviewNotes": null,
           "modifiedContent": null,
           "appliedTestCaseId": null,
-          "llmModel": "deepseek-chat",
-          "tokensUsed": 312,
+          "llmModel": "local-draft",
+          "tokensUsed": null,
           "createdDateTime": "2026-03-28T09:15:00Z",
           "updatedDateTime": null,
           "rowVersion": "AQIDBAUGBwg=",
@@ -466,6 +540,28 @@
           "feedbackSummary": null
         }
       ]
+    },
+    "generationStatusWaitingForCallback200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "WaitingForCallback",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": null,
+      "testCasesGenerated": null,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
+    },
+    "generationStatusCompleted200": {
+      "jobId": "a465978a-2bf6-40bf-b2a8-a0c596545bdd",
+      "testSuiteId": "7b6cd8ad-9cab-4f53-9769-a0cf4ec0b47d",
+      "status": "Completed",
+      "queuedAt": "2026-05-16T06:10:00Z",
+      "triggeredAt": "2026-05-16T06:10:02Z",
+      "completedAt": "2026-05-16T06:16:30Z",
+      "testCasesGenerated": 6,
+      "errorMessage": null,
+      "webhookName": "generate-llm-suggestions"
     },
     "listSuggestions200": [
       {
@@ -637,7 +733,10 @@
     }
   },
   "relatedNotes": [
-    "Neu FE vua goi POST /generate thanh cong, co the dung suggestions[] trong 201 response ngay thay vi refetch list lap tuc.",
+    "Neu FE vua goi POST /generate thanh cong, dung suggestions[] trong 201 response de render draft ngay.",
+    "Neu response co refinementJobId, poll GET /generation-status?jobId=... den khi Completed/Failed/Cancelled.",
+    "Khi Completed, refetch GET /llm-suggestions de lay refined suggestions moi.",
+    "Neu Failed, draft van dung duoc; khong tu dong goi lai POST /generate trong loop.",
     "Neu FE muon cho user edit nested request/expectation/variables, hay hydrate editor state tu chuoi JSON trong suggestedRequest/suggestedExpectation truoc.",
     "Feedback write va bulk review da ton tai o runtime hien tai, nhung nen duoc handoff rieng theo FE-16 va FE-17."
   ]

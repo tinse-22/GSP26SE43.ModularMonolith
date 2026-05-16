@@ -104,6 +104,7 @@ public static class TestGenerationServiceCollectionExtensions
             .AddScoped<ILlmSuggestionFeedbackUpsertService, LlmSuggestionFeedbackUpsertService>()
             .AddScoped<ILlmSuggestionFeedbackContextService, LlmSuggestionFeedbackContextService>()
             .AddScoped<ILlmScenarioSuggester, LlmScenarioSuggester>()
+            .AddScoped<ILlmSuggestionPreviewPersistenceService, LlmSuggestionPreviewPersistenceService>()
             .AddScoped<ILlmSuggestionReviewService, LlmSuggestionReviewService>()
             .AddScoped<ILlmSuggestionMaterializer, LlmSuggestionMaterializer>()
             .AddScoped<IBoundaryNegativeTestCaseGenerator, BoundaryNegativeTestCaseGenerator>();
@@ -205,6 +206,7 @@ public static class TestGenerationServiceCollectionExtensions
         services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
         services.AddOutboxMessagePublishers(Assembly.GetExecutingAssembly());
         services.AddHostedService<MessageBusConsumerBackgroundService<TriggerTestGenerationConsumer, TriggerTestGenerationMessage>>();
+        services.AddHostedService<MessageBusConsumerBackgroundService<TriggerLlmSuggestionRefinementConsumer, TriggerLlmSuggestionRefinementMessage>>();
 
         return services;
     }

@@ -587,7 +587,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_PropagateTransientN8nError()
+    public async Task SuggestScenariosAsync_Should_UseLocalFallback_WhenN8nTransientErrorPersists()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -606,17 +606,21 @@ public class LlmScenarioSuggesterTests
                 false));
 
         // Act
-        var act = () => _sut.SuggestScenariosAsync(context);
+        var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        await act.Should().ThrowAsync<N8nTransientException>();
+        result.UsedLocalFallback.Should().BeTrue();
+        result.LlmModel.Should().Be("local-fallback");
+        result.Scenarios.Should().NotBeEmpty();
+        result.Scenarios.Select(x => x.EndpointId).Distinct()
+            .Should().BeEquivalentTo(new[] { EndpointId1, EndpointId2 });
 
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Exactly(2));
 
         _llmGatewayServiceMock.Verify(
             x => x.CacheSuggestionsAsync(
@@ -626,7 +630,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_SplitBatchAndRetry_WhenTransientTimeoutOccurs()
+    public async Task SuggestScenariosAsync_Should_FallbackOnlyTimedOutEndpoint_WhenOneEndpointTimesOut()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -684,7 +688,7 @@ public class LlmScenarioSuggesterTests
         var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
-        result.Scenarios.Should().HaveCount(2);
+        result.UsedLocalFallback.Should().BeTrue();
         result.Scenarios.Select(x => x.EndpointId).Should().BeEquivalentTo(new[] { EndpointId1, EndpointId2 });
 
         _n8nServiceMock.Verify(
@@ -692,7 +696,7 @@ public class LlmScenarioSuggesterTests
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.Exactly(3));
+            Times.Exactly(2));
     }
 
     [Fact]

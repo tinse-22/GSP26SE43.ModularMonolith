@@ -30,7 +30,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
     private const int LeanScenarioTargetPerEndpoint = 10;
     private const int StandardScenarioTargetPerEndpoint = 10;
-    private const int MaxScenarioTargetPerBatch = 100;
+    private const int MaxScenarioTargetPerBatch = MaxScenarioTargetPerEndpoint;
     private const int MaxScenarioTargetPerEndpoint = 10;
     private const int MinScenarioTargetPerEndpoint = 4;
 
@@ -249,8 +249,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         var totalLatencyMs = 0;
         var usedLocalFallback = false;
         string modelUsed = null;
-        var batchQueue = new Queue<List<ApiOrderItemModel>>();
-        batchQueue.Enqueue(orderedSequence.ToList());
+        var batchQueue = new Queue<List<ApiOrderItemModel>>(
+            BuildEndpointBatches(orderedSequence, metadataMap));
         var processedBatchCount = 0;
 
         while (batchQueue.Count > 0)
@@ -324,13 +324,26 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
                 _logger.LogError(
                     ex,
-                    "n8n failed while generating LLM suggestions. TestSuiteId={TestSuiteId}, BatchAttempt={BatchAttempt}, EndpointCount={EndpointCount}, StatusCode={StatusCode}, Webhook={Webhook}",
+                    "n8n failed while generating LLM suggestions. Falling back to local synthesis for this batch. TestSuiteId={TestSuiteId}, BatchAttempt={BatchAttempt}, EndpointCount={EndpointCount}, StatusCode={StatusCode}, Webhook={Webhook}",
                     context.TestSuiteId,
                     processedBatchCount,
                     batch.Count,
                     ex.StatusCode,
                     N8nWebhookNames.GenerateLlmSuggestions);
-                throw;
+
+                var fallbackScenarios = EnsureAdaptiveCoverage(
+                    Array.Empty<LlmSuggestedScenario>(),
+                    batch,
+                    metadataMap,
+                    endpointContracts,
+                    context.SrsRequirements,
+                    srsDocumentContent,
+                    requirementMatchesByEndpoint,
+                    allowFallback: true);
+
+                allScenarios.AddRange(fallbackScenarios);
+                usedLocalFallback = true;
+                continue;
             }
 
             stopwatch.Stop();
@@ -373,9 +386,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             context.SrsRequirements,
             srsDocumentContent,
             requirementMatchesByEndpoint,
-            allowFallback: false);
+            allowFallback: true);
 
-        if (algorithmProfile.UseFeedbackLoopContext)
+        if (algorithmProfile.UseFeedbackLoopContext && !usedLocalFallback)
         {
             await CacheResultsAsync(context, orderedSequence, cacheKey, scenarios, cancellationToken);
         }
@@ -393,11 +406,147 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return new LlmScenarioSuggestionResult
         {
             Scenarios = scenarios,
-            LlmModel = modelUsed,
+            LlmModel = modelUsed ?? (usedLocalFallback ? "local-fallback" : null),
             TokensUsed = totalTokens,
             LatencyMs = totalLatencyMs,
             FromCache = false,
             UsedLocalFallback = usedLocalFallback,
+        };
+    }
+
+    public Task<LlmScenarioSuggestionResult> SuggestLocalDraftAsync(
+        LlmScenarioSuggestionContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var algorithmProfile = context?.AlgorithmProfile ?? new GenerationAlgorithmProfile();
+        var orderedSequence = algorithmProfile.UseDependencyAwareOrdering
+            ? ApplyDependencyAwareOrdering(context.OrderedEndpoints)
+            : context.OrderedEndpoints.ToList();
+
+        var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
+        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
+        var requirementMatchesByEndpoint = BuildRequirementMatches(context, orderedSequence, metadataMap);
+        var srsDocumentContent = context.SrsDocument?.ParsedMarkdown ?? context.SrsDocument?.RawContent;
+
+        var scenarios = EnsureAdaptiveCoverage(
+            Array.Empty<LlmSuggestedScenario>(),
+            orderedSequence,
+            metadataMap,
+            endpointContracts,
+            context.SrsRequirements,
+            srsDocumentContent,
+            requirementMatchesByEndpoint,
+            allowFallback: true);
+
+        stopwatch.Stop();
+
+        _logger.LogInformation(
+            "Local draft LLM suggestions generated. TestSuiteId={TestSuiteId}, ScenarioCount={ScenarioCount}, LatencyMs={LatencyMs}",
+            context.TestSuiteId,
+            scenarios.Count,
+            stopwatch.ElapsedMilliseconds);
+
+        return Task.FromResult(new LlmScenarioSuggestionResult
+        {
+            Scenarios = scenarios,
+            LlmModel = "local-draft",
+            LatencyMs = (int)stopwatch.ElapsedMilliseconds,
+            FromCache = false,
+            UsedLocalFallback = true,
+        });
+    }
+
+    public async Task<N8nBoundaryNegativePayload> BuildAsyncRefinementPayloadAsync(
+        LlmScenarioSuggestionContext context,
+        Guid refinementJobId,
+        string callbackUrl,
+        string callbackApiKey,
+        CancellationToken cancellationToken = default)
+    {
+        var algorithmProfile = context?.AlgorithmProfile ?? new GenerationAlgorithmProfile();
+        var orderedSequence = algorithmProfile.UseDependencyAwareOrdering
+            ? ApplyDependencyAwareOrdering(context.OrderedEndpoints)
+            : context.OrderedEndpoints.ToList();
+
+        var feedbackContext = algorithmProfile.UseFeedbackLoopContext
+            ? await BuildFeedbackContextSafeAsync(context, orderedSequence, cancellationToken)
+            : LlmSuggestionFeedbackContextResult.Empty;
+
+        var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
+        var orderedMetadata = orderedSequence
+            .Where(oe => metadataMap.ContainsKey(oe.EndpointId))
+            .Select(oe => metadataMap[oe.EndpointId])
+            .ToList();
+
+        IReadOnlyList<ObservationConfirmationPrompt> prompts = Array.Empty<ObservationConfirmationPrompt>();
+        if (algorithmProfile.UseObservationConfirmationPrompting)
+        {
+            var promptContexts = EndpointPromptContextMapper.Map(orderedMetadata, context.Suite);
+            prompts = _promptBuilder.BuildForSequence(promptContexts);
+        }
+
+        var requirementMatchesByEndpoint = BuildRequirementMatches(context, orderedSequence, metadataMap);
+        var payload = BuildN8nPayload(
+            context,
+            orderedSequence,
+            metadataMap,
+            prompts,
+            feedbackContext.EndpointFeedbackContexts,
+            requirementMatchesByEndpoint);
+
+        payload.RefinementJobId = refinementJobId;
+        payload.CallbackUrl = callbackUrl;
+        payload.CallbackApiKey = callbackApiKey;
+
+        _logger.LogInformation(
+            "Built async LLM suggestion refinement payload. TestSuiteId={TestSuiteId}, RefinementJobId={RefinementJobId}, EndpointCount={EndpointCount}, CallbackUrl={CallbackUrl}",
+            context.TestSuiteId,
+            refinementJobId,
+            payload.Endpoints.Count,
+            callbackUrl);
+
+        return payload;
+    }
+
+    public LlmScenarioSuggestionResult ParseRefinementResponse(
+        LlmScenarioSuggestionContext context,
+        N8nBoundaryNegativeResponse response)
+    {
+        var algorithmProfile = context?.AlgorithmProfile ?? new GenerationAlgorithmProfile();
+        var orderedSequence = algorithmProfile.UseDependencyAwareOrdering
+            ? ApplyDependencyAwareOrdering(context.OrderedEndpoints)
+            : context.OrderedEndpoints.ToList();
+        var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
+        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
+        var requirementMatchesByEndpoint = BuildRequirementMatches(context, orderedSequence, metadataMap);
+        var srsDocumentContent = context.SrsDocument?.ParsedMarkdown ?? context.SrsDocument?.RawContent;
+
+        var parsed = ParseScenarios(
+            response,
+            endpointContracts,
+            metadataMap,
+            context.SrsRequirements,
+            srsDocumentContent,
+            requirementMatchesByEndpoint);
+
+        var scenarios = EnsureAdaptiveCoverage(
+            parsed,
+            orderedSequence,
+            metadataMap,
+            endpointContracts,
+            context.SrsRequirements,
+            srsDocumentContent,
+            requirementMatchesByEndpoint,
+            allowFallback: false);
+
+        return new LlmScenarioSuggestionResult
+        {
+            Scenarios = scenarios,
+            LlmModel = response?.Model,
+            TokensUsed = response?.TokensUsed,
+            FromCache = false,
+            UsedLocalFallback = false,
         };
     }
 
