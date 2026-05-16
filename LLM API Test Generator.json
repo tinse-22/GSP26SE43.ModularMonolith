@@ -98,21 +98,21 @@
     },
     {
       "parameters": {
-        "model": "llama-3.3-70b-versatile",
+        "model": "deepseek-v4-pro",
         "options": {}
       },
-      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
       "typeVersion": 1,
       "position": [
-        2400,
-        1824
+        800,
+        592
       ],
       "id": "fcaeaefc-23f3-40be-8e7a-f67330483a8c",
-      "name": "Groq Chat Model4",
+      "name": "DeepSeek Chat Model",
       "credentials": {
-        "groqApi": {
-          "id": "VTKxCOCM2hfPcoNP",
-          "name": "Groq account"
+        "deepSeekApi": {
+          "id": "3oNSdsNhLPNIonwL",
+          "name": "DeepSeek account"
         }
       }
     },
@@ -339,8 +339,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1.1,
       "position": [
-        784,
-        320
+        2160,
+        1840
       ],
       "id": "b2c09ac7-8aec-4a2c-8ea2-6094bc98ae82",
       "name": "Google Gemini Chat Model",
@@ -359,14 +359,15 @@
           "systemMessage": "={{ $json.systemPrompt }}"
         }
       },
-      "id": "865df7e1-ecfe-44ab-af84-7637f92985b8",
+      "id": "a2e79be6-d430-4765-8aab-b87d80fec3b2",
       "name": "AI Agent (Gemini)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
       "position": [
-        2400,
-        1536
-      ]
+        848,
+        208
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -375,68 +376,101 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "efd083e6-9118-4f94-8871-a272cefb3ae1",
+      "id": "94e5d505-4ec9-4c15-a9f0-16cde961f71b",
       "name": "Webhook4",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        1680,
-        1536
+        128,
+        208
       ],
       "webhookId": "generate-llm-suggestions"
     },
     {
       "parameters": {
-        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nconst endpoints = body.endpoints;\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload must contain non-empty endpoints array.');\n}\n\nconst promptConfig = body.promptConfig ?? {};\nif (!promptConfig.systemPrompt || !String(promptConfig.systemPrompt).trim()) {\n  throw new Error('Payload missing promptConfig.systemPrompt from BE.');\n}\nif (!promptConfig.taskInstruction || !String(promptConfig.taskInstruction).trim()) {\n  throw new Error('Payload missing promptConfig.taskInstruction from BE.');\n}\nif (!promptConfig.rules || !String(promptConfig.rules).trim()) {\n  throw new Error('Payload missing promptConfig.rules from BE.');\n}\nif (!promptConfig.responseFormat || !String(promptConfig.responseFormat).trim()) {\n  throw new Error('Payload missing promptConfig.responseFormat from BE.');\n}\n\nconst algorithmProfile = body.algorithmProfile ?? {};\n\nreturn [{\n  json: {\n    testSuiteId: body.testSuiteId ?? '',\n    promptConfig,\n    algorithmProfile,\n    srsContext: body.srsContext ?? null,\n    endpoints\n  }\n}];"
+        "jsCode": "const rawInput = $input.first().json.body ?? $input.first().json;\nconst body = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;\n\nconst endpoints = body.endpoints;\nif (!Array.isArray(endpoints) || endpoints.length === 0) {\n  throw new Error('Payload must contain non-empty endpoints array.');\n}\n\nconst promptConfig = body.promptConfig ?? {};\nif (!promptConfig.systemPrompt || !String(promptConfig.systemPrompt).trim()) throw new Error('Payload missing promptConfig.systemPrompt from BE.');\nif (!promptConfig.taskInstruction || !String(promptConfig.taskInstruction).trim()) throw new Error('Payload missing promptConfig.taskInstruction from BE.');\nif (!promptConfig.rules || !String(promptConfig.rules).trim()) throw new Error('Payload missing promptConfig.rules from BE.');\nif (!promptConfig.responseFormat || !String(promptConfig.responseFormat).trim()) throw new Error('Payload missing promptConfig.responseFormat from BE.');\n\nconst callbackUrl = String(body.callbackUrl ?? '').trim();\nif (!callbackUrl) throw new Error('Payload missing callbackUrl from BE.');\n\nconst callbackApiKey = String(body.callbackApiKey ?? '').trim();\nif (!callbackApiKey) throw new Error('Payload missing callbackApiKey from BE.');\n\nconst refinementJobId = String(body.refinementJobId ?? '').trim();\nif (!refinementJobId) throw new Error('Payload missing refinementJobId from BE.');\n\nreturn [{ json: {\n  testSuiteId: body.testSuiteId ?? '',\n  refinementJobId,\n  callbackUrl,\n  callbackApiKey,\n  promptConfig,\n  algorithmProfile: body.algorithmProfile ?? {},\n  srsContext: body.srsContext ?? null,\n  endpoints\n}}];"
       },
-      "id": "8d8fe4b0-d030-45eb-828b-e5d854458097",
+      "id": "48fcbe41-57fc-45ab-a004-9baa86f0a4c3",
       "name": "Parse Input4",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1920,
-        1536
+        368,
+        208
       ]
     },
     {
       "parameters": {
-        "jsCode": "const { promptConfig, endpoints, algorithmProfile, srsContext } = $input.first().json;\n\nconst promptBlocks = endpoints\n  .map((ep, i) => {\n    const combined = String(ep?.prompt?.combinedPrompt || '').trim();\n    if (!combined) {\n      throw new Error(`Endpoint ${i + 1} (ID=${ep?.endpointId || 'unknown'}) is missing prompt.combinedPrompt from BE.`);\n    }\n\n    return [\n      `### Endpoint ${i + 1} [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}`,\n      combined\n    ].join('\\n');\n  });\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nif (!systemPrompt || !taskInstruction || !rules || !responseFormat) {\n  throw new Error('promptConfig from BE is incomplete. Required: systemPrompt, taskInstruction, rules, responseFormat.');\n}\n\nconst enabledFlags = Object.entries(algorithmProfile || {})\n  .filter(([, value]) => value === true)\n  .map(([key]) => `- ${key}`);\n\nconst algorithmGuidance = enabledFlags.length > 0\n  ? [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      enabledFlags.join('\\n'),\n      'Apply these generation strategies while producing scenarios.'\n    ].join('\\n')\n  : [\n      '=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===',\n      '- none',\n      'Use promptConfig instructions as the primary strategy.'\n    ].join('\\n');\n\n// Build SRS section when BE provides it\nlet srsSection = '';\nif (srsContext && (srsContext.content || (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0))) {\n  const parts = [`=== SRS DOCUMENT: ${srsContext.documentTitle || 'Untitled'} ===`];\n  if (srsContext.content) { parts.push(srsContext.content); }\n  if (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0) {\n    parts.push('--- REQUIREMENTS ---');\n    for (const req of srsContext.requirements) {\n      parts.push(`[${req.code}] ${req.title}`);\n      if (req.endpointId) {\n        parts.push(`EndpointId: ${req.endpointId}`);\n      }\n      if (Array.isArray(req.testableConstraints) && req.testableConstraints.length > 0) {\n        parts.push('Constraints:');\n        for (const c of req.testableConstraints) {\n          const constraint = String(c?.constraint || '').trim();\n          if (!constraint) continue;\n          const outcome = String(c?.expectedOutcome || '').trim();\n          const priority = String(c?.priority || '').trim();\n          const extras = [\n            outcome ? `expectedOutcome=${outcome}` : null,\n            priority ? `priority=${priority}` : null\n          ].filter(Boolean).join(', ');\n          parts.push(`- ${constraint}${extras ? ` (${extras})` : ''}`);\n        }\n      }\n      const description = String(req.description || '').trim();\n      if (description) {\n        parts.push(description);\n      }\n      parts.push('');\n    }\n  }\n  srsSection = parts.join('\\n');\n}\n\nconst userPrompt = [\n  taskInstruction,\n  algorithmGuidance,\n  ...(srsSection ? ['=== SRS REQUIREMENTS (align generated scenarios to these) ===', srsSection] : []),\n  '=== BE GENERATED ENDPOINT PROMPTS (PRIMARY INPUT) ===',\n  promptBlocks.join('\\n\\n'),\n  rules,\n  responseFormat\n].join('\\n\\n');\n\nreturn [{ json: { systemPrompt, userPrompt } }];"
+        "jsCode": "const { testSuiteId, refinementJobId, callbackUrl, callbackApiKey, promptConfig, endpoints, algorithmProfile, srsContext } = $input.first().json;\n\nconst promptBlocks = endpoints.map((ep, i) => {\n  const combined = String(ep?.prompt?.combinedPrompt || '').trim();\n  if (!combined) throw new Error(`Endpoint ${i + 1} (ID=${ep?.endpointId || 'unknown'}) is missing prompt.combinedPrompt from BE.`);\n  return `### Endpoint ${i + 1} [ID=${ep.endpointId}] ${ep.httpMethod} ${ep.path}\\n${combined}`;\n});\n\nconst systemPrompt = String(promptConfig.systemPrompt || '').trim();\nconst taskInstruction = String(promptConfig.taskInstruction || '').trim();\nconst rules = String(promptConfig.rules || '').trim();\nconst responseFormat = String(promptConfig.responseFormat || '').trim();\n\nconst enabledFlags = Object.entries(algorithmProfile || {}).filter(([,v]) => v === true).map(([k]) => `- ${k}`);\nconst algorithmGuidance = enabledFlags.length > 0\n  ? ['=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===', enabledFlags.join('\\n'), 'Apply these generation strategies while producing scenarios.'].join('\\n')\n  : ['=== ALGORITHM PROFILE FROM BE (ENABLED FLAGS) ===', '- none', 'Use promptConfig instructions as the primary strategy.'].join('\\n');\n\nlet srsSection = '';\nif (srsContext && (srsContext.content || (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0))) {\n  const parts = [`=== SRS DOCUMENT: ${srsContext.documentTitle || 'Untitled'} ===`];\n  if (srsContext.content) parts.push(srsContext.content);\n  if (Array.isArray(srsContext.requirements) && srsContext.requirements.length > 0) {\n    parts.push('--- REQUIREMENTS ---');\n    for (const req of srsContext.requirements) {\n      parts.push(`[${req.code}] ${req.title}`);\n      if (req.endpointId) parts.push(`EndpointId: ${req.endpointId}`);\n      if (req.description) parts.push(String(req.description));\n      parts.push('');\n    }\n  }\n  srsSection = parts.join('\\n');\n}\n\nconst userPrompt = [\n  taskInstruction,\n  algorithmGuidance,\n  ...(srsSection ? ['=== SRS REQUIREMENTS (align generated scenarios to these) ===', srsSection] : []),\n  '=== BE GENERATED ENDPOINT PROMPTS (PRIMARY INPUT) ===',\n  promptBlocks.join('\\n\\n'),\n  rules,\n  responseFormat\n].join('\\n\\n');\n\nreturn [{ json: { testSuiteId, refinementJobId, callbackUrl, callbackApiKey, systemPrompt, userPrompt } }];"
       },
-      "id": "e14329b6-efbd-41de-9450-f7a7df0a4a4e",
+      "id": "2237f59e-bd3b-4177-8fb9-6da900d16610",
       "name": "Prepare Boundary Prompt1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        1536
+        608,
+        208
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Safety net: if LLM didn't use {{tcUniqueId}} in fields that need uniqueness, patch them.\n// Generic — works for any field name / any project / any domain. No URL-pattern matching.\nfunction patchBodyForUniqueness(body) {\n  if (!body || typeof body !== 'string') return body;\n  let obj;\n  try { obj = JSON.parse(body); } catch { return body; }\n  let changed = false;\n\n  // Regex for a valid email address (\\\\w = \\w in JS inside JSON string)\n  const emailRe = /^([\\w.+-]+)@([\\w.-]+)$/;\n  // Field names that typically require a unique value per run\n  const uniqueFieldRe = /^(email|username|user_name|user|name|code|slug|phone|mobile|ref|reference|sku|handle|login|nickname|tag)$/i;\n\n  function walk(node) {\n    if (!node || typeof node !== 'object') return;\n    for (const key of Object.keys(node)) {\n      const val = node[key];\n      if (typeof val === 'string') {\n        const p = patchValue(key, val);\n        if (p !== val) { node[key] = p; changed = true; }\n      } else if (typeof val === 'object') { walk(val); }\n    }\n  }\n\n  function patchValue(key, val) {\n    // Already a placeholder — VariableResolver will handle it\n    if (val.includes('{{')) return val;\n    // Already uniquified (ends with _xxxxxxxx 8-char hex)\n    if (/_[a-f0-9]{8}$/.test(val.toLowerCase())) return val;\n\n    // Email fields: patch local part with _{{tcUniqueId}} suffix\n    const emailMatch = val.match(emailRe);\n    if (emailMatch) {\n      const local = emailMatch[1].toLowerCase();\n      const domain = emailMatch[2];\n      // Only patch if it looks synthetic (not a real runtime value from a prior test)\n      const looksStatic = /^(test|user|demo|sample|qa|auto|register|new|admin|foo|bar|fake|dummy|temp)/.test(local)\n        || domain.startsWith('example.') || domain === 'test.com' || domain === 'mailtest.com';\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare email \"' + val + '\" in field \"' + key + '\"');\n        return local + '_{{tcUniqueId}}@' + domain;\n      }\n      return val;\n    }\n\n    // Non-email unique fields: append _{{tcUniqueId}} if value looks like a static placeholder\n    if (uniqueFieldRe.test(key)) {\n      const looksStatic = /^(test|user|demo|sample|qa|auto|my|new|admin|foo|bar|fake|dummy|temp|default)[_-]?/.test(val.toLowerCase());\n      if (looksStatic) {\n        console.warn('[patchBodyForUniqueness] Patching bare unique field \"' + key + '\" value \"' + val + '\"');\n        return val + '_{{tcUniqueId}}';\n      }\n    }\n    return val;\n  }\n\n  walk(obj);\n  return changed ? JSON.stringify(obj) : body;\n}\n\n// ━━━ Parse LLM response ━━━\nconst response = $input.first().json;\n\nconst rawContent =\n  response?.output ??\n  response?.choices?.[0]?.message?.content ??\n  null;\n\nif (!rawContent) {\n  throw new Error('LLM tra ve response rong. Keys: ' + Object.keys(response || {}).join(', '));\n}\n\n// Cleanup markdown fences\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) {\n  cleaned = fencedMatch[1].trim();\n} else {\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n}\ncleaned = cleaned.replace(/```/g, '').trim();\n\n// Extract JSON object boundary\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace  = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {\n  cleaned = cleaned.slice(firstBrace, lastBrace + 1);\n}\n\n// Fix trailing commas before ] or }\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\n// Fix unescaped control chars inside strings\nfunction fixControlChars(s) {\n  let result = '', inString = false, i = 0;\n  while (i < s.length) {\n    const ch = s[i];\n    if (inString) {\n      if (ch === '\\\\') { result += ch; i++; if (i < s.length) { result += s[i]; i++; } continue; }\n      if (ch === '\"') { inString = false; result += ch; i++; continue; }\n      if (ch === '\\n') { result += '\\\\n'; i++; continue; }\n      if (ch === '\\r') { result += '\\\\r'; i++; continue; }\n      if (ch === '\\t') { result += '\\\\t'; i++; continue; }\n      result += ch; i++;\n    } else {\n      if (ch === '\"') inString = true;\n      result += ch; i++;\n    }\n  }\n  return result;\n}\ncleaned = fixControlChars(cleaned);\n\n// Close unclosed brackets (handles LLM truncation)\ncleaned = cleaned.replace(/,\\s*$/, '');\nconst ob = (cleaned.match(/{/g)||[]).length, cb = (cleaned.match(/}/g)||[]).length;\nconst oB = (cleaned.match(/\\[/g)||[]).length, cB = (cleaned.match(/\\]/g)||[]).length;\nfor (let i = 0; i < oB - cB; i++) cleaned += ']';\nfor (let i = 0; i < ob - cb; i++) cleaned += '}';\n\n// ── Fallback: extract individual complete scenario objects ──\n// Used when primary JSON.parse fails (e.g. unescaped quotes mid-string,\n// truncated JSON with partial object at end, etc.)\nfunction extractCompleteScenarios(text) {\n  const arrM = text.match(/\"scenarios\"\\s*:\\s*\\[/);\n  if (!arrM) throw new Error('Khong tim thay mang scenarios trong JSON.');\n  const arrStart = arrM.index + arrM[0].length;\n  let depth = 0, objStart = -1;\n  const items = [];\n  let i = arrStart;\n  while (i < text.length) {\n    const c = text[i];\n    // Skip over string literals to avoid false bracket-depth counting\n    if (c === '\"') {\n      i++;\n      while (i < text.length) {\n        if (text[i] === '\\\\') { i += 2; continue; }\n        if (text[i] === '\"') break;\n        i++;\n      }\n      i++;\n      continue;\n    }\n    if (c === '{') {\n      if (depth === 0) objStart = i;\n      depth++;\n    } else if (c === '}') {\n      depth--;\n      if (depth === 0 && objStart !== -1) {\n        const objText = text.slice(objStart, i + 1);\n        try {\n          const obj = JSON.parse(fixControlChars(objText));\n          items.push(obj);\n        } catch (_) { /* skip malformed individual objects */ }\n        objStart = -1;\n      }\n    } else if (c === ']' && depth === 0) {\n      break;\n    }\n    i++;\n  }\n  if (items.length === 0) throw new Error('Khong trich xuat duoc scenario nao hop le.');\n  return { scenarios: items, model: 'unknown', tokensUsed: 0 };\n}\n\n// ── Primary parse → fallback extractor ──\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e1) {\n  try {\n    parsed = extractCompleteScenarios(cleaned);\n    // Log recovery info (visible in n8n execution log)\n    console.warn('[ParseBoundaryResponse] Used fallback extractor, recovered ' + parsed.scenarios.length + ' scenarios. Primary JSON.parse error: ' + e1.message.substring(0, 120));\n  } catch (e2) {\n    throw new Error('Khong parse duoc JSON tu LLM. Error: ' + e1.message + '\\nRaw (800): ' + cleaned.substring(0, 800));\n  }\n}\n\nconst scenarios = parsed?.scenarios;\nif (!Array.isArray(scenarios) || scenarios.length === 0) {\n  throw new Error('LLM response thieu mang scenarios hoac rong.');\n}\n\n// Normalize scenarios\nscenarios.forEach((s, i) => {\n  if (!s?.endpointId) throw new Error('Scenario index ' + i + ' thieu endpointId.');\n  s.scenarioName = String(s.scenarioName ?? ('Scenario ' + (i + 1)));\n  s.description  = String(s.description  ?? '');\n  // Respect whatever testType the LLM returned; only fall back when truly absent\n  const rawType = String(s.testType ?? '').trim();\n  const normType = rawType.replace(/[_\\s-]/g, '').toLowerCase();\n  s.testType = normType === 'happypath' ? 'HappyPath' : normType === 'boundary' ? 'Boundary' : normType === 'negative' ? 'Negative' : (rawType || 'Negative');\n  s.priority     = String(s.priority     ?? 'Medium');\n  s.tags         = Array.isArray(s.tags) ? s.tags : [];\n  s.variables    = Array.isArray(s.variables) ? s.variables : [];\n  s.coveredRequirementCodes = Array.isArray(s.coveredRequirementCodes)\n    ? s.coveredRequirementCodes.map(String).filter(c => c.trim())\n    : [];\n\n  s.request = s.request ?? {};\n  s.request.httpMethod  = String(s.request.httpMethod ?? 'GET');\n  s.request.url         = String(s.request.url        ?? '/');\n  s.request.bodyType    = String(s.request.bodyType   ?? 'None');\n  s.request.timeout     = Number(s.request.timeout    ?? 30000);\n  s.request.headers     = s.request.headers     ?? null;\n  s.request.pathParams  = s.request.pathParams  ?? null;\n  s.request.queryParams = s.request.queryParams ?? null;\n  if (s.request.body !== null && s.request.body !== undefined && typeof s.request.body !== 'string') {\n    s.request.body = JSON.stringify(s.request.body);\n  }\n\n  s.expectation = s.expectation ?? {};\n  if (!Array.isArray(s.expectation.expectedStatus)) {\n    s.expectation.expectedStatus = [400];\n  }\n  s.expectation.bodyContains    = s.expectation.bodyContains    ?? null;\n  s.expectation.bodyNotContains = s.expectation.bodyNotContains ?? null;\n  s.expectation.jsonPathChecks  = (s.expectation.jsonPathChecks && typeof s.expectation.jsonPathChecks === 'object' && Object.keys(s.expectation.jsonPathChecks).length > 0)\n    ? s.expectation.jsonPathChecks\n    : null;\n});\n\nfunction normalizeExpectationToken(value) {\n  if (value === null || value === undefined) return value;\n  if (typeof value !== 'string') return value;\n  const raw = value.trim();\n  if (!raw) return value;\n  const lower = raw.toLowerCase();\n  const collapsed = lower.replace(/[\\s_-]+/g, '');\n  if (collapsed === 'nonempty' || collapsed === 'notempty' || collapsed === 'nonblank' || collapsed === 'notblank') {\n    return 'non-empty';\n  }\n  if (collapsed === 'notnull' || collapsed === 'nonnull') {\n    return 'not null';\n  }\n  if (collapsed === 'exists' || collapsed === 'exist' || collapsed === 'present') {\n    return 'present';\n  }\n  if (lower.startsWith('type:') || lower.startsWith('type=')) {\n    const t = lower.slice(5).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  if (lower.startsWith('format:') || lower.startsWith('format=')) {\n    const t = lower.slice(7).trim();\n    if (['string', 'number', 'boolean', 'array', 'object', 'uuid', 'guid', 'datetime', 'date-time', 'timestamp'].includes(t)) {\n      if (t === 'guid') return 'uuid';\n      if (t === 'date-time' || t === 'timestamp') return 'datetime';\n      return t;\n    }\n  }\n  return value;\n}\n\nfunction normalizeJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n  for (const path of Object.keys(checks)) {\n    if (typeof checks[path] === 'string') {\n      checks[path] = normalizeExpectationToken(checks[path]);\n    }\n  }\n}\nscenarios.forEach(normalizeJsonPathChecks);\n\n// Apply uniqueness safety net to all scenario bodies\nscenarios.forEach(s => { s.request.body = patchBodyForUniqueness(s.request.body); });\n\n// Sync jsonPathChecks with body: if LLM used different email/unique-field values in\n// assertions vs body (common LLM inconsistency), override assertions to match the body.\n// Also apply patchBodyForUniqueness to bare values inside jsonPathChecks.\nfunction syncJsonPathChecks(s) {\n  const checks = s.expectation?.jsonPathChecks;\n  if (!checks || typeof checks !== 'object') return;\n\n  // Extract top-level string fields from the (already-patched) request body\n  let bodyFields = {};\n  if (s.request?.body && typeof s.request.body === 'string') {\n    try { bodyFields = JSON.parse(s.request.body); } catch { bodyFields = {}; }\n  }\n\n  // Regex: path ends with a known unique field name (case-insensitive)\n  const uniquePathRe = /(?:^|\\.)(?:email|username|user_name|name|code|slug|phone|mobile|ref|sku|handle|login|nickname)$/i;\n\n  const is4xx = Array.isArray(s.expectation.expectedStatus)\n    && s.expectation.expectedStatus.every(c => c >= 400);\n\n  for (const path of Object.keys(checks)) {\n    if (!uniquePathRe.test(path)) continue;\n\n    // For tests that expect only 4xx (error responses): remove assertions on data fields\n    // because the API won't return the created resource.\n    if (is4xx) {\n      delete checks[path];\n      continue;\n    }\n\n    // For 2xx tests: ensure assertion value matches the body field value so they use the\n    // same {{tcUniqueId}} expansion. Determine body field name from the path tail.\n    const fieldMatch = path.match(/([\\w_]+)$/i);\n    if (!fieldMatch) continue;\n    const fieldName = Object.keys(bodyFields).find(\n      k => k.toLowerCase() === fieldMatch[1].toLowerCase()\n    );\n    if (fieldName && typeof bodyFields[fieldName] === 'string') {\n      checks[path] = bodyFields[fieldName];\n    } else {\n      // No matching body field — apply patchBodyForUniqueness logic to the assertion value\n      const curVal = checks[path];\n      if (typeof curVal === 'string') {\n        checks[path] = patchBodyForUniqueness(JSON.stringify({ _v: curVal })).replace(/^\\{\"_v\":\"?|\"?\\}$/g, '') || curVal;\n      }\n    }\n  }\n\n  // Remove empty jsonPathChecks\n  if (Object.keys(checks).length === 0) s.expectation.jsonPathChecks = null;\n}\nscenarios.forEach(syncJsonPathChecks);\n\nreturn [{\n  json: {\n    scenarios,\n    model:      parsed.model      ?? 'unknown',\n    tokensUsed: parsed.tokensUsed ?? 0\n  }\n}];"
+        "jsCode": "const response = $input.first().json;\n\nconst rawContent = response?.output ?? response?.choices?.[0]?.message?.content ?? null;\nif (!rawContent) {\n  return [{ json: { scenarios: [], model: 'unknown', tokensUsed: 0, warning: 'LLM_EMPTY_OR_TERMINATED' } }];\n}\n\nlet cleaned = String(rawContent).trim().replace(/^\\uFEFF/, '');\nconst fencedMatch = cleaned.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/i);\nif (fencedMatch?.[1]) cleaned = fencedMatch[1].trim();\nelse cleaned = cleaned.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\ncleaned = cleaned.replace(/```/g, '').trim();\n\nconst firstBrace = cleaned.indexOf('{');\nconst lastBrace = cleaned.lastIndexOf('}');\nif (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) cleaned = cleaned.slice(firstBrace, lastBrace + 1);\ncleaned = cleaned.replace(/,\\s*([}\\]])/g, '$1');\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch {\n  return [{ json: { scenarios: [], model: 'unknown', tokensUsed: 0, warning: 'LLM_JSON_PARSE_FAILED' } }];\n}\n\nconst scenarios = Array.isArray(parsed?.scenarios) ? parsed.scenarios : [];\nfor (let i = 0; i < scenarios.length; i++) {\n  const s = scenarios[i] ?? {};\n  s.scenarioName = String(s.scenarioName ?? `Scenario ${i + 1}`);\n  s.description = String(s.description ?? '');\n  s.testType = String(s.testType ?? 'Negative');\n  s.priority = String(s.priority ?? 'Medium');\n  s.tags = Array.isArray(s.tags) ? s.tags : [];\n  s.variables = Array.isArray(s.variables) ? s.variables : [];\n  s.coveredRequirementCodes = Array.isArray(s.coveredRequirementCodes) ? s.coveredRequirementCodes.map(String).filter(x => x.trim()) : [];\n\n  s.request = s.request ?? {};\n  s.request.httpMethod = String(s.request.httpMethod ?? 'GET');\n  s.request.url = String(s.request.url ?? '/');\n  s.request.bodyType = String(s.request.bodyType ?? 'None');\n  s.request.timeout = Number(s.request.timeout ?? 30000);\n  s.request.headers = s.request.headers ?? null;\n  s.request.pathParams = s.request.pathParams ?? null;\n  s.request.queryParams = s.request.queryParams ?? null;\n  if (s.request.body !== null && s.request.body !== undefined && typeof s.request.body !== 'string') s.request.body = JSON.stringify(s.request.body);\n\n  s.expectation = s.expectation ?? {};\n  if (!Array.isArray(s.expectation.expectedStatus) || s.expectation.expectedStatus.length === 0 || !s.expectation.expectedStatus.every(x => Number.isInteger(x))) {\n    s.expectation.expectedStatus = [400];\n  }\n  s.expectation.bodyContains = s.expectation.bodyContains ?? null;\n  s.expectation.bodyNotContains = s.expectation.bodyNotContains ?? null;\n  s.expectation.jsonPathChecks = (s.expectation.jsonPathChecks && typeof s.expectation.jsonPathChecks === 'object' && Object.keys(s.expectation.jsonPathChecks).length > 0) ? s.expectation.jsonPathChecks : null;\n}\n\nreturn [{ json: { scenarios, model: parsed?.model ?? 'unknown', tokensUsed: Number(parsed?.tokensUsed ?? 0) } }];"
       },
-      "id": "6ac59ad8-e3c6-4e70-b942-5e91b0d5b0c5",
+      "id": "cd237c0a-d004-40ba-86d0-51caa4763ad5",
       "name": "Parse Boundary Response1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2640,
-        1536
+        1088,
+        208
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ {\n  accepted: true,\n  mode: 'async-callback',\n  refinementJobId: $json.refinementJobId,\n  testSuiteId: $json.testSuiteId,\n  message: 'LLM suggestion refinement accepted. Result will be sent to callbackUrl.'\n} }}",
+        "options": {
+          "responseCode": 202
+        }
       },
-      "id": "0720ca1a-df4d-481c-ab0d-7f14b65c8da5",
-      "name": "Respond to Webhook4",
+      "id": "e4dd695f-3f71-4725-b4d8-961a9d401df7",
+      "name": "Respond Ack LLM Suggestions",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        2880,
-        1536
+        608,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $node[\"Parse Input4\"].json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-callback-api-key",
+              "value": "={{ $node[\"Parse Input4\"].json.callbackApiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  scenarios: $json.scenarios,\n  model: $json.model,\n  tokensUsed: $json.tokensUsed\n} }}",
+        "options": {}
+      },
+      "id": "c8581a64-f4c1-45dc-8ef5-4c029a4ca27e",
+      "name": "POST LLM Suggestions Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1328,
+        208
       ]
     }
   ],
@@ -497,7 +531,7 @@
         ]
       ]
     },
-    "Groq Chat Model4": {
+    "DeepSeek Chat Model": {
       "ai_languageModel": [
         [
           {
@@ -671,6 +705,11 @@
       "main": [
         [
           {
+            "node": "Respond Ack LLM Suggestions",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Prepare Boundary Prompt1",
             "type": "main",
             "index": 0
@@ -693,7 +732,7 @@
       "main": [
         [
           {
-            "node": "Respond to Webhook4",
+            "node": "POST LLM Suggestions Callback",
             "type": "main",
             "index": 0
           }
@@ -706,7 +745,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "b6762a4a-2581-458f-be69-2cffb96e5b9c",
+  "versionId": "ed72991c-ef27-47b3-aa91-b3e81564422a",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "c8303d773e04f734681461843d2c1ac65903f7fb8c55a3f01d55581364ff0b9c"

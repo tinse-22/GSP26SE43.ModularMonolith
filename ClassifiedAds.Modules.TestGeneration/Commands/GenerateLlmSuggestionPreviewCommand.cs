@@ -3,15 +3,19 @@ using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Contracts.Subscription.Enums;
 using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
+using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,49 +28,55 @@ public class GenerateLlmSuggestionPreviewCommand : ICommand
     public Guid SpecificationId { get; set; }
     public bool ForceRefresh { get; set; }
     public GenerationAlgorithmProfile AlgorithmProfile { get; set; } = new();
-    public GenerateLlmSuggestionPreviewResultModel Result { get; set; }
+    public Guid JobId { get; set; }
 }
 
 public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<GenerateLlmSuggestionPreviewCommand>
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-    };
-
     private readonly IRepository<TestSuite, Guid> _suiteRepository;
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
+    private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly IRepository<SrsDocument, Guid> _srsDocumentRepository;
     private readonly IRepository<SrsRequirement, Guid> _srsRequirementRepository;
     private readonly IApiTestOrderGateService _gateService;
     private readonly IApiEndpointMetadataService _endpointMetadataService;
     private readonly IApiEndpointParameterDetailService _endpointParameterDetailService;
     private readonly ILlmScenarioSuggester _llmSuggester;
+    private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
+    private readonly IMessageBus _messageBus;
+    private readonly N8nIntegrationOptions _n8nOptions;
     private readonly ILogger<GenerateLlmSuggestionPreviewCommandHandler> _logger;
 
     public GenerateLlmSuggestionPreviewCommandHandler(
         IRepository<TestSuite, Guid> suiteRepository,
         IRepository<LlmSuggestion, Guid> suggestionRepository,
+        IRepository<TestGenerationJob, Guid> jobRepository,
         IRepository<SrsDocument, Guid> srsDocumentRepository,
         IRepository<SrsRequirement, Guid> srsRequirementRepository,
         IApiTestOrderGateService gateService,
         IApiEndpointMetadataService endpointMetadataService,
         IApiEndpointParameterDetailService endpointParameterDetailService,
         ILlmScenarioSuggester llmSuggester,
+        ILlmSuggestionPreviewPersistenceService persistenceService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
+        IMessageBus messageBus,
+        IOptions<N8nIntegrationOptions> n8nOptions,
         ILogger<GenerateLlmSuggestionPreviewCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
         _suggestionRepository = suggestionRepository;
+        _jobRepository = jobRepository;
         _srsDocumentRepository = srsDocumentRepository;
         _srsRequirementRepository = srsRequirementRepository;
         _gateService = gateService;
         _endpointMetadataService = endpointMetadataService;
         _endpointParameterDetailService = endpointParameterDetailService;
         _llmSuggester = llmSuggester;
+        _persistenceService = persistenceService;
         _subscriptionLimitService = subscriptionLimitService;
+        _messageBus = messageBus;
+        _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
         _logger = logger;
     }
 
@@ -109,16 +119,34 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         }
 
         // 5) Check existing pending suggestions
+        var existingPending = await _suggestionRepository.ToListAsync(
+            _suggestionRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == command.TestSuiteId
+                    && x.ReviewStatus == ReviewStatus.Pending));
+
         if (!command.ForceRefresh)
         {
-            var existingPending = await _suggestionRepository.ToListAsync(
-                _suggestionRepository.GetQueryableSet()
-                    .Where(x => x.TestSuiteId == command.TestSuiteId
-                        && x.ReviewStatus == ReviewStatus.Pending));
-
             ValidationException.Requires(
                 existingPending.Count == 0,
                 "Đã có suggestion preview đang chờ review. Sử dụng ForceRefresh=true để tạo mới.");
+        }
+        else
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var existing in existingPending)
+            {
+                existing.ReviewStatus = ReviewStatus.Superseded;
+                existing.ReviewedById = command.CurrentUserId;
+                existing.ReviewedAt = now;
+                existing.UpdatedDateTime = now;
+                existing.RowVersion = Guid.NewGuid().ToByteArray();
+                await _suggestionRepository.UpdateAsync(existing, cancellationToken);
+            }
+
+            if (existingPending.Count > 0)
+            {
+                await _suggestionRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            }
         }
 
         // 6) Build contract-rich LLM context (metadata + parameter details)
@@ -170,146 +198,90 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             SrsRequirements = srsRequirements,
         };
 
-        var llmResult = await _llmSuggester.SuggestScenariosAsync(llmContext, cancellationToken);
-
-        if (llmResult.Scenarios.Count == 0)
+        var job = new TestGenerationJob
         {
-            command.Result = new GenerateLlmSuggestionPreviewResultModel
-            {
-                TestSuiteId = command.TestSuiteId,
-                TotalSuggestions = 0,
-                EndpointsCovered = 0,
-                LlmModel = llmResult.LlmModel,
-                LlmTokensUsed = llmResult.TokensUsed,
-                FromCache = llmResult.FromCache,
-                GeneratedAt = DateTimeOffset.UtcNow,
-                Suggestions = new List<LlmSuggestionModel>(),
-            };
-            return;
-        }
+            TestSuiteId = command.TestSuiteId,
+            ProposalId = null,
+            Status = GenerationJobStatus.Queued,
+            TriggeredById = command.CurrentUserId,
+            QueuedAt = DateTimeOffset.UtcNow,
+            WebhookName = N8nWebhookNames.GenerateLlmSuggestions,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+        };
 
-        // 7) Supersede existing non-materialized suggestions (treat new generate as active batch)
-        var existingSuggestions = await _suggestionRepository.ToListAsync(
-            _suggestionRepository.GetQueryableSet()
-                .Where(x => x.TestSuiteId == command.TestSuiteId
-                    && !x.AppliedTestCaseId.HasValue));
+        await _jobRepository.AddAsync(job, cancellationToken);
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        var now = DateTimeOffset.UtcNow;
+        command.JobId = job.Id;
+        await QueueRefinementAsync(job, llmContext, cancellationToken);
 
-        foreach (var existing in existingSuggestions)
+        _logger.LogInformation(
+            "Queued LLM suggestion generation. TestSuiteId={TestSuiteId}, JobId={JobId}, RefinementStatus={RefinementStatus}, ActorUserId={UserId}",
+            command.TestSuiteId, job.Id, job.Status, command.CurrentUserId);
+    }
+
+    private async Task QueueRefinementAsync(
+        TestGenerationJob job,
+        LlmScenarioSuggestionContext llmContext,
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            existing.ReviewStatus = ReviewStatus.Superseded;
-            existing.ReviewedById = command.CurrentUserId;
-            existing.ReviewedAt = now;
-            existing.UpdatedDateTime = now;
-            existing.RowVersion = Guid.NewGuid().ToByteArray();
-            await _suggestionRepository.UpdateAsync(existing, cancellationToken);
-        }
+            var callbackUrl = BuildCallbackUrl(job.Id);
+            var payload = await _llmSuggester.BuildAsyncRefinementPayloadAsync(
+                llmContext,
+                job.Id,
+                callbackUrl,
+                _n8nOptions.CallbackApiKey ?? string.Empty,
+                cancellationToken);
 
-        // 8) Persist new LlmSuggestion rows
-        var suggestions = new List<LlmSuggestion>();
-        var orderItemMap = approvedOrder.ToDictionary(e => e.EndpointId);
-        int displayOrder = 0;
+            job.CallbackUrl = callbackUrl;
+            job.Status = GenerationJobStatus.Queued;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        foreach (var scenario in llmResult.Scenarios)
-        {
-            orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem);
-
-            var suggestion = new LlmSuggestion
-            {
-                Id = Guid.NewGuid(),
-                TestSuiteId = suite.Id,
-                EndpointId = scenario.EndpointId,
-                CacheKey = null,
-                DisplayOrder = displayOrder++,
-                SuggestionType = scenario.SuggestedTestType == TestType.HappyPath
-                    ? LlmSuggestionType.HappyPath
-                    : LlmSuggestionType.BoundaryNegative,
-                TestType = scenario.SuggestedTestType,
-                SuggestedName = LlmSuggestionMaterializer.SanitizeName(scenario.ScenarioName, orderItem),
-                SuggestedDescription = scenario.Description,
-                SuggestedRequest = JsonSerializer.Serialize(new N8nTestCaseRequest
+            await _messageBus.SendAsync(
+                new TriggerLlmSuggestionRefinementMessage
                 {
-                    HttpMethod = string.IsNullOrWhiteSpace(scenario.SuggestedHttpMethod)
-                        ? orderItem?.HttpMethod
-                        : scenario.SuggestedHttpMethod,
-                    Url = string.IsNullOrWhiteSpace(scenario.SuggestedUrl)
-                        ? orderItem?.Path
-                        : scenario.SuggestedUrl,
-                    BodyType = scenario.SuggestedBodyType,
-                    Body = scenario.SuggestedBody,
-                    PathParams = scenario.SuggestedPathParams,
-                    QueryParams = scenario.SuggestedQueryParams,
-                    Headers = scenario.SuggestedHeaders,
-                }, JsonOpts),
-                SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
+                    JobId = job.Id,
+                    TestSuiteId = job.TestSuiteId,
+                    TriggeredById = job.TriggeredById,
+                    WebhookName = N8nWebhookNames.GenerateLlmSuggestions,
+                    CallbackUrl = callbackUrl,
+                    Payload = payload,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                },
+                new MetaData
                 {
-                    ExpectedStatus = scenario.ExpectedStatusCodes ?? new List<int>(),
-                    BodyContains = scenario.SuggestedBodyContains ?? new List<string>(),
-                    BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
-                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
-                    HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
-                    ExpectationSource = scenario.ExpectationSource,
-                    RequirementCode = scenario.RequirementCode,
-                    PrimaryRequirementId = scenario.PrimaryRequirementId,
-                }, JsonOpts),
-                SuggestedVariables = scenario.Variables?.Count > 0
-                    ? JsonSerializer.Serialize(scenario.Variables, JsonOpts)
-                    : null,
-                SuggestedTags = JsonSerializer.Serialize(scenario.Tags ?? new List<string>(), JsonOpts),
-                Priority = LlmSuggestionMaterializer.ParsePriority(scenario.Priority),
-                ReviewStatus = ReviewStatus.Pending,
-                LlmModel = llmResult.LlmModel,
-                TokensUsed = llmResult.TokensUsed,
-                SrsDocumentId = suite.SrsDocumentId,
-                CoveredRequirementIds = scenario.CoveredRequirementIds?.Count > 0
-                    ? JsonSerializer.Serialize(scenario.CoveredRequirementIds, JsonOpts)
-                    : null,
-                CreatedDateTime = now,
-                RowVersion = Guid.NewGuid().ToByteArray(),
-            };
-
-            suggestions.Add(suggestion);
-            await _suggestionRepository.AddAsync(suggestion, cancellationToken);
-        }
-
-        await _suggestionRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-
-        // 9) Increment LLM usage (only if live call, not cache hit)
-        if (!llmResult.FromCache && !llmResult.UsedLocalFallback)
-        {
-            await _subscriptionLimitService.IncrementUsageAsync(
-                new Contracts.Subscription.DTOs.IncrementUsageRequest
-                {
-                    UserId = command.CurrentUserId,
-                    LimitType = LimitType.MaxLlmCallsPerMonth,
-                    IncrementValue = 1,
+                    CreationDateTime = DateTimeOffset.UtcNow,
+                    EnqueuedDateTime = DateTimeOffset.UtcNow,
+                    MessageId = job.Id.ToString(),
                 },
                 cancellationToken);
         }
-
-        // 10) Build result
-        command.Result = new GenerateLlmSuggestionPreviewResultModel
+        catch (Exception ex)
         {
-            TestSuiteId = command.TestSuiteId,
-            TotalSuggestions = suggestions.Count,
-            EndpointsCovered = suggestions
-                .Where(s => s.EndpointId.HasValue)
-                .Select(s => s.EndpointId.Value)
-                .Distinct()
-                .Count(),
-            LlmModel = llmResult.LlmModel,
-            LlmTokensUsed = llmResult.TokensUsed,
-            FromCache = llmResult.FromCache,
-            GeneratedAt = now,
-            Suggestions = suggestions.Select(LlmSuggestionModel.FromEntity).ToList(),
-        };
+            job.Status = GenerationJobStatus.Failed;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            job.ErrorMessage = $"Không thể queue n8n refinement: {ex.Message}";
+            job.ErrorDetails = ex.ToString();
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation(
-            "LLM suggestion preview generated. TestSuiteId={TestSuiteId}, TotalSuggestions={Total}, " +
-            "EndpointsCovered={Covered}, FromCache={FromCache}, ActorUserId={UserId}",
-            command.TestSuiteId, suggestions.Count,
-            command.Result.EndpointsCovered, llmResult.FromCache, command.CurrentUserId);
+            _logger.LogError(
+                ex,
+                "Failed to queue async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                job.Id,
+                job.TestSuiteId);
+        }
+    }
+
+    private string BuildCallbackUrl(Guid jobId)
+    {
+        var baseUrl = _n8nOptions.BeBaseUrl?.TrimEnd('/');
+        return string.IsNullOrWhiteSpace(baseUrl)
+            ? $"/api/test-generation/llm-suggestions/callback/{jobId}"
+            : $"{baseUrl}/api/test-generation/llm-suggestions/callback/{jobId}";
     }
 
 }
