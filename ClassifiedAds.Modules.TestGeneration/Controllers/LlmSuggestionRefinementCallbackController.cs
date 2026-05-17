@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -55,6 +56,8 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
         [FromHeader(Name = "x-callback-api-key")] string callbackApiKey,
         [FromBody] JsonElement request)
     {
+        var receivedAt = DateTimeOffset.UtcNow;
+        var totalStopwatch = Stopwatch.StartNew();
         var expectedKey = _n8nOptions.CallbackApiKey;
         if (string.IsNullOrWhiteSpace(expectedKey) || callbackApiKey != expectedKey)
         {
@@ -64,7 +67,9 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
             return Unauthorized();
         }
 
+        var parseStopwatch = Stopwatch.StartNew();
         var parsed = TryParseCallbackPayload(request, out var response, out var parseError);
+        parseStopwatch.Stop();
         if (!parsed)
         {
             await _dispatcher.DispatchAsync(new ProcessLlmSuggestionRefinementCallbackCommand
@@ -74,23 +79,36 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
             });
 
             _logger.LogWarning(
-                "Invalid LLM suggestion refinement callback payload. JobId={JobId}, Error={Error}",
+                "Invalid LLM suggestion refinement callback payload. JobId={JobId}, BatchId={BatchId}, CallbackReceivedAt={CallbackReceivedAt}, CallbackParseMs={CallbackParseMs}, Error={Error}",
                 jobId,
+                jobId,
+                receivedAt,
+                parseStopwatch.ElapsedMilliseconds,
                 parseError);
 
             return BadRequest(parseError);
         }
 
+        var dispatchStopwatch = Stopwatch.StartNew();
         await _dispatcher.DispatchAsync(new ProcessLlmSuggestionRefinementCallbackCommand
         {
             JobId = jobId,
             Response = response,
         });
+        dispatchStopwatch.Stop();
+        totalStopwatch.Stop();
 
         _logger.LogInformation(
-            "LLM suggestion refinement callback processed. JobId={JobId}, ScenarioCount={ScenarioCount}",
+            "LLM suggestion refinement callback processed. JobId={JobId}, BatchId={BatchId}, CallbackReceivedAt={CallbackReceivedAt}, CallbackParseMs={CallbackParseMs}, CallbackDispatchMs={CallbackDispatchMs}, CallbackTotalMs={CallbackTotalMs}, ScenarioCount={ScenarioCount}, Model={Model}, TokensUsed={TokensUsed}",
             jobId,
-            response.Scenarios?.Count ?? 0);
+            jobId,
+            receivedAt,
+            parseStopwatch.ElapsedMilliseconds,
+            dispatchStopwatch.ElapsedMilliseconds,
+            totalStopwatch.ElapsedMilliseconds,
+            response.Scenarios?.Count ?? 0,
+            response.Model,
+            response.TokensUsed);
 
         return NoContent();
     }

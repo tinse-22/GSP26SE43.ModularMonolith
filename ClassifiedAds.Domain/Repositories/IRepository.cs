@@ -29,6 +29,8 @@ public interface IRepository<TEntity, TKey> : IConcurrencyHandler<TEntity>
 
     Task<List<T>> ToListAsync<T>(IQueryable<T> query);
 
+    Task<int> CountAsync<T>(IQueryable<T> query, CancellationToken cancellationToken = default);
+
     Task BulkInsertAsync(IReadOnlyCollection<TEntity> entities, CancellationToken cancellationToken = default);
 
     Task BulkInsertAsync(IReadOnlyCollection<TEntity> entities, Expression<Func<TEntity, object>> columnNamesSelector, CancellationToken cancellationToken = default);

@@ -11,6 +11,7 @@ using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -68,6 +69,8 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
         ProcessLlmSuggestionRefinementCallbackCommand command,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var contextLoadStopwatch = Stopwatch.StartNew();
         var job = await _jobRepository.FirstOrDefaultAsync(
             _jobRepository.GetQueryableSet().Where(x => x.Id == command.JobId));
 
@@ -147,8 +150,13 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
             SrsDocument = srsDocument,
             SrsRequirements = srsRequirements,
         };
+        contextLoadStopwatch.Stop();
 
+        var parseStopwatch = Stopwatch.StartNew();
         var llmResult = _llmSuggester.ParseRefinementResponse(llmContext, command.Response);
+        parseStopwatch.Stop();
+
+        var persistStopwatch = Stopwatch.StartNew();
         var suggestions = await _persistenceService.ReplacePendingSuggestionsAsync(
             suite,
             approvedOrder,
@@ -171,12 +179,25 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
         job.RowVersion = Guid.NewGuid().ToByteArray();
         await _jobRepository.UpdateAsync(job, cancellationToken);
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        persistStopwatch.Stop();
+        totalStopwatch.Stop();
+
+        var callbackAgeMs = job.TriggeredAt.HasValue
+            ? (long?)Math.Max(0, (job.CompletedAt.Value - job.TriggeredAt.Value).TotalMilliseconds)
+            : null;
 
         _logger.LogInformation(
-            "Processed LLM suggestion refinement callback. JobId={JobId}, TestSuiteId={TestSuiteId}, SuggestionCount={SuggestionCount}, Model={Model}",
+            "Processed LLM suggestion refinement callback metrics. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, CallbackAgeMs={CallbackAgeMs}, CallbackContextLoadMs={CallbackContextLoadMs}, CallbackParseMs={CallbackParseMs}, CallbackPersistMs={CallbackPersistMs}, CallbackTotalMs={CallbackTotalMs}, SuggestionCount={SuggestionCount}, TokensUsed={TokensUsed}, Model={Model}",
             job.Id,
             job.TestSuiteId,
+            job.Id,
+            callbackAgeMs,
+            contextLoadStopwatch.ElapsedMilliseconds,
+            parseStopwatch.ElapsedMilliseconds,
+            persistStopwatch.ElapsedMilliseconds,
+            totalStopwatch.ElapsedMilliseconds,
             suggestions.Count,
+            command.Response?.TokensUsed,
             llmResult.LlmModel);
     }
 }
