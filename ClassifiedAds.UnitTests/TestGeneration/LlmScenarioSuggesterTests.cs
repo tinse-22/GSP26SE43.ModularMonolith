@@ -606,7 +606,7 @@ public class LlmScenarioSuggesterTests
                 false));
 
         // Act
-        var result = await _sut.SuggestScenariosAsync(context);
+        var act = () => _sut.SuggestScenariosAsync(context);
 
         // Assert
         result.UsedLocalFallback.Should().BeTrue();

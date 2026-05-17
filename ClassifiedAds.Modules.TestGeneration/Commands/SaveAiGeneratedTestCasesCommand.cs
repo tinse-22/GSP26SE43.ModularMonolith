@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -189,6 +190,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static readonly Regex StatusCodeRegex = new(
         @"\b([1-5]\d\d)\b",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRegex = new(
+        @"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly ProposalStatus[] ActiveProposalStatuses =
     {
@@ -298,6 +302,11 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     requirementsById,
                     endpointRequirementMap);
             }
+
+            await ValidateGeneratedTestCasesAgainstOpenApiContractAsync(
+                suite,
+                command.TestCases,
+                ct);
 
             // Replace any previously AI-generated test cases for this suite.
             var existing = await _testCaseRepository.ToListAsync(
@@ -1048,5 +1057,223 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             "status" => ExtractFrom.Status,
             _ => ExtractFrom.ResponseBody,
         };
+    }
+
+    private async Task ValidateGeneratedTestCasesAgainstOpenApiContractAsync(
+        TestSuite suite,
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        CancellationToken cancellationToken)
+    {
+        if (suite?.ApiSpecId is not Guid specId || specId == Guid.Empty || testCases == null || testCases.Count == 0)
+        {
+            return;
+        }
+
+        var endpointIds = testCases
+            .Where(x => x?.EndpointId is Guid id && id != Guid.Empty)
+            .Select(x => x.EndpointId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (endpointIds.Count == 0)
+        {
+            return;
+        }
+
+        var metadata = await _apiEndpointMetadataService.GetEndpointMetadataAsync(specId, endpointIds, cancellationToken);
+        var metadataByEndpointId = metadata
+            .GroupBy(x => x.EndpointId)
+            .Select(x => x.First())
+            .ToDictionary(x => x.EndpointId);
+
+        var ordered = testCases
+            .Select((x, i) => new { TestCase = x, Index = i })
+            .OrderBy(x => x.TestCase?.OrderIndex ?? x.Index)
+            .ThenBy(x => x.Index)
+            .ToList();
+
+        var producedVariables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "tcUniqueId",
+        };
+
+        foreach (var item in ordered)
+        {
+            var dto = item.TestCase;
+            if (dto == null || dto.EndpointId is not Guid endpointId || endpointId == Guid.Empty)
+            {
+                continue;
+            }
+
+            if (!metadataByEndpointId.TryGetValue(endpointId, out var endpoint))
+            {
+                throw new ValidationException(
+                    $"AI-generated test case '{dto.Name ?? $"index {item.Index}"}' references unknown endpointId '{endpointId}' for specification '{specId}'.");
+            }
+
+            ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index);
+            ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index);
+            ValidateVariableDependencies(dto, producedVariables, item.Index);
+            RegisterProducedVariables(dto, producedVariables);
+        }
+    }
+
+    private static void ValidateExpectedStatusesAgainstOpenApi(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint,
+        int index)
+    {
+        var expectedStatuses = ParseStatusCodesFromExpectation(dto?.Expectation?.ExpectedStatus);
+        if (expectedStatuses.Count == 0)
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing expectation.expectedStatus.");
+        }
+
+        var allowedStatuses = endpoint?.Responses?
+            .Select(x => x.StatusCode)
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToHashSet() ?? new HashSet<int>();
+
+        if (allowedStatuses.Count == 0)
+        {
+            return;
+        }
+
+        var invalid = expectedStatuses.Where(x => !allowedStatuses.Contains(x)).Distinct().ToList();
+        if (invalid.Count > 0)
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' has expectedStatus [{string.Join(", ", expectedStatuses)}] " +
+                $"but OpenAPI for endpoint '{endpoint.HttpMethod} {endpoint.Path}' allows [{string.Join(", ", allowedStatuses.OrderBy(x => x))}].");
+        }
+    }
+
+    private static void ValidateAuthorizationHeaderAgainstOpenApi(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint,
+        int index)
+    {
+        if (endpoint?.IsAuthRelated == true)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(dto?.Request?.Headers))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(dto.Request.Headers);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "Authorization", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ValidationException(
+                        $"AI-generated test case '{dto?.Name ?? $"index {index}"}' adds Authorization header, " +
+                        $"but endpoint '{endpoint.HttpMethod} {endpoint.Path}' is public in OpenAPI.");
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore malformed header JSON here; persistence normalization will handle invalid shapes.
+        }
+    }
+
+    private static void ValidateVariableDependencies(
+        AiGeneratedTestCaseDto dto,
+        HashSet<string> producedVariables,
+        int index)
+    {
+        var requiredVariables = ExtractPlaceholders(dto);
+        if (requiredVariables.Count == 0)
+        {
+            return;
+        }
+
+        var locallyDefined = dto?.Variables?
+            .Where(x => !string.IsNullOrWhiteSpace(x?.VariableName))
+            .Select(x => x.VariableName.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var variable in requiredVariables)
+        {
+            if (locallyDefined.Contains(variable) || producedVariables.Contains(variable))
+            {
+                continue;
+            }
+
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' uses placeholder '{{{{{variable}}}}}' " +
+                "but no producer/extractor exists in previous test cases or this test case variables.");
+        }
+    }
+
+    private static HashSet<string> ExtractPlaceholders(AiGeneratedTestCaseDto dto)
+    {
+        var values = new[]
+        {
+            dto?.Request?.Url,
+            dto?.Request?.Headers,
+            dto?.Request?.PathParams,
+            dto?.Request?.QueryParams,
+            dto?.Request?.Body,
+            dto?.Expectation?.BodyContains,
+            dto?.Expectation?.BodyNotContains,
+            dto?.Expectation?.HeaderChecks,
+            dto?.Expectation?.JsonPathChecks,
+        };
+
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in values)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            foreach (Match match in PlaceholderRegex.Matches(value))
+            {
+                var name = match.Groups[1].Value?.Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                result.Add(name);
+            }
+        }
+
+        return result;
+    }
+
+    private static void RegisterProducedVariables(
+        AiGeneratedTestCaseDto dto,
+        HashSet<string> producedVariables)
+    {
+        if (dto?.Variables == null || dto.Variables.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var variable in dto.Variables)
+        {
+            if (string.IsNullOrWhiteSpace(variable?.VariableName))
+            {
+                continue;
+            }
+
+            producedVariables.Add(variable.VariableName.Trim());
+        }
     }
 }
