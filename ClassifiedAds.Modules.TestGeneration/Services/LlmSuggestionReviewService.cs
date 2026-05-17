@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.TestGeneration.Models.Requests;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -142,6 +143,13 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         Guid currentUserId,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        long limitCheckMs = 0;
+        long loadExistingTestCasesMs = 0;
+        long materializeMs = 0;
+        long dependencyEnrichMs = 0;
+        long dbSaveMs = 0;
+
         ValidationException.Requires(suite != null, "TestSuite là bắt buộc.");
         ValidationException.Requires(currentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
 
@@ -157,6 +165,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             "Tất cả suggestions phải thuộc về test suite được review.");
         EnsureSuggestionsAreApprovableForMaterialization(approvalItems.Select(x => x.Suggestion));
 
+        var loadExistingStopwatch = Stopwatch.StartNew();
         var previouslyApprovedSuggestions = (await _suggestionRepository.ToListAsync(
             _suggestionRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == suite.Id
@@ -218,11 +227,14 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 
         if (potentialNewCount > 0)
         {
+            var limitStopwatch = Stopwatch.StartNew();
             var limitCheck = await _subscriptionLimitService.CheckLimitAsync(
                 currentUserId,
                 LimitType.MaxTestCasesPerSuite,
                 potentialNewCount,
                 cancellationToken);
+            limitStopwatch.Stop();
+            limitCheckMs = limitStopwatch.ElapsedMilliseconds;
 
             if (!limitCheck.IsAllowed)
             {
@@ -259,6 +271,8 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
             : (await _variableRepository.ToListAsync(
                 _variableRepository.GetQueryableSet().Where(x => existingTestCaseIds.Contains(x.TestCaseId))))
                 ?? new List<TestCaseVariable>();
+        loadExistingStopwatch.Stop();
+        loadExistingTestCasesMs = loadExistingStopwatch.ElapsedMilliseconds;
 
         var now = DateTimeOffset.UtcNow;
         var nextOrderIndex = existingTestCases.Count == 0
@@ -271,6 +285,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         {
             await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
             {
+                var materializeStopwatch = Stopwatch.StartNew();
                 foreach (var approvalItem in approvalItems)
                 {
                     var suggestion = approvalItem.Suggestion;
@@ -321,11 +336,14 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 
                 if (materializedTestCases.Count > 0)
                 {
+                    var dependencyEnrichStopwatch = Stopwatch.StartNew();
                     var enrichment = GeneratedTestCaseDependencyEnricher.Enrich(
                         materializedTestCases,
                         approvedOrder,
                         existingTestCases,
                         existingProducerVariables);
+                    dependencyEnrichStopwatch.Stop();
+                    dependencyEnrichMs = dependencyEnrichStopwatch.ElapsedMilliseconds;
 
                     foreach (var existingProducerVariable in enrichment.ExistingProducerVariablesToPersist)
                     {
@@ -407,6 +425,9 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                     }
                 }
 
+                materializeStopwatch.Stop();
+                materializeMs = materializeStopwatch.ElapsedMilliseconds;
+
                 await _versionRepository.AddAsync(new TestSuiteVersion
                 {
                     Id = Guid.NewGuid(),
@@ -438,7 +459,10 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 suite.RowVersion = Guid.NewGuid().ToByteArray();
                 await _suiteRepository.UpdateAsync(suite, ct);
 
+                var dbSaveStopwatch = Stopwatch.StartNew();
                 await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
+                dbSaveStopwatch.Stop();
+                dbSaveMs = dbSaveStopwatch.ElapsedMilliseconds;
             }, cancellationToken: cancellationToken);
         }
         catch (Exception ex) when (_suggestionRepository.IsDbUpdateConcurrencyException(ex))
@@ -460,11 +484,22 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 cancellationToken);
         }
 
+        totalStopwatch.Stop();
         _logger.LogInformation(
-            "Approved {SuggestionCount} LLM suggestion(s). SuggestionIds={SuggestionIds}, TestSuiteId={TestSuiteId}, ActorUserId={ActorUserId}",
-            approvalItems.Count,
-            approvalItems.Select(x => x.Suggestion.Id).ToArray(),
+            "LLM suggestion materialization metrics. TestSuiteId={TestSuiteId}, SuggestionReviewPath={SuggestionReviewPath}, SuggestionCount={SuggestionCount}, MaterializedCount={MaterializedCount}, LoadExistingTestCasesMs={LoadExistingTestCasesMs}, LimitCheckMs={LimitCheckMs}, MaterializeMs={MaterializeMs}, DependencyEnrichMs={DependencyEnrichMs}, DbSaveMs={DbSaveMs}, NormalPathMs={NormalPathMs}, BulkPathMs={BulkPathMs}, BulkPathEnabled={BulkPathEnabled}, SuggestionIds={SuggestionIds}, ActorUserId={ActorUserId}",
             suite.Id,
+            "normal",
+            approvalItems.Count,
+            materializedTestCases.Count,
+            loadExistingTestCasesMs,
+            limitCheckMs,
+            materializeMs,
+            dependencyEnrichMs,
+            dbSaveMs,
+            totalStopwatch.ElapsedMilliseconds,
+            0,
+            false,
+            approvalItems.Select(x => x.Suggestion.Id).ToArray(),
             currentUserId);
 
         return new LlmSuggestionApprovalBatchResult

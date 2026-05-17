@@ -5,7 +5,9 @@ using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -36,24 +38,40 @@ public class TriggerLlmSuggestionRefinementConsumer : IMessageBusConsumer<Trigge
         MetaData metaData,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var payloadBytes = data.Payload == null
+            ? 0
+            : JsonSerializer.SerializeToUtf8Bytes(data.Payload).Length;
+        var queueDelayMs = metaData?.EnqueuedDateTime.HasValue == true
+            ? (long)Math.Max(0, (DateTimeOffset.UtcNow - metaData.EnqueuedDateTime.Value).TotalMilliseconds)
+            : data.CreatedAt == default
+                ? 0
+                : (long)Math.Max(0, (DateTimeOffset.UtcNow - data.CreatedAt).TotalMilliseconds);
+
         var job = await _jobRepository.FirstOrDefaultAsync(
             _jobRepository.GetQueryableSet().Where(x => x.Id == data.JobId));
 
         if (job == null)
         {
             _logger.LogWarning(
-                "LLM suggestion refinement job not found. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                "LLM suggestion refinement job not found. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}",
                 data.JobId,
-                data.TestSuiteId);
+                data.TestSuiteId,
+                data.JobId,
+                queueDelayMs,
+                payloadBytes);
             return;
         }
 
         if (job.Status != GenerationJobStatus.Queued)
         {
             _logger.LogWarning(
-                "LLM suggestion refinement job is not queued. JobId={JobId}, Status={Status}",
+                "LLM suggestion refinement job is not queued. JobId={JobId}, BatchId={BatchId}, Status={Status}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}",
                 job.Id,
-                job.Status);
+                job.Id,
+                job.Status,
+                queueDelayMs,
+                payloadBytes);
             return;
         }
 
@@ -74,23 +92,38 @@ public class TriggerLlmSuggestionRefinementConsumer : IMessageBusConsumer<Trigge
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
-                "Triggering async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}, WebhookName={WebhookName}, CallbackUrl={CallbackUrl}",
+                "Triggering async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, WebhookName={WebhookName}, CallbackUrl={CallbackUrl}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}, EndpointCount={EndpointCount}, RetryCount={RetryCount}",
                 job.Id,
                 data.TestSuiteId,
+                job.Id,
                 data.WebhookName,
-                data.CallbackUrl);
+                data.CallbackUrl,
+                queueDelayMs,
+                payloadBytes,
+                data.Payload?.Endpoints?.Count ?? 0,
+                job.RetryCount);
 
+            var webhookStopwatch = Stopwatch.StartNew();
             var result = await _n8nService.TriggerWebhookWithResultAsync(
                 data.WebhookName,
                 data.Payload,
                 cancellationToken);
+            webhookStopwatch.Stop();
 
             if (result.Success)
             {
+                totalStopwatch.Stop();
                 _logger.LogInformation(
-                    "Async LLM suggestion refinement accepted by n8n. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                    "Async LLM suggestion refinement accepted by n8n. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, WebhookAcceptMs={WebhookAcceptMs}, TotalTriggerMs={TotalTriggerMs}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}, EndpointCount={EndpointCount}, RetryCount={RetryCount}",
                     job.Id,
-                    data.TestSuiteId);
+                    data.TestSuiteId,
+                    job.Id,
+                    webhookStopwatch.ElapsedMilliseconds,
+                    totalStopwatch.ElapsedMilliseconds,
+                    queueDelayMs,
+                    payloadBytes,
+                    data.Payload?.Endpoints?.Count ?? 0,
+                    job.RetryCount);
                 return;
             }
 
@@ -103,9 +136,15 @@ public class TriggerLlmSuggestionRefinementConsumer : IMessageBusConsumer<Trigge
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
             _logger.LogError(
-                "Async LLM suggestion refinement trigger failed. JobId={JobId}, TestSuiteId={TestSuiteId}, Error={Error}",
+                "Async LLM suggestion refinement trigger failed. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, WebhookAcceptMs={WebhookAcceptMs}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}, EndpointCount={EndpointCount}, RetryCount={RetryCount}, Error={Error}",
                 job.Id,
                 data.TestSuiteId,
+                job.Id,
+                webhookStopwatch.ElapsedMilliseconds,
+                queueDelayMs,
+                payloadBytes,
+                data.Payload?.Endpoints?.Count ?? 0,
+                job.RetryCount,
                 result.ErrorMessage);
         }
         catch (Exception ex)
@@ -120,9 +159,14 @@ public class TriggerLlmSuggestionRefinementConsumer : IMessageBusConsumer<Trigge
 
             _logger.LogError(
                 ex,
-                "Unexpected error triggering async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                "Unexpected error triggering async LLM suggestion refinement. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, QueueDelayMs={QueueDelayMs}, PayloadBytes={PayloadBytes}, EndpointCount={EndpointCount}, RetryCount={RetryCount}",
                 job.Id,
-                data.TestSuiteId);
+                data.TestSuiteId,
+                job.Id,
+                queueDelayMs,
+                payloadBytes,
+                data.Payload?.Endpoints?.Count ?? 0,
+                job.RetryCount);
 
             throw;
         }

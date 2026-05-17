@@ -6,6 +6,7 @@ using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -54,6 +55,7 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
         BulkReviewLlmSuggestionsCommand command,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId là bắt buộc.");
         ValidationException.Requires(command.CurrentUserId != Guid.Empty, "CurrentUserId là bắt buộc.");
 
@@ -87,9 +89,11 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
             filterByTestType = parsedTestType;
         }
 
+        var suiteLoadStopwatch = Stopwatch.StartNew();
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet()
                 .Where(x => x.Id == command.TestSuiteId));
+        suiteLoadStopwatch.Stop();
 
         if (suite == null)
         {
@@ -131,8 +135,10 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
             queryable = queryable.Where(x => x.EndpointId == command.FilterByEndpointId.Value);
         }
 
+        var loadSuggestionsStopwatch = Stopwatch.StartNew();
         var suggestions = await _suggestionRepository.ToListAsync(
             queryable.OrderBy(x => x.DisplayOrder));
+        loadSuggestionsStopwatch.Stop();
 
         var now = DateTimeOffset.UtcNow;
         if (suggestions.Count == 0)
@@ -146,10 +152,24 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
                 MaterializedCount = 0,
                 ReviewedAt = now,
             };
+
+            _logger.LogInformation(
+                "Bulk LLM suggestion review metrics. TestSuiteId={TestSuiteId}, Action={Action}, LoadSuiteMs={LoadSuiteMs}, LoadSuggestionsMs={LoadSuggestionsMs}, ReviewMs={ReviewMs}, TotalMs={TotalMs}, MatchedCount={MatchedCount}, ProcessedCount={ProcessedCount}, MaterializedCount={MaterializedCount}, ActorUserId={ActorUserId}",
+                command.TestSuiteId,
+                action,
+                suiteLoadStopwatch.ElapsedMilliseconds,
+                loadSuggestionsStopwatch.ElapsedMilliseconds,
+                0,
+                totalStopwatch.ElapsedMilliseconds,
+                0,
+                0,
+                0,
+                command.CurrentUserId);
             return;
         }
 
         var appliedTestCaseIds = Array.Empty<Guid>();
+        var reviewStopwatch = Stopwatch.StartNew();
 
         if (isApprove)
         {
@@ -174,6 +194,8 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
                 cancellationToken);
         }
 
+        reviewStopwatch.Stop();
+
         var reviewedAt = suggestions
             .Select(x => x.ReviewedAt)
             .Where(x => x.HasValue)
@@ -194,9 +216,14 @@ public class BulkReviewLlmSuggestionsCommandHandler : ICommandHandler<BulkReview
         };
 
         _logger.LogInformation(
-            "Bulk reviewed LLM suggestions. TestSuiteId={TestSuiteId}, Action={Action}, ProcessedCount={ProcessedCount}, MaterializedCount={MaterializedCount}, ActorUserId={ActorUserId}",
+            "Bulk LLM suggestion review metrics. TestSuiteId={TestSuiteId}, Action={Action}, LoadSuiteMs={LoadSuiteMs}, LoadSuggestionsMs={LoadSuggestionsMs}, ReviewMs={ReviewMs}, TotalMs={TotalMs}, MatchedCount={MatchedCount}, ProcessedCount={ProcessedCount}, MaterializedCount={MaterializedCount}, ActorUserId={ActorUserId}",
             command.TestSuiteId,
             command.Result.Action,
+            suiteLoadStopwatch.ElapsedMilliseconds,
+            loadSuggestionsStopwatch.ElapsedMilliseconds,
+            reviewStopwatch.ElapsedMilliseconds,
+            totalStopwatch.ElapsedMilliseconds,
+            suggestions.Count,
             command.Result.ProcessedCount,
             command.Result.MaterializedCount,
             command.CurrentUserId);

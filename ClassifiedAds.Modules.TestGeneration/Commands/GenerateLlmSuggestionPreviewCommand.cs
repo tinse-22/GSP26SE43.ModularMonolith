@@ -15,7 +15,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -84,13 +86,19 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         GenerateLlmSuggestionPreviewCommand command,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var stageStopwatch = Stopwatch.StartNew();
+
         // 1) Validate inputs
         ValidationException.Requires(command.TestSuiteId != Guid.Empty, "TestSuiteId là bắt buộc.");
         ValidationException.Requires(command.SpecificationId != Guid.Empty, "SpecificationId là bắt buộc.");
+        var validateMs = stageStopwatch.ElapsedMilliseconds;
 
         // 2) Load suite + ownership
+        stageStopwatch.Restart();
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
+        var loadSuiteMs = stageStopwatch.ElapsedMilliseconds;
 
         if (suite == null)
         {
@@ -106,11 +114,15 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             "Không thể tạo suggestion preview cho test suite đã archived.");
 
         // 3) Gate: require approved order
+        stageStopwatch.Restart();
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(command.TestSuiteId, cancellationToken);
+        var requireOrderMs = stageStopwatch.ElapsedMilliseconds;
 
         // 4) Check LLM usage limit
+        stageStopwatch.Restart();
         var llmLimitCheck = await _subscriptionLimitService.CheckLimitAsync(
             command.CurrentUserId, LimitType.MaxLlmCallsPerMonth, 1, cancellationToken);
+        var limitCheckMs = stageStopwatch.ElapsedMilliseconds;
 
         if (!llmLimitCheck.IsAllowed)
         {
@@ -119,6 +131,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         }
 
         // 5) Check existing pending suggestions
+        stageStopwatch.Restart();
         var existingPending = await _suggestionRepository.ToListAsync(
             _suggestionRepository.GetQueryableSet()
                 .Where(x => x.TestSuiteId == command.TestSuiteId
@@ -149,23 +162,30 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             }
         }
 
+        var pendingSuggestionsCheckMs = stageStopwatch.ElapsedMilliseconds;
+
         // 6) Build contract-rich LLM context (metadata + parameter details)
         var endpointIds = approvedOrder
             .Select(x => x.EndpointId)
             .Distinct()
             .ToList();
 
+        stageStopwatch.Restart();
         var endpointMetadata = await _endpointMetadataService.GetEndpointMetadataAsync(
             command.SpecificationId,
             endpointIds,
             cancellationToken);
+        var metadataMs = stageStopwatch.ElapsedMilliseconds;
 
+        stageStopwatch.Restart();
         var endpointParameterDetails = await _endpointParameterDetailService.GetParameterDetailsAsync(
             command.SpecificationId,
             endpointIds,
             cancellationToken);
+        var parameterDetailMs = stageStopwatch.ElapsedMilliseconds;
 
         // 6a) Load SRS document + requirements when available so LLM can generate traceable scenarios
+        stageStopwatch.Restart();
         SrsDocument srsDocument = null;
         List<SrsRequirement> srsRequirements = new();
 
@@ -182,6 +202,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                         .Where(x => x.SrsDocumentId == srsDocument.Id));
             }
         }
+
+        var srsLoadMs = stageStopwatch.ElapsedMilliseconds;
 
         var llmContext = new LlmScenarioSuggestionContext
         {
@@ -213,33 +235,60 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
         command.JobId = job.Id;
-        await QueueRefinementAsync(job, llmContext, cancellationToken);
+        var queueMetrics = await QueueRefinementAsync(job, llmContext, cancellationToken);
+        totalStopwatch.Stop();
 
         _logger.LogInformation(
-            "Queued LLM suggestion generation. TestSuiteId={TestSuiteId}, JobId={JobId}, RefinementStatus={RefinementStatus}, ActorUserId={UserId}",
-            command.TestSuiteId, job.Id, job.Status, command.CurrentUserId);
+            "LLM suggestion generation queue metrics. JobId={JobId}, TestSuiteId={TestSuiteId}, BatchId={BatchId}, RefinementStatus={RefinementStatus}, ActorUserId={UserId}, EndpointCount={EndpointCount}, ValidateMs={ValidateMs}, LoadSuiteMs={LoadSuiteMs}, RequireOrderMs={RequireOrderMs}, LimitCheckMs={LimitCheckMs}, PendingSuggestionsCheckMs={PendingSuggestionsCheckMs}, MetadataMs={MetadataMs}, ParameterDetailMs={ParameterDetailMs}, SrsLoadMs={SrsLoadMs}, BuildPayloadMs={BuildPayloadMs}, PayloadBytes={PayloadBytes}, EnqueueMessageMs={EnqueueMessageMs}, TotalApiMs={TotalApiMs}, CacheHitCount={CacheHitCount}, CacheMissCount={CacheMissCount}",
+            job.Id,
+            command.TestSuiteId,
+            job.Id,
+            job.Status,
+            command.CurrentUserId,
+            endpointIds.Count,
+            validateMs,
+            loadSuiteMs,
+            requireOrderMs,
+            limitCheckMs,
+            pendingSuggestionsCheckMs,
+            metadataMs,
+            parameterDetailMs,
+            srsLoadMs,
+            queueMetrics.BuildPayloadMs,
+            queueMetrics.PayloadBytes,
+            queueMetrics.EnqueueMessageMs,
+            totalStopwatch.ElapsedMilliseconds,
+            0,
+            endpointIds.Count);
     }
 
-    private async Task QueueRefinementAsync(
+    private async Task<QueueRefinementMetrics> QueueRefinementAsync(
         TestGenerationJob job,
         LlmScenarioSuggestionContext llmContext,
         CancellationToken cancellationToken)
     {
+        var metrics = new QueueRefinementMetrics();
+
         try
         {
             var callbackUrl = BuildCallbackUrl(job.Id);
+            var buildPayloadStopwatch = Stopwatch.StartNew();
             var payload = await _llmSuggester.BuildAsyncRefinementPayloadAsync(
                 llmContext,
                 job.Id,
                 callbackUrl,
                 _n8nOptions.CallbackApiKey ?? string.Empty,
                 cancellationToken);
+            buildPayloadStopwatch.Stop();
+            metrics.BuildPayloadMs = buildPayloadStopwatch.ElapsedMilliseconds;
+            metrics.PayloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload).Length;
 
             job.CallbackUrl = callbackUrl;
             job.Status = GenerationJobStatus.Queued;
             job.RowVersion = Guid.NewGuid().ToByteArray();
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
+            var enqueueStopwatch = Stopwatch.StartNew();
             await _messageBus.SendAsync(
                 new TriggerLlmSuggestionRefinementMessage
                 {
@@ -258,6 +307,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                     MessageId = job.Id.ToString(),
                 },
                 cancellationToken);
+            enqueueStopwatch.Stop();
+            metrics.EnqueueMessageMs = enqueueStopwatch.ElapsedMilliseconds;
         }
         catch (Exception ex)
         {
@@ -274,6 +325,8 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
                 job.Id,
                 job.TestSuiteId);
         }
+
+        return metrics;
     }
 
     private string BuildCallbackUrl(Guid jobId)
@@ -284,4 +337,12 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             : $"{baseUrl}/api/test-generation/llm-suggestions/callback/{jobId}";
     }
 
+    private sealed class QueueRefinementMetrics
+    {
+        public long BuildPayloadMs { get; set; }
+
+        public long PayloadBytes { get; set; }
+
+        public long EnqueueMessageMs { get; set; }
+    }
 }

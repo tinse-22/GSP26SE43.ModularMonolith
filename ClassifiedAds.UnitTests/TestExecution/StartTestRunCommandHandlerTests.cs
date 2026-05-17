@@ -335,8 +335,8 @@ public class StartTestRunCommandHandlerTests
         SetupEnvironment();
 
         // Running runs exist
-        _runRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestRun>>()))
-            .ReturnsAsync(new List<TestRun> { new TestRun(), new TestRun() });
+        _runRepoMock.Setup(x => x.CountAsync(It.IsAny<IQueryable<TestRun>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
 
         _limitServiceMock
             .Setup(x => x.CheckLimitAsync(_userId, LimitType.MaxConcurrentRuns, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
@@ -364,8 +364,8 @@ public class StartTestRunCommandHandlerTests
         SetupSuiteAccess();
         SetupEnvironment();
 
-        _runRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestRun>>()))
-            .ReturnsAsync(new List<TestRun>());
+        _runRepoMock.Setup(x => x.CountAsync(It.IsAny<IQueryable<TestRun>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
 
         _limitServiceMock
             .Setup(x => x.CheckLimitAsync(It.IsAny<Guid>(), LimitType.MaxConcurrentRuns, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
@@ -450,8 +450,8 @@ public class StartTestRunCommandHandlerTests
 
     private void SetupLimits()
     {
-        _runRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<TestRun>>()))
-            .ReturnsAsync(new List<TestRun>());
+        _runRepoMock.Setup(x => x.CountAsync(It.IsAny<IQueryable<TestRun>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
 
         _limitServiceMock
             .Setup(x => x.CheckLimitAsync(It.IsAny<Guid>(), LimitType.MaxConcurrentRuns, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
