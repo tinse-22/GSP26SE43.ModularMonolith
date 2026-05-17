@@ -64,15 +64,41 @@ internal sealed class JsonArrayOrStringConverter : JsonConverter<string>
         => writer.WriteStringValue(value);
 }
 
+internal sealed class JsonStringOrRawJsonConverter : JsonConverter<string>
+{
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return reader.GetString();
+        }
+
+        using var document = JsonDocument.ParseValue(ref reader);
+        return document.RootElement.GetRawText();
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value);
+}
+
 /// <summary>Callback payload posted by n8n after LLM test-case generation.</summary>
 public class AiTestCaseRequestDto
 {
     public string HttpMethod { get; set; } = "GET";
     public string Url { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string Headers { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string PathParams { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string QueryParams { get; set; }
     public string BodyType { get; set; } = "None";
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string Body { get; set; }
     public int Timeout { get; set; } = 30000;
 }
@@ -81,10 +107,15 @@ public class AiTestCaseExpectationDto
 {
     [JsonConverter(typeof(JsonArrayOrStringConverter))]
     public string ExpectedStatus { get; set; } = "[200]";
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string ResponseSchema { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string HeaderChecks { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string BodyContains { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string BodyNotContains { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
 }
@@ -111,6 +142,7 @@ public class AiGeneratedTestCaseDto
     /// <summary>e.g. "Critical", "High", "Medium", "Low"</summary>
     public string Priority { get; set; } = "Medium";
     public int OrderIndex { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string Tags { get; set; }
     public AiTestCaseRequestDto Request { get; set; }
     public AiTestCaseExpectationDto Expectation { get; set; }
