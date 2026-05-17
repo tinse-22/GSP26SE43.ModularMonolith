@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -94,15 +95,50 @@ public class ProcessSrsAnalysisCallbackCommandHandler : ICommandHandler<ProcessS
         }
 
         // Map clarification questions by requirementCode for lookup
+        var normalizedRequirements = NormalizeRequirements(command.Requirements);
         var clarificationsByCode = command.ClarificationQuestions
+            .Where(c => !string.IsNullOrWhiteSpace(c?.RequirementCode) && !string.IsNullOrWhiteSpace(c?.Question))
             .GroupBy(c => c.RequirementCode)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        // Replace-snapshot mode: clear old requirements and clarifications for this SRS doc
+        // so each analysis result is consistent and does not accumulate stale data.
+        var existingRequirements = await _requirementRepository.ToListAsync(
+            _requirementRepository.GetQueryableSet()
+                .Where(x => x.SrsDocumentId == job.SrsDocumentId));
+        if (existingRequirements.Count > 0)
+        {
+            var existingRequirementIds = existingRequirements.Select(x => x.Id).ToHashSet();
+            var existingClarifications = await _clarificationRepository.ToListAsync(
+                _clarificationRepository.GetQueryableSet()
+                    .Where(x => existingRequirementIds.Contains(x.SrsRequirementId)));
+            if (existingClarifications.Count > 0)
+            {
+                await _clarificationRepository.BulkDeleteAsync(existingClarifications, cancellationToken);
+            }
+
+            await _requirementRepository.BulkDeleteAsync(existingRequirements, cancellationToken);
+            await _requirementRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        if (normalizedRequirements.Count == 0)
+        {
+            job.Status = SrsAnalysisJobStatus.Failed;
+            job.ErrorMessage = "SRS analysis produced no valid requirements after quality filtering.";
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+            await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
         int requirementsExtracted = 0;
 
-        for (int i = 0; i < command.Requirements.Count; i++)
+        for (int i = 0; i < normalizedRequirements.Count; i++)
         {
-            var reqDto = command.Requirements[i];
+            var reqDto = normalizedRequirements[i];
 
             var req = new SrsRequirement
             {
@@ -163,8 +199,86 @@ public class ProcessSrsAnalysisCallbackCommandHandler : ICommandHandler<ProcessS
         await _srsDocumentRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "SRS analysis callback processed. JobId={JobId}, RequirementsExtracted={Count}",
-            job.Id, requirementsExtracted);
+            "SRS analysis callback processed. JobId={JobId}, RequirementsExtracted={Count}, RawRequirements={RawCount}",
+            job.Id, requirementsExtracted, command.Requirements.Count);
+    }
+
+    private static List<N8nSrsRequirementResult> NormalizeRequirements(List<N8nSrsRequirementResult> requirements)
+    {
+        if (requirements == null || requirements.Count == 0)
+        {
+            return new List<N8nSrsRequirementResult>();
+        }
+
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<N8nSrsRequirementResult>();
+
+        for (var i = 0; i < requirements.Count; i++)
+        {
+            var dto = requirements[i];
+            if (dto == null)
+            {
+                continue;
+            }
+
+            var title = (dto.Title ?? string.Empty).Trim();
+            var description = (dto.Description ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(description))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = description.Length > 120 ? description[..120] : description;
+            }
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                description = title;
+            }
+
+            var requirementCode = string.IsNullOrWhiteSpace(dto.RequirementCode)
+                ? $"REQ-{i + 1:000}"
+                : dto.RequirementCode.Trim();
+
+            var key = $"{title}|{description}";
+            if (!seenKeys.Add(key))
+            {
+                continue;
+            }
+
+            var testableConstraints = string.IsNullOrWhiteSpace(dto.TestableConstraints)
+                ? JsonSerializer.Serialize(new[]
+                {
+                    new Dictionary<string, string>
+                    {
+                        ["constraint"] = description,
+                        ["priority"] = "Medium",
+                    },
+                })
+                : dto.TestableConstraints.Trim();
+
+            var assumptions = string.IsNullOrWhiteSpace(dto.Assumptions) ? "[]" : dto.Assumptions.Trim();
+            var ambiguities = string.IsNullOrWhiteSpace(dto.Ambiguities) ? "[]" : dto.Ambiguities.Trim();
+            var confidenceScore = Math.Clamp(dto.ConfidenceScore, 0f, 1f);
+
+            result.Add(new N8nSrsRequirementResult
+            {
+                RequirementCode = requirementCode,
+                Title = title,
+                Description = description,
+                Type = string.IsNullOrWhiteSpace(dto.Type) ? "Functional" : dto.Type.Trim(),
+                TestableConstraints = testableConstraints,
+                Assumptions = assumptions,
+                Ambiguities = ambiguities,
+                ConfidenceScore = confidenceScore,
+                MappedEndpointPath = string.IsNullOrWhiteSpace(dto.MappedEndpointPath)
+                    ? null
+                    : dto.MappedEndpointPath.Trim(),
+            });
+        }
+
+        return result;
     }
 
     private static SrsRequirementType ParseRequirementType(string type)
