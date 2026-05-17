@@ -1289,7 +1289,20 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             try
             {
-                return Regex.IsMatch(actual, inlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                if (Regex.IsMatch(actual, inlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500)))
+                {
+                    return true;
+                }
+
+                // Some LLM/n8n pipelines over-escape regex strings (e.g. "\\\\." instead of "\\.").
+                // Try once with a normalized pattern before failing hard.
+                var normalizedInlinePattern = NormalizePossiblyOverEscapedRegex(inlinePattern);
+                if (!string.Equals(normalizedInlinePattern, inlinePattern, StringComparison.Ordinal))
+                {
+                    return Regex.IsMatch(actual, normalizedInlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                }
+
+                return false;
             }
             catch
             {
@@ -1567,6 +1580,31 @@ public class RuleBasedValidator : IRuleBasedValidator
             || candidate.Contains(".+", StringComparison.Ordinal)
             || candidate.Contains("(?:", StringComparison.Ordinal)
             || (candidate.Contains("[", StringComparison.Ordinal) && candidate.Contains("]", StringComparison.Ordinal));
+    }
+
+    private static string NormalizePossiblyOverEscapedRegex(string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return pattern;
+        }
+
+        // Heuristic: only normalize when we detect doubled escapes.
+        // Example input: ^[a-z]+\\.[a-z]{2}$  ->  ^[a-z]+\.[a-z]{2}$
+        if (!pattern.Contains(@"\\", StringComparison.Ordinal))
+        {
+            return pattern;
+        }
+
+        try
+        {
+            var unescaped = Regex.Unescape(pattern);
+            return string.IsNullOrWhiteSpace(unescaped) ? pattern : unescaped;
+        }
+        catch
+        {
+            return pattern;
+        }
     }
 
     private static string Truncate(string value, int maxLength)
