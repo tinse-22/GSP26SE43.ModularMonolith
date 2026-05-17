@@ -47,6 +47,27 @@ public class HttpTestExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_LargeResponseBody_ShouldReadOnlyPreviewLimit()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new string('x', 100_000), System.Text.Encoding.UTF8, "text/plain"),
+        });
+        var client = new HttpClient(handler);
+        _httpClientFactoryMock.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(client);
+
+        var request = CreateRequest("GET", "https://api.example.com/large");
+
+        // Act
+        var result = await _executor.ExecuteAsync(request);
+
+        // Assert
+        result.StatusCode.Should().Be(200);
+        result.Body.Should().HaveLength(65_536);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_PostWithBody_ShouldSendBody()
     {
         // Arrange
