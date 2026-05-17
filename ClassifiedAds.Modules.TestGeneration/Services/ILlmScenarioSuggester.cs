@@ -17,6 +17,21 @@ public interface ILlmScenarioSuggester
     Task<LlmScenarioSuggestionResult> SuggestScenariosAsync(
         LlmScenarioSuggestionContext context,
         CancellationToken cancellationToken = default);
+
+    Task<LlmScenarioSuggestionResult> SuggestLocalDraftAsync(
+        LlmScenarioSuggestionContext context,
+        CancellationToken cancellationToken = default);
+
+    Task<N8nBoundaryNegativePayload> BuildAsyncRefinementPayloadAsync(
+        LlmScenarioSuggestionContext context,
+        Guid refinementJobId,
+        string callbackUrl,
+        string callbackApiKey,
+        CancellationToken cancellationToken = default);
+
+    LlmScenarioSuggestionResult ParseRefinementResponse(
+        LlmScenarioSuggestionContext context,
+        N8nBoundaryNegativeResponse response);
 }
 
 public class LlmScenarioSuggestionContext

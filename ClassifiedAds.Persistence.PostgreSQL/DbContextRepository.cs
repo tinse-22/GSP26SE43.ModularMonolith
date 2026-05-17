@@ -82,6 +82,11 @@ public class DbContextRepository<TDbContext, TEntity, TKey> : IRepository<TEntit
         return query.ToListAsync();
     }
 
+    public Task<int> CountAsync<T1>(IQueryable<T1> query, CancellationToken cancellationToken = default)
+    {
+        return query.CountAsync(cancellationToken);
+    }
+
     public async Task BulkInsertAsync(IReadOnlyCollection<TEntity> entities, CancellationToken cancellationToken = default)
     {
         await _dbContext.BulkInsertAsync(entities, cancellationToken: cancellationToken);

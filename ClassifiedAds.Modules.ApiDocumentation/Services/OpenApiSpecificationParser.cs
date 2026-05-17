@@ -178,7 +178,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
 
         foreach (var param in mergedParams.Values)
         {
-            var mappedParam = MapParameter(param, isSwagger2, root);
+            var mappedParam = MapParameter(param, operation, isSwagger2, root);
             if (mappedParam != null)
             {
                 endpoint.Parameters.Add(mappedParam);
@@ -250,7 +250,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
         return endpoint;
     }
 
-    private static ParsedParameter MapParameter(JsonElement param, bool isSwagger2, JsonElement root)
+    private static ParsedParameter MapParameter(JsonElement param, JsonElement operation, bool isSwagger2, JsonElement root)
     {
         var name = GetStringProperty(param, "name");
         if (string.IsNullOrWhiteSpace(name))
@@ -275,6 +275,7 @@ public class OpenApiSpecificationParser : ISpecificationParser
                 Name = "body",
                 Location = "Body",
                 DataType = "object",
+                ContentType = ResolveSwagger2Consumes(operation, root),
                 IsRequired = GetBoolProperty(param, "required"),
                 Schema = schema,
             };
@@ -344,21 +345,22 @@ public class OpenApiSpecificationParser : ISpecificationParser
             return null;
         }
 
-        // Prefer application/json
+        // Prefer JSON while preserving the selected OpenAPI media type.
         JsonElement mediaType;
+        string contentType;
         if (contentElement.TryGetProperty("application/json", out mediaType))
         {
-            // use it
+            contentType = "application/json";
         }
         else
         {
-            // Take the first content type
             using var enumerator = contentElement.EnumerateObject();
             if (!enumerator.MoveNext())
             {
                 return null;
             }
 
+            contentType = enumerator.Current.Name;
             mediaType = enumerator.Current.Value;
         }
 
@@ -386,10 +388,47 @@ public class OpenApiSpecificationParser : ISpecificationParser
             Name = "body",
             Location = "Body",
             DataType = "object",
+            ContentType = contentType,
             IsRequired = GetBoolProperty(requestBody, "required"),
             Schema = schemaJson,
             Examples = examplesJson,
         };
+    }
+
+    private static string ResolveSwagger2Consumes(JsonElement operation, JsonElement root)
+    {
+        var operationConsumes = GetFirstStringArrayItem(operation, "consumes");
+        if (!string.IsNullOrWhiteSpace(operationConsumes))
+        {
+            return operationConsumes;
+        }
+
+        var rootConsumes = GetFirstStringArrayItem(root, "consumes");
+        return string.IsNullOrWhiteSpace(rootConsumes) ? "application/json" : rootConsumes;
+    }
+
+    private static string GetFirstStringArrayItem(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var arrayElement) ||
+            arrayElement.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var item in arrayElement.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var value = item.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static ParsedResponse MapResponse(string statusCodeKey, JsonElement response, JsonElement root)

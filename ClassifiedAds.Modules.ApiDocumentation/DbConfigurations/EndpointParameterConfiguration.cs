@@ -25,6 +25,9 @@ public class EndpointParameterConfiguration : IEntityTypeConfiguration<Entities.
         builder.Property(x => x.Format)
             .HasMaxLength(50);
 
+        builder.Property(x => x.ContentType)
+            .HasMaxLength(100);
+
         builder.Property(x => x.DefaultValue)
             .HasColumnType("text");
 

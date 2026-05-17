@@ -242,6 +242,7 @@ public class ParseUploadedSpecificationCommandHandler : ICommandHandler<ParseUpl
                             Location = location,
                             DataType = parsedParam.DataType ?? "string",
                             Format = parsedParam.Format?.Trim(),
+                            ContentType = parsedParam.ContentType?.Trim(),
                             IsRequired = parsedParam.IsRequired,
                             DefaultValue = parsedParam.DefaultValue,
                             Schema = parsedParam.Schema,

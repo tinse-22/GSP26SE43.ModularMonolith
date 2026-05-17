@@ -9,6 +9,7 @@ using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
+using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
@@ -168,6 +169,9 @@ public class N8nGenerateTestsPayload
     public Guid TestSuiteId { get; set; }
     public string TestSuiteName { get; set; } = string.Empty;
     public Guid SpecificationId { get; set; }
+    public string Model { get; set; } = "gpt-4.1-mini";
+    public int MaxOutputTokens { get; set; } = 4096;
+    public bool PreferJsonObjectResponse { get; set; } = true;
     public N8nUnifiedPromptConfig PromptConfig { get; set; } = new();
     public List<N8nOrderedEndpoint> Endpoints { get; set; } = new();
     public Dictionary<Guid, string> EndpointBusinessContexts { get; set; } = new();
@@ -216,6 +220,10 @@ public class N8nSrsRequirement
     /// </summary>
     public string Ambiguities { get; set; }
 
+    public List<Guid> EndpointIds { get; set; } = new();
+
+    public List<Guid> DependencyEndpointIds { get; set; } = new();
+
     /// <summary>
     /// Effective confidence score — RefinedConfidenceScore if available, else ConfidenceScore.
     /// Low values (&lt; 0.6) indicate the generated expectation may need human review.
@@ -237,6 +245,7 @@ public class N8nOrderedEndpoint
     public Models.N8nPromptPayload Prompt { get; set; }
     public List<string> ParameterSchemaPayloads { get; set; } = new();
     public List<string> ResponseSchemaPayloads { get; set; } = new();
+    public List<N8nParameterDetail> ParameterDetails { get; set; } = new();
 }
 
 public class N8nUnifiedPromptConfig

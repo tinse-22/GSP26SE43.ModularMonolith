@@ -446,6 +446,7 @@ public class BodyMutationEngine : IBodyMutationEngine
             var n when n.Contains("phone") => true,
             var n when n.Contains("code") => true,
             var n when n.Contains("slug") => true,
+            var n when n.Contains("sku") => true,
             _ => false,
         };
     }
@@ -458,7 +459,7 @@ public class BodyMutationEngine : IBodyMutationEngine
     {
         if (normalizedFormat == "email" || normalizedName.Contains("email"))
         {
-            return $"testuser_{{{{tcUniqueId}}}}@example.com";
+            return $"user_{{{{tcUniqueId}}}}@yourdomain.com";
         }
 
         if (normalizedName.Contains("username"))
@@ -469,6 +470,11 @@ public class BodyMutationEngine : IBodyMutationEngine
         if (normalizedName.Contains("phone"))
         {
             return $"+1202555{{{{tcUniqueId}}}}";
+        }
+
+        if (normalizedName.Contains("sku"))
+        {
+            return $"SKU_{{{{tcUniqueId}}}}";
         }
 
         // Generic unique placeholder for code/slug etc.

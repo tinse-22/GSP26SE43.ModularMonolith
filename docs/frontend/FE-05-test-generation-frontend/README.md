@@ -13,6 +13,10 @@ Muc tieu:
 - khong thay the bo docs planning goc cua backend trong `docs/features/FE-05-test-generation`
 - uu tien controller, command, query, model, service, va exception handler dang chay trong codebase hien tai
 
+Neu FE can noi tron ven tu API order -> LLM suggestion review -> generated test cases, dung tai lieu tong hop:
+
+- `docs/frontend/FULL-TEST-FLOW-FE-CONTRACT.md`
+
 ## 1. Pham vi FE-05
 
 Feature nay gom 2 phase runtime can noi:

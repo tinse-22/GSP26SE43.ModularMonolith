@@ -7,6 +7,7 @@ using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -49,13 +50,22 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
 
     public async Task HandleAsync(ApproveApiTestOrderCommand command, CancellationToken cancellationToken = default)
     {
+        var totalSw = Stopwatch.StartNew();
+
         if (command.ProposalId == Guid.Empty)
         {
             throw new ValidationException("ProposalId là bắt buộc.");
         }
 
+        var loadSuiteSw = Stopwatch.StartNew();
         var suite = await _suiteRepository.FirstOrDefaultAsync(
             _suiteRepository.GetQueryableSet().Where(x => x.Id == command.TestSuiteId));
+        loadSuiteSw.Stop();
+        _logger.LogInformation(
+            "api_test_order.approve.load_suite completed. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, DurationMs={DurationMs}",
+            command.TestSuiteId,
+            command.ProposalId,
+            loadSuiteSw.ElapsedMilliseconds);
 
         if (suite == null)
         {
@@ -64,9 +74,16 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
 
         EnsureOwnership(suite, command.CurrentUserId);
 
+        var loadProposalSw = Stopwatch.StartNew();
         var proposal = await _proposalRepository.FirstOrDefaultAsync(
             _proposalRepository.GetQueryableSet()
                 .Where(x => x.Id == command.ProposalId && x.TestSuiteId == command.TestSuiteId));
+        loadProposalSw.Stop();
+        _logger.LogInformation(
+            "api_test_order.approve.load_proposal completed. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, DurationMs={DurationMs}",
+            command.TestSuiteId,
+            command.ProposalId,
+            loadProposalSw.ElapsedMilliseconds);
 
         if (proposal == null)
         {
@@ -76,6 +93,12 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
         if (IsIdempotentApprovedProposal(proposal))
         {
             command.Result = ApiTestOrderModelMapper.ToModel(proposal, _apiTestOrderService);
+            totalSw.Stop();
+            _logger.LogInformation(
+                "api_test_order.approve.completed_idempotent. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, DurationMs={DurationMs}",
+                command.TestSuiteId,
+                command.ProposalId,
+                totalSw.ElapsedMilliseconds);
             return;
         }
 
@@ -114,12 +137,20 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
 
         try
         {
+            var saveSw = Stopwatch.StartNew();
             await _proposalRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
             {
                 await _proposalRepository.UpdateAsync(proposal, ct);
                 await _suiteRepository.UpdateAsync(suite, ct);
                 await _proposalRepository.UnitOfWork.SaveChangesAsync(ct);
             }, cancellationToken: cancellationToken);
+            saveSw.Stop();
+            _logger.LogInformation(
+                "api_test_order.approve.save completed. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, Status={Status}, DurationMs={DurationMs}",
+                command.TestSuiteId,
+                command.ProposalId,
+                proposal.Status,
+                saveSw.ElapsedMilliseconds);
         }
         catch (Exception ex) when (_proposalRepository.IsDbUpdateConcurrencyException(ex))
         {
@@ -129,13 +160,15 @@ public class ApproveApiTestOrderCommandHandler : ICommandHandler<ApproveApiTestO
         }
 
         command.Result = ApiTestOrderModelMapper.ToModel(proposal, _apiTestOrderService);
+        totalSw.Stop();
         _logger.LogInformation(
-            "Approved test order proposal. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, ProposalNumber={ProposalNumber}, Status={Status}, ActorUserId={ActorUserId}",
+            "Approved test order proposal. TestSuiteId={TestSuiteId}, ProposalId={ProposalId}, ProposalNumber={ProposalNumber}, Status={Status}, ActorUserId={ActorUserId}, DurationMs={DurationMs}",
             command.TestSuiteId,
             command.ProposalId,
             proposal.ProposalNumber,
             proposal.Status,
-            command.CurrentUserId);
+            command.CurrentUserId,
+            totalSw.ElapsedMilliseconds);
     }
 
     private static void EnsureOwnership(TestSuite suite, Guid currentUserId)

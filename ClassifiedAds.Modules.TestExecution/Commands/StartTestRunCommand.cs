@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -85,6 +86,8 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
 
     public async Task HandleAsync(StartTestRunCommand command, CancellationToken cancellationToken = default)
     {
+        var totalSw = Stopwatch.StartNew();
+
         // 1. Validate input
         if (command.TestSuiteId == Guid.Empty)
         {
@@ -98,6 +101,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             .ToList() ?? new List<Guid>();
 
         // 2. Suite access context
+        var validateSw = Stopwatch.StartNew();
         var suiteContext = await _gatewayService.GetSuiteAccessContextAsync(command.TestSuiteId, cancellationToken);
 
         // 3. Validate ownership
@@ -134,7 +138,16 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             }
         }
 
+        validateSw.Stop();
+        _logger.LogInformation(
+            "test_run.start.validate completed. TestSuiteId={TestSuiteId}, CurrentUserId={CurrentUserId}, SelectedCaseCount={SelectedCaseCount}, DurationMs={DurationMs}",
+            command.TestSuiteId,
+            command.CurrentUserId,
+            selectedIds.Count,
+            validateSw.ElapsedMilliseconds);
+
         // 6. Resolve environment
+        var environmentSw = Stopwatch.StartNew();
         ExecutionEnvironment environment;
         if (command.EnvironmentId.HasValue)
         {
@@ -159,12 +172,19 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             }
         }
 
+        environmentSw.Stop();
+        _logger.LogInformation(
+            "test_run.environment.resolve completed. TestSuiteId={TestSuiteId}, EnvironmentId={EnvironmentId}, DurationMs={DurationMs}",
+            command.TestSuiteId,
+            environment.Id,
+            environmentSw.ElapsedMilliseconds);
+
         // 7. Check concurrent run limit
-        var runningCount = await _runRepository.ToListAsync(
+        var currentRunning = await _runRepository.CountAsync(
             _runRepository.GetQueryableSet()
                 .Where(x => x.TriggeredById == command.CurrentUserId
-                    && (x.Status == TestRunStatus.Pending || x.Status == TestRunStatus.Running)));
-        var currentRunning = runningCount.Count;
+                    && (x.Status == TestRunStatus.Pending || x.Status == TestRunStatus.Running)),
+            cancellationToken);
 
         var concurrentCheck = await _limitService.CheckLimitAsync(
             command.CurrentUserId,
@@ -190,6 +210,7 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
         }
 
         // 9. Allocate RunNumber in Serializable transaction and insert Pending run
+        var createRunSw = Stopwatch.StartNew();
         TestRun run = null;
         await _runRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
@@ -216,9 +237,16 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             await _runRepository.UnitOfWork.SaveChangesAsync(ct);
         }, isolationLevel: IsolationLevel.Serializable, cancellationToken: cancellationToken);
 
+        createRunSw.Stop();
+
         _logger.LogInformation(
-            "Created test run. RunId={RunId}, SuiteId={SuiteId}, RunNumber={RunNumber}, EnvironmentId={EnvironmentId}",
-            run.Id, command.TestSuiteId, run.RunNumber, environment.Id);
+            "test_run.start.create_run completed. RunId={RunId}, SuiteId={SuiteId}, RunNumber={RunNumber}, EnvironmentId={EnvironmentId}, CurrentRunning={CurrentRunning}, DurationMs={DurationMs}",
+            run.Id,
+            command.TestSuiteId,
+            run.RunNumber,
+            environment.Id,
+            currentRunning,
+            createRunSw.ElapsedMilliseconds);
 
         // 10. Build effective retry policy.
         //     Explicit RetryPolicy object takes precedence; scalar fields act as fallback.
@@ -250,5 +278,12 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             command.StrictValidation,
             effectivePolicy,
             effectiveProfile);
+
+        totalSw.Stop();
+        _logger.LogInformation(
+            "test_run.start.completed. RunId={RunId}, SuiteId={SuiteId}, TotalDurationMs={DurationMs}",
+            run.Id,
+            command.TestSuiteId,
+            totalSw.ElapsedMilliseconds);
     }
 }

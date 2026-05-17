@@ -713,7 +713,7 @@ public class BodyMutationEngineTests
         // Assert
         var missingPassword = mutations
             .First(m => m.MutationType == "missingRequired" && m.TargetFieldName == "password");
-        missingPassword.MutatedBody.Should().Contain("testuser_{{tcUniqueId}}@example.com");
+        missingPassword.MutatedBody.Should().Contain("user_{{tcUniqueId}}@yourdomain.com");
         missingPassword.MutatedBody.Should().NotContain("legacy@example.com");
     }
 }

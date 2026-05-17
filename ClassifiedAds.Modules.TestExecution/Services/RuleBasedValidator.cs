@@ -15,9 +15,6 @@ public class RuleBasedValidator : IRuleBasedValidator
 {
     private const int TotalValidationChecks = 7;
     private const string InvalidExpectationFormatCode = "INVALID_EXPECTATION_FORMAT";
-    private static readonly Regex TcUniqueIdPlaceholderRegex = new(
-        Regex.Escape("{{tcUniqueId}}"),
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // Detects JWT-like values: three non-trivial base64url segments separated by dots.
     // JWTs are session-specific and always differ across runs; treat as existence checks.
@@ -1180,11 +1177,6 @@ public class RuleBasedValidator : IRuleBasedValidator
             return true;
         }
 
-        if (MatchesTcUniqueIdTemplate(actual, expected))
-        {
-            return true;
-        }
-
         // Try numeric comparison
         if (decimal.TryParse(actual, out var actualNum) && decimal.TryParse(expected, out var expectedNum))
         {
@@ -1297,7 +1289,20 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             try
             {
-                return Regex.IsMatch(actual, inlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                if (Regex.IsMatch(actual, inlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500)))
+                {
+                    return true;
+                }
+
+                // Some LLM/n8n pipelines over-escape regex strings (e.g. "\\\\." instead of "\\.").
+                // Try once with a normalized pattern before failing hard.
+                var normalizedInlinePattern = NormalizePossiblyOverEscapedRegex(inlinePattern);
+                if (!string.Equals(normalizedInlinePattern, inlinePattern, StringComparison.Ordinal))
+                {
+                    return Regex.IsMatch(actual, normalizedInlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                }
+
+                return false;
             }
             catch
             {
@@ -1577,21 +1582,29 @@ public class RuleBasedValidator : IRuleBasedValidator
             || (candidate.Contains("[", StringComparison.Ordinal) && candidate.Contains("]", StringComparison.Ordinal));
     }
 
-    private static bool MatchesTcUniqueIdTemplate(string actual, string expected)
+    private static string NormalizePossiblyOverEscapedRegex(string pattern)
     {
-        if (string.IsNullOrWhiteSpace(actual)
-            || string.IsNullOrWhiteSpace(expected)
-            || !expected.Contains("{{tcUniqueId}}", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(pattern))
         {
-            return false;
+            return pattern;
         }
 
-        // tcUniqueId is an 8-char hex token. Some responses append an additional run suffix,
-        // e.g. "<prefix>_<tcUniqueId>-<runSuffix>", so allow an optional "-xxxxxxxx" tail.
-        var expectedPattern = "^" + Regex.Escape(expected) + "$";
-        expectedPattern = TcUniqueIdPlaceholderRegex.Replace(expectedPattern, "[a-f0-9]{8}(?:-[a-z0-9]{8})?");
+        // Heuristic: only normalize when we detect doubled escapes.
+        // Example input: ^[a-z]+\\.[a-z]{2}$  ->  ^[a-z]+\.[a-z]{2}$
+        if (!pattern.Contains(@"\\", StringComparison.Ordinal))
+        {
+            return pattern;
+        }
 
-        return Regex.IsMatch(actual, expectedPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        try
+        {
+            var unescaped = Regex.Unescape(pattern);
+            return string.IsNullOrWhiteSpace(unescaped) ? pattern : unescaped;
+        }
+        catch
+        {
+            return pattern;
+        }
     }
 
     private static string Truncate(string value, int maxLength)

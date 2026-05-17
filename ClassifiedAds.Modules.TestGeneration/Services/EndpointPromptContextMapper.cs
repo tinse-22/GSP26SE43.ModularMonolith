@@ -72,6 +72,11 @@ public static class EndpointPromptContextMapper
                     details.Add($"format={parameter.Format}");
                 }
 
+                if (!string.IsNullOrWhiteSpace(parameter.ContentType))
+                {
+                    details.Add($"contentType={parameter.ContentType}");
+                }
+
                 if (!string.IsNullOrWhiteSpace(parameter.DefaultValue))
                 {
                     details.Add($"default={parameter.DefaultValue}");

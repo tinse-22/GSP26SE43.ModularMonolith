@@ -95,6 +95,8 @@ public class ApiEndpointParameterDescriptorDto
 
     public string Format { get; set; }
 
+    public string ContentType { get; set; }
+
     public string Schema { get; set; }
 
     public string DefaultValue { get; set; }

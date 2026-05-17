@@ -10,6 +10,7 @@ using ClassifiedAds.Modules.TestExecution.Models;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -74,12 +75,24 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         TestRunRetryPolicyModel retryPolicy = null,
         ValidationProfile validationProfile = ValidationProfile.Default)
     {
+        var totalSw = Stopwatch.StartNew();
+
         var run = await _runRepository.FirstOrDefaultAsync(
             _runRepository.GetQueryableSet().Where(x => x.Id == testRunId));
 
+        var contextLoadSw = Stopwatch.StartNew();
         var executionContext = await _gatewayService.GetExecutionContextAsync(
             run.TestSuiteId, selectedTestCaseIds, ct);
+        contextLoadSw.Stop();
+        _logger.LogInformation(
+            "test_run.context.load completed. RunId={RunId}, TestSuiteId={TestSuiteId}, SelectedCaseCount={SelectedCaseCount}, CaseCount={CaseCount}, DurationMs={DurationMs}",
+            run.Id,
+            run.TestSuiteId,
+            selectedTestCaseIds?.Count ?? 0,
+            executionContext.OrderedTestCases.Count,
+            contextLoadSw.ElapsedMilliseconds);
 
+        var environmentSw = Stopwatch.StartNew();
         var environment = await _runRepository.UnitOfWork.ExecuteInTransactionAsync(
             async _ => await _envRepository.FirstOrDefaultAsync(
                 _envRepository.GetQueryableSet().Where(x => x.Id == run.EnvironmentId)),
@@ -88,10 +101,18 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var resolvedEnv = NormalizeEnvironmentBaseUrlForMultiResourceSuite(
             await _envResolver.ResolveAsync(environment, ct),
             executionContext.OrderedTestCases);
+        environmentSw.Stop();
+        _logger.LogInformation(
+            "test_run.environment.resolve completed. RunId={RunId}, EnvironmentId={EnvironmentId}, EnvironmentName={EnvironmentName}, DurationMs={DurationMs}",
+            run.Id,
+            run.EnvironmentId,
+            resolvedEnv.Name,
+            environmentSw.ElapsedMilliseconds);
 
         var retentionDays = (await _limitService.CheckLimitAsync(
             currentUserId, LimitType.RetentionDays, 0, ct)).LimitValue ?? 7;
 
+        var metadataSw = Stopwatch.StartNew();
         var endpointMetadataMap = new Dictionary<Guid, ApiEndpointMetadataDto>();
         if (executionContext.Suite.ApiSpecId.HasValue && executionContext.OrderedEndpointIds.Count > 0)
         {
@@ -99,6 +120,15 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 executionContext.Suite.ApiSpecId.Value, executionContext.OrderedEndpointIds, ct))
                 .ToDictionary(m => m.EndpointId);
         }
+
+        metadataSw.Stop();
+        _logger.LogInformation(
+            "test_run.endpoint_metadata.load completed. RunId={RunId}, ApiSpecId={ApiSpecId}, EndpointCount={EndpointCount}, MetadataCount={MetadataCount}, DurationMs={DurationMs}",
+            run.Id,
+            executionContext.Suite.ApiSpecId,
+            executionContext.OrderedEndpointIds.Count,
+            endpointMetadataMap.Count,
+            metadataSw.ElapsedMilliseconds);
 
         run.Status = TestRunStatus.Running;
         run.StartedAt = DateTimeOffset.UtcNow;
@@ -115,6 +145,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             "Test run started. RunId={RunId}, TotalCases={TotalCases}, Policy={Policy}",
             run.Id, executionContext.OrderedTestCases.Count, effectivePolicy);
 
+        var executionSw = Stopwatch.StartNew();
         foreach (var testCase in executionContext.OrderedTestCases)
         {
             await ExecuteAndTrackAsync(testCase, context, ct);
@@ -125,18 +156,38 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             }
         }
 
+        executionSw.Stop();
+        _logger.LogInformation(
+            "test_run.execution completed. RunId={RunId}, CaseCount={CaseCount}, AttemptCount={AttemptCount}, DurationMs={DurationMs}",
+            run.Id,
+            executionContext.OrderedTestCases.Count,
+            context.Attempts.Count,
+            executionSw.ElapsedMilliseconds);
+
         var orderedResults = context.CaseResults
             .OrderBy(x => x.OrderIndex)
             .ThenBy(x => x.ExecutionAttempt)
             .ToList();
 
-        return await _resultCollector.CollectAsync(
+        var collectSw = Stopwatch.StartNew();
+        var result = await _resultCollector.CollectAsync(
             run,
             orderedResults,
             retentionDays,
             resolvedEnv.Name,
             ct,
             context.Attempts);
+        collectSw.Stop();
+        totalSw.Stop();
+        _logger.LogInformation(
+            "test_run.result.collect completed. RunId={RunId}, ResultCount={ResultCount}, AttemptCount={AttemptCount}, DurationMs={DurationMs}, TotalDurationMs={TotalDurationMs}",
+            run.Id,
+            orderedResults.Count,
+            context.Attempts.Count,
+            collectSw.ElapsedMilliseconds,
+            totalSw.ElapsedMilliseconds);
+
+        return result;
     }
 
     private async Task ExecuteAndTrackAsync(
@@ -250,6 +301,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         ExecutionContextState context,
         CancellationToken ct)
     {
+        var replaySw = Stopwatch.StartNew();
+        var replayedCount = 0;
+
         // Cascading-replay loop: after replaying a case its result enters CaseResultMap,
         // which may unlock further downstream skipped cases.  We keep sweeping until no
         // new cases become runnable.  The bound (orderedCases.Count + 1) prevents any
@@ -320,9 +374,21 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 context.RecordResult(replay, replayAttemptId);
                 LogCaseOutcome(context.RunId, replay, replayAttemptId, parentAttemptId, replayReason, null, Array.Empty<Guid>(), originalSkipDeps);
                 anyReplayed = true;
+                replayedCount++;
             }
         }
         while (anyReplayed && passCount < maxPasses);
+
+        replaySw.Stop();
+        if (replayedCount > 0)
+        {
+            _logger.LogInformation(
+                "test_run.replay_skipped completed. RunId={RunId}, PassCount={PassCount}, ReplayedCount={ReplayedCount}, DurationMs={DurationMs}",
+                context.RunId,
+                passCount,
+                replayedCount,
+                replaySw.ElapsedMilliseconds);
+        }
     }
 
     private static TestCaseExecutionAttemptModel BuildAttemptModel(
@@ -376,9 +442,19 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 context.RunId, testCase.TestCaseId);
         }
 
+        var preValidationSw = Stopwatch.StartNew();
         var preValidation = _preValidator.Validate(testCase, context.ResolvedEnv, context.VariableBag, endpointMetadata);
+        preValidationSw.Stop();
         if (preValidation.HasErrors)
         {
+            _logger.LogInformation(
+                "test_run.case.pre_validate completed. RunId={RunId}, TestCaseId={TestCaseId}, EndpointId={EndpointId}, Status={Status}, DurationMs={DurationMs}",
+                context.RunId,
+                testCase.TestCaseId,
+                testCase.EndpointId,
+                "Failed",
+                preValidationSw.ElapsedMilliseconds);
+
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -399,12 +475,23 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         ResolvedTestCaseRequest resolvedRequest;
+        var resolveSw = Stopwatch.StartNew();
         try
         {
             resolvedRequest = _variableResolver.Resolve(testCase, context.VariableBag, context.ResolvedEnv);
+            resolveSw.Stop();
         }
         catch (UnresolvedVariableException ex)
         {
+            resolveSw.Stop();
+            _logger.LogInformation(
+                "test_run.case.variable_resolve completed. RunId={RunId}, TestCaseId={TestCaseId}, EndpointId={EndpointId}, Status={Status}, DurationMs={DurationMs}",
+                context.RunId,
+                testCase.TestCaseId,
+                testCase.EndpointId,
+                "Failed",
+                resolveSw.ElapsedMilliseconds);
+
             return new TestCaseExecutionResult
             {
                 TestCaseId = testCase.TestCaseId,
@@ -430,8 +517,11 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         if (!string.IsNullOrEmpty(resolvedRequest.TcUniqueId))
             context.VariableBag["tcUniqueId"] = resolvedRequest.TcUniqueId;
 
+        var httpSw = Stopwatch.StartNew();
         var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
+        httpSw.Stop();
 
+        var extractionSw = Stopwatch.StartNew();
         var extracted = (_variableExtractor.Extract(
             response,
             testCase.Variables ?? Array.Empty<ExecutionVariableRuleDto>(),
@@ -474,7 +564,29 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
+        extractionSw.Stop();
+
+        var validationSw = Stopwatch.StartNew();
         var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile, context.VariableBag);
+        validationSw.Stop();
+
+        _logger.LogInformation(
+            "test_run.case.completed. RunId={RunId}, TestCaseId={TestCaseId}, EndpointId={EndpointId}, HttpMethod={HttpMethod}, UrlHost={UrlHost}, Status={Status}, HttpStatusCode={HttpStatusCode}, AttemptNumber={AttemptNumber}, ResponseBodyLength={ResponseBodyLength}, PreValidationMs={PreValidationMs}, VariableResolveMs={VariableResolveMs}, HttpLatencyMs={HttpLatencyMs}, HttpExecutorMs={HttpExecutorMs}, ExtractionMs={ExtractionMs}, ValidationMs={ValidationMs}",
+            context.RunId,
+            testCase.TestCaseId,
+            testCase.EndpointId,
+            resolvedRequest.HttpMethod,
+            TryGetUrlHost(resolvedRequest.ResolvedUrl),
+            validation.IsPassed ? "Passed" : "Failed",
+            response.StatusCode,
+            attempt,
+            response.Body?.Length ?? 0,
+            preValidationSw.ElapsedMilliseconds,
+            resolveSw.ElapsedMilliseconds,
+            response.LatencyMs,
+            httpSw.ElapsedMilliseconds,
+            extractionSw.ElapsedMilliseconds,
+            validationSw.ElapsedMilliseconds);
 
         return new TestCaseExecutionResult
         {
@@ -529,6 +641,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 context.CaseResultMap.TryGetValue(depId, out var depResult)
                 && !DependencySatisfactionPolicy.IsSatisfied(depResult))
             .ToList();
+    }
+
+    private static string TryGetUrlHost(string url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            ? uri.Host
+            : null;
     }
 
     /// <summary>

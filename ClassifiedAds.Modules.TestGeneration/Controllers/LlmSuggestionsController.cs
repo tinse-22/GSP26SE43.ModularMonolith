@@ -40,18 +40,18 @@ public class LlmSuggestionsController : ControllerBase
     }
 
     /// <summary>
-    /// Generate LLM suggestion previews for review.
-    /// Calls LLM pipeline and persists suggestions as pending rows (not test cases).
+    /// Queue LLM suggestion generation for review.
+    /// Suggestions are persisted only after n8n posts the async callback result.
     /// </summary>
     /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
     [Authorize(Permissions.GenerateBoundaryNegativeTestCases)]
     [HttpPost("generate")]
     [Consumes("application/json")]
-    [ProducesResponseType(typeof(GenerateLlmSuggestionPreviewResultModel), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(GenerateTestsAcceptedResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<ActionResult<GenerateLlmSuggestionPreviewResultModel>> GeneratePreview(
+    public async Task<ActionResult<GenerateTestsAcceptedResponse>> GeneratePreview(
         Guid suiteId,
         [FromBody] GenerateLlmSuggestionPreviewRequest request)
     {
@@ -67,12 +67,16 @@ public class LlmSuggestionsController : ControllerBase
         await _dispatcher.DispatchAsync(command);
 
         _logger.LogInformation(
-            "Generated LLM suggestion preview. TestSuiteId={TestSuiteId}, TotalSuggestions={Total}, ActorUserId={ActorUserId}",
-            suiteId, command.Result?.TotalSuggestions, _currentUser.UserId);
+            "Queued LLM suggestion generation. TestSuiteId={TestSuiteId}, JobId={JobId}, ActorUserId={ActorUserId}",
+            suiteId, command.JobId, _currentUser.UserId);
 
-        return Created(
-            $"/api/test-suites/{suiteId}/llm-suggestions",
-            command.Result);
+        return Accepted(new GenerateTestsAcceptedResponse
+        {
+            JobId = command.JobId,
+            TestSuiteId = suiteId,
+            Mode = "callback",
+            Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Suggestions sẽ xuất hiện sau khi callback hoàn tất.",
+        });
     }
 
     /// <summary>

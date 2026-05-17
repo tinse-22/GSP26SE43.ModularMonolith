@@ -1,8 +1,11 @@
-﻿using ClassifiedAds.Application;
+using ClassifiedAds.Application;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Contracts.Identity.Services;
+using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Authorization;
 using ClassifiedAds.Modules.TestGeneration.Commands;
 using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Models.Requests;
 using ClassifiedAds.Modules.TestGeneration.Queries;
@@ -13,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.TestGeneration.Controllers;
@@ -25,17 +29,20 @@ public class TestOrderController : ControllerBase
 {
     private readonly Dispatcher _dispatcher;
     private readonly ICurrentUser _currentUser;
+    private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly N8nIntegrationOptions _n8nOptions;
     private readonly ILogger<TestOrderController> _logger;
 
     public TestOrderController(
         Dispatcher dispatcher,
         ICurrentUser currentUser,
+        IRepository<TestGenerationJob, Guid> jobRepository,
         IOptions<N8nIntegrationOptions> n8nOptions,
         ILogger<TestOrderController> logger)
     {
         _dispatcher = dispatcher;
         _currentUser = currentUser;
+        _jobRepository = jobRepository;
         _n8nOptions = n8nOptions.Value;
         _logger = logger;
     }
@@ -201,7 +208,7 @@ public class TestOrderController : ControllerBase
             JobId = command.JobId,
             TestSuiteId = suiteId,
             Mode = "callback",
-            Message = "Đã tạo job và đưa yêu cầu trigger n8n vào hàng đợi. Sử dụng GET /generation-status để kiểm tra trạng thái."
+            Message = "�� t?o job v� dua y�u c?u trigger n8n v�o h�ng d?i. S? d?ng GET /generation-status d? ki?m tra tr?ng th�i."
         });
     }
 
@@ -233,7 +240,7 @@ public class TestOrderController : ControllerBase
     /// Authentication is via the x-callback-api-key header (shared secret) instead of JWT.
     /// </summary>
     /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
-    [AllowAnonymous]
+        [AllowAnonymous]
     [HttpPost("test-cases/from-ai")]
     [Consumes("application/json")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -257,17 +264,58 @@ public class TestOrderController : ControllerBase
             return BadRequest("testCases array is required and must not be empty.");
         }
 
-        await _dispatcher.DispatchAsync(new SaveAiGeneratedTestCasesCommand
+        try
         {
-            TestSuiteId = suiteId,
-            TestCases = request.TestCases,
-        });
+            await _dispatcher.DispatchAsync(new SaveAiGeneratedTestCasesCommand
+            {
+                TestSuiteId = suiteId,
+                TestCases = request.TestCases,
+            });
+        }
+        catch (ValidationException ex)
+        {
+            await MarkLatestWaitingJobFailedAsync(
+                suiteId,
+                $"STRICT_CONTRACT_VALIDATION_FAILED: {ex.Message}");
+
+            _logger.LogWarning(
+                ex,
+                "n8n callback strict-contract validation failed. TestSuiteId={TestSuiteId}",
+                suiteId);
+
+            return BadRequest(new
+            {
+                code = "STRICT_CONTRACT_VALIDATION_FAILED",
+                message = ex.Message,
+            });
+        }
 
         _logger.LogInformation(
             "Received {Count} AI-generated test cases from n8n for TestSuiteId={TestSuiteId}",
             request.TestCases.Count, suiteId);
 
         return NoContent();
+    }
+
+    private async Task MarkLatestWaitingJobFailedAsync(Guid suiteId, string errorMessage)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var latestJob = await _jobRepository.FirstOrDefaultAsync(
+            _jobRepository.GetQueryableSet()
+                .Where(x => x.TestSuiteId == suiteId && x.Status == GenerationJobStatus.WaitingForCallback)
+                .OrderByDescending(x => x.QueuedAt));
+
+        if (latestJob == null)
+        {
+            return;
+        }
+
+        latestJob.Status = GenerationJobStatus.Failed;
+        latestJob.CompletedAt = now;
+        latestJob.ErrorMessage = errorMessage;
+        latestJob.RowVersion = Guid.NewGuid().ToByteArray();
+        await _jobRepository.UpdateAsync(latestJob);
+        await _jobRepository.UnitOfWork.SaveChangesAsync();
     }
 }
 

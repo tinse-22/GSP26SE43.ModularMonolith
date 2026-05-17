@@ -288,12 +288,12 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("For each constraint:");
         sb.AppendLine("1. **Find evidence**: Quote the EXACT text from the spec that supports this constraint.");
         sb.AppendLine("2. **Cross-check examples**: If the spec includes examples, verify the constraint is consistent with them.");
-        sb.AppendLine("3. **Verify applicability**: Is this constraint for a happy-path (2xx) test case?");
+        sb.AppendLine("3. **Verify applicability**: Which scenario types does this constraint support: HappyPath, Boundary, Negative, or multiple?");
         sb.AppendLine("4. **Decision**: KEEP or REMOVE. Remove if:");
         sb.AppendLine("   - No direct evidence in the spec or business rules (you inferred it)");
         sb.AppendLine("   - Contradicted by examples");
-        sb.AppendLine("   - Only applies to error cases (4xx/5xx)");
         sb.AppendLine("   - Too implementation-specific (e.g., response time)");
+        sb.AppendLine("Confirm constraints for all scenario types: HappyPath, Boundary, and Negative. Use SRS/business constraints first when relevant to the endpoint. Use OpenAPI schema and documented responses as structural support. If no business rule applies, keep OpenAPI-only constraints.");
         sb.AppendLine();
         sb.AppendLine("Output ONLY confirmed constraints in the JSON format specified in the system prompt.");
         sb.AppendLine("Set confidence to 'high' if evidence is explicit, 'medium' if based on schema type inference.");
@@ -325,7 +325,7 @@ OUTPUT FORMAT (JSON array):
         sb.AppendLine("- Find the EXACT text in the spec that supports it.");
         sb.AppendLine("- If examples exist, verify consistency.");
         sb.AppendLine("- REMOVE any constraint you cannot directly back with spec evidence.");
-        sb.AppendLine("- Only keep constraints relevant to happy-path (2xx) testing.");
+        sb.AppendLine("- Keep constraints relevant to HappyPath, Boundary, and Negative testing. Do not remove validation, conflict, auth, missing-field, or documented error-response constraints just because they are not 2xx.");
         sb.AppendLine();
         sb.AppendLine("## Step 3: Output");
         sb.AppendLine("Output ONLY confirmed constraints as a JSON array (see system prompt for format).");

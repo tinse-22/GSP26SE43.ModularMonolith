@@ -36,6 +36,8 @@ internal sealed class ContractAwareRequestContext
 
     public string RequestBodyExamples { get; set; }
 
+    public string RequestContentType { get; set; }
+
     public string SuccessResponseSchema { get; set; }
 
     public Dictionary<string, string> PlaceholderByFieldName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -121,12 +123,124 @@ internal static class ContractAwareRequestSynthesizer
                 : repair.BodyType;
         }
 
+        scenario.SuggestedBody = NormalizeBodyAgainstContract(scenario.SuggestedBody, context);
+
         if (scenario.Variables == null || scenario.Variables.Count == 0)
         {
             scenario.Variables = repair.Variables;
         }
 
         return scenario;
+    }
+
+    private static string NormalizeBodyAgainstContract(string body, ContractAwareRequestContext context)
+    {
+        if (string.IsNullOrWhiteSpace(body) || !TryParseSchema(context?.RequestBodySchema, out var schemaRoot))
+        {
+            return body;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(body);
+            if (node == null)
+            {
+                return body;
+            }
+
+            PruneNodeToSchema(node, schemaRoot);
+            ApplyPlaceholderHints(node, context);
+            return node.ToJsonString(JsonOptions);
+        }
+        catch
+        {
+            return body;
+        }
+    }
+
+    private static void PruneNodeToSchema(JsonNode node, JsonElement schema)
+    {
+        if (node is JsonObject obj)
+        {
+            var properties = ResolveSchemaProperties(schema);
+            if (properties.Count > 0)
+            {
+                foreach (var property in obj.ToList())
+                {
+                    if (!properties.TryGetValue(property.Key, out var propertySchema))
+                    {
+                        obj.Remove(property.Key);
+                        continue;
+                    }
+
+                    if (property.Value != null)
+                    {
+                        PruneNodeToSchema(property.Value, propertySchema);
+                    }
+                }
+            }
+            else
+            {
+                foreach (var property in obj.ToList())
+                {
+                    if (property.Value != null)
+                    {
+                        PruneNodeToSchema(property.Value, schema);
+                    }
+                }
+            }
+        }
+        else if (node is JsonArray array &&
+                 schema.TryGetProperty("items", out var items))
+        {
+            foreach (var item in array)
+            {
+                if (item != null)
+                {
+                    PruneNodeToSchema(item, items);
+                }
+            }
+        }
+    }
+
+    private static Dictionary<string, JsonElement> ResolveSchemaProperties(JsonElement schema)
+    {
+        var result = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            return result;
+        }
+
+        if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in properties.EnumerateObject())
+            {
+                result[property.Name] = property.Value;
+            }
+        }
+
+        if (result.Count > 0)
+        {
+            return result;
+        }
+
+        foreach (var keyword in new[] { "allOf", "oneOf", "anyOf" })
+        {
+            if (!schema.TryGetProperty(keyword, out var variants) || variants.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var variant in variants.EnumerateArray())
+            {
+                foreach (var kvp in ResolveSchemaProperties(variant))
+                {
+                    result[kvp.Key] = kvp.Value;
+                }
+            }
+        }
+
+        return result;
     }
 
     private static Dictionary<string, string> BuildPathParams(ContractAwareRequestContext context)
@@ -220,6 +334,16 @@ internal static class ContractAwareRequestSynthesizer
         {
             if (TryFindJsonPath(bodyNode, "email", out var emailPath))
             {
+                if (testType == TestType.HappyPath)
+                {
+                    result.Add(new N8nTestCaseVariable
+                    {
+                        VariableName = "email",
+                        ExtractFrom = "RequestBody",
+                        JsonPath = emailPath,
+                    });
+                }
+
                 result.Add(new N8nTestCaseVariable
                 {
                     VariableName = testType == TestType.HappyPath ? "registeredEmail" : "requestEmail",
@@ -230,6 +354,16 @@ internal static class ContractAwareRequestSynthesizer
 
             if (TryFindJsonPath(bodyNode, "password", out var passwordPath))
             {
+                if (testType == TestType.HappyPath)
+                {
+                    result.Add(new N8nTestCaseVariable
+                    {
+                        VariableName = "password",
+                        ExtractFrom = "RequestBody",
+                        JsonPath = passwordPath,
+                    });
+                }
+
                 result.Add(new N8nTestCaseVariable
                 {
                     VariableName = testType == TestType.HappyPath ? "registeredPassword" : "requestPassword",
@@ -556,7 +690,7 @@ internal static class ContractAwareRequestSynthesizer
         var name = propertyName?.Trim().ToLowerInvariant() ?? string.Empty;
         if (name.Contains("email"))
         {
-            value = "testuser_{{tcUniqueId}}@example.com";
+            value = "user_{{tcUniqueId}}@yourdomain.com";
             return true;
         }
 
@@ -611,6 +745,12 @@ internal static class ContractAwareRequestSynthesizer
 
     private static string InferBodyType(ContractAwareRequestContext context, JsonNode bodyNode)
     {
+        var contentTypeBodyType = InferBodyTypeFromContentType(context?.RequestContentType);
+        if (!string.IsNullOrWhiteSpace(contentTypeBodyType))
+        {
+            return contentTypeBodyType;
+        }
+
         var bodyParameters = (context?.Parameters ?? Array.Empty<ParameterDetailDto>())
             .Where(parameter => parameter != null &&
                                 string.Equals(parameter.Location, "Body", StringComparison.OrdinalIgnoreCase))
@@ -639,6 +779,37 @@ internal static class ContractAwareRequestSynthesizer
         }
 
         return bodyNode is JsonValue ? "Raw" : "JSON";
+    }
+
+    private static string InferBodyTypeFromContentType(string contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return null;
+        }
+
+        var normalized = contentType.Trim().ToLowerInvariant();
+        if (normalized.Contains("multipart/form-data"))
+        {
+            return "FormData";
+        }
+
+        if (normalized.Contains("application/x-www-form-urlencoded"))
+        {
+            return "UrlEncoded";
+        }
+
+        if (normalized.Contains("application/json") || normalized.EndsWith("+json", StringComparison.OrdinalIgnoreCase))
+        {
+            return "JSON";
+        }
+
+        if (normalized.Contains("text/plain") || normalized.Contains("application/octet-stream"))
+        {
+            return "Raw";
+        }
+
+        return null;
     }
 
     private static bool IsFileLikeParameter(ParameterDetailDto parameter)
@@ -1104,7 +1275,7 @@ internal static class ContractAwareRequestSynthesizer
 
         string value = normalizedFormat switch
         {
-            "email" => "testuser_{{tcUniqueId}}@example.com",
+            "email" => "user_{{tcUniqueId}}@yourdomain.com",
             "uuid" => "00000000-0000-0000-0000-000000000001",
             "date" => "2024-01-01",
             "date-time" => "2024-01-01T00:00:00Z",
@@ -1116,8 +1287,8 @@ internal static class ContractAwareRequestSynthesizer
         {
             var candidate when candidate.Contains("file") => "sample-file.txt",
             var candidate when candidate.Contains("image") => "sample-image.txt",
-            var candidate when candidate.Contains("password") => "{{runUniquePassword}}",
-            var candidate when candidate.Contains("email") => "testuser_{{tcUniqueId}}@example.com",
+            var candidate when candidate.Contains("password") => BuildPasswordValue(minLength),
+            var candidate when candidate.Contains("email") => "user_{{tcUniqueId}}@yourdomain.com",
             var candidate when candidate.Contains("username") => "user_{{tcUniqueId}}",
             var candidate when candidate.Contains("phone") => "+1202555{{tcUniqueId}}",
             var candidate when candidate.Contains("code") => "CODE_{{tcUniqueId}}",
@@ -1139,6 +1310,17 @@ internal static class ContractAwareRequestSynthesizer
         if (maxLength.HasValue && value.Length > maxLength.Value)
         {
             value = value[..maxLength.Value];
+        }
+
+        return value;
+    }
+
+    private static string BuildPasswordValue(int? minLength)
+    {
+        var value = "Password123";
+        if (minLength.HasValue && value.Length < minLength.Value)
+        {
+            value = value.PadRight(minLength.Value, 'x');
         }
 
         return value;

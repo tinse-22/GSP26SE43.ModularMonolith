@@ -73,6 +73,14 @@ public class N8nBoundaryNegativePayload
 
     public string TestSuiteName { get; set; }
 
+    public Guid? RefinementJobId { get; set; }
+
+    /// <summary>BE endpoint n8n should POST refined LLM suggestions back to.</summary>
+    public string CallbackUrl { get; set; }
+
+    /// <summary>Sent by n8n in the x-callback-api-key header when posting callback results.</summary>
+    public string CallbackApiKey { get; set; }
+
     public string GlobalBusinessRules { get; set; }
 
     /// <summary>
@@ -124,11 +132,29 @@ public class N8nBoundaryEndpointPayload
     public List<N8nParameterDetail> ParameterDetails { get; set; } = new();
 
     /// <summary>
+    /// Endpoint-scoped SRS requirements selected by backend mapping. Dependency matches are context only.
+    /// </summary>
+    public List<N8nSrsRequirementBrief> SrsRequirements { get; set; } = new();
+
+    public List<N8nRequirementMatchBrief> RequirementMatches { get; set; } = new();
+
+    /// <summary>
     /// Error response descriptors from Swagger (4xx/5xx only).
     /// Key = status code string ("400", "422"). Max 5 entries.
     /// LLM MUST use these codes ONLY in expectedStatus.
     /// </summary>
     public Dictionary<string, N8nErrorResponseDescriptor> ErrorResponses { get; set; } = new();
+}
+
+public class N8nRequirementMatchBrief
+{
+    public string Code { get; set; }
+
+    public string Relevance { get; set; }
+
+    public string Confidence { get; set; }
+
+    public List<string> MatchedSignals { get; set; } = new();
 }
 
 public class N8nParameterDetail
@@ -140,6 +166,8 @@ public class N8nParameterDetail
     public string DataType { get; set; }
 
     public string Format { get; set; }
+
+    public string ContentType { get; set; }
 
     public bool IsRequired { get; set; }
 

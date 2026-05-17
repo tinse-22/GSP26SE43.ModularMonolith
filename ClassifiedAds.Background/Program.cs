@@ -188,6 +188,7 @@ Host.CreateDefaultBuilder(args)
     services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.Messaging);
     services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.Messaging);
     services.AddMessageBusReceiver<TriggerTestGenerationConsumer, TriggerTestGenerationMessage>(appSettings.Messaging);
+    services.AddMessageBusReceiver<TriggerLlmSuggestionRefinementConsumer, TriggerLlmSuggestionRefinementMessage>(appSettings.Messaging);
 
     // Register feature toggles (e.g., file-based outbox publishing toggle)
     AddFeatureToggles(services);

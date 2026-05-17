@@ -1,7 +1,11 @@
+using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Commands;
 using ClassifiedAds.Modules.TestGeneration.Entities;
+using ClassifiedAds.Modules.TestGeneration.Models;
+using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -20,6 +24,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
 
     private readonly Mock<IRepository<TestSuite, Guid>> _suiteRepoMock;
     private readonly Mock<IRepository<TestCase, Guid>> _testCaseRepoMock;
+    private readonly Mock<IRepository<TestCaseDependency, Guid>> _dependencyRepoMock;
     private readonly Mock<IRepository<TestCaseRequest, Guid>> _requestRepoMock;
     private readonly Mock<IRepository<TestCaseExpectation, Guid>> _expectationRepoMock;
     private readonly Mock<IRepository<TestCaseVariable, Guid>> _variableRepoMock;
@@ -27,6 +32,9 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     private readonly Mock<IRepository<TestGenerationJob, Guid>> _jobRepoMock;
     private readonly Mock<IRepository<TestCaseRequirementLink, Guid>> _linkRepoMock;
     private readonly Mock<IRepository<SrsRequirement, Guid>> _srsRequirementRepoMock;
+    private readonly Mock<IRepository<TestOrderProposal, Guid>> _proposalRepoMock;
+    private readonly Mock<IApiTestOrderService> _apiTestOrderServiceMock;
+    private readonly Mock<IApiEndpointMetadataService> _endpointMetadataServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>> _loggerMock;
     private readonly SaveAiGeneratedTestCasesCommandHandler _handler;
@@ -35,6 +43,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     {
         _suiteRepoMock = new Mock<IRepository<TestSuite, Guid>>();
         _testCaseRepoMock = new Mock<IRepository<TestCase, Guid>>();
+        _dependencyRepoMock = new Mock<IRepository<TestCaseDependency, Guid>>();
         _requestRepoMock = new Mock<IRepository<TestCaseRequest, Guid>>();
         _expectationRepoMock = new Mock<IRepository<TestCaseExpectation, Guid>>();
         _variableRepoMock = new Mock<IRepository<TestCaseVariable, Guid>>();
@@ -42,11 +51,16 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _jobRepoMock = new Mock<IRepository<TestGenerationJob, Guid>>();
         _linkRepoMock = new Mock<IRepository<TestCaseRequirementLink, Guid>>();
         _srsRequirementRepoMock = new Mock<IRepository<SrsRequirement, Guid>>();
+        _proposalRepoMock = new Mock<IRepository<TestOrderProposal, Guid>>();
+        _apiTestOrderServiceMock = new Mock<IApiTestOrderService>();
+        _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
         _loggerMock = new Mock<ILogger<SaveAiGeneratedTestCasesCommandHandler>>();
 
         _testCaseRepoMock.Setup(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
         _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _dependencyRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseDependency>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -76,6 +90,12 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             .ReturnsAsync(new List<SrsRequirement>());
         _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<Guid>>()))
             .ReturnsAsync(new List<Guid>());
+        _proposalRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<TestOrderProposal>().AsQueryable());
+        _proposalRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestOrderProposal>>()))
+            .ReturnsAsync((TestOrderProposal)null);
+        _apiTestOrderServiceMock.Setup(x => x.DeserializeOrderJson(It.IsAny<string>()))
+            .Returns(new List<ApiOrderItemModel>());
 
         _unitOfWorkMock.Setup(x => x.ExecuteInTransactionAsync(
                 It.IsAny<Func<CancellationToken, Task>>(),
@@ -93,6 +113,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _handler = new SaveAiGeneratedTestCasesCommandHandler(
             _suiteRepoMock.Object,
             _testCaseRepoMock.Object,
+            _dependencyRepoMock.Object,
             _requestRepoMock.Object,
             _expectationRepoMock.Object,
             _variableRepoMock.Object,
@@ -100,6 +121,10 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             _jobRepoMock.Object,
             _linkRepoMock.Object,
             _srsRequirementRepoMock.Object,
+            _proposalRepoMock.Object,
+            _apiTestOrderServiceMock.Object,
+            _endpointMetadataServiceMock.Object,
+            new EndpointRequirementMapper(),
             _loggerMock.Object);
     }
 
@@ -462,6 +487,96 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_DropEndpointIrrelevantRequirementIds_WhenMetadataIsAvailable()
+    {
+        var srsDocId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        var registerReqId = Guid.NewGuid();
+        var loginReqId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        suite.ApiSpecId = specId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var requirements = new List<SrsRequirement>
+        {
+            new()
+            {
+                Id = registerReqId,
+                SrsDocumentId = srsDocId,
+                RequirementCode = "REQ-002",
+                Title = "Registration",
+                Description = "A user can register with a valid unique email and password.",
+                RequirementType = SrsRequirementType.Functional,
+            },
+            new()
+            {
+                Id = loginReqId,
+                SrsDocumentId = srsDocId,
+                RequirementCode = "REQ-003",
+                Title = "Login",
+                Description = "A user can login with the correct email and password and receives a token.",
+                RequirementType = SrsRequirementType.Functional,
+            },
+        };
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet()).Returns(requirements.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(requirements);
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/login",
+                    OperationId = "login",
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            Schema = """
+                            {
+                              "type": "object",
+                              "properties": {
+                                "email": { "type": "string", "format": "email" },
+                                "password": { "type": "string", "minLength": 6 }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                },
+            });
+
+        _testCaseRepoMock.Setup(x => x.UpdateAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { registerReqId, loginReqId };
+
+        await _handler.HandleAsync(command);
+
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == loginReqId),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(l => l.SrsRequirementId == registerReqId),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_RejectInvalidRequirementIds_WhenSuiteHasSrsDoc()
     {
         var srsDocId = Guid.NewGuid();
@@ -503,7 +618,7 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_Should_RejectExpectedStatus_WhenCoveredRequirementHasExplicitDifferentStatus()
+    public async Task HandleAsync_Should_NotRejectExpectedStatus_WhenSrsStatusDiffers()
     {
         var srsDocId = Guid.NewGuid();
         var reqId = Guid.NewGuid();
@@ -547,12 +662,11 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
 
         var act = () => _handler.HandleAsync(command);
 
-        await act.Should().ThrowAsync<ValidationException>()
-            .WithMessage("*REQ-400*explicitly requires status [400]*");
+        await act.Should().NotThrowAsync();
 
         _expectationRepoMock.Verify(x => x.AddAsync(
-            It.IsAny<TestCaseExpectation>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.Is<TestCaseExpectation>(e => e.ExpectedStatus == "[200]"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

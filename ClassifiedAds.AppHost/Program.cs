@@ -182,6 +182,8 @@ else
         .WithEnvironment("ConnectionStrings__Default", localDatabase!.Resource.ConnectionStringExpression);
 }
 
+webapi = ApplyTestGenerationN8nOverrides(webapi, "webapi");
+
 // Background - Background worker service
 // Depends on: selected database mode, RabbitMQ, MailHog, Redis
 // Waits for migrator to complete before starting
@@ -227,6 +229,8 @@ else
         .WaitFor(localDatabase!)
         .WithEnvironment("ConnectionStrings__Default", localDatabase!.Resource.ConnectionStringExpression);
 }
+
+background = ApplyTestGenerationN8nOverrides(background, "background");
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // Build and Run
@@ -296,4 +300,41 @@ bool LooksLikeSupabaseTransactionPooler(string connectionString)
 
     return host.IndexOf(".pooler.supabase.com", StringComparison.OrdinalIgnoreCase) >= 0 &&
         string.Equals(port, "6543", StringComparison.OrdinalIgnoreCase);
+}
+
+IResourceBuilder<ProjectResource> ApplyTestGenerationN8nOverrides(
+    IResourceBuilder<ProjectResource> project,
+    string resourceName)
+{
+    var keys = new[]
+    {
+        "Modules:TestGeneration:N8nIntegration:BaseUrl",
+        "Modules:TestGeneration:N8nIntegration:ApiKey",
+        "Modules:TestGeneration:N8nIntegration:BeBaseUrl",
+        "Modules:TestGeneration:N8nIntegration:CallbackApiKey",
+        "Modules:TestGeneration:N8nIntegration:TimeoutSeconds",
+        "Modules:TestGeneration:N8nIntegration:LlmSuggestionTimeoutSeconds",
+        "Modules:TestGeneration:N8nIntegration:UseDotnetIntegrationWorkflowForGeneration",
+        "Modules:TestGeneration:N8nIntegration:GenerationModel",
+        "Modules:TestGeneration:N8nIntegration:Webhooks:generate-llm-suggestions",
+    };
+
+    foreach (var key in keys)
+    {
+        var value = builder.Configuration[key];
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            continue;
+        }
+
+        var environmentKey = key.Replace(':', '_').Replace("_", "__");
+        project = project.WithEnvironment(environmentKey, value);
+
+        if (key.EndsWith(":BeBaseUrl", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[AppHost] {resourceName} n8n callback base URL: {value}");
+        }
+    }
+
+    return project;
 }

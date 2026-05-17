@@ -431,6 +431,7 @@ public class PostmanSpecificationParser : ISpecificationParser
         var mode = GetStringProperty(bodyElement, "mode");
 
         string schemaJson = null;
+        string contentType = null;
 
         if (string.Equals(mode, "raw", StringComparison.OrdinalIgnoreCase))
         {
@@ -442,16 +443,22 @@ public class PostmanSpecificationParser : ISpecificationParser
                 {
                     using var doc = JsonDocument.Parse(raw);
                     schemaJson = JsonSerializer.Serialize(new { type = "object", example = raw });
+                    contentType = "application/json";
                 }
                 catch
                 {
                     schemaJson = JsonSerializer.Serialize(new { type = "string", example = raw });
+                    contentType = "text/plain";
                 }
             }
         }
         else if (string.Equals(mode, "urlencoded", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(mode, "formdata", StringComparison.OrdinalIgnoreCase))
         {
+            contentType = string.Equals(mode, "formdata", StringComparison.OrdinalIgnoreCase)
+                ? "multipart/form-data"
+                : "application/x-www-form-urlencoded";
+
             if (bodyElement.TryGetProperty(mode, out var formData) && formData.ValueKind == JsonValueKind.Array)
             {
                 var properties = new Dictionary<string, object>();
@@ -481,6 +488,7 @@ public class PostmanSpecificationParser : ISpecificationParser
             Name = "body",
             Location = "Body",
             DataType = "object",
+            ContentType = contentType,
             IsRequired = true,
             Schema = schemaJson,
         };

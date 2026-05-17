@@ -79,6 +79,12 @@ public class ParsedParameter
 
     public string Format { get; set; }
 
+    /// <summary>
+    /// Request body media type when this parameter represents the operation body.
+    /// Example: application/json, multipart/form-data, application/x-www-form-urlencoded.
+    /// </summary>
+    public string ContentType { get; set; }
+
     public bool IsRequired { get; set; }
 
     public string DefaultValue { get; set; }

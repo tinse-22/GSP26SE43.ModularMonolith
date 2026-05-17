@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -80,15 +81,14 @@ public class HttpTestExecutor : IHttpTestExecutor
                 }
             }
 
-            using var response = await client.SendAsync(httpRequest, ct);
+            using var response = await client.SendAsync(
+                httpRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
 
             sw.Stop();
 
-            var body = await response.Content.ReadAsStringAsync(ct);
-            if (body != null && body.Length > MaxResponseBodyLength)
-            {
-                body = body[..MaxResponseBodyLength];
-            }
+            var body = await ReadBodyPreviewAsync(response.Content, ct);
 
             var responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var h in response.Headers)
@@ -145,6 +145,34 @@ public class HttpTestExecutor : IHttpTestExecutor
                 TransportError = $"Lỗi không mong muốn: {ex.Message}",
             };
         }
+    }
+
+    private static async Task<string> ReadBodyPreviewAsync(HttpContent content, CancellationToken ct)
+    {
+        if (content == null)
+        {
+            return null;
+        }
+
+        await using var stream = await content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 8192, leaveOpen: false);
+
+        var buffer = new char[Math.Min(8192, MaxResponseBodyLength)];
+        var builder = new StringBuilder(capacity: Math.Min(MaxResponseBodyLength, 8192));
+
+        while (builder.Length < MaxResponseBodyLength)
+        {
+            var remaining = MaxResponseBodyLength - builder.Length;
+            var read = await reader.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), ct);
+            if (read == 0)
+            {
+                break;
+            }
+
+            builder.Append(buffer, 0, read);
+        }
+
+        return builder.ToString();
     }
 
     private static string BuildUrlWithQueryParams(string url, Dictionary<string, string> queryParams)
