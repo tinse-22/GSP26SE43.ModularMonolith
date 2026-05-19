@@ -5,6 +5,7 @@ using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace ClassifiedAds.UnitTests.TestGeneration;
 
@@ -45,6 +46,14 @@ public class ExpectationResolverTests
         result.PrimaryRequirementId.Should().Be(requirementId);
         result.RequirementCode.Should().Be("REQ-400");
         result.BodyContains.Should().Contain("email");
+        var provenance = JsonSerializer.Deserialize<List<ExpectedProvenanceItem>>(
+            result.ExpectedProvenance,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        provenance.Should().NotBeNullOrEmpty();
+        provenance.Should().Contain(x =>
+            x.Source == "srs" &&
+            x.RequirementCode == "REQ-400" &&
+            x.Evidence.Contains("invalid email", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -316,5 +325,92 @@ public class ExpectationResolverTests
         result.ExpectedStatusCodes.Should().Equal(200);
         result.JsonPathChecks.Should().ContainKey("$.data.token");
         result.JsonPathChecks["$.data.token"].Should().Be("exists");
+    }
+
+    [Fact]
+    public void Resolve_Should_IncludeMarkdownConstraintEvidence_InExpectedProvenance()
+    {
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.Negative,
+            SrsDocumentContent = """
+            ## Validation Rules
+            `email` format invalid -> 400
+            """,
+        });
+
+        result.Source.Should().Be(ExpectationSource.Srs);
+        result.ExpectedStatusCodes.Should().Equal(400);
+
+        var provenance = JsonSerializer.Deserialize<List<ExpectedProvenanceItem>>(
+            result.ExpectedProvenance,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        provenance.Should().NotBeNullOrEmpty();
+        provenance.Should().Contain(x =>
+            x.Source == "srs" &&
+            x.RequirementCode == "SRS-MD" &&
+            x.Evidence.Contains("email", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Resolve_Should_UseStructuredSrsAssertions_WhenConstraintProvidesThem()
+    {
+        var requirementId = Guid.NewGuid();
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.HappyPath,
+            CoveredRequirementIds = new List<Guid> { requirementId },
+            SrsRequirements = new List<SrsRequirement>
+            {
+                new()
+                {
+                    Id = requirementId,
+                    RequirementCode = "REQ-REGISTER",
+                    IsReviewed = true,
+                    TestableConstraints = """
+                    [{
+                      "constraint": "Successful registration returns created user payload.",
+                      "expectedStatusCodes": [201],
+                      "bodyContains": ["success", "data"],
+                      "jsonPathChecks": {
+                        "$.data.id": "string",
+                        "$.data.email": "string",
+                        "$.data.createdAt": "datetime"
+                      },
+                      "evidence": "SRS section 4.2: successful registration returns id, email, and createdAt."
+                    }]
+                    """,
+                },
+            },
+        });
+
+        result.Source.Should().Be(ExpectationSource.Srs);
+        result.ExpectedStatusCodes.Should().Equal(201);
+        result.BodyContains.Should().Equal("success", "data");
+        result.JsonPathChecks.Should().Contain(new Dictionary<string, string>
+        {
+            ["$.data.id"] = "string",
+            ["$.data.email"] = "string",
+            ["$.data.createdAt"] = "datetime",
+        });
+
+        var provenance = JsonSerializer.Deserialize<List<ExpectedProvenanceItem>>(
+            result.ExpectedProvenance,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        provenance.Should().NotBeNullOrEmpty();
+        provenance.Should().OnlyContain(x =>
+            x.Source == "srs" &&
+            x.RequirementCode == "REQ-REGISTER" &&
+            x.Evidence.Contains("SRS section 4.2", StringComparison.OrdinalIgnoreCase));
     }
 }

@@ -97,6 +97,8 @@ public class TestCaseRunResultModel
 
     public Guid? PrimaryRequirementId { get; set; }
 
+    public string ExpectedProvenance { get; set; }
+
     /// <summary>
     /// Total number of execution attempts made for this test case across the entire run
     /// (including retries). This equals 1 when no retry was needed.

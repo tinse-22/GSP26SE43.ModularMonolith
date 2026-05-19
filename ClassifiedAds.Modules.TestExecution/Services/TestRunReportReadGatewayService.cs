@@ -294,6 +294,10 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
             BodyNotContains = expectation.BodyNotContains,
             JsonPathChecks = expectation.JsonPathChecks,
             MaxResponseTime = expectation.MaxResponseTime,
+            ExpectationSource = expectation.ExpectationSource,
+            RequirementCode = expectation.RequirementCode,
+            PrimaryRequirementId = expectation.PrimaryRequirementId,
+            ExpectedProvenance = expectation.ExpectedProvenance,
         };
     }
 

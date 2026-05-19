@@ -60,6 +60,7 @@ internal static class TestRunResultsStorage
                 ExpectationSource = result.ExpectationSource,
                 RequirementCode = result.RequirementCode,
                 PrimaryRequirementId = result.PrimaryRequirementId,
+                ExpectedProvenance = result.ExpectedProvenance,
                 RequestHeaders = DeserializeJson<Dictionary<string, string>>(result.RequestHeaders) ?? new Dictionary<string, string>(),
                 ResponseHeaders = DeserializeJson<Dictionary<string, string>>(result.ResponseHeaders) ?? new Dictionary<string, string>(),
                 ResponseBodyPreview = result.ResponseBodyPreview,
