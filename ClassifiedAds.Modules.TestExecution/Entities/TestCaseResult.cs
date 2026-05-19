@@ -134,4 +134,9 @@ public class TestCaseResult : Entity<Guid>, IAggregateRoot
     public string RequirementCode { get; set; }
 
     public Guid? PrimaryRequirementId { get; set; }
+
+    /// <summary>
+    /// JSON array snapshot of per-expected-item provenance from the test case expectation.
+    /// </summary>
+    public string ExpectedProvenance { get; set; }
 }

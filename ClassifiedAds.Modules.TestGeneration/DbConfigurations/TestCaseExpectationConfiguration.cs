@@ -32,6 +32,9 @@ public class TestCaseExpectationConfiguration : IEntityTypeConfiguration<Entitie
         builder.Property(x => x.RequirementCode);
         builder.Property(x => x.PrimaryRequirementId);
 
+        builder.Property(x => x.ExpectedProvenance)
+            .HasColumnType("jsonb");
+
         builder.HasIndex(x => x.TestCaseId).IsUnique();
     }
 }

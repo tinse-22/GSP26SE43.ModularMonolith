@@ -1,343 +1,507 @@
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.BridgeComponent`1.<ConvertValueTask>g__ConvertValueTaskAsync|5_0[TTo](ValueTask`1 valueTask, ResilienceContext resilienceContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Retry.RetryResilienceStrategy`1.ExecuteCore[TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.BridgeComponent`1.<ConvertValueTask>g__ConvertValueTaskAsync|5_0[TTo](ValueTask`1 valueTask, ResilienceContext resilienceContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.CircuitBreaker.CircuitBreakerResilienceStrategy`1.ExecuteCore[TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Timeout.TimeoutResilienceStrategy.ExecuteCore[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Microsoft.Extensions.Http.Resilience.ResilienceHandler.<>c.<<SendAsync>b__3_0>d.MoveNext()
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetException(Exception exception)
-         at Microsoft.Extensions.Http.Resilience.ResilienceHandler.SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.ExecutionTrackingComponent.ExecuteCore[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.CompositeComponent.ExecuteCoreWithTelemetry[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.RateLimiting.RateLimiterResilienceStrategy.ExecuteCore[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Timeout.TimeoutResilienceStrategy.ExecuteCore[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.BridgeComponent`1.<ConvertValueTask>g__ConvertValueTaskAsync|5_0[TTo](ValueTask`1 valueTask, ResilienceContext resilienceContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Retry.RetryResilienceStrategy`1.ExecuteCore[TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.Pipeline.BridgeComponent`1.<ConvertValueTask>g__ConvertValueTaskAsync|5_0[TTo](ValueTask`1 valueTask, ResilienceContext resilienceContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.CircuitBreaker.CircuitBreakerResilienceStrategy`1.ExecuteCore[TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Timeout.TimeoutResilienceStrategy.ExecuteCore[TResult,TState](Func`3 callback, ResilienceContext context, TState state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Polly.Utils.StrategyHelper.<ExecuteCallbackSafeAsync>g__AwaitTask|0_0[TResult,TState,T](ValueTask`1 task, Boolean continueOnCapturedContext)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task`1.TrySetResult(TResult result)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetExistingTaskResult(Task`1 task, TResult result)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetResult(TResult result)
-         at Microsoft.Extensions.Http.Resilience.ResilienceHandler.<>c.<<SendAsync>b__3_0>d.MoveNext()
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetException(Exception exception)
-         at Microsoft.Extensions.Http.Logging.LoggingHttpMessageHandler.<SendCoreAsync>g__Core|4_0(HttpRequestMessage request, Boolean useAsync, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Net.Http.DiagnosticsHandler.SendAsyncCore(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Net.Http.Metrics.MetricsHandler.SendAsyncWithMetrics(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Net.Http.HttpConnectionWaiter`1.WaitForConnectionWithTelemetryAsync(HttpRequestMessage request, HttpConnectionPool pool, Boolean async, CancellationToken requestCancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext()
-         at System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(IAsyncStateMachineBox box, Boolean allowInlining)
-         at System.Threading.Tasks.Task.RunContinuations(Object continuationObject)
-         at System.Threading.Tasks.Task.TrySetCanceled(CancellationToken tokenToRecord, Object cancellationException)
-         at System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1.SetException(Exception exception)
-         at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecutionContextCallback(Object s)
-         at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.MoveNext(Thread threadPoolThread)
-         at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.AsyncStateMachineBox`1.ExecuteFromThreadPool(Thread threadPoolThread)
-         at System.Threading.ThreadPoolWorkQueue.Dispatch()
-         at System.Threading.PortableThreadPool.WorkerThread.WorkerThreadStart()
-         at System.Threading.Thread.StartCallback()
-      --- End of stack trace from previous location ---
-         at Polly.Outcome`1.ThrowIfException()
-         at Microsoft.Extensions.Http.Resilience.ResilienceHandler.SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-         at Microsoft.Extensions.ServiceDiscovery.Http.ResolvingHttpDelegatingHandler.SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-         at Microsoft.Extensions.Http.Logging.LoggingScopeHttpMessageHandler.<SendCoreAsync>g__Core|4_0(HttpRequestMessage request, Boolean useAsync, CancellationToken cancellationToken)
-         at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
-         at ClassifiedAds.Modules.TestGeneration.Services.N8nIntegrationService.TriggerWebhookAsync[TPayload](String webhookName, TPayload payload, CancellationToken cancellationToken) in D:\GSP26SE43.ModularMonolith\ClassifiedAds.Modules.TestGeneration\Services\N8nIntegrationService.cs:line 136
-         at ClassifiedAds.Modules.TestGeneration.Commands.GenerateTestCasesCommandHandler.HandleAsync(GenerateTestCasesCommand command, CancellationToken cancellationToken) in D:\GSP26SE43.ModularMonolith\ClassifiedAds.Modules.TestGeneration\Commands\GenerateTestCasesCommand.cs:line 250
-         at ClassifiedAds.Application.Dispatcher.DispatchAsync(ICommand command, CancellationToken cancellationToken) in D:\GSP26SE43.ModularMonolith\ClassifiedAds.Application\Common\Dispatcher.cs:line 44
-         at ClassifiedAds.Modules.TestGeneration.Controllers.TestOrderController.GenerateTests(Guid suiteId) in D:\GSP26SE43.ModularMonolith\ClassifiedAds.Modules.TestGeneration\Controllers\TestOrderController.cs:line 187
-         at lambda_method1474(Closure, Object)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.TaskOfActionResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Logged|12_1(ControllerActionInvoker invoker)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
-         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
-         at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
-         at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
-         at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
-         at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
-         at Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddlewareImpl.<Invoke>g__Awaited|10_0(ExceptionHandlerMiddlewareImpl middleware, HttpContext context, Task task)
+[
+  {
+    "scenarios": [
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "HappyPath: Valid registration",
+        "description": "Register a new user with valid email and password format.",
+        "testType": "HappyPath",
+        "priority": "High",
+        "tags": [
+          "auth",
+          "smoke"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"user_{{tcUniqueId}}@example.com\", \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            201
+          ],
+          "bodyContains": [
+            "success",
+            "data"
+          ],
+          "bodyNotContains": null,
+          "jsonPathChecks": {
+            "$.success": "boolean",
+            "$.data.id": "string",
+            "$.data.email": "string",
+            "$.data.createdAt": "datetime"
+          }
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Boundary: Password at minimum length",
+        "description": "Register with password exactly 6 characters long as defined in schema.",
+        "testType": "Boundary",
+        "priority": "Medium",
+        "tags": [
+          "boundary"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"min_pass_{{tcUniqueId}}@example.com\", \"password\": \"123456\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            201
+          ],
+          "bodyContains": [
+            "success"
+          ],
+          "bodyNotContains": null,
+          "jsonPathChecks": {
+            "$.success": "true"
+          }
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Duplicate email registration",
+        "description": "Attempt to register with an email that already exists in the system.",
+        "testType": "Negative",
+        "priority": "High",
+        "tags": [
+          "conflict"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"{{email}}\", \"password\": \"newPassword123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            409
+          ],
+          "bodyContains": [
+            "message",
+            "success"
+          ],
+          "bodyNotContains": null,
+          "jsonPathChecks": {
+            "$.success": "false",
+            "$.message": "string"
+          }
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Password below minimum length",
+        "description": "Attempt to register with a 5-character password, violating minLength: 6.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"invalid_pwd_{{tcUniqueId}}@example.com\", \"password\": \"12345\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "bodyContains": [
+            "message"
+          ],
+          "bodyNotContains": null,
+          "jsonPathChecks": {
+            "$.success": "false"
+          }
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Missing email field",
+        "description": "Submit registration without the required email field.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"password\": \"somePassword123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "bodyContains": [
+            "message"
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Missing password field",
+        "description": "Submit registration without the required password field.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"missing_pwd_{{tcUniqueId}}@example.com\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "bodyContains": [
+            "message"
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Invalid email format (missing @)",
+        "description": "Validate email format constraint by omitting the @ symbol.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"noatsign_example.com\", \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Invalid email format (missing domain)",
+        "description": "Validate email format constraint by omitting the domain part.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"user@\", \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Boundary: Very long email address",
+        "description": "Register with a long valid email address to check buffer handling.",
+        "testType": "Boundary",
+        "priority": "Low",
+        "tags": [
+          "boundary"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"long_local_part_name_test_sequence_{{tcUniqueId}}@very.long.subdomain.of.a.valid.domain.example.com\", \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            201
+          ],
+          "jsonPathChecks": {
+            "$.success": "true"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Empty string email",
+        "description": "Test registration with an empty string for email.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"\", \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Null email field",
+        "description": "Test registration with a null value for the email field.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": null, \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Email as integer",
+        "description": "Verify type validation by passing an integer for the email field.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": 12345, \"password\": \"securePass123\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Empty password string",
+        "description": "Test registration with an empty string for password, violating minLength.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"empty_pwd_{{tcUniqueId}}@example.com\", \"password\": \"\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Boundary: Maximum length password",
+        "description": "Register with a very long password (e.g. 128 chars) to check upper boundaries.",
+        "testType": "Boundary",
+        "priority": "Low",
+        "tags": [
+          "boundary"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{\"email\": \"max_pass_{{tcUniqueId}}@example.com\", \"password\": \"pass_long_sequence_repeated_to_test_upper_limits_of_string_storage_and_hashing_algorithms_1234567890_1234567890_1234567890_1234567890\"}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            201
+          ],
+          "jsonPathChecks": {
+            "$.success": "true"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      },
+      {
+        "endpointId": "2acf83f1-1658-4b07-804b-68d5e4615384",
+        "scenarioName": "Negative: Empty object body",
+        "description": "Submit an empty JSON object to the registration endpoint.",
+        "testType": "Negative",
+        "priority": "Medium",
+        "tags": [
+          "validation"
+        ],
+        "request": {
+          "httpMethod": "POST",
+          "url": "/api/auth/register",
+          "headers": null,
+          "pathParams": {},
+          "queryParams": {},
+          "bodyType": "JSON",
+          "body": "{}",
+          "timeout": 30000
+        },
+        "expectation": {
+          "expectedStatus": [
+            400
+          ],
+          "jsonPathChecks": {
+            "$.success": "false"
+          },
+          "bodyContains": null,
+          "bodyNotContains": null
+        },
+        "coveredRequirementCodes": [],
+        "variables": []
+      }
+    ],
+    "model": "gpt-4o-2024-08-06",
+    "tokensUsed": 1250
+  }
+]

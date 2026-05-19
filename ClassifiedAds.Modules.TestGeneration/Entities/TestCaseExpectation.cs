@@ -54,6 +54,11 @@ public class TestCaseExpectation : Entity<Guid>, IAggregateRoot
 
     public string RequirementCode { get; set; }
 
+    /// <summary>
+    /// JSON array describing per-expected-item source, evidence, requirement, and confidence.
+    /// </summary>
+    public string ExpectedProvenance { get; set; }
+
     // Navigation properties
     public TestCase TestCase { get; set; }
 }

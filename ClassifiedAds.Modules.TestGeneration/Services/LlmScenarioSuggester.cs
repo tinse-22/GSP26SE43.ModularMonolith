@@ -152,6 +152,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly ILlmAssistantGatewayService _llmGatewayService;
     private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
     private readonly IExpectationResolver _expectationResolver;
+    private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
     public LlmScenarioSuggester(
@@ -160,6 +161,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ILlmAssistantGatewayService llmGatewayService,
         ILlmSuggestionFeedbackContextService feedbackContextService,
         IExpectationResolver expectationResolver,
+        IEndpointRequirementMapper requirementMapper,
         ILogger<LlmScenarioSuggester> logger)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
@@ -167,6 +169,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
         _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
         _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
+        _requirementMapper = requirementMapper ?? throw new ArgumentNullException(nameof(requirementMapper));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -528,6 +531,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
             endpointContracts.TryGetValue(scenario.EndpointId, out var contract);
+            scenario = FilterScenarioRequirementCoverage(scenario, metadata, context.SrsRequirements);
 
             scenario.SuggestedHttpMethod ??= orderItem?.HttpMethod ?? metadata?.HttpMethod;
             scenario.SuggestedUrl ??= orderItem?.Path ?? metadata?.Path;
@@ -591,6 +595,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 scenario.ExpectationSource = resolved.Source.ToString();
                 scenario.RequirementCode = resolved.RequirementCode ?? scenario.RequirementCode;
                 scenario.PrimaryRequirementId = resolved.PrimaryRequirementId ?? scenario.PrimaryRequirementId;
+                scenario.ExpectedProvenance = resolved.ExpectedProvenance ?? scenario.ExpectedProvenance;
             }
 
             var request = new N8nTestCaseRequest
@@ -633,6 +638,43 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             FromCache = false,
             UsedLocalFallback = false,
         };
+    }
+
+    private LlmSuggestedScenario FilterScenarioRequirementCoverage(
+        LlmSuggestedScenario scenario,
+        ApiEndpointMetadataDto endpoint,
+        IReadOnlyList<SrsRequirement> requirements)
+    {
+        if (scenario == null ||
+            endpoint == null ||
+            requirements == null ||
+            requirements.Count == 0 ||
+            scenario.CoveredRequirementIds == null ||
+            scenario.CoveredRequirementIds.Count == 0)
+        {
+            return scenario;
+        }
+
+        var coverableIds = _requirementMapper
+            .MapRequirementsToEndpoint(endpoint, requirements)
+            .Where(x => x.IsCoverable)
+            .Select(x => x.Requirement?.Id ?? Guid.Empty)
+            .Where(x => x != Guid.Empty)
+            .ToHashSet();
+
+        scenario.CoveredRequirementIds = scenario.CoveredRequirementIds
+            .Where(coverableIds.Contains)
+            .Distinct()
+            .ToList();
+
+        if (scenario.PrimaryRequirementId.HasValue &&
+            !scenario.CoveredRequirementIds.Contains(scenario.PrimaryRequirementId.Value))
+        {
+            scenario.PrimaryRequirementId = null;
+            scenario.RequirementCode = null;
+        }
+
+        return scenario;
     }
 
     private static List<List<ApiOrderItemModel>> BuildEndpointBatches(
@@ -1014,8 +1056,18 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 CoveredRequirementIds = coveredIds,
                 ExpectationSource = s.Expectation?.ExpectationSource,
                 RequirementCode = s.Expectation?.RequirementCode,
-                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId,
+                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId
+                    ?? (!string.IsNullOrWhiteSpace(s.Expectation?.RequirementCode) &&
+                        codeToId.TryGetValue(s.Expectation.RequirementCode.Trim(), out var requirementId)
+                            ? requirementId
+                            : null),
             };
+
+            if (parsedScenario.PrimaryRequirementId.HasValue &&
+                !parsedScenario.CoveredRequirementIds.Contains(parsedScenario.PrimaryRequirementId.Value))
+            {
+                parsedScenario.CoveredRequirementIds.Add(parsedScenario.PrimaryRequirementId.Value);
+            }
 
             scenarios.Add(parsedScenario);
         }
@@ -1261,6 +1313,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
             RequirementCode = resolvedExpectation?.RequirementCode,
             PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
+            ExpectedProvenance = resolvedExpectation?.ExpectedProvenance,
         };
     }
 

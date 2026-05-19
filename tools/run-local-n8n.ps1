@@ -42,6 +42,16 @@ function Wait-ForHttpEndpoint {
     throw "Timed out waiting for $Url"
 }
 
+function Redact-NgrokSensitiveOutput {
+    param([string]$Text)
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return $Text
+    }
+
+    return $Text -replace "(?is)(Your authtoken:\s*)\S+", '$1<redacted>'
+}
+
 function Wait-ForNgrokPublicUrl {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process]$NgrokProcess,
@@ -53,8 +63,8 @@ function Wait-ForNgrokPublicUrl {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($NgrokProcess.HasExited) {
-            $stderr = Get-Content -LiteralPath $NgrokStdErrPath -Raw -ErrorAction SilentlyContinue
-            $stdout = Get-Content -LiteralPath $NgrokStdOutPath -Raw -ErrorAction SilentlyContinue
+            $stderr = Redact-NgrokSensitiveOutput (Get-Content -LiteralPath $NgrokStdErrPath -Raw -ErrorAction SilentlyContinue)
+            $stdout = Redact-NgrokSensitiveOutput (Get-Content -LiteralPath $NgrokStdOutPath -Raw -ErrorAction SilentlyContinue)
             throw "ngrok exited before opening a tunnel. ExitCode=$($NgrokProcess.ExitCode)`nSTDERR:`n$stderr`nSTDOUT:`n$stdout"
         }
 
@@ -73,8 +83,8 @@ function Wait-ForNgrokPublicUrl {
         }
     }
 
-    $stderr = Get-Content -LiteralPath $NgrokStdErrPath -Raw -ErrorAction SilentlyContinue
-    $stdout = Get-Content -LiteralPath $NgrokStdOutPath -Raw -ErrorAction SilentlyContinue
+    $stderr = Redact-NgrokSensitiveOutput (Get-Content -LiteralPath $NgrokStdErrPath -Raw -ErrorAction SilentlyContinue)
+    $stdout = Redact-NgrokSensitiveOutput (Get-Content -LiteralPath $NgrokStdOutPath -Raw -ErrorAction SilentlyContinue)
     throw "Timed out waiting for ngrok public URL on http://127.0.0.1:4040/api/tunnels`nSTDERR:`n$stderr`nSTDOUT:`n$stdout"
 }
 

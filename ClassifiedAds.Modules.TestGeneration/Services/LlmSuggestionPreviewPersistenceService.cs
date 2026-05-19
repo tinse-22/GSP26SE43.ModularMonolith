@@ -104,6 +104,7 @@ public class LlmSuggestionPreviewPersistenceService : ILlmSuggestionPreviewPersi
                     ExpectationSource = scenario.ExpectationSource,
                     RequirementCode = scenario.RequirementCode,
                     PrimaryRequirementId = scenario.PrimaryRequirementId,
+                    ExpectedProvenance = scenario.ExpectedProvenance,
                 }, JsonOpts),
                 SuggestedVariables = scenario.Variables?.Count > 0
                     ? JsonSerializer.Serialize(scenario.Variables, JsonOpts)

@@ -72,6 +72,8 @@ public class ExecutionTestCaseExpectationDto
     public string RequirementCode { get; set; }
 
     public Guid? PrimaryRequirementId { get; set; }
+
+    public string ExpectedProvenance { get; set; }
 }
 
 public class ExecutionVariableRuleDto

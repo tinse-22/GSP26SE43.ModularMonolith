@@ -704,6 +704,50 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             Times.AtLeastOnce);
     }
 
+    [Fact]
+    public async Task HandleAsync_Should_ResolvePrimaryRequirement_FromRequirementCode_WhenIdsMissing()
+    {
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var requirement = new SrsRequirement
+        {
+            Id = reqId,
+            SrsDocumentId = srsDocId,
+            RequirementCode = "REQ-REGISTER",
+            Title = "Register user",
+            Description = "Successful registration returns created user data.",
+            TestableConstraints = """[{ "constraint": "register -> 201", "expectedOutcome": "201 Created" }]""",
+        };
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement> { requirement }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement> { requirement });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Expectation = new AiTestCaseExpectationDto
+        {
+            ExpectedStatus = "[201]",
+            RequirementCode = "REQ-REGISTER",
+        };
+
+        await _handler.HandleAsync(command);
+
+        _expectationRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseExpectation>(e =>
+                e.PrimaryRequirementId == reqId &&
+                e.RequirementCode == "REQ-REGISTER" &&
+                e.ExpectationSource == ExpectationSource.Srs.ToString() &&
+                e.ExpectedProvenance.Contains("\"source\":\"srs\"", StringComparison.OrdinalIgnoreCase)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static TestSuite CreateSuite()
     {
         return new TestSuite

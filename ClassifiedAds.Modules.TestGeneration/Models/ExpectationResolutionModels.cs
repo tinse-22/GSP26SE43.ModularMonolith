@@ -36,6 +36,25 @@ public sealed class ResolvedExpectation
     public string RequirementCode { get; init; }
 
     public bool HasExplicitSrsStatus { get; init; }
+
+    public string ExpectedProvenance { get; init; }
+}
+
+public sealed class ExpectedProvenanceItem
+{
+    public string Field { get; set; }
+
+    public string Expected { get; set; }
+
+    public string Type { get; set; }
+
+    public string Source { get; set; }
+
+    public string RequirementCode { get; set; }
+
+    public string Evidence { get; set; }
+
+    public string Confidence { get; set; }
 }
 
 public sealed class GeneratedScenarioContext

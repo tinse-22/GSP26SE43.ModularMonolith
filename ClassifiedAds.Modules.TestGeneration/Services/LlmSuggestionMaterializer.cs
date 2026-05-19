@@ -228,6 +228,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
                 ExpectationSource = originalExpectation?.ExpectationSource,
                 RequirementCode = originalExpectation?.RequirementCode,
                 PrimaryRequirementId = originalExpectation?.PrimaryRequirementId,
+                ExpectedProvenance = modified.Expectation.ExpectedProvenance ?? originalExpectation?.ExpectedProvenance,
             };
         }
         else
@@ -422,6 +423,22 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             ExpectationSource = scenario.ExpectationSource,
             RequirementCode = scenario.RequirementCode,
             PrimaryRequirementId = scenario.PrimaryRequirementId,
+            ExpectedProvenance = ExpectedProvenanceBuilder.Build(new N8nTestCaseExpectation
+            {
+                ExpectedStatus = expectedStatus,
+                BodyContains = bodyContains,
+                BodyNotContains = scenario.SuggestedBodyNotContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>(),
+                HeaderChecks = scenario.SuggestedHeaderChecks != null
+                    ? new Dictionary<string, string>(scenario.SuggestedHeaderChecks, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                JsonPathChecks = scenario.SuggestedJsonPathChecks != null
+                    ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ExpectationSource = scenario.ExpectationSource,
+                RequirementCode = scenario.RequirementCode,
+                PrimaryRequirementId = scenario.PrimaryRequirementId,
+                ExpectedProvenance = scenario.ExpectedProvenance,
+            }),
         };
     }
 
