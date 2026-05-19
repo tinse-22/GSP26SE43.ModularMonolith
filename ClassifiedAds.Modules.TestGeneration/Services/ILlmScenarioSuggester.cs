@@ -153,6 +153,8 @@ public class LlmSuggestedScenario
 
     public Guid? PrimaryRequirementId { get; set; }
 
+    public string ExpectedProvenance { get; set; }
+
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>

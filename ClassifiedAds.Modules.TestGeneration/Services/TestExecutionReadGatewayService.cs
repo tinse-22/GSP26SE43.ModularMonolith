@@ -375,6 +375,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                     ExpectationSource = expectation.ExpectationSource,
                     RequirementCode = expectation.RequirementCode,
                     PrimaryRequirementId = expectation.PrimaryRequirementId,
+                    ExpectedProvenance = expectation.ExpectedProvenance,
                 }
                 : null,
             Variables = variables?.Select(v => new ExecutionVariableRuleDto

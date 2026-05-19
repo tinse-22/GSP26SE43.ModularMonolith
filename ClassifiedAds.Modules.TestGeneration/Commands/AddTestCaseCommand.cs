@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using ClassifiedAds.Modules.TestGeneration.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -42,6 +43,7 @@ public class AddTestCaseCommand : ICommand
     public string BodyNotContains { get; set; }
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectedProvenance { get; set; }
 
     // Variables
     public List<VariableInput> Variables { get; set; } = new List<VariableInput>();
@@ -191,6 +193,7 @@ public class AddTestCaseCommandHandler : ICommandHandler<AddTestCaseCommand>
             BodyNotContains = command.BodyNotContains,
             JsonPathChecks = command.JsonPathChecks,
             MaxResponseTime = command.MaxResponseTime,
+            ExpectedProvenance = ExpectedProvenanceBuilder.Normalize(command.ExpectedProvenance),
             CreatedDateTime = now,
         };
 

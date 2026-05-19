@@ -57,6 +57,7 @@ public class N8nTestCaseExpectation
     public string ExpectationSource { get; set; }
     public string RequirementCode { get; set; }
     public Guid? PrimaryRequirementId { get; set; }
+    public string ExpectedProvenance { get; set; }
 }
 
 public class N8nTestCaseVariable

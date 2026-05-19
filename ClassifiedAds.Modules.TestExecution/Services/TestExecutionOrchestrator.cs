@@ -471,6 +471,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             };
         }
 
@@ -509,6 +510,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             };
         }
 
@@ -615,6 +617,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExpectationSource = testCase.Expectation?.ExpectationSource,
             RequirementCode = testCase.Expectation?.RequirementCode,
             PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+            ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             RequestHeaders = resolvedRequest.Headers,
             ResponseHeaders = response.Headers,
             ResponseBody = response.Body,
@@ -727,6 +730,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExpectationSource = testCase.Expectation?.ExpectationSource,
             RequirementCode = testCase.Expectation?.RequirementCode,
             PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+            ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
         };
     }
 

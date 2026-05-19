@@ -86,6 +86,7 @@ public class TestResultCollector : ITestResultCollector
             ExpectationSource = r.ExpectationSource,
             RequirementCode = r.RequirementCode,
             PrimaryRequirementId = r.PrimaryRequirementId,
+            ExpectedProvenance = r.ExpectedProvenance,
             RequestHeaders = r.RequestHeaders ?? new Dictionary<string, string>(),
             ResponseHeaders = r.ResponseHeaders ?? new Dictionary<string, string>(),
             ResponseBodyPreview = TruncateBody(r.ResponseBody),
@@ -292,6 +293,7 @@ public class TestResultCollector : ITestResultCollector
                 ExpectationSource = caseModel.ExpectationSource,
                 RequirementCode = caseModel.RequirementCode,
                 PrimaryRequirementId = caseModel.PrimaryRequirementId,
+                ExpectedProvenance = caseModel.ExpectedProvenance,
             })
             .ToList();
     }

@@ -158,6 +158,10 @@ public class TestCaseExpectationModel
     public string BodyNotContains { get; set; }
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectationSource { get; set; }
+    public Guid? PrimaryRequirementId { get; set; }
+    public string RequirementCode { get; set; }
+    public string ExpectedProvenance { get; set; }
 
     public static TestCaseExpectationModel FromEntity(TestCaseExpectation entity)
     {
@@ -171,6 +175,10 @@ public class TestCaseExpectationModel
             BodyNotContains = entity.BodyNotContains,
             JsonPathChecks = entity.JsonPathChecks,
             MaxResponseTime = entity.MaxResponseTime,
+            ExpectationSource = entity.ExpectationSource,
+            PrimaryRequirementId = entity.PrimaryRequirementId,
+            RequirementCode = entity.RequirementCode,
+            ExpectedProvenance = entity.ExpectedProvenance,
         };
     }
 }

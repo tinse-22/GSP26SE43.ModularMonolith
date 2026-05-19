@@ -62,6 +62,7 @@ public class EditableSuggestionExpectationInput
     public Dictionary<string, string> HeaderChecks { get; set; }
     public Dictionary<string, string> JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectedProvenance { get; set; }
 }
 
 public class EditableSuggestionVariableInput

@@ -119,6 +119,11 @@ public class AiTestCaseExpectationDto
     [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectationSource { get; set; }
+    public string RequirementCode { get; set; }
+    public Guid? PrimaryRequirementId { get; set; }
+    [JsonConverter(typeof(JsonStringOrRawJsonConverter))]
+    public string ExpectedProvenance { get; set; }
 }
 
 public class AiTestCaseVariableDto
@@ -377,6 +382,18 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
                 if (dto.Expectation is not null)
                 {
+                    var primaryRequirement = ResolvePrimaryRequirement(dto, requirementsById);
+                    var expectedProvenance = ExpectedProvenanceBuilder.BuildFromSerializedExpectation(
+                        dto.Expectation.ExpectedStatus,
+                        dto.Expectation.BodyContains,
+                        dto.Expectation.BodyNotContains,
+                        dto.Expectation.HeaderChecks,
+                        dto.Expectation.JsonPathChecks,
+                        dto.Expectation.MaxResponseTime,
+                        dto.Expectation.ExpectedProvenance,
+                        dto.Expectation.ExpectationSource ?? (primaryRequirement != null ? "Srs" : "Llm"),
+                        dto.Expectation.RequirementCode ?? primaryRequirement?.RequirementCode,
+                        primaryRequirement);
                     var exp = new TestCaseExpectation
                     {
                         Id = Guid.NewGuid(),
@@ -388,6 +405,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                         BodyNotContains = NormalizeNullableJsonArray(dto.Expectation.BodyNotContains),
                         JsonPathChecks = NormalizeNullableJsonObject(dto.Expectation.JsonPathChecks),
                         MaxResponseTime = dto.Expectation.MaxResponseTime,
+                        ExpectationSource = dto.Expectation.ExpectationSource ?? (primaryRequirement != null ? ExpectationSource.Srs.ToString() : ExpectationSource.Llm.ToString()),
+                        RequirementCode = dto.Expectation.RequirementCode ?? primaryRequirement?.RequirementCode,
+                        PrimaryRequirementId = dto.Expectation.PrimaryRequirementId ?? primaryRequirement?.Id,
+                        ExpectedProvenance = expectedProvenance,
                         CreatedDateTime = now,
                     };
                     await _testCaseExpectationRepository.AddAsync(exp, ct);
@@ -1255,6 +1276,45 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
 
         return result;
+    }
+
+    private static SrsRequirement ResolvePrimaryRequirement(
+        AiGeneratedTestCaseDto dto,
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById)
+    {
+        if (dto == null || requirementsById == null || requirementsById.Count == 0)
+        {
+            return null;
+        }
+
+        if (dto.Expectation?.PrimaryRequirementId is Guid primaryId
+            && primaryId != Guid.Empty
+            && requirementsById.TryGetValue(primaryId, out var explicitRequirement))
+        {
+            return explicitRequirement;
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.Expectation?.RequirementCode))
+        {
+            var byCode = requirementsById.Values.FirstOrDefault(x =>
+                string.Equals(
+                    x.RequirementCode,
+                    dto.Expectation.RequirementCode,
+                    StringComparison.OrdinalIgnoreCase));
+            if (byCode != null)
+            {
+                return byCode;
+            }
+        }
+
+        var firstCovered = dto.CoveredRequirementIds?
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .FirstOrDefault(x => requirementsById.ContainsKey(x)) ?? Guid.Empty;
+
+        return firstCovered != Guid.Empty && requirementsById.TryGetValue(firstCovered, out var requirement)
+            ? requirement
+            : null;
     }
 
     private static void RegisterProducedVariables(

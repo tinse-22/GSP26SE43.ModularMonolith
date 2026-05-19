@@ -176,6 +176,37 @@ public class LlmSuggestionMaterializerTests
     }
 
     [Fact]
+    public void MaterializeFromScenario_Should_PreserveExpectedProvenance()
+    {
+        N8nTestCaseExpectation capturedExpectation = null;
+        _expectationBuilderMock
+            .Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
+            .Callback<Guid, N8nTestCaseExpectation>((_, expectation) => capturedExpectation = expectation)
+            .Returns<Guid, N8nTestCaseExpectation>((id, _) =>
+                new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+
+        var provenance = """[{"field":"expectedStatus","expected":"201","type":"status","source":"srs","requirementCode":"REQ-001","evidence":"User registration succeeds","confidence":"high"}]""";
+        var endpointId = Guid.NewGuid();
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = endpointId,
+            ScenarioName = "Register user",
+            SuggestedTestType = TestType.HappyPath,
+            ExpectedStatusCodes = new List<int> { 201 },
+            ExpectedProvenance = provenance,
+        };
+
+        _sut.MaterializeFromScenario(
+            scenario,
+            Guid.NewGuid(),
+            new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/register" },
+            0);
+
+        capturedExpectation.Should().NotBeNull();
+        capturedExpectation.ExpectedProvenance.Should().Be(provenance);
+    }
+
+    [Fact]
     public void MaterializeFromScenario_Should_MapVariablesCorrectly()
     {
         // Arrange

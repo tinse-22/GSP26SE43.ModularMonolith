@@ -21,6 +21,7 @@ public class TestCaseResultConfiguration : IEntityTypeConfiguration<TestCaseResu
         builder.Property(x => x.ExpectationSource);
         builder.Property(x => x.RequirementCode);
         builder.Property(x => x.PrimaryRequirementId);
+        builder.Property(x => x.ExpectedProvenance).HasColumnType("jsonb");
 
         // JSONB columns for complex structures (best practice for PostgreSQL)
         builder.Property(x => x.RequestHeaders).HasColumnType("jsonb");
