@@ -196,8 +196,8 @@ function Wait-ForNgrokPublicUrl {
         try {
             $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
             $publicUrl = $response.tunnels |
-                Where-Object { $_.proto -eq "https" } |
-                Select-Object -ExpandProperty public_url -First 1
+            Where-Object { $_.proto -eq "https" } |
+            Select-Object -ExpandProperty public_url -First 1
 
             if (-not [string]::IsNullOrWhiteSpace($publicUrl)) {
                 return $publicUrl.TrimEnd("/")
@@ -374,10 +374,10 @@ try {
             -StdOutPath $backgroundStdOutPath `
             -StdErrPath $backgroundStdErrPath
         [void](Wait-ForNgrokPublicUrl `
-            -NgrokProcess $ngrokProcess `
-            -NgrokStdOutPath $ngrokStdOutPath `
-            -NgrokStdErrPath $ngrokStdErrPath `
-            -TimeoutSeconds 10)
+                -NgrokProcess $ngrokProcess `
+                -NgrokStdOutPath $ngrokStdOutPath `
+                -NgrokStdErrPath $ngrokStdErrPath `
+                -TimeoutSeconds 10)
     }
 }
 finally {
