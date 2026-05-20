@@ -1,6 +1,7 @@
 using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
+using ClassifiedAds.Contracts.TestGeneration.Validation;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
@@ -1134,9 +1135,36 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
             ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index);
             ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index);
+            ValidateRequestBodyAgainstOpenApi(dto, endpoint, item.Index);
             ValidateVariableDependencies(dto, producedVariables, item.Index);
             RegisterProducedVariables(dto, producedVariables);
         }
+    }
+
+    private static void ValidateRequestBodyAgainstOpenApi(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint,
+        int index)
+    {
+        var issues = RequestSchemaPayloadValidator.Validate(
+            dto?.Request?.Body,
+            dto?.Request?.BodyType,
+            endpoint,
+            variables: null,
+            expectedStatuses: ParseStatusCodesFromExpectation(dto?.Expectation?.ExpectedStatus),
+            testType: dto?.TestType,
+            testName: dto?.Name);
+
+        if (issues.Count == 0)
+        {
+            return;
+        }
+
+        var issue = issues[0];
+        throw new ValidationException(
+            $"AI-generated test case '{dto?.Name ?? $"index {index}"}' has invalid request payload for endpoint " +
+            $"'{endpoint?.HttpMethod} {endpoint?.Path}': {issue.Code} at {issue.Target}. " +
+            $"Expected {issue.Expected}; actual {issue.Actual}.");
     }
 
     private static void ValidateExpectedStatusesAgainstOpenApi(

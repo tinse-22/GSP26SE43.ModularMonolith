@@ -19,16 +19,103 @@ function Test-Command {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Wait-ForHttpEndpoint {
+function Test-TcpEndpoint {
     param(
-        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$HostName,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [int]$TimeoutMilliseconds = 1000
+    )
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connectTask = $client.ConnectAsync($HostName, $Port)
+        return $connectTask.Wait($TimeoutMilliseconds) -and $client.Connected
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Wait-ForTcpEndpoint {
+    param(
+        [Parameter(Mandatory = $true)][string]$HostName,
+        [Parameter(Mandatory = $true)][int]$Port,
         [int]$TimeoutSeconds = 60
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
+        if (Test-TcpEndpoint -HostName $HostName -Port $Port) {
+            return
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "Timed out waiting for TCP endpoint ${HostName}:$Port"
+}
+
+function Ensure-LocalRabbitMq {
+    if (Test-TcpEndpoint -HostName "127.0.0.1" -Port 5672) {
+        return
+    }
+
+    if (-not (Test-Command -Name "docker")) {
+        throw "RabbitMQ is not reachable at 127.0.0.1:5672 and Docker CLI was not found. Start RabbitMQ or install Docker."
+    }
+
+    Write-Host "RabbitMQ is not reachable at 127.0.0.1:5672. Starting docker compose service rabbitmq ..."
+    Push-Location $repoRoot
+    try {
+        & docker compose up -d rabbitmq
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to start RabbitMQ with docker compose up -d rabbitmq."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    Wait-ForTcpEndpoint -HostName "127.0.0.1" -Port 5672 -TimeoutSeconds 90
+}
+
+function Assert-ProcessRunning {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$StdOutPath,
+        [string]$StdErrPath
+    )
+
+    if ($Process.HasExited) {
+        $stdout = Get-Content -LiteralPath $StdOutPath -Raw -ErrorAction SilentlyContinue
+        $stderr = Get-Content -LiteralPath $StdErrPath -Raw -ErrorAction SilentlyContinue
+        throw "$Name exited unexpectedly. ExitCode=$($Process.ExitCode)`nSTDERR:`n$stderr`nSTDOUT:`n$stdout"
+    }
+}
+
+function Wait-ForHttpEndpoint {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [System.Diagnostics.Process]$Process,
+        [string]$StdOutPath,
+        [string]$StdErrPath,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -ne $Process -and $Process.HasExited) {
+            $stdout = Get-Content -LiteralPath $StdOutPath -Raw -ErrorAction SilentlyContinue
+            $stderr = Get-Content -LiteralPath $StdErrPath -Raw -ErrorAction SilentlyContinue
+            throw "Process exited before $Url was available. ExitCode=$($Process.ExitCode)`nSTDERR:`n$stderr`nSTDOUT:`n$stdout"
+        }
+
         try {
-            & curl.exe --silent --show-error --fail --insecure --max-time 5 $Url | Out-Null
+            & curl.exe --silent --fail --insecure --max-time 5 $Url | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 return
             }
@@ -40,6 +127,44 @@ function Wait-ForHttpEndpoint {
     }
 
     throw "Timed out waiting for $Url"
+}
+
+function Test-TcpPortInUse {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+}
+
+function Get-AvailableTcpPort {
+    param([Parameter(Mandatory = $true)][int]$PreferredPort)
+
+    $port = $PreferredPort
+    while (Test-TcpPortInUse -Port $port) {
+        $port++
+    }
+
+    return $port
+}
+
+function Set-N8nCallbackBaseUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$BaseUrl
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $json = Get-Content -LiteralPath $Path -Raw
+    $updated = [System.Text.RegularExpressions.Regex]::Replace(
+        $json,
+        '"BeBaseUrl"\s*:\s*"[^"]*"',
+        { param($match) '"BeBaseUrl": "' + $BaseUrl + '"' })
+
+    if ($updated -ne $json) {
+        Set-Content -LiteralPath $Path -Value $updated -NoNewline
+    }
 }
 
 function Redact-NgrokSensitiveOutput {
@@ -107,15 +232,34 @@ if (-not (Test-Command -Name "ngrok")) {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+Ensure-LocalRabbitMq
+
 $logDirectory = Join-Path $repoRoot ".codex-logs"
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $ngrokStdOutPath = Join-Path $logDirectory "run-local-n8n-ngrok.stdout.log"
 $ngrokStdErrPath = Join-Path $logDirectory "run-local-n8n-ngrok.stderr.log"
-$webApiUrl = if ($WebApiScheme -eq "https") {
-    "https://localhost:$WebApiHttpsPort"
+$webApiStdOutPath = Join-Path $logDirectory "run-local-n8n-webapi.stdout.log"
+$webApiStdErrPath = Join-Path $logDirectory "run-local-n8n-webapi.stderr.log"
+$backgroundStdOutPath = Join-Path $logDirectory "run-local-n8n-background.stdout.log"
+$backgroundStdErrPath = Join-Path $logDirectory "run-local-n8n-background.stderr.log"
+$selectedWebApiPort = if ($WebApiScheme -eq "https") {
+    Get-AvailableTcpPort -PreferredPort $WebApiHttpsPort
 }
 else {
-    "http://localhost:$WebApiHttpPort"
+    Get-AvailableTcpPort -PreferredPort $WebApiHttpPort
+}
+
+if (($WebApiScheme -eq "https" -and $selectedWebApiPort -ne $WebApiHttpsPort) -or
+    ($WebApiScheme -eq "http" -and $selectedWebApiPort -ne $WebApiHttpPort)) {
+    $preferredWebApiPort = if ($WebApiScheme -eq "https") { $WebApiHttpsPort } else { $WebApiHttpPort }
+    Write-Host "Port $preferredWebApiPort is already in use. Using $selectedWebApiPort instead."
+}
+
+$webApiUrl = if ($WebApiScheme -eq "https") {
+    "https://localhost:$selectedWebApiPort"
+}
+else {
+    "http://localhost:$selectedWebApiPort"
 }
 
 $processes = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
@@ -142,13 +286,22 @@ try {
         -NgrokStdOutPath $ngrokStdOutPath `
         -NgrokStdErrPath $ngrokStdErrPath
     $env:Modules__TestGeneration__N8nIntegration__BeBaseUrl = $publicUrl
+    Set-N8nCallbackBaseUrl `
+        -Path (Join-Path $repoRoot "ClassifiedAds.WebAPI/appsettings.Development.json") `
+        -BaseUrl $publicUrl
+    Set-N8nCallbackBaseUrl `
+        -Path (Join-Path $repoRoot "ClassifiedAds.Background/appsettings.json") `
+        -BaseUrl $publicUrl
     Write-Host "ngrok public URL: $publicUrl"
 
     Write-Host "Starting ClassifiedAds.WebAPI on $webApiUrl ..."
+    $previousAspNetCoreUrls = $env:ASPNETCORE_URLS
+    $env:ASPNETCORE_URLS = $webApiUrl
+    $env:ASPNETCORE_ENVIRONMENT = "Development"
     $webApiArgs = @(
         "run",
         "--project", "ClassifiedAds.WebAPI/ClassifiedAds.WebAPI.csproj",
-        "--launch-profile", "https"
+        "--no-launch-profile"
     )
 
     if ($SkipRestore) {
@@ -160,12 +313,20 @@ try {
         -ArgumentList $webApiArgs `
         -WorkingDirectory $repoRoot `
         -WindowStyle Hidden `
+        -RedirectStandardOutput $webApiStdOutPath `
+        -RedirectStandardError $webApiStdErrPath `
         -PassThru
     $processes.Add($webApiProcess)
+    $env:ASPNETCORE_URLS = $previousAspNetCoreUrls
 
-    Wait-ForHttpEndpoint -Url "$webApiUrl/health"
+    Wait-ForHttpEndpoint `
+        -Url "$webApiUrl/alive" `
+        -Process $webApiProcess `
+        -StdOutPath $webApiStdOutPath `
+        -StdErrPath $webApiStdErrPath
 
     Write-Host "Starting ClassifiedAds.Background with callback base URL $publicUrl ..."
+    $env:DOTNET_ENVIRONMENT = "Development"
     $backgroundArgs = @(
         "run",
         "--project", "ClassifiedAds.Background/ClassifiedAds.Background.csproj"
@@ -180,8 +341,16 @@ try {
         -ArgumentList $backgroundArgs `
         -WorkingDirectory $repoRoot `
         -WindowStyle Hidden `
+        -RedirectStandardOutput $backgroundStdOutPath `
+        -RedirectStandardError $backgroundStdErrPath `
         -PassThru
     $processes.Add($backgroundProcess)
+    Start-Sleep -Seconds 5
+    Assert-ProcessRunning `
+        -Process $backgroundProcess `
+        -Name "ClassifiedAds.Background" `
+        -StdOutPath $backgroundStdOutPath `
+        -StdErrPath $backgroundStdErrPath
 
     Write-Host ""
     Write-Host "Local n8n callback stack is running."
@@ -193,7 +362,17 @@ try {
 
     while ($true) {
         Start-Sleep -Seconds 5
-        Wait-ForHttpEndpoint -Url "$webApiUrl/health" -TimeoutSeconds 10
+        Wait-ForHttpEndpoint `
+            -Url "$webApiUrl/alive" `
+            -Process $webApiProcess `
+            -StdOutPath $webApiStdOutPath `
+            -StdErrPath $webApiStdErrPath `
+            -TimeoutSeconds 10
+        Assert-ProcessRunning `
+            -Process $backgroundProcess `
+            -Name "ClassifiedAds.Background" `
+            -StdOutPath $backgroundStdOutPath `
+            -StdErrPath $backgroundStdErrPath
         [void](Wait-ForNgrokPublicUrl `
             -NgrokProcess $ngrokProcess `
             -NgrokStdOutPath $ngrokStdOutPath `

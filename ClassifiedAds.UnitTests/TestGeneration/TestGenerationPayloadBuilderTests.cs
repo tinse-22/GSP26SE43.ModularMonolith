@@ -262,6 +262,10 @@ public class TestGenerationPayloadBuilderTests
         payload.Model.Should().Be("gpt-4.1-mini");
         payload.MaxOutputTokens.Should().Be(1024);
         payload.PreferJsonObjectResponse.Should().BeTrue();
+        payload.PromptConfig.Rules.Should().Contain("Do not generate a Negative test unless the request data is actually invalid");
+        payload.PromptConfig.Rules.Should().Contain("Do not use 401 as a generic negative status");
+        payload.PromptConfig.Rules.Should().Contain("non-existent ID tests must use a syntactically valid ID that was not produced by setup");
+        payload.PromptConfig.TaskInstruction.Should().Contain("use direct endpoint SRS/business rules to supplement expected statuses");
         payload.GlobalBusinessRules.Should().HaveLength(40);
         payload.EndpointBusinessContexts[endpointId].Should().HaveLength(40);
 
