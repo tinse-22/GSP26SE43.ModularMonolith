@@ -233,6 +233,78 @@ public class PreExecutionValidatorContractTests
         result.Warnings.Should().Contain(x => x.Code == "IDENTIFIER_PLACEHOLDER_DUPLICATE_ID_FALLBACK");
     }
 
+    [Fact]
+    public void Validate_Should_Fail_WhenNumericSchemaFieldUsesIdentifierPlaceholder()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.Body = "{\"price\":\"{{productId}}\",\"stock\":10}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), CreateProductSchemaMetadata());
+
+        result.Errors.Should().Contain(x =>
+            x.Code == "REQUEST_SCHEMA_TYPE_MISMATCH" &&
+            x.Target == "Request.Body.price");
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_WhenIdentifierSchemaFieldUsesWrongResourcePlaceholder()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.Body = "{\"name\":\"Sample\",\"price\":10,\"stock\":5,\"categoryId\":\"{{productId}}\"}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), CreateProductSchemaMetadata());
+
+        result.Errors.Should().Contain(x =>
+            x.Code == "REQUEST_SCHEMA_TYPE_MISMATCH" &&
+            x.Target == "Request.Body.categoryId");
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_WhenNumericSchemaFieldUsesNumericPlaceholder()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.Body = "{\"price\":\"{{price}}\",\"stock\":\"{{stock}}\",\"categoryId\":\"{{categoryId}}\"}";
+
+        var variables = new Dictionary<string, string>
+        {
+            ["price"] = "12.5",
+            ["stock"] = "4",
+            ["categoryId"] = Guid.NewGuid().ToString(),
+        };
+        var result = _sut.Validate(testCase, CreateEnvironment(), variables, CreateProductSchemaMetadata());
+
+        result.Errors.Should().NotContain(x => x.Code == "REQUEST_SCHEMA_TYPE_MISMATCH");
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_WhenJsonBodyContainsJavascriptExpression()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Request.Body = "{\"name\":\"long\".repeat(100),\"price\":10}";
+
+        var result = _sut.Validate(testCase, CreateEnvironment(), new Dictionary<string, string>(), CreateProductSchemaMetadata());
+
+        result.Errors.Should().Contain(x => x.Code == "REQUEST_BODY_INVALID_JSON");
+    }
+
+    [Fact]
+    public void Validate_Should_AllowWrongTypeNegativeCase_WhenExpectedBadRequest()
+    {
+        var testCase = CreateBaseTestCase();
+        testCase.Name = "Negative: invalid price type";
+        testCase.TestType = "Negative";
+        testCase.Expectation = new ExecutionTestCaseExpectationDto { ExpectedStatus = "[400]" };
+        testCase.Request.Body = "{\"price\":\"cheap\",\"stock\":5,\"categoryId\":\"{{categoryId}}\"}";
+
+        var result = _sut.Validate(
+            testCase,
+            CreateEnvironment(),
+            new Dictionary<string, string> { ["categoryId"] = Guid.NewGuid().ToString() },
+            CreateProductSchemaMetadata());
+
+        result.Errors.Should().NotContain(x => x.Code == "REQUEST_SCHEMA_TYPE_MISMATCH");
+    }
+
     private static ExecutionTestCaseDto CreateBaseTestCase()
     {
         return new ExecutionTestCaseDto
@@ -262,6 +334,28 @@ public class PreExecutionValidatorContractTests
             Variables = new Dictionary<string, string>(),
             DefaultHeaders = new Dictionary<string, string>(),
             DefaultQueryParams = new Dictionary<string, string>(),
+        };
+    }
+
+    private static ApiEndpointMetadataDto CreateProductSchemaMetadata()
+    {
+        return new ApiEndpointMetadataDto
+        {
+            HasRequiredRequestBody = true,
+            ParameterSchemaPayloads = new List<string>
+            {
+                """
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "price": { "type": "number" },
+                    "stock": { "type": "integer" },
+                    "categoryId": { "type": "string" }
+                  }
+                }
+                """,
+            },
         };
     }
 }

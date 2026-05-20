@@ -104,7 +104,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateHeaders(response, expectation, result), ref checksPerformed, ref checksSkipped);
 
         // 4. Body contains
-        TrackCheck(ValidateBodyContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateBodyContains(response, expectation, testCase, result, variableBag), ref checksPerformed, ref checksSkipped);
 
         // 5. Body not contains
         TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
@@ -709,7 +709,8 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ExecutionTestCaseDto testCase,
-        TestCaseValidationResult result)
+        TestCaseValidationResult result,
+        IReadOnlyDictionary<string, string> variableBag)
     {
         if (string.IsNullOrWhiteSpace(expectation.BodyContains))
         {
@@ -734,6 +735,7 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var normalizedPatterns = patterns?
             .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .Select(pattern => ResolveExpectationPlaceholders(pattern, variableBag))
             .ToList();
 
         if (normalizedPatterns == null || normalizedPatterns.Count == 0)
@@ -802,6 +804,30 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         result.BodyContainsPassed = allPassed || softMode;
         return true;
+    }
+
+    private static string ResolveExpectationPlaceholders(
+        string value,
+        IReadOnlyDictionary<string, string> variableBag)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            variableBag == null ||
+            variableBag.Count == 0 ||
+            !value.Contains("{{", StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        return Regex.Replace(
+            value,
+            @"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
+            match =>
+            {
+                var variableName = match.Groups[1].Value;
+                return variableBag.TryGetValue(variableName, out var resolved)
+                    ? resolved ?? string.Empty
+                    : match.Value;
+            });
     }
 
     private static bool ValidateBodyNotContains(
