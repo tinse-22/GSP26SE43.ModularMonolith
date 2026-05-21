@@ -180,6 +180,67 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_RejectAiPayload_WhenNumericFieldUsesIdentifierPlaceholder()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var endpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "PUT",
+                    Path = "/api/products/{id}",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200 },
+                        new() { StatusCode = 400 },
+                    },
+                    ParameterSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "price": { "type": "number" },
+                            "stock": { "type": "integer" },
+                            "categoryId": { "type": "string" }
+                          }
+                        }
+                        """,
+                    },
+                },
+            });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Request.HttpMethod = "PUT";
+        command.TestCases[0].Request.Url = "/api/products/{id}";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = "{\"price\":\"{{productId}}\",\"stock\":10,\"categoryId\":\"{{categoryId}}\"}";
+        command.TestCases[0].Expectation.ExpectedStatus = "[200]";
+        command.TestCases[0].Variables = new List<AiTestCaseVariableDto>
+        {
+            new() { VariableName = "productId", ExtractFrom = "ResponseBody", JsonPath = "$.data.id" },
+            new() { VariableName = "categoryId", ExtractFrom = "ResponseBody", JsonPath = "$.data.categoryId" },
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*REQUEST_SCHEMA_TYPE_MISMATCH*Request.Body.price*");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ParseHttpMethod_FromMethodAndPathFormat()
     {
         var suite = CreateSuite();

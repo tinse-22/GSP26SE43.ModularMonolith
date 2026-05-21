@@ -79,6 +79,10 @@ public static class TestExecutionServiceCollectionExtensions
                 options.AttemptTimeout.Timeout = System.TimeSpan.FromSeconds(120);
                 options.TotalRequestTimeout.Timeout = System.TimeSpan.FromSeconds(180);
                 options.CircuitBreaker.SamplingDuration = System.TimeSpan.FromSeconds(240);
+                // Test execution must observe each API response independently. A normal
+                // circuit breaker turns early target API failures into a cascade of
+                // transport failures for later cases, hiding the real expectation issues.
+                options.CircuitBreaker.MinimumThroughput = int.MaxValue;
 
                 // Allow a single retry for transient connection errors (e.g. Render cold-start ResponseEnded).
                 // ShouldHandle uses the default transient-error predicate (HttpRequestException, 5xx, 408).

@@ -453,6 +453,24 @@ public class RuleBasedValidatorTests
     }
 
     [Fact]
+    public void Validate_BodyContainsPlaceholder_Should_ResolveFromVariableBag()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"data":{"id":"prod-123"}}""");
+        var testCase = CreateTestCase(bodyContains: """["{{productId}}"]""");
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            variableBag: new Dictionary<string, string> { ["productId"] = "prod-123" });
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.BodyContainsPassed.Should().BeTrue();
+    }
+
+    [Fact]
     public void Validate_BodyNotContainsPresent_Should_Fail()
     {
         // Arrange

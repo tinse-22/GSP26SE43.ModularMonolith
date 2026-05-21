@@ -1,5 +1,6 @@
 using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.DTOs;
+using ClassifiedAds.Contracts.TestGeneration.Validation;
 using ClassifiedAds.Modules.TestExecution.Models;
 using System;
 using System.Collections.Generic;
@@ -53,10 +54,39 @@ public class PreExecutionValidator : IPreExecutionValidator
         ValidatePathParams(testCase, variableBag, environment, result);
         ValidateRequiredQueryParams(testCase, endpointMetadata, result);
         ValidateBody(testCase, endpointMetadata, result);
+        ValidateRequestBodySchema(testCase, endpointMetadata, variableBag, environment, result);
         ValidateUnresolvedPlaceholders(testCase, variableBag, environment, result);
         ValidateVariableChaining(testCase, variableBag, result);
 
         return result;
+    }
+
+    private static void ValidateRequestBodySchema(
+        ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
+        IReadOnlyDictionary<string, string> variableBag,
+        ResolvedExecutionEnvironment environment,
+        PreExecutionValidationResult result)
+    {
+        var variables = BuildMergedVariables(variableBag, environment);
+        foreach (var issue in RequestSchemaPayloadValidator.Validate(
+                     testCase?.Request?.Body,
+                     testCase?.Request?.BodyType,
+                     endpointMetadata,
+                     variables,
+                     ParseExpectedStatuses(testCase?.Expectation?.ExpectedStatus),
+                     testCase?.TestType,
+                     testCase?.Name))
+        {
+            result.Errors.Add(new ValidationFailureModel
+            {
+                Code = issue.Code,
+                Message = issue.Message,
+                Target = issue.Target,
+                Expected = issue.Expected,
+                Actual = issue.Actual,
+            });
+        }
     }
 
     private static void ValidateEnvironment(
@@ -410,19 +440,7 @@ public class PreExecutionValidator : IPreExecutionValidator
         ResolvedExecutionEnvironment environment,
         PreExecutionValidationResult result)
     {
-        var mergedVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (environment?.Variables != null)
-        {
-            foreach (var kvp in environment.Variables)
-            {
-                mergedVars[kvp.Key] = kvp.Value;
-            }
-        }
-
-        foreach (var kvp in variableBag)
-        {
-            mergedVars[kvp.Key] = kvp.Value;
-        }
+        var mergedVars = BuildMergedVariables(variableBag, environment);
 
         // Inject built-in runtime variables that VariableResolver guarantees at execution time.
         // These are always available regardless of environment/variableBag so the validator
@@ -447,6 +465,30 @@ public class PreExecutionValidator : IPreExecutionValidator
         {
             CheckPlaceholders(kvp.Value, $"QueryParam:{kvp.Key}", mergedVars, result);
         }
+    }
+
+    private static Dictionary<string, string> BuildMergedVariables(
+        IReadOnlyDictionary<string, string> variableBag,
+        ResolvedExecutionEnvironment environment)
+    {
+        var mergedVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (environment?.Variables != null)
+        {
+            foreach (var kvp in environment.Variables)
+            {
+                mergedVars[kvp.Key] = kvp.Value;
+            }
+        }
+
+        if (variableBag != null)
+        {
+            foreach (var kvp in variableBag)
+            {
+                mergedVars[kvp.Key] = kvp.Value;
+            }
+        }
+
+        return mergedVars;
     }
 
     private static void CheckPlaceholders(

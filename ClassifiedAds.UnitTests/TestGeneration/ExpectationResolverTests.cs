@@ -413,4 +413,121 @@ public class ExpectationResolverTests
             x.RequirementCode == "REQ-REGISTER" &&
             x.Evidence.Contains("SRS section 4.2", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public void Resolve_Should_AllowDirectSrsBusinessStatus_WhenOpenApiIsIncomplete()
+    {
+        var endpointId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = endpointId,
+            HttpMethod = "POST",
+            TestType = TestType.Negative,
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new() { StatusCode = 201, Schema = "{}" },
+                new() { StatusCode = 401, Schema = "{}" },
+            },
+            SrsRequirements = new List<SrsRequirement>
+            {
+                new()
+                {
+                    Id = requirementId,
+                    EndpointId = endpointId,
+                    RequirementCode = "TC-PROD-CRT-003",
+                    IsReviewed = true,
+                    TestableConstraints = """
+                    [{
+                      "constraint": "categoryId is not a valid ObjectId -> 400",
+                      "expectedStatusCodes": [400],
+                      "bodyContains": ["categoryId", "invalid"],
+                      "jsonPathChecks": { "$.success": "false" }
+                    }]
+                    """,
+                },
+            },
+            LlmExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 401 },
+                BodyContains = new List<string> { "email", "invalid" },
+                JsonPathChecks = new Dictionary<string, string> { ["$.success"] = "false" },
+            },
+        });
+
+        result.Source.Should().Be(ExpectationSource.Srs);
+        result.ExpectedStatusCodes.Should().Equal(400);
+        result.BodyContains.Should().Equal("categoryId", "invalid");
+        result.JsonPathChecks.Should().Contain("$.success", "false");
+    }
+
+    [Fact]
+    public void Resolve_Should_RemoveErrorAssertions_FromSuccessExpectation()
+    {
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.Boundary,
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new() { StatusCode = 201, Schema = "{}" },
+                new() { StatusCode = 400, Schema = "{}" },
+            },
+            LlmExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 201 },
+                BodyContains = new List<string> { "errors", "message", "success" },
+                JsonPathChecks = new Dictionary<string, string>
+                {
+                    ["$.success"] = "false",
+                    ["$.errors.*"] = "email",
+                },
+            },
+        });
+
+        result.ExpectedStatusCodes.Should().Equal(201);
+        result.BodyContains.Should().Equal("message", "success");
+        result.JsonPathChecks.Should().Contain("$.success", "true");
+        result.JsonPathChecks.Should().NotContainKey("$.errors.*");
+    }
+
+    [Fact]
+    public void Resolve_Should_RemoveSuccessDataAssertions_FromFailureExpectation()
+    {
+        var resolver = new ExpectationResolver(new Mock<ILogger<ExpectationResolver>>().Object);
+
+        var result = resolver.Resolve(new GeneratedScenarioContext
+        {
+            EndpointId = Guid.NewGuid(),
+            HttpMethod = "POST",
+            TestType = TestType.Negative,
+            SwaggerResponses = new List<ApiEndpointResponseDescriptorDto>
+            {
+                new() { StatusCode = 201, Schema = "{}" },
+                new() { StatusCode = 409, Schema = "{}" },
+            },
+            LlmExpectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 409 },
+                BodyContains = new List<string> { "data", "already exists" },
+                JsonPathChecks = new Dictionary<string, string>
+                {
+                    ["$.success"] = "true",
+                    ["$.data.id"] = "string",
+                    ["$.message"] = "already exists",
+                },
+            },
+        });
+
+        result.ExpectedStatusCodes.Should().Equal(409);
+        result.BodyContains.Should().Equal("already exists");
+        result.JsonPathChecks.Should().Contain("$.success", "false");
+        result.JsonPathChecks.Should().Contain("$.message", "already exists");
+        result.JsonPathChecks.Should().NotContainKey("$.data.id");
+    }
 }
