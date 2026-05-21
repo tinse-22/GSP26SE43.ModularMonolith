@@ -151,6 +151,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IN8nIntegrationService _n8nService;
     private readonly ILlmAssistantGatewayService _llmGatewayService;
     private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
+    private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
@@ -159,6 +160,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IN8nIntegrationService n8nService,
         ILlmAssistantGatewayService llmGatewayService,
         ILlmSuggestionFeedbackContextService feedbackContextService,
+        IEndpointRequirementMapper requirementMapper,
         IExpectationResolver expectationResolver,
         ILogger<LlmScenarioSuggester> logger)
     {
@@ -166,6 +168,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
         _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
+        _requirementMapper = requirementMapper ?? throw new ArgumentNullException(nameof(requirementMapper));
         _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
