@@ -106,29 +106,6 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
             signals.AddRange(overlap.Select(x => $"token:{x}"));
         }
 
-        var endpointIntent = ResolveIntent(endpointSignals.SemanticTokens);
-        var requirementIntent = ResolveIntent(requirementTokens);
-        if (!string.IsNullOrWhiteSpace(endpointIntent) &&
-            string.Equals(endpointIntent, requirementIntent, StringComparison.OrdinalIgnoreCase))
-        {
-            signals.Add($"intent:{endpointIntent}");
-            return Build(requirement, RequirementRelevance.Direct, RequirementMatchConfidence.High, signals);
-        }
-
-        if (IsDependencyIntent(endpointIntent, requirementIntent))
-        {
-            signals.Add($"dependency:{requirementIntent}->{endpointIntent}");
-            return Build(requirement, RequirementRelevance.Dependency, RequirementMatchConfidence.Medium, signals);
-        }
-
-        if (!string.IsNullOrWhiteSpace(endpointIntent) &&
-            !string.IsNullOrWhiteSpace(requirementIntent) &&
-            !string.Equals(endpointIntent, requirementIntent, StringComparison.OrdinalIgnoreCase) &&
-            requirement.RequirementType is not SrsRequirementType.Security and not SrsRequirementType.Constraint)
-        {
-            return Build(requirement, RequirementRelevance.None, RequirementMatchConfidence.Low, signals);
-        }
-
         var fieldOverlap = endpointSignals.FieldTokens.Intersect(requirementTokens, StringComparer.OrdinalIgnoreCase).ToList();
         if (fieldOverlap.Count > 0)
         {
@@ -147,7 +124,7 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
             return Build(requirement, RequirementRelevance.Partial, RequirementMatchConfidence.Medium, signals);
         }
 
-        if (overlap.Count == 1 && IsStrongEndpointToken(overlap[0]))
+        if (overlap.Count == 1 && IsStrongDomainToken(overlap[0]))
         {
             return Build(requirement, RequirementRelevance.Partial, RequirementMatchConfidence.Medium, signals);
         }
@@ -274,42 +251,6 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
         return normalized;
     }
 
-    private static string ResolveIntent(HashSet<string> tokens)
-    {
-        if (tokens.Contains("register") || tokens.Contains("registration") || tokens.Contains("signup"))
-        {
-            return "register";
-        }
-
-        if (tokens.Contains("login") || tokens.Contains("signin") || tokens.Contains("authenticate") || tokens.Contains("token"))
-        {
-            return "login";
-        }
-
-        if (tokens.Contains("health") || tokens.Contains("heartbeat"))
-        {
-            return "health";
-        }
-
-        if (tokens.Contains("category"))
-        {
-            return "category";
-        }
-
-        if (tokens.Contains("product"))
-        {
-            return "product";
-        }
-
-        return null;
-    }
-
-    private static bool IsDependencyIntent(string endpointIntent, string requirementIntent)
-    {
-        return string.Equals(endpointIntent, "login", StringComparison.OrdinalIgnoreCase) &&
-               string.Equals(requirementIntent, "register", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static bool IsCrossCuttingRequirement(SrsRequirement requirement, HashSet<string> requirementTokens)
     {
         if (requirement.RequirementType is SrsRequirementType.Security or SrsRequirementType.Constraint)
@@ -320,8 +261,12 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
         return SecurityTokens.Any(requirementTokens.Contains) || ValidationTokens.Any(requirementTokens.Contains);
     }
 
-    private static bool IsStrongEndpointToken(string token)
-        => token is "register" or "registration" or "login" or "health" or "category" or "product";
+    private static bool IsStrongDomainToken(string token)
+        => !string.IsNullOrWhiteSpace(token)
+           && token.Length >= 4
+           && !StopWords.Contains(token)
+           && !ValidationTokens.Contains(token, StringComparer.OrdinalIgnoreCase)
+           && !SecurityTokens.Contains(token, StringComparer.OrdinalIgnoreCase);
 
     private static bool MatchesMappedEndpointPath(ApiEndpointMetadataDto endpoint, string mappedEndpointPath)
     {

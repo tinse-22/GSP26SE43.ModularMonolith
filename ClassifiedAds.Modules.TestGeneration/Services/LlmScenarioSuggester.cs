@@ -154,8 +154,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IN8nIntegrationService _n8nService;
     private readonly ILlmAssistantGatewayService _llmGatewayService;
     private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
-    private readonly IExpectationResolver _expectationResolver;
     private readonly IEndpointRequirementMapper _requirementMapper;
+    private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
     public LlmScenarioSuggester(
@@ -163,16 +163,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IN8nIntegrationService n8nService,
         ILlmAssistantGatewayService llmGatewayService,
         ILlmSuggestionFeedbackContextService feedbackContextService,
-        IExpectationResolver expectationResolver,
         IEndpointRequirementMapper requirementMapper,
+        IExpectationResolver expectationResolver,
         ILogger<LlmScenarioSuggester> logger)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
         _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
-        _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _requirementMapper = requirementMapper ?? throw new ArgumentNullException(nameof(requirementMapper));
+        _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -1064,7 +1064,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                         codeToId.TryGetValue(s.Expectation.RequirementCode.Trim(), out var requirementId)
                             ? requirementId
                             : null),
+                CredentialPolicy = s.CredentialPolicy,
+                LockedFields = s.LockedFields ?? new List<string>(),
             };
+
+            parsedScenario.Tags = MergeCredentialControlTags(
+                parsedScenario.Tags,
+                parsedScenario.CredentialPolicy,
+                parsedScenario.LockedFields);
 
             if (parsedScenario.PrimaryRequirementId.HasValue &&
                 !parsedScenario.CoveredRequirementIds.Contains(parsedScenario.PrimaryRequirementId.Value))
@@ -1076,6 +1083,61 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         return scenarios;
+    }
+
+    private static List<string> MergeCredentialControlTags(
+        List<string> tags,
+        string credentialPolicy,
+        IReadOnlyCollection<string> lockedFields)
+    {
+        var merged = new List<string>(tags ?? new List<string>());
+        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(credentialPolicy))
+        {
+            var normalizedPolicy = NormalizeCredentialPolicy(credentialPolicy);
+            if (!string.IsNullOrWhiteSpace(normalizedPolicy))
+            {
+                var policyTag = $"cred-policy:{normalizedPolicy}";
+                if (seen.Add(policyTag))
+                {
+                    merged.Add(policyTag);
+                }
+            }
+        }
+
+        if (lockedFields != null)
+        {
+            foreach (var field in lockedFields)
+            {
+                if (string.IsNullOrWhiteSpace(field))
+                {
+                    continue;
+                }
+
+                var normalizedField = field.Trim().ToLowerInvariant();
+                var lockTag = $"cred-lock:{normalizedField}";
+                if (seen.Add(lockTag))
+                {
+                    merged.Add(lockTag);
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    private static string NormalizeCredentialPolicy(string policy)
+    {
+        var normalized = policy?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "preserve" => "preserve",
+            "rewrite_email" => "rewrite_email",
+            "rewrite_password" => "rewrite_password",
+            "rewrite_both" => "rewrite_both",
+            _ => string.Empty,
+        };
     }
 
     private static List<string> NormalizeRegisterBodyContains(
@@ -1572,12 +1634,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
             }
 
-            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata) &&
-                IsLoginLikeEndpoint(endpoint, metadata))
-            {
-                placeholders["email"] = "registeredEmail";
-                placeholders["password"] = "registeredPassword";
-            }
         }
 
         return placeholders;

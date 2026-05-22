@@ -303,8 +303,10 @@ public class TestResultCollector : ITestResultCollector
     // ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// A failed case fails the whole run only when execution never reached an HTTP response
-    /// (connection failure, DNS error, timeout before any response, etc.).
+    /// A failed case fails the whole run only when it is an actual transport/runtime execution
+    /// failure (connection/DNS/timeout before any HTTP response).
+    /// Validation/pre-check failures (schema mismatch, unresolved variable, missing env values)
+    /// should fail the case but not mark the whole run lifecycle as Failed.
     /// </summary>
     private static bool IsExecutionFailure(TestCaseExecutionResult caseResult)
     {
@@ -313,8 +315,13 @@ public class TestResultCollector : ITestResultCollector
             return false;
         }
 
-        return string.Equals(caseResult.Status, "Failed", StringComparison.OrdinalIgnoreCase)
-            && !caseResult.HttpStatusCode.HasValue;
+        if (!string.Equals(caseResult.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return caseResult.FailureReasons?.Any(f =>
+            string.Equals(f?.Code, "HTTP_REQUEST_ERROR", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     private static string TruncateBody(string body)
