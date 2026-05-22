@@ -236,11 +236,32 @@ public class TestOrderController : ControllerBase
     }
 
     /// <summary>
+    /// Returns recent generation jobs for this suite.
+    /// </summary>
+    [Authorize(Permissions.GenerateTestCases)]
+    [HttpGet("generation-jobs")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<GenerationJobStatusDto>>> GetGenerationJobs(
+        Guid suiteId,
+        [FromQuery] int limit = 20)
+    {
+        var jobs = await _dispatcher.DispatchAsync(new GetGenerationJobsQuery
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = _currentUser.UserId,
+            Limit = limit,
+        });
+
+        return Ok(jobs);
+    }
+
+    /// <summary>
     /// Callback endpoint called by n8n after AI test-case generation.
     /// Authentication is via the x-callback-api-key header (shared secret) instead of JWT.
     /// </summary>
     /// <returns><placeholder>A <see cref="Task"/> representing the asynchronous operation.</placeholder></returns>
-        [AllowAnonymous]
+    [AllowAnonymous]
     [HttpPost("test-cases/from-ai")]
     [Consumes("application/json")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

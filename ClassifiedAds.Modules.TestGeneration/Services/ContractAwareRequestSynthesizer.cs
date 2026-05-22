@@ -91,7 +91,7 @@ internal static class ContractAwareRequestSynthesizer
         var bodyNode = BuildBodyNode(context, testType);
         if (bodyNode != null)
         {
-            ApplyPlaceholderHints(bodyNode, context);
+            ApplyPlaceholderHints(bodyNode, context, testType);
             result.BodyType = InferBodyType(context, bodyNode);
             result.Body = bodyNode.ToJsonString(JsonOptions);
         }
@@ -123,7 +123,7 @@ internal static class ContractAwareRequestSynthesizer
                 : repair.BodyType;
         }
 
-        scenario.SuggestedBody = NormalizeBodyAgainstContract(scenario.SuggestedBody, context);
+        scenario.SuggestedBody = NormalizeBodyAgainstContract(scenario.SuggestedBody, context, scenario.SuggestedTestType);
 
         if (scenario.Variables == null || scenario.Variables.Count == 0)
         {
@@ -133,7 +133,7 @@ internal static class ContractAwareRequestSynthesizer
         return scenario;
     }
 
-    private static string NormalizeBodyAgainstContract(string body, ContractAwareRequestContext context)
+    private static string NormalizeBodyAgainstContract(string body, ContractAwareRequestContext context, TestType testType)
     {
         if (string.IsNullOrWhiteSpace(body) || !TryParseSchema(context?.RequestBodySchema, out var schemaRoot))
         {
@@ -149,7 +149,7 @@ internal static class ContractAwareRequestSynthesizer
             }
 
             PruneNodeToSchema(node, schemaRoot);
-            ApplyPlaceholderHints(node, context);
+            ApplyPlaceholderHints(node, context, testType);
             return node.ToJsonString(JsonOptions);
         }
         catch
@@ -330,11 +330,32 @@ internal static class ContractAwareRequestSynthesizer
     {
         var result = new List<N8nTestCaseVariable>();
 
-        if (bodyNode != null && context.IsRegisterLikeEndpoint)
+        if (bodyNode != null)
         {
-            if (TryFindJsonPath(bodyNode, "email", out var emailPath))
+            foreach (var mapping in context.PlaceholderByFieldName ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
             {
-                if (testType == TestType.HappyPath)
+                if (string.IsNullOrWhiteSpace(mapping.Key) || string.IsNullOrWhiteSpace(mapping.Value))
+                {
+                    continue;
+                }
+
+                if (!TryFindJsonPath(bodyNode, mapping.Key, out var mappedPath))
+                {
+                    continue;
+                }
+
+                result.Add(new N8nTestCaseVariable
+                {
+                    VariableName = mapping.Value,
+                    ExtractFrom = "RequestBody",
+                    JsonPath = mappedPath,
+                });
+            }
+
+            // Backward-compatible auth aliases for legacy auth flows only.
+            if (context.IsRegisterLikeEndpoint)
+            {
+                if (TryFindJsonPath(bodyNode, "email", out var emailPath))
                 {
                     result.Add(new N8nTestCaseVariable
                     {
@@ -342,19 +363,16 @@ internal static class ContractAwareRequestSynthesizer
                         ExtractFrom = "RequestBody",
                         JsonPath = emailPath,
                     });
+
+                    result.Add(new N8nTestCaseVariable
+                    {
+                        VariableName = testType == TestType.HappyPath ? "registeredEmail" : "requestEmail",
+                        ExtractFrom = "RequestBody",
+                        JsonPath = emailPath,
+                    });
                 }
 
-                result.Add(new N8nTestCaseVariable
-                {
-                    VariableName = testType == TestType.HappyPath ? "registeredEmail" : "requestEmail",
-                    ExtractFrom = "RequestBody",
-                    JsonPath = emailPath,
-                });
-            }
-
-            if (TryFindJsonPath(bodyNode, "password", out var passwordPath))
-            {
-                if (testType == TestType.HappyPath)
+                if (TryFindJsonPath(bodyNode, "password", out var passwordPath))
                 {
                     result.Add(new N8nTestCaseVariable
                     {
@@ -362,14 +380,14 @@ internal static class ContractAwareRequestSynthesizer
                         ExtractFrom = "RequestBody",
                         JsonPath = passwordPath,
                     });
-                }
 
-                result.Add(new N8nTestCaseVariable
-                {
-                    VariableName = testType == TestType.HappyPath ? "registeredPassword" : "requestPassword",
-                    ExtractFrom = "RequestBody",
-                    JsonPath = passwordPath,
-                });
+                    result.Add(new N8nTestCaseVariable
+                    {
+                        VariableName = testType == TestType.HappyPath ? "registeredPassword" : "requestPassword",
+                        ExtractFrom = "RequestBody",
+                        JsonPath = passwordPath,
+                    });
+                }
             }
         }
 
@@ -615,12 +633,26 @@ internal static class ContractAwareRequestSynthesizer
         return BuildHeuristicStringValue(fieldName, parameter?.DataType, parameter?.Format, null, null);
     }
 
-    private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context)
+    private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
     {
         if (node is JsonObject obj)
         {
             foreach (var property in obj.ToList())
             {
+                // Preserve negative login intent: do not auto-bind password to registeredPassword
+                // for negative auth scenarios (e.g. wrong/invalid password).
+                if (context.IsLoginLikeEndpoint &&
+                    testType == TestType.Negative &&
+                    string.Equals(property.Key, "password", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (property.Value != null)
+                    {
+                        ApplyPlaceholderHints(property.Value, context, testType);
+                    }
+
+                    continue;
+                }
+
                 var placeholder = GetPlaceholder(context, property.Key);
                 if (!string.IsNullOrWhiteSpace(placeholder) && IsScalarLike(property.Value))
                 {
@@ -630,7 +662,7 @@ internal static class ContractAwareRequestSynthesizer
 
                 if (property.Value != null)
                 {
-                    ApplyPlaceholderHints(property.Value, context);
+                    ApplyPlaceholderHints(property.Value, context, testType);
                 }
             }
 
@@ -643,7 +675,7 @@ internal static class ContractAwareRequestSynthesizer
             {
                 if (item != null)
                 {
-                    ApplyPlaceholderHints(item, context);
+                    ApplyPlaceholderHints(item, context, testType);
                 }
             }
         }

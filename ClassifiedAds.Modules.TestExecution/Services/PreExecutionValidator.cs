@@ -78,6 +78,21 @@ public class PreExecutionValidator : IPreExecutionValidator
                      testCase?.TestType,
                      testCase?.Name))
         {
+            // Identifier placeholder resource mismatch (e.g. categoryId uses {{productId}})
+            // should not hard-stop execution, because runtime value may still be a valid ID.
+            // Keep strict numeric/type mismatches as errors.
+            if (string.Equals(issue.Code, "REQUEST_SCHEMA_TYPE_MISMATCH", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(issue.Expected) &&
+                issue.Expected.StartsWith("Placeholder matching resource", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "REQUEST_SCHEMA_IDENTIFIER_PLACEHOLDER_MISMATCH",
+                    Message = issue.Message + " Request will continue; consider aligning placeholder name with target field for clarity.",
+                });
+                continue;
+            }
+
             result.Errors.Add(new ValidationFailureModel
             {
                 Code = issue.Code,
