@@ -59,7 +59,11 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "8. request.body must be a serialized JSON string or null using exact OpenAPI field names. request.bodyType must match the OpenAPI content type.\n" +
         "9. expectation.expectedStatus must use documented OpenAPI responses. If an SRS business rule has no compatible documented status, omit that scenario.\n" +
         "10. coveredRequirementIds may include only endpoint-relevant direct/partial SRS requirements; dependency requirements are setup context only.\n" +
-        "11. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
+        "11. Do not generate a Negative test unless the request data is actually invalid for this endpoint; valid boundary values are Boundary or HappyPath, not Negative.\n" +
+        "12. Distinguish auth-negative from business-negative: missing/invalid Authorization expects 401; authenticated validation/business failures use 400/404/409 when SRS or endpoint rules state them. Do not use 401 as a generic negative status.\n" +
+        "13. Login wrong-password and non-existent-email tests must use credentials that cannot match the registered setup account. Do not reuse {{registeredPassword}} for wrong-password cases.\n" +
+        "14. For dependent resources such as product.categoryId, create or reference a setup variable for existing IDs; non-existent ID tests must use a syntactically valid ID that was not produced by setup.\n" +
+        "15. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -360,6 +364,10 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
         var sb = new StringBuilder();
         sb.Append($"Generate mixed test cases for this ordered REST API sequence (suite: {suiteName}).");
+        sb.AppendLine();
+        sb.AppendLine("Use OpenAPI for request shape and documented responses, and use direct endpoint SRS/business rules to supplement expected statuses when OpenAPI is incomplete.");
+        sb.AppendLine("Never turn every Negative case on protected endpoints into 401: only authorization failures are 401; authenticated validation and business-rule failures should use the endpoint-relevant 400/404/409 expectation when provided.");
+        sb.AppendLine("Preserve dependency intent: setup-created IDs represent existing resources, while non-existent-resource tests must use distinct valid IDs that setup did not create.");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -535,6 +543,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
         sb.AppendLine();
         sb.AppendLine("Generate mixed test cases (HappyPath, Boundary, Negative) for this endpoint when supported by OpenAPI and endpoint-relevant SRS. OpenAPI is the structural frame; SRS is business intent.");
+        sb.AppendLine("Negative means the submitted request violates a documented validation, authorization, existence, or conflict rule. If the request is valid, generate HappyPath/Boundary instead.");
+        sb.AppendLine("For protected endpoints, use 401 only for missing/invalid auth. With valid auth, use the business validation status from SRS/OpenAPI such as 400, 404, or 409.");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {

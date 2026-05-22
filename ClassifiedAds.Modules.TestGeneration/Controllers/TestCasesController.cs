@@ -263,6 +263,7 @@ public class TestCasesController : ControllerBase
             BodyNotContains = request.Expectation?.BodyNotContains,
             JsonPathChecks = request.Expectation?.JsonPathChecks,
             MaxResponseTime = request.Expectation?.MaxResponseTime,
+            ExpectedProvenance = request.Expectation?.ExpectedProvenance,
             Variables = request.Variables?.Select(v => new VariableInput
             {
                 VariableName = v.VariableName,
@@ -327,6 +328,7 @@ public class TestCasesController : ControllerBase
             BodyNotContains = request.Expectation?.BodyNotContains,
             JsonPathChecks = request.Expectation?.JsonPathChecks,
             MaxResponseTime = request.Expectation?.MaxResponseTime,
+            ExpectedProvenance = request.Expectation?.ExpectedProvenance,
             Variables = request.Variables?.Select(v => new VariableInput
             {
                 VariableName = v.VariableName,

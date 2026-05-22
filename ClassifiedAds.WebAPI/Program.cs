@@ -229,7 +229,8 @@ services.AddCors(options =>
     options.AddPolicy("AllowedOrigins", builder => builder
         .WithOrigins(appSettings.CORS.AllowedOrigins)
         .AllowAnyMethod()
-        .AllowAnyHeader());
+        .AllowAnyHeader()
+        .AllowCredentials());
 
     options.AddPolicy("SignalRHubs", builder => builder
         .WithOrigins(appSettings.CORS.AllowedOrigins)

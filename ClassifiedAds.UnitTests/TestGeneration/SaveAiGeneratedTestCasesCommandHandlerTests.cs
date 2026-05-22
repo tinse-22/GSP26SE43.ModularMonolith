@@ -180,6 +180,67 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_RejectAiPayload_WhenNumericFieldUsesIdentifierPlaceholder()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var endpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "PUT",
+                    Path = "/api/products/{id}",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200 },
+                        new() { StatusCode = 400 },
+                    },
+                    ParameterSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "price": { "type": "number" },
+                            "stock": { "type": "integer" },
+                            "categoryId": { "type": "string" }
+                          }
+                        }
+                        """,
+                    },
+                },
+            });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Request.HttpMethod = "PUT";
+        command.TestCases[0].Request.Url = "/api/products/{id}";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = "{\"price\":\"{{productId}}\",\"stock\":10,\"categoryId\":\"{{categoryId}}\"}";
+        command.TestCases[0].Expectation.ExpectedStatus = "[200]";
+        command.TestCases[0].Variables = new List<AiTestCaseVariableDto>
+        {
+            new() { VariableName = "productId", ExtractFrom = "ResponseBody", JsonPath = "$.data.id" },
+            new() { VariableName = "categoryId", ExtractFrom = "ResponseBody", JsonPath = "$.data.categoryId" },
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*REQUEST_SCHEMA_TYPE_MISMATCH*Request.Body.price*");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ParseHttpMethod_FromMethodAndPathFormat()
     {
         var suite = CreateSuite();
@@ -702,6 +763,50 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception, string>>()),
             Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ResolvePrimaryRequirement_FromRequirementCode_WhenIdsMissing()
+    {
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var requirement = new SrsRequirement
+        {
+            Id = reqId,
+            SrsDocumentId = srsDocId,
+            RequirementCode = "REQ-REGISTER",
+            Title = "Register user",
+            Description = "Successful registration returns created user data.",
+            TestableConstraints = """[{ "constraint": "register -> 201", "expectedOutcome": "201 Created" }]""",
+        };
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement> { requirement }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement> { requirement });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Expectation = new AiTestCaseExpectationDto
+        {
+            ExpectedStatus = "[201]",
+            RequirementCode = "REQ-REGISTER",
+        };
+
+        await _handler.HandleAsync(command);
+
+        _expectationRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseExpectation>(e =>
+                e.PrimaryRequirementId == reqId &&
+                e.RequirementCode == "REQ-REGISTER" &&
+                e.ExpectationSource == ExpectationSource.Srs.ToString() &&
+                e.ExpectedProvenance.Contains("\"source\":\"srs\"", StringComparison.OrdinalIgnoreCase)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static TestSuite CreateSuite()

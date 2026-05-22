@@ -36,6 +36,11 @@ public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
                 TestCaseId = testCaseId,
                 ExpectedStatus = JsonSerializer.Serialize(new[] { 200 }, JsonOpts),
                 ExpectationSource = ExpectationSource.Default.ToString(),
+                ExpectedProvenance = ExpectedProvenanceBuilder.Build(new N8nTestCaseExpectation
+                {
+                    ExpectedStatus = new List<int> { 200 },
+                    ExpectationSource = ExpectationSource.Default.ToString(),
+                }),
             };
         }
 
@@ -55,6 +60,7 @@ public class TestCaseExpectationBuilder : ITestCaseExpectationBuilder
                 : source.ExpectationSource,
             RequirementCode = source.RequirementCode,
             PrimaryRequirementId = source.PrimaryRequirementId,
+            ExpectedProvenance = ExpectedProvenanceBuilder.Build(source),
         };
     }
 

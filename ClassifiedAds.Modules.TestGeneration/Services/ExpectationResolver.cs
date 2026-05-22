@@ -48,7 +48,7 @@ public sealed class ExpectationResolver : IExpectationResolver
                     merged.RequirementCode,
                     string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()),
                     string.Join(",", llm.ExpectedStatusCodes ?? new List<int>()));
-                return ConstrainToOpenApi(merged, context);
+                return WithProvenance(ConstrainToOpenApi(merged, context), context);
             }
 
             _logger.LogInformation(
@@ -59,7 +59,7 @@ public sealed class ExpectationResolver : IExpectationResolver
                 string.Join(",", srs.ExpectedStatusCodes ?? new List<int>()),
                 string.Join(",", srs.BodyContains ?? new List<string>()),
                 string.Join(", ", (srs.JsonPathChecks ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}:{kv.Value}")));
-            return ConstrainToOpenApi(srs, context);
+            return WithProvenance(ConstrainToOpenApi(srs, context), context);
         }
 
         if (srs?.HasExplicitSrsStatus == true)
@@ -83,7 +83,7 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
         {
-            return ConstrainToOpenApi(EnrichFromSrsAndSwagger(llm, context), context);
+            return WithProvenance(ConstrainToOpenApi(EnrichFromSrsAndSwagger(llm, context), context), context);
         }
 
         if (!string.IsNullOrWhiteSpace(srsReason))
@@ -103,7 +103,7 @@ public sealed class ExpectationResolver : IExpectationResolver
                 endpointInfo,
                 context.TestType,
                 string.Join(",", swagger.ExpectedStatusCodes ?? new List<int>()));
-            return swagger;
+            return WithProvenance(swagger, context);
         }
 
         if (llm != null)
@@ -113,7 +113,7 @@ public sealed class ExpectationResolver : IExpectationResolver
                 endpointInfo,
                 context.TestType,
                 string.Join(",", llm.ExpectedStatusCodes ?? new List<int>()));
-            return ConstrainToOpenApi(llm, context);
+            return WithProvenance(ConstrainToOpenApi(llm, context), context);
         }
 
         var def = BuildDefault(context);
@@ -123,7 +123,7 @@ public sealed class ExpectationResolver : IExpectationResolver
             context.TestType,
             context.HttpMethod,
             string.Join(",", def.ExpectedStatusCodes ?? new List<int>()));
-        return ConstrainToOpenApi(def, context);
+        return WithProvenance(ConstrainToOpenApi(def, context), context);
     }
 
     private static bool CanUseSrsStatusOverride(
@@ -253,7 +253,10 @@ public sealed class ExpectationResolver : IExpectationResolver
     public N8nTestCaseExpectation ResolveToN8nExpectation(GeneratedScenarioContext context)
     {
         var resolved = Resolve(context);
-        return ToN8nExpectation(resolved);
+        var expectation = ToN8nExpectation(resolved);
+        var requirement = FindRequirementForProvenance(context, expectation.PrimaryRequirementId, expectation.RequirementCode);
+        expectation.ExpectedProvenance = ExpectedProvenanceBuilder.Build(expectation, requirement);
+        return expectation;
     }
 
     public static N8nTestCaseExpectation ToN8nExpectation(ResolvedExpectation resolved)
@@ -265,18 +268,74 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         var expectedStatus = resolved.ExpectedStatusCodes?.Count > 0 ? resolved.ExpectedStatusCodes : new List<int> { 200 };
 
+        var sanitized = SanitizeAssertionsForStatuses(resolved, expectedStatus);
+
         return new N8nTestCaseExpectation
         {
             ExpectedStatus = expectedStatus,
-            ResponseSchema = resolved.ResponseSchema,
-            HeaderChecks = resolved.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            BodyContains = resolved.BodyContains ?? new List<string>(),
-            BodyNotContains = resolved.BodyNotContains ?? new List<string>(),
-            JsonPathChecks = ReconcileJsonPathChecksWithStatuses(resolved.JsonPathChecks, expectedStatus),
-            MaxResponseTime = resolved.MaxResponseTime,
-            ExpectationSource = resolved.Source.ToString(),
-            RequirementCode = resolved.RequirementCode,
-            PrimaryRequirementId = resolved.PrimaryRequirementId,
+            ResponseSchema = sanitized.ResponseSchema,
+            HeaderChecks = sanitized.HeaderChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            BodyContains = sanitized.BodyContains ?? new List<string>(),
+            BodyNotContains = sanitized.BodyNotContains ?? new List<string>(),
+            JsonPathChecks = sanitized.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            MaxResponseTime = sanitized.MaxResponseTime,
+            ExpectationSource = sanitized.Source.ToString(),
+            RequirementCode = sanitized.RequirementCode,
+            PrimaryRequirementId = sanitized.PrimaryRequirementId,
+            ExpectedProvenance = sanitized.ExpectedProvenance,
+        };
+    }
+
+    private static SrsRequirement FindRequirementForProvenance(
+        GeneratedScenarioContext context,
+        Guid? requirementId,
+        string requirementCode)
+    {
+        if (context?.SrsRequirements == null || context.SrsRequirements.Count == 0)
+        {
+            return null;
+        }
+
+        if (requirementId.HasValue)
+        {
+            var byId = context.SrsRequirements.FirstOrDefault(x => x.Id == requirementId.Value);
+            if (byId != null)
+            {
+                return byId;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(requirementCode)
+            ? null
+            : context.SrsRequirements.FirstOrDefault(x =>
+                string.Equals(x.RequirementCode, requirementCode, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static ResolvedExpectation WithProvenance(
+        ResolvedExpectation result,
+        GeneratedScenarioContext context)
+    {
+        if (result == null || !string.IsNullOrWhiteSpace(result.ExpectedProvenance))
+        {
+            return result;
+        }
+
+        var expectation = ToN8nExpectation(result);
+        var requirement = FindRequirementForProvenance(context, result.PrimaryRequirementId, result.RequirementCode);
+        return new ResolvedExpectation
+        {
+            ExpectedStatusCodes = result.ExpectedStatusCodes,
+            ResponseSchema = result.ResponseSchema,
+            HeaderChecks = result.HeaderChecks,
+            BodyContains = result.BodyContains,
+            BodyNotContains = result.BodyNotContains,
+            JsonPathChecks = result.JsonPathChecks,
+            MaxResponseTime = result.MaxResponseTime,
+            Source = result.Source,
+            PrimaryRequirementId = result.PrimaryRequirementId,
+            RequirementCode = result.RequirementCode,
+            HasExplicitSrsStatus = result.HasExplicitSrsStatus,
+            ExpectedProvenance = ExpectedProvenanceBuilder.Build(expectation, requirement),
         };
     }
 
@@ -288,7 +347,7 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         if (result == null || context?.SwaggerResponses == null || context.SwaggerResponses.Count == 0)
         {
-            return result;
+            return SanitizeAssertionsForStatuses(result, result?.ExpectedStatusCodes);
         }
 
         var documentedStatuses = context.SwaggerResponses
@@ -299,21 +358,23 @@ public sealed class ExpectationResolver : IExpectationResolver
             .ToList();
         if (documentedStatuses.Count == 0)
         {
-            return result;
+            return SanitizeAssertionsForStatuses(result, result.ExpectedStatusCodes);
         }
+
+        var allowedStatuses = BuildAllowedStatusCodes(context, documentedStatuses);
 
         var current = result.ExpectedStatusCodes?.Count > 0
             ? result.ExpectedStatusCodes
             : new List<int>();
         var filtered = current
-            .Where(documentedStatuses.Contains)
+            .Where(allowedStatuses.Contains)
             .Distinct()
             .OrderBy(x => x)
             .ToList();
 
         if (filtered.Count == 0)
         {
-            filtered = SelectCompatibleDocumentedStatuses(documentedStatuses, context.TestType, current);
+            filtered = SelectCompatibleDocumentedStatuses(allowedStatuses, context.TestType, current);
         }
 
         if (filtered.Count == 0)
@@ -321,13 +382,78 @@ public sealed class ExpectationResolver : IExpectationResolver
             var swagger = TryResolveFromSwagger(context);
             if (swagger != null)
             {
-                return swagger;
+                return SanitizeAssertionsForStatuses(swagger, swagger.ExpectedStatusCodes);
             }
 
-            filtered = documentedStatuses.Take(1).ToList();
+            filtered = allowedStatuses.Take(1).ToList();
         }
 
-        return CopyWithStatuses(result, filtered);
+        return SanitizeAssertionsForStatuses(CopyWithStatuses(result, filtered), filtered);
+    }
+
+    private static List<int> BuildAllowedStatusCodes(
+        GeneratedScenarioContext context,
+        IReadOnlyCollection<int> documentedStatuses)
+    {
+        var result = documentedStatuses?
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList() ?? new List<int>();
+
+        foreach (var status in GetDirectSrsStatusCodes(context))
+        {
+            if (result.Contains(status))
+            {
+                continue;
+            }
+
+            var srsStatus = new ResolvedExpectation
+            {
+                ExpectedStatusCodes = new List<int> { status },
+                HasExplicitSrsStatus = true,
+            };
+
+            if (CanUseSrsStatusOverride(srsStatus, context, new ResolvedExpectation
+            {
+                ExpectedStatusCodes = result,
+            }))
+            {
+                result.Add(status);
+            }
+        }
+
+        return result
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+    }
+
+    private static IEnumerable<int> GetDirectSrsStatusCodes(GeneratedScenarioContext context)
+    {
+        if (context?.SrsRequirements == null || context.SrsRequirements.Count == 0)
+        {
+            return Enumerable.Empty<int>();
+        }
+
+        var result = new List<int>();
+        foreach (var requirement in RankRequirements(context).Where(x => IsDirectEndpointRequirement(x, context)))
+        {
+            foreach (var constraint in ParseConstraints(requirement))
+            {
+                var statuses = NormalizeStatuses(
+                    constraint.ExpectedStatusCodes.Count > 0
+                        ? constraint.ExpectedStatusCodes
+                        : ParseStatusCodes(constraint.ExpectedOutcome, constraint.Constraint),
+                    context.TestType);
+
+                result.AddRange(statuses);
+            }
+        }
+
+        return result
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList();
     }
 
     private static ResolvedExpectation EnrichSrsRequiredResponseFieldAssertions(
@@ -515,7 +641,115 @@ public sealed class ExpectationResolver : IExpectationResolver
             PrimaryRequirementId = source.PrimaryRequirementId,
             RequirementCode = source.RequirementCode,
             HasExplicitSrsStatus = source.HasExplicitSrsStatus,
+            ExpectedProvenance = source.ExpectedProvenance,
         };
+    }
+
+    private static ResolvedExpectation SanitizeAssertionsForStatuses(
+        ResolvedExpectation source,
+        IReadOnlyCollection<int> statuses)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        var expectedStatuses = statuses?.Where(code => code >= 100 && code <= 599).Distinct().ToList()
+            ?? source.ExpectedStatusCodes?.Where(code => code >= 100 && code <= 599).Distinct().ToList()
+            ?? new List<int>();
+        var hasSuccessStatus = expectedStatuses.Any(code => code >= 200 && code <= 299);
+        var hasFailureStatus = expectedStatuses.Any(code => code < 200 || code >= 300);
+
+        var bodyContains = source.BodyContains?
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Where(x => ShouldKeepBodyContainsForStatuses(x, hasSuccessStatus, hasFailureStatus))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
+
+        var jsonPathChecks = source.JsonPathChecks?.Count > 0
+            ? new Dictionary<string, string>(source.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var key in jsonPathChecks.Keys.ToList())
+        {
+            if (!ShouldKeepJsonPathForStatuses(key, hasSuccessStatus, hasFailureStatus))
+            {
+                jsonPathChecks.Remove(key);
+            }
+        }
+
+        jsonPathChecks = ReconcileJsonPathChecksWithStatuses(jsonPathChecks, expectedStatuses);
+
+        return new ResolvedExpectation
+        {
+            ExpectedStatusCodes = expectedStatuses.Count > 0 ? expectedStatuses : source.ExpectedStatusCodes,
+            ResponseSchema = source.ResponseSchema,
+            HeaderChecks = source.HeaderChecks,
+            BodyContains = bodyContains,
+            BodyNotContains = source.BodyNotContains,
+            JsonPathChecks = jsonPathChecks,
+            MaxResponseTime = source.MaxResponseTime,
+            Source = source.Source,
+            PrimaryRequirementId = source.PrimaryRequirementId,
+            RequirementCode = source.RequirementCode,
+            HasExplicitSrsStatus = source.HasExplicitSrsStatus,
+            ExpectedProvenance = source.ExpectedProvenance,
+        };
+    }
+
+    private static bool ShouldKeepBodyContainsForStatuses(
+        string value,
+        bool hasSuccessStatus,
+        bool hasFailureStatus)
+    {
+        if (string.IsNullOrWhiteSpace(value) || hasSuccessStatus == hasFailureStatus)
+        {
+            return true;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        if (hasSuccessStatus)
+        {
+            return normalized is not "error" and not "errors" and not "invalid" and not "required" and not "unauthorized" and not "forbidden"
+                && !normalized.Contains("validation failed")
+                && !normalized.Contains("already exists")
+                && !normalized.Contains("not found")
+                && !normalized.Contains("conflict");
+        }
+
+        return normalized is not "data" and not "token"
+            && !normalized.Contains("registered successfully")
+            && !normalized.Contains("login successful")
+            && !normalized.Contains("created successfully")
+            && !normalized.Contains("updated successfully")
+            && !normalized.Contains("deleted successfully");
+    }
+
+    private static bool ShouldKeepJsonPathForStatuses(
+        string jsonPath,
+        bool hasSuccessStatus,
+        bool hasFailureStatus)
+    {
+        if (string.IsNullOrWhiteSpace(jsonPath) || hasSuccessStatus == hasFailureStatus)
+        {
+            return true;
+        }
+
+        var normalized = jsonPath.Trim();
+        if (hasSuccessStatus)
+        {
+            return !normalized.Contains(".errors", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Contains("['errors']", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Contains("[\"errors\"]", StringComparison.OrdinalIgnoreCase)
+                && !normalized.EndsWith(".error", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Contains(".fieldErrors", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Contains(".formErrors", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return !normalized.StartsWith("$.data.", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("$.data", StringComparison.OrdinalIgnoreCase)
+            && !normalized.StartsWith("$.token", StringComparison.OrdinalIgnoreCase)
+            && !normalized.EndsWith(".token", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static Dictionary<string, string> ReconcileJsonPathChecksWithStatuses(
@@ -603,18 +837,29 @@ public sealed class ExpectationResolver : IExpectationResolver
                     continue;
                 }
 
-                var statuses = NormalizeStatuses(ParseStatusCodes(constraint.ExpectedOutcome, constraint.Constraint), context.TestType);
+                var statuses = NormalizeStatuses(
+                    constraint.ExpectedStatusCodes.Count > 0
+                        ? constraint.ExpectedStatusCodes
+                        : ParseStatusCodes(constraint.ExpectedOutcome, constraint.Constraint),
+                    context.TestType);
                 if (statuses.Count == 0)
                 {
                     continue;
                 }
 
                 var hasExplicitSrsStatus = coveredIds.Contains(requirement.Id)
-                    || context?.AllowUncoveredSrsStatusOverride == true;
+                    || context?.AllowUncoveredSrsStatusOverride == true
+                    || IsDirectEndpointRequirement(requirement, context);
 
-                var bodyContains = ExtractBodyContains(requirement, constraint, context.TestType);
-                var bodyNotContains = ExtractBodyNotContains(requirement, constraint.Constraint);
-                var srsJsonPathChecks = BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
+                var bodyContains = constraint.BodyContains.Count > 0
+                    ? constraint.BodyContains
+                    : ExtractBodyContains(requirement, constraint, context.TestType);
+                var bodyNotContains = constraint.BodyNotContains.Count > 0
+                    ? constraint.BodyNotContains
+                    : ExtractBodyNotContains(requirement, constraint.Constraint);
+                var srsJsonPathChecks = constraint.JsonPathChecks.Count > 0
+                    ? constraint.JsonPathChecks
+                    : BuildSrsJsonPathChecks(requirement, constraint, context.TestType, statuses);
 
                 // If SRS could not derive any jsonPath assertions, fall back to what the LLM already
                 // suggested — the LLM had the full SRS context and produced API-specific assertions.
@@ -630,16 +875,37 @@ public sealed class ExpectationResolver : IExpectationResolver
                     ? bodyContains
                     : (context.LlmExpectation?.BodyContains?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? bodyContains);
 
+                var provenance = ExpectedProvenanceBuilder.BuildFromEvidence(
+                    new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = statuses,
+                        ResponseSchema = constraint.ResponseSchema,
+                        HeaderChecks = constraint.HeaderChecks,
+                        BodyContains = finalBodyContains,
+                        BodyNotContains = bodyNotContains,
+                        JsonPathChecks = jsonPathChecks,
+                        MaxResponseTime = constraint.MaxResponseTime,
+                        ExpectationSource = ExpectationSource.Srs.ToString(),
+                        RequirementCode = requirement.RequirementCode,
+                        PrimaryRequirementId = requirement.Id,
+                    },
+                    requirement.RequirementCode,
+                    string.IsNullOrWhiteSpace(constraint.Evidence) ? constraint.Constraint : constraint.Evidence);
+
                 return (new ResolvedExpectation
                 {
                     ExpectedStatusCodes = statuses,
+                    ResponseSchema = constraint.ResponseSchema,
+                    HeaderChecks = constraint.HeaderChecks,
                     BodyContains = finalBodyContains,
                     BodyNotContains = bodyNotContains,
                     JsonPathChecks = jsonPathChecks,
+                    MaxResponseTime = constraint.MaxResponseTime,
                     Source = ExpectationSource.Srs,
                     PrimaryRequirementId = requirement.Id,
                     RequirementCode = requirement.RequirementCode,
                     HasExplicitSrsStatus = hasExplicitSrsStatus,
+                    ExpectedProvenance = provenance,
                 }, null);
             }
         }
@@ -659,6 +925,17 @@ public sealed class ExpectationResolver : IExpectationResolver
 
                 var bodyContains = ExtractBodyContainsFromMarkdown(mc, context.TestType);
                 var jsonPathChecks = BuildSrsJsonPathChecksFromMarkdown(mc, context.TestType, statuses);
+                var provenance = ExpectedProvenanceBuilder.BuildFromEvidence(
+                    new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = statuses,
+                        BodyContains = bodyContains,
+                        JsonPathChecks = jsonPathChecks,
+                        ExpectationSource = ExpectationSource.Srs.ToString(),
+                        RequirementCode = mc.RequirementCode,
+                    },
+                    mc.RequirementCode,
+                    mc.Constraint);
 
                 return (new ResolvedExpectation
                 {
@@ -667,6 +944,8 @@ public sealed class ExpectationResolver : IExpectationResolver
                     JsonPathChecks = jsonPathChecks,
                     Source = ExpectationSource.Srs,
                     RequirementCode = mc.RequirementCode,
+                    HasExplicitSrsStatus = true,
+                    ExpectedProvenance = provenance,
                 }, null);
             }
 
@@ -717,16 +996,6 @@ public sealed class ExpectationResolver : IExpectationResolver
                 ? BuildRequiredJsonPathAssertions(primaryResponse.Schema)
                 : ErrorResponseSchemaAnalyzer.BuildJsonPathAssertions(primaryResponse.Schema, context.TestType)
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        if (bodyContains.Count == 0 && jsonPathChecks.Count == 0)
-        {
-            var llmFallback = NormalizeLlmExpectation(context?.LlmExpectation, context?.TestType ?? TestType.Negative);
-            if (llmFallback != null)
-            {
-                bodyContains = llmFallback.BodyContains;
-                jsonPathChecks = llmFallback.JsonPathChecks;
-            }
-        }
 
         return new ResolvedExpectation
         {
@@ -881,6 +1150,7 @@ public sealed class ExpectationResolver : IExpectationResolver
             MaxResponseTime = expectation.MaxResponseTime,
             RequirementCode = expectation.RequirementCode,
             PrimaryRequirementId = expectation.PrimaryRequirementId,
+            ExpectedProvenance = ExpectedProvenanceBuilder.Normalize(expectation.ExpectedProvenance),
         };
     }
 
@@ -928,6 +1198,13 @@ public sealed class ExpectationResolver : IExpectationResolver
             .ThenBy(x => x.RequirementCode);
     }
 
+    private static bool IsDirectEndpointRequirement(SrsRequirement requirement, GeneratedScenarioContext context)
+    {
+        return requirement?.EndpointId is Guid requirementEndpointId
+            && context?.EndpointId is Guid endpointId
+            && requirementEndpointId == endpointId;
+    }
+
     private static List<SrsConstraintCandidate> ParseConstraints(SrsRequirement requirement)
     {
         var json = !string.IsNullOrWhiteSpace(requirement?.RefinedConstraints)
@@ -965,6 +1242,14 @@ public sealed class ExpectationResolver : IExpectationResolver
                     ExpectedOutcome = expectedOutcome,
                     Field = item.TryGetProperty("field", out var field) ? field.GetString() : InferFieldName(constraint),
                     RuleType = item.TryGetProperty("ruleType", out var ruleType) ? ruleType.GetString() : InferRuleType(constraint),
+                    ExpectedStatusCodes = ReadIntList(item, "expectedStatusCodes", "expectedStatus"),
+                    BodyContains = ReadStringList(item, "bodyContains"),
+                    BodyNotContains = ReadStringList(item, "bodyNotContains"),
+                    JsonPathChecks = ReadStringMap(item, "jsonPathChecks"),
+                    HeaderChecks = ReadStringMap(item, "headerChecks"),
+                    ResponseSchema = ReadString(item, "responseSchema"),
+                    MaxResponseTime = ReadNullableInt(item, "maxResponseTime"),
+                    Evidence = ReadString(item, "evidence") ?? ReadString(item, "rationale"),
                 });
             }
 
@@ -974,6 +1259,124 @@ public sealed class ExpectationResolver : IExpectationResolver
         {
             return new List<SrsConstraintCandidate>();
         }
+    }
+
+    private static List<int> ReadIntList(JsonElement item, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!item.TryGetProperty(propertyName, out var property))
+            {
+                continue;
+            }
+
+            var values = ParseStatusCodesFromElement(property);
+            if (values.Count > 0)
+            {
+                return values;
+            }
+        }
+
+        return new List<int>();
+    }
+
+    private static List<int> ParseStatusCodesFromElement(JsonElement element)
+    {
+        var values = new List<int>();
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in element.EnumerateArray())
+            {
+                values.AddRange(ParseStatusCodesFromElement(child));
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number))
+        {
+            values.Add(number);
+        }
+        else if (element.ValueKind == JsonValueKind.String)
+        {
+            values.AddRange(ParseStatusCodes(element.GetString(), null));
+        }
+
+        return values
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToList();
+    }
+
+    private static List<string> ReadStringList(JsonElement item, string propertyName)
+    {
+        if (!item.TryGetProperty(propertyName, out var property))
+        {
+            return new List<string>();
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            var value = property.GetString();
+            return string.IsNullOrWhiteSpace(value)
+                ? new List<string>()
+                : new List<string> { value.Trim() };
+        }
+
+        if (property.ValueKind != JsonValueKind.Array)
+        {
+            return new List<string>();
+        }
+
+        return property.EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static Dictionary<string, string> ReadStringMap(JsonElement item, string propertyName)
+    {
+        if (!item.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.Object)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return property.EnumerateObject()
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+            .ToDictionary(
+                x => x.Name.Trim(),
+                x => x.Value.ValueKind == JsonValueKind.String
+                    ? x.Value.GetString()
+                    : x.Value.ToString(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string ReadString(JsonElement item, string propertyName)
+    {
+        return item.TryGetProperty(propertyName, out var property) &&
+               property.ValueKind == JsonValueKind.String &&
+               !string.IsNullOrWhiteSpace(property.GetString())
+            ? property.GetString().Trim()
+            : null;
+    }
+
+    private static int? ReadNullableInt(JsonElement item, string propertyName)
+    {
+        if (!item.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return property.ValueKind == JsonValueKind.String &&
+               int.TryParse(property.GetString(), out number)
+            ? number
+            : null;
     }
 
     private static string ExtractExpectedOutcome(string constraintText)
@@ -1274,6 +1677,22 @@ public sealed class ExpectationResolver : IExpectationResolver
         public string Field { get; init; }
 
         public string RuleType { get; init; }
+
+        public List<int> ExpectedStatusCodes { get; init; } = new();
+
+        public List<string> BodyContains { get; init; } = new();
+
+        public List<string> BodyNotContains { get; init; } = new();
+
+        public Dictionary<string, string> JsonPathChecks { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, string> HeaderChecks { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public string ResponseSchema { get; init; }
+
+        public int? MaxResponseTime { get; init; }
+
+        public string Evidence { get; init; }
     }
 
     private sealed class MarkdownConstraintCandidate

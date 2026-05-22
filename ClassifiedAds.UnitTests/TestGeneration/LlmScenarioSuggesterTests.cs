@@ -1271,6 +1271,53 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public void ParseRefinementResponse_Should_ResolvePrimaryRequirementId_FromExpectationRequirementCode()
+    {
+        var requirementId = Guid.NewGuid();
+        var context = CreateDefaultContext();
+        context.SrsRequirements = new List<SrsRequirement>
+        {
+            new()
+            {
+                Id = requirementId,
+                RequirementCode = "REQ-REGISTER",
+                EndpointId = EndpointId1,
+                IsReviewed = true,
+                TestableConstraints = """[{ "constraint": "registration succeeds -> 201", "expectedOutcome": "201 Created" }]""",
+            },
+        };
+
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = EndpointId1,
+                    ScenarioName = "Register user",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/auth/register",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 201 },
+                        RequirementCode = "REQ-REGISTER",
+                    },
+                },
+            },
+        };
+
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        var scenario = result.Scenarios.Should().ContainSingle().Subject;
+        scenario.PrimaryRequirementId.Should().Be(requirementId);
+        scenario.CoveredRequirementIds.Should().Contain(requirementId);
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_RepairJsonPathChecks_WhenLlmLeftEmpty()
     {
         // Arrange

@@ -3,6 +3,7 @@ using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
+using ClassifiedAds.Modules.TestGeneration.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -43,6 +44,7 @@ public class UpdateTestCaseCommand : ICommand
     public string BodyNotContains { get; set; }
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectedProvenance { get; set; }
 
     // Variables
     public List<VariableInput> Variables { get; set; } = new ();
@@ -201,6 +203,7 @@ public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseComman
             existingExpectation.BodyNotContains = command.BodyNotContains;
             existingExpectation.JsonPathChecks = command.JsonPathChecks;
             existingExpectation.MaxResponseTime = command.MaxResponseTime;
+            existingExpectation.ExpectedProvenance = ExpectedProvenanceBuilder.Normalize(command.ExpectedProvenance);
             existingExpectation.UpdatedDateTime = now;
             await _expectationRepository.UpdateAsync(existingExpectation, cancellationToken);
         }
@@ -217,6 +220,7 @@ public class UpdateTestCaseCommandHandler : ICommandHandler<UpdateTestCaseComman
                 BodyNotContains = command.BodyNotContains,
                 JsonPathChecks = command.JsonPathChecks,
                 MaxResponseTime = command.MaxResponseTime,
+                ExpectedProvenance = ExpectedProvenanceBuilder.Normalize(command.ExpectedProvenance),
                 CreatedDateTime = now,
             };
             await _expectationRepository.AddAsync(existingExpectation, cancellationToken);

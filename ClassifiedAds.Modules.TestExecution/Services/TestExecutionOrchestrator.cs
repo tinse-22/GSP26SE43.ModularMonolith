@@ -471,6 +471,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             };
         }
 
@@ -509,6 +510,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             };
         }
 
@@ -532,6 +534,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         foreach (var kvp in ExtractImplicitVariables(testCase, response))
         {
             context.VariableBag[kvp.Key] = kvp.Value;
+            context.VariableBag[$"case.{testCase.TestCaseId:N}.{kvp.Key}"] = kvp.Value;
         }
 
         // For any successful 2xx POST/PUT/PATCH: extract ALL primitive JSON fields from
@@ -551,11 +554,14 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             {
                 context.VariableBag[kvp.Key] = kvp.Value;
             }
+
+            context.VariableBag[$"case.{testCase.TestCaseId:N}.{kvp.Key}"] = kvp.Value;
         }
 
         foreach (var kvp in ExtractResponseBodyVariables(testCase, response))
         {
             context.VariableBag[kvp.Key] = kvp.Value;
+            context.VariableBag[$"case.{testCase.TestCaseId:N}.{kvp.Key}"] = kvp.Value;
         }
 
         PromoteAuthTokenAliases(extracted);
@@ -615,6 +621,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExpectationSource = testCase.Expectation?.ExpectationSource,
             RequirementCode = testCase.Expectation?.RequirementCode,
             PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+            ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
             RequestHeaders = resolvedRequest.Headers,
             ResponseHeaders = response.Headers,
             ResponseBody = response.Body,
@@ -727,6 +734,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             ExpectationSource = testCase.Expectation?.ExpectationSource,
             RequirementCode = testCase.Expectation?.RequirementCode,
             PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+            ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
         };
     }
 

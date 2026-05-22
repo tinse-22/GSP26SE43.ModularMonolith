@@ -81,6 +81,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "10. If endpoint has required path params, request.pathParams MUST include non-empty values for every required token.\n" +
         "11. If endpoint has required query params, request.queryParams MUST include non-empty values for every required query param.\n" +
         "12. If endpoint requires request body, request.bodyType must be one of JSON, FormData, UrlEncoded, or Raw as appropriate for the contract, and request.body must be non-empty.\n" +
+        "12b. REQUEST SCHEMA TYPES: For OpenAPI body fields with type number/integer, emit JSON numeric literals or numeric-semantic placeholders only, such as {{price}}, {{stock}}, {{quantity}}, or {{count}}. Never put ID placeholders like {{productId}}, {{categoryId}}, or {{id}} into numeric fields, and never quote numeric literals for success cases.\n" +
+        "12c. PLACEHOLDER SEMANTICS: Resource ID placeholders must match the target resource field. For example categoryId may use {{categoryId}}, but must not use {{productId}}. Boundary strings must be concrete JSON strings, not JavaScript expressions such as \"x\".repeat(100).\n" +
+        "12d. NEGATIVE INTENT: Negative login/auth tests must actually mutate the credential or auth header under test. Do not reuse both {{registeredEmail}} and {{registeredPassword}} unchanged while expecting failure. Use 401 only for missing/invalid authentication; use 400/404/409 for validation, not-found, or conflict cases.\n" +
         "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n" +
         "14. EXPECTATION TOKENS (GENERALIZED): For jsonPathChecks values, use canonical tokens only: \"present\", \"not null\", \"non-empty\", \"string\", \"number\", \"boolean\", \"array\", \"object\", \"uuid\", \"datetime\", or regex:<pattern>. Avoid camelCase tokens like nonEmpty/notEmpty. Do not assert full message strings or session-specific values (token/id/timestamp); use existence/type/regex instead.\n" +
         "15. AUTH MODE: For Unauthorized/Missing Token tests, set request.headers to include \"X-Test-Auth-Mode\": \"none\" and do NOT send Authorization. For Invalid Token tests, set Authorization to an invalid value and do NOT set X-Test-Auth-Mode.\n" +
@@ -151,6 +154,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IN8nIntegrationService _n8nService;
     private readonly ILlmAssistantGatewayService _llmGatewayService;
     private readonly ILlmSuggestionFeedbackContextService _feedbackContextService;
+    private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<LlmScenarioSuggester> _logger;
 
@@ -159,6 +163,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IN8nIntegrationService n8nService,
         ILlmAssistantGatewayService llmGatewayService,
         ILlmSuggestionFeedbackContextService feedbackContextService,
+        IEndpointRequirementMapper requirementMapper,
         IExpectationResolver expectationResolver,
         ILogger<LlmScenarioSuggester> logger)
     {
@@ -166,6 +171,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
         _llmGatewayService = llmGatewayService ?? throw new ArgumentNullException(nameof(llmGatewayService));
         _feedbackContextService = feedbackContextService ?? throw new ArgumentNullException(nameof(feedbackContextService));
+        _requirementMapper = requirementMapper ?? throw new ArgumentNullException(nameof(requirementMapper));
         _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -528,6 +534,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
             endpointContracts.TryGetValue(scenario.EndpointId, out var contract);
+            scenario = FilterScenarioRequirementCoverage(scenario, metadata, context.SrsRequirements);
 
             scenario.SuggestedHttpMethod ??= orderItem?.HttpMethod ?? metadata?.HttpMethod;
             scenario.SuggestedUrl ??= orderItem?.Path ?? metadata?.Path;
@@ -591,6 +598,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 scenario.ExpectationSource = resolved.Source.ToString();
                 scenario.RequirementCode = resolved.RequirementCode ?? scenario.RequirementCode;
                 scenario.PrimaryRequirementId = resolved.PrimaryRequirementId ?? scenario.PrimaryRequirementId;
+                scenario.ExpectedProvenance = resolved.ExpectedProvenance ?? scenario.ExpectedProvenance;
             }
 
             var request = new N8nTestCaseRequest
@@ -633,6 +641,43 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             FromCache = false,
             UsedLocalFallback = false,
         };
+    }
+
+    private LlmSuggestedScenario FilterScenarioRequirementCoverage(
+        LlmSuggestedScenario scenario,
+        ApiEndpointMetadataDto endpoint,
+        IReadOnlyList<SrsRequirement> requirements)
+    {
+        if (scenario == null ||
+            endpoint == null ||
+            requirements == null ||
+            requirements.Count == 0 ||
+            scenario.CoveredRequirementIds == null ||
+            scenario.CoveredRequirementIds.Count == 0)
+        {
+            return scenario;
+        }
+
+        var coverableIds = _requirementMapper
+            .MapRequirementsToEndpoint(endpoint, requirements)
+            .Where(x => x.IsCoverable)
+            .Select(x => x.Requirement?.Id ?? Guid.Empty)
+            .Where(x => x != Guid.Empty)
+            .ToHashSet();
+
+        scenario.CoveredRequirementIds = scenario.CoveredRequirementIds
+            .Where(coverableIds.Contains)
+            .Distinct()
+            .ToList();
+
+        if (scenario.PrimaryRequirementId.HasValue &&
+            !scenario.CoveredRequirementIds.Contains(scenario.PrimaryRequirementId.Value))
+        {
+            scenario.PrimaryRequirementId = null;
+            scenario.RequirementCode = null;
+        }
+
+        return scenario;
     }
 
     private static List<List<ApiOrderItemModel>> BuildEndpointBatches(
@@ -1014,13 +1059,85 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 CoveredRequirementIds = coveredIds,
                 ExpectationSource = s.Expectation?.ExpectationSource,
                 RequirementCode = s.Expectation?.RequirementCode,
-                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId,
+                PrimaryRequirementId = s.Expectation?.PrimaryRequirementId
+                    ?? (!string.IsNullOrWhiteSpace(s.Expectation?.RequirementCode) &&
+                        codeToId.TryGetValue(s.Expectation.RequirementCode.Trim(), out var requirementId)
+                            ? requirementId
+                            : null),
+                CredentialPolicy = s.CredentialPolicy,
+                LockedFields = s.LockedFields ?? new List<string>(),
             };
+
+            parsedScenario.Tags = MergeCredentialControlTags(
+                parsedScenario.Tags,
+                parsedScenario.CredentialPolicy,
+                parsedScenario.LockedFields);
+
+            if (parsedScenario.PrimaryRequirementId.HasValue &&
+                !parsedScenario.CoveredRequirementIds.Contains(parsedScenario.PrimaryRequirementId.Value))
+            {
+                parsedScenario.CoveredRequirementIds.Add(parsedScenario.PrimaryRequirementId.Value);
+            }
 
             scenarios.Add(parsedScenario);
         }
 
         return scenarios;
+    }
+
+    private static List<string> MergeCredentialControlTags(
+        List<string> tags,
+        string credentialPolicy,
+        IReadOnlyCollection<string> lockedFields)
+    {
+        var merged = new List<string>(tags ?? new List<string>());
+        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(credentialPolicy))
+        {
+            var normalizedPolicy = NormalizeCredentialPolicy(credentialPolicy);
+            if (!string.IsNullOrWhiteSpace(normalizedPolicy))
+            {
+                var policyTag = $"cred-policy:{normalizedPolicy}";
+                if (seen.Add(policyTag))
+                {
+                    merged.Add(policyTag);
+                }
+            }
+        }
+
+        if (lockedFields != null)
+        {
+            foreach (var field in lockedFields)
+            {
+                if (string.IsNullOrWhiteSpace(field))
+                {
+                    continue;
+                }
+
+                var normalizedField = field.Trim().ToLowerInvariant();
+                var lockTag = $"cred-lock:{normalizedField}";
+                if (seen.Add(lockTag))
+                {
+                    merged.Add(lockTag);
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    private static string NormalizeCredentialPolicy(string policy)
+    {
+        var normalized = policy?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "preserve" => "preserve",
+            "rewrite_email" => "rewrite_email",
+            "rewrite_password" => "rewrite_password",
+            "rewrite_both" => "rewrite_both",
+            _ => string.Empty,
+        };
     }
 
     private static List<string> NormalizeRegisterBodyContains(
@@ -1261,6 +1378,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
             RequirementCode = resolvedExpectation?.RequirementCode,
             PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
+            ExpectedProvenance = resolvedExpectation?.ExpectedProvenance,
         };
     }
 
@@ -1516,12 +1634,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
             }
 
-            if (IsAuthLikeEndpoint(dependencyOrderItem, dependencyMetadata) &&
-                IsLoginLikeEndpoint(endpoint, metadata))
-            {
-                placeholders["email"] = "registeredEmail";
-                placeholders["password"] = "registeredPassword";
-            }
         }
 
         return placeholders;

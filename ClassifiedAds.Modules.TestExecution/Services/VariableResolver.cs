@@ -37,6 +37,8 @@ public class VariableResolver : IVariableResolver
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex SimpleSyntheticNameRegex = new(@"^[A-Za-z0-9 _\-]{2,80}$", RegexOptions.Compiled);
     private static readonly Regex DuplicatedIdentifierPlaceholderRegex = new(@"IdId(s)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private const string CredentialPolicyTagPrefix = "cred-policy:";
+    private const string CredentialLockTagPrefix = "cred-lock:";
     // Matches values already uniquified by {{tcUniqueId}} resolution — local part ends with _xxxxxxxx (8 hex chars).
     private static readonly Regex AlreadyUniquifiedRegex = new(@"_[a-f0-9]{8}$", RegexOptions.Compiled);
 
@@ -86,7 +88,7 @@ public class VariableResolver : IVariableResolver
         // Resolve path params and apply to URL
         var pathParams = DeserializeDictionary(request.PathParams);
         var allowIdentifierLiteralReplacement = AllowsIdentifierLiteralReplacement(testCase);
-        var normalizedPathParams = NormalizePathParams(pathParams, resolvedUrl, mergedVars, allowIdentifierLiteralReplacement);
+        var normalizedPathParams = NormalizePathParams(testCase, pathParams, resolvedUrl, mergedVars, allowIdentifierLiteralReplacement);
         var resolvedPathParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var routeTokenApplied = false;
         foreach (var kvp in normalizedPathParams)
@@ -161,7 +163,7 @@ public class VariableResolver : IVariableResolver
 
         var disableAuth = string.Equals(authMode, "none", StringComparison.OrdinalIgnoreCase);
         var optionalAuth = string.Equals(authMode, "optional", StringComparison.OrdinalIgnoreCase);
-
+        var requiredAuth = string.Equals(authMode, "required", StringComparison.OrdinalIgnoreCase);
         if (disableAuth || (optionalAuth && !requestHasAuthHeader))
         {
             RemoveAuthHeaders(resolvedHeaders);
@@ -171,7 +173,10 @@ public class VariableResolver : IVariableResolver
         {
             ApplyAuthHeaderTemplates(resolvedHeaders, mergedVars);
 
-            if (!(optionalAuth && !requestHasAuthHeader))
+            // Only inject fallback token when auth intent is explicit:
+            // - n8n sets auth-mode=required, or
+            // - request explicitly declares an auth header template/value.
+            if (requiredAuth || requestHasAuthHeader)
             {
                 ApplyAuthFallbackHeader(resolvedHeaders, mergedVars);
             }
@@ -182,13 +187,18 @@ public class VariableResolver : IVariableResolver
             ? ResolvePlaceholders(request.Body, mergedVars)
             : null;
 
+        // Always normalize unquoted numeric placeholders (e.g. "stock": {{stock}})
+        // so JSON stays syntactically valid even when some runtime variables are missing.
+        // This is safe for both LLM and non-LLM sourced requests.
+        resolvedBody = NormalizeNumericPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
+        resolvedBody = NormalizeDependencyScopedLoginCredentials(testCase, resolvedBody, mergedVars);
+
         if (!IsLlmSourced(testCase))
         {
             // Non-LLM test cases: run the full normalization pipeline.
-            resolvedBody = NormalizeHappyPathCredentials(testCase, resolvedBody, mergedVars);
+            resolvedBody = NormalizeCredentialsByPolicy(testCase, resolvedBody, mergedVars);
             resolvedBody = NormalizeIdentifierLiteralsInJsonBody(testCase, resolvedBody, mergedVars);
             resolvedBody = NormalizeHappyPathSyntheticBody(testCase, resolvedBody, mergedVars);
-            resolvedBody = NormalizeNumericPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
             resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
         }
         // LLM-sourced: ResolvePlaceholders (above) already resolved all {{tcUniqueId}},
@@ -366,6 +376,7 @@ public class VariableResolver : IVariableResolver
     }
 
     private static Dictionary<string, string> NormalizePathParams(
+        ExecutionTestCaseDto testCase,
         IReadOnlyDictionary<string, string> pathParams,
         string resolvedUrl,
         IReadOnlyDictionary<string, string> variables,
@@ -380,10 +391,11 @@ public class VariableResolver : IVariableResolver
         foreach (var kvp in pathParams)
         {
             var resolvedValue = kvp.Value;
+            var candidates = BuildPathParamVariableCandidates(kvp.Key, resolvedUrl);
             if (allowIdentifierLiteralReplacement &&
                 (ShouldReplaceIdentifierLiteral(resolvedValue)
                     || IsLikelyObjectIdLiteralPlaceholder(resolvedValue)) &&
-                TryResolveVariableValue(BuildPathParamVariableCandidates(kvp.Key, resolvedUrl), variables, out var replacement))
+                TryResolveVariableValueFromDependencies(testCase, candidates, variables, out var replacement))
             {
                 resolvedValue = replacement;
             }
@@ -860,19 +872,60 @@ public class VariableResolver : IVariableResolver
         yield return "bearer_token";
     }
 
-    private static string NormalizeHappyPathCredentials(
+    private static string NormalizeCredentialsByPolicy(
         ExecutionTestCaseDto testCase,
         string resolvedBody,
         IReadOnlyDictionary<string, string> variables)
     {
-        // Only rewrite credentials for HappyPath login flows.
-        // Boundary/Negative tests need their LLM-suggested credentials preserved
-        // (e.g. "wrong password" scenario must not be replaced with the valid runUniquePassword).
+        var policy = ResolveCredentialRewritePolicy(testCase);
+        var lockMap = ResolveLockedCredentialFields(testCase);
+        var hasExplicitPolicy = policy != CredentialRewritePolicy.LegacyDefault;
+
+        // Generic default mode for multi-project support:
+        // never rewrite credential-like fields unless policy is explicit from tags.
+        // This avoids auth-specific hardcoded behavior leaking into unrelated APIs.
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || testCase?.Request == null
-            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
-            || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody)
-            || !IsLoginLikeRequest(testCase))
+            || !LooksLikeJsonBody(testCase.Request.BodyType, resolvedBody))
+        {
+            return resolvedBody;
+        }
+
+        if (!hasExplicitPolicy)
+        {
+            return resolvedBody;
+        }
+
+        var allowEmailRewrite = policy switch
+        {
+            CredentialRewritePolicy.RewriteEmail => true,
+            CredentialRewritePolicy.RewriteBoth => true,
+            _ => false,
+        };
+
+        var allowPasswordRewrite = policy switch
+        {
+            CredentialRewritePolicy.RewritePassword => true,
+            CredentialRewritePolicy.RewriteBoth => true,
+            _ => false,
+        };
+
+        if (policy == CredentialRewritePolicy.Preserve)
+        {
+            return resolvedBody;
+        }
+
+        if (lockMap.LockEmail)
+        {
+            allowEmailRewrite = false;
+        }
+
+        if (lockMap.LockPassword)
+        {
+            allowPasswordRewrite = false;
+        }
+
+        if (!allowEmailRewrite && !allowPasswordRewrite)
         {
             return resolvedBody;
         }
@@ -900,11 +953,16 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        var changed = RewriteCredentialFields(root, preferredEmail, preferredPassword);
+        var changed = RewriteCredentialFields(root, preferredEmail, preferredPassword, allowEmailRewrite, allowPasswordRewrite);
         return changed ? root.ToJsonString(JsonOptions) : resolvedBody;
     }
 
-    private static bool RewriteCredentialFields(JsonNode node, string preferredEmail, string preferredPassword)
+    private static bool RewriteCredentialFields(
+        JsonNode node,
+        string preferredEmail,
+        string preferredPassword,
+        bool allowEmailRewrite,
+        bool allowPasswordRewrite)
     {
         if (node is JsonObject obj)
         {
@@ -913,7 +971,8 @@ public class VariableResolver : IVariableResolver
             {
                 if (property.Value is JsonValue value && value.TryGetValue<string>(out var current))
                 {
-                    if (property.Key.Equals("email", StringComparison.OrdinalIgnoreCase)
+                    if (allowEmailRewrite
+                        && property.Key.Equals("email", StringComparison.OrdinalIgnoreCase)
                         && !string.IsNullOrWhiteSpace(preferredEmail)
                         && ShouldRewriteSyntheticEmail(current)
                         && !string.Equals(current, preferredEmail, StringComparison.Ordinal))
@@ -923,7 +982,8 @@ public class VariableResolver : IVariableResolver
                         continue;
                     }
 
-                    if (property.Key.Equals("password", StringComparison.OrdinalIgnoreCase)
+                    if (allowPasswordRewrite
+                        && property.Key.Equals("password", StringComparison.OrdinalIgnoreCase)
                         && !string.IsNullOrWhiteSpace(preferredPassword)
                         && ShouldRewriteSyntheticPassword(current)
                         && !string.Equals(current, preferredPassword, StringComparison.Ordinal))
@@ -934,7 +994,8 @@ public class VariableResolver : IVariableResolver
                     }
                 }
 
-                if (property.Value != null && RewriteCredentialFields(property.Value, preferredEmail, preferredPassword))
+                if (property.Value != null
+                    && RewriteCredentialFields(property.Value, preferredEmail, preferredPassword, allowEmailRewrite, allowPasswordRewrite))
                 {
                     changed = true;
                 }
@@ -948,7 +1009,8 @@ public class VariableResolver : IVariableResolver
             var changed = false;
             foreach (var item in array)
             {
-                if (item != null && RewriteCredentialFields(item, preferredEmail, preferredPassword))
+                if (item != null
+                    && RewriteCredentialFields(item, preferredEmail, preferredPassword, allowEmailRewrite, allowPasswordRewrite))
                 {
                     changed = true;
                 }
@@ -958,6 +1020,89 @@ public class VariableResolver : IVariableResolver
         }
 
         return false;
+    }
+
+    private static CredentialRewritePolicy ResolveCredentialRewritePolicy(ExecutionTestCaseDto testCase)
+    {
+        var tags = ParseTags(testCase?.Tags);
+        foreach (var tag in tags)
+        {
+            if (!tag.StartsWith(CredentialPolicyTagPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag[CredentialPolicyTagPrefix.Length..].Trim().ToLowerInvariant();
+            return value switch
+            {
+                "preserve" => CredentialRewritePolicy.Preserve,
+                "rewrite_email" => CredentialRewritePolicy.RewriteEmail,
+                "rewrite_password" => CredentialRewritePolicy.RewritePassword,
+                "rewrite_both" => CredentialRewritePolicy.RewriteBoth,
+                _ => CredentialRewritePolicy.LegacyDefault,
+            };
+        }
+
+        return CredentialRewritePolicy.LegacyDefault;
+    }
+
+    private static CredentialFieldLocks ResolveLockedCredentialFields(ExecutionTestCaseDto testCase)
+    {
+        var result = new CredentialFieldLocks();
+        var tags = ParseTags(testCase?.Tags);
+        foreach (var tag in tags)
+        {
+            if (!tag.StartsWith(CredentialLockTagPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag[CredentialLockTagPrefix.Length..].Trim().ToLowerInvariant();
+            if (value == "request.body.email")
+            {
+                result.LockEmail = true;
+            }
+            else if (value == "request.body.password")
+            {
+                result.LockPassword = true;
+            }
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyList<string> ParseTags(string serializedTags)
+    {
+        if (string.IsNullOrWhiteSpace(serializedTags))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var tags = JsonSerializer.Deserialize<string[]>(serializedTags, JsonOptions);
+            return tags ?? Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private enum CredentialRewritePolicy
+    {
+        LegacyDefault = 0,
+        Preserve = 1,
+        RewriteEmail = 2,
+        RewritePassword = 3,
+        RewriteBoth = 4,
+    }
+
+    private sealed class CredentialFieldLocks
+    {
+        public bool LockEmail { get; set; }
+
+        public bool LockPassword { get; set; }
     }
 
     private static bool TryGetPreferredCredentialValue(
@@ -1015,11 +1160,74 @@ public class VariableResolver : IVariableResolver
             return resolvedBody;
         }
 
-        var changed = ReplaceIdentifierLiterals(root, variables);
+        var changed = ReplaceIdentifierLiterals(root, testCase, variables);
         return changed ? root.ToJsonString(JsonOptions) : resolvedBody;
     }
 
-    private static bool ReplaceIdentifierLiterals(JsonNode node, IReadOnlyDictionary<string, string> variables)
+    private static string NormalizeDependencyScopedLoginCredentials(
+        ExecutionTestCaseDto testCase,
+        string resolvedBody,
+        IReadOnlyDictionary<string, string> variables)
+    {
+        if (string.IsNullOrWhiteSpace(resolvedBody)
+            || variables == null
+            || !HasDependencies(testCase)
+            || !IsLoginLikeRequest(testCase)
+            || !LooksLikeJsonBody(testCase?.Request?.BodyType, resolvedBody))
+        {
+            return resolvedBody;
+        }
+
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(resolvedBody);
+        }
+        catch
+        {
+            return resolvedBody;
+        }
+
+        if (root is not JsonObject obj)
+        {
+            return resolvedBody;
+        }
+
+        var changed = false;
+
+        if (TryResolveVariableValueFromDependencies(
+                testCase,
+                new[] { "registeredEmail", "email", "requestEmail", "testEmail" },
+                variables,
+                out var dependencyEmail)
+            && obj.TryGetPropertyValue("email", out var emailNode)
+            && emailNode is JsonValue
+            && !string.IsNullOrWhiteSpace(dependencyEmail))
+        {
+            obj["email"] = dependencyEmail;
+            changed = true;
+        }
+
+        if (TryResolveVariableValueFromDependencies(
+                testCase,
+                new[] { "registeredPassword", "password", "requestPassword", "testPassword" },
+                variables,
+                out var dependencyPassword)
+            && obj.TryGetPropertyValue("password", out var passwordNode)
+            && passwordNode is JsonValue
+            && !string.IsNullOrWhiteSpace(dependencyPassword))
+        {
+            obj["password"] = dependencyPassword;
+            changed = true;
+        }
+
+        return changed ? obj.ToJsonString(JsonOptions) : resolvedBody;
+    }
+
+    private static bool ReplaceIdentifierLiterals(
+        JsonNode node,
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> variables)
     {
         if (node is JsonObject obj)
         {
@@ -1032,7 +1240,7 @@ public class VariableResolver : IVariableResolver
                     if (IsIdentifierField(property.Key) &&
                         (ShouldReplaceIdentifierLiteral(currentValue)
                             || IsLikelyObjectIdLiteralPlaceholder(currentValue)) &&
-                        TryResolveVariableValue(BuildBodyIdentifierCandidates(property.Key), variables, out var replacement))
+                        TryResolveVariableValueFromDependencies(testCase, BuildBodyIdentifierCandidates(property.Key), variables, out var replacement))
                     {
                         obj[property.Key] = replacement;
                         changed = true;
@@ -1040,7 +1248,7 @@ public class VariableResolver : IVariableResolver
                     }
                 }
 
-                if (property.Value != null && ReplaceIdentifierLiterals(property.Value, variables))
+                if (property.Value != null && ReplaceIdentifierLiterals(property.Value, testCase, variables))
                 {
                     changed = true;
                 }
@@ -1054,7 +1262,7 @@ public class VariableResolver : IVariableResolver
             var changed = false;
             foreach (var item in array)
             {
-                if (item != null && ReplaceIdentifierLiterals(item, variables))
+                if (item != null && ReplaceIdentifierLiterals(item, testCase, variables))
                 {
                     changed = true;
                 }
@@ -1079,10 +1287,22 @@ public class VariableResolver : IVariableResolver
                 candidates.Add(stripped + "Id");
                 candidates.Add(stripped);
             }
+            
+            // For semantic identifier fields (e.g. categoryId, userId, productId),
+            // DO NOT fall back to generic id/resourceId because that can cross-wire
+            // dependencies (e.g. product id accidentally used as category id).
+            // Only plain "id" should use generic fallback candidates.
+            if (string.Equals(propertyName, "id", StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add("resourceId");
+                candidates.Add("id");
+            }
         }
-
-        candidates.Add("resourceId");
-        candidates.Add("id");
+        else
+        {
+            candidates.Add("resourceId");
+            candidates.Add("id");
+        }
 
         return candidates
             .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
@@ -1114,6 +1334,46 @@ public class VariableResolver : IVariableResolver
 
         resolved = null;
         return false;
+    }
+
+    private static bool TryResolveVariableValueFromDependencies(
+        ExecutionTestCaseDto testCase,
+        IEnumerable<string> candidates,
+        IReadOnlyDictionary<string, string> variables,
+        out string resolved)
+    {
+        if (testCase?.DependencyIds != null
+            && testCase.DependencyIds.Count > 0
+            && candidates != null
+            && variables != null
+            && variables.Count > 0)
+        {
+            var candidateList = candidates
+                .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var i = testCase.DependencyIds.Count - 1; i >= 0; i--)
+            {
+                var dependencyId = testCase.DependencyIds[i];
+                foreach (var candidate in candidateList)
+                {
+                    var scopedKey = $"case.{dependencyId:N}.{candidate}";
+                    if (!variables.TryGetValue(scopedKey, out var value)
+                        || string.IsNullOrWhiteSpace(value)
+                        || value.Contains("{{", StringComparison.Ordinal)
+                        || ShouldReplaceIdentifierLiteral(value))
+                    {
+                        continue;
+                    }
+
+                    resolved = value;
+                    return true;
+                }
+            }
+        }
+
+        return TryResolveVariableValue(candidates, variables, out resolved);
     }
 
     private static bool ShouldReplaceIdentifierLiteral(string value)
@@ -1177,7 +1437,7 @@ public class VariableResolver : IVariableResolver
 
         var replacementValue = SelectPreferredResolvedPathParamValue(resolvedPathParams);
         if (string.IsNullOrWhiteSpace(replacementValue)
-            && TryResolveVariableValue(BuildRouteIdentifierVariableCandidates(resolvedUrl), variables, out var fallbackVariableValue))
+            && TryResolveVariableValueFromDependencies(testCase, BuildRouteIdentifierVariableCandidates(resolvedUrl), variables, out var fallbackVariableValue))
         {
             replacementValue = fallbackVariableValue;
         }
@@ -2577,3 +2837,4 @@ public class UnresolvedVariableException : Exception
     {
     }
 }
+

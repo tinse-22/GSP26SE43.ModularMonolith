@@ -113,6 +113,7 @@ public class TestCaseExpectationInput
     public string BodyNotContains { get; set; }
     public string JsonPathChecks { get; set; }
     public int? MaxResponseTime { get; set; }
+    public string ExpectedProvenance { get; set; }
 }
 
 /// <summary>

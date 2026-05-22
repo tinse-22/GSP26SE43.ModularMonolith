@@ -153,6 +153,20 @@ public class LlmSuggestedScenario
 
     public Guid? PrimaryRequirementId { get; set; }
 
+    public string ExpectedProvenance { get; set; }
+
+    /// <summary>
+    /// Optional credential rewrite intent from n8n.
+    /// Supported values: preserve, rewrite_email, rewrite_password, rewrite_both.
+    /// </summary>
+    public string CredentialPolicy { get; set; }
+
+    /// <summary>
+    /// Optional list of request fields that must never be rewritten by BE resolver.
+    /// Example: ["request.body.password", "request.body.email"].
+    /// </summary>
+    public List<string> LockedFields { get; set; } = new List<string>();
+
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>
