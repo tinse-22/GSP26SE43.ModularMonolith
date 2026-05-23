@@ -127,8 +127,8 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
 
     private static void ApplyAuthFlowDependencies(List<ApiEndpointMetadataDto> endpoints, List<DependencyEdge> allEdges)
     {
-        var registerEndpoints = endpoints.Where(IsRegisterLikeEndpoint).ToList();
-        var loginEndpoints = endpoints.Where(IsLoginLikeEndpoint).ToList();
+        var registerEndpoints = endpoints.Where(IsCredentialProducerEndpoint).ToList();
+        var loginEndpoints = endpoints.Where(IsCredentialConsumerEndpoint).ToList();
         if (registerEndpoints.Count == 0 || loginEndpoints.Count == 0)
         {
             return;
@@ -149,8 +149,8 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
                     SourceOperationId = loginEndpoint.EndpointId,
                     TargetOperationId = registerEndpoint.EndpointId,
                     Type = DependencyEdgeType.SemanticToken,
-                    Reason = "Auth flow heuristic: login should depend on a prior register/signup endpoint when both are present.",
-                    Confidence = 0.95,
+                    Reason = "Auth flow dependency inferred from auth metadata + credential contract (producer -> consumer).",
+                    Confidence = 0.90,
                 });
             }
         }
@@ -170,8 +170,8 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
                     SourceOperationId = protectedEndpoint.EndpointId,
                     TargetOperationId = loginEndpoint.EndpointId,
                     Type = DependencyEdgeType.SemanticToken,
-                    Reason = "Auth flow heuristic: protected endpoint should depend on a prior login/token endpoint when auth is required.",
-                    Confidence = 0.90,
+                    Reason = "Auth bootstrap dependency inferred from auth metadata (protected endpoint -> auth consumer).",
+                    Confidence = 0.85,
                 });
             }
         }
@@ -179,50 +179,95 @@ public class ApiTestOrderAlgorithm : IApiTestOrderAlgorithm
 
     private static bool RequiresAuthBootstrap(ApiEndpointMetadataDto endpoint)
     {
-        return endpoint?.IsAuthRelated == true && !IsAuthLikeEndpoint(endpoint);
+        return endpoint?.IsAuthRelated == true && !IsCredentialProducerEndpoint(endpoint) && !IsCredentialConsumerEndpoint(endpoint);
     }
 
-    private static bool IsAuthLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    private static bool IsCredentialProducerEndpoint(ApiEndpointMetadataDto endpoint)
     {
-        return IsRegisterLikeEndpoint(endpoint) || IsLoginLikeEndpoint(endpoint);
+        if (endpoint?.IsAuthRelated != true)
+        {
+            return false;
+        }
+
+        var method = (endpoint.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
+        if (method != "POST")
+        {
+            return false;
+        }
+
+        var hasCredentialInputs = (endpoint.ParameterNames ?? Array.Empty<string>())
+            .Any(x => IsCredentialLikeName(x));
+
+        return hasCredentialInputs && !HasTokenLikeResponse(endpoint);
     }
 
-    private static bool IsRegisterLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    private static bool IsCredentialConsumerEndpoint(ApiEndpointMetadataDto endpoint)
     {
-        var signature = BuildEndpointSignature(endpoint);
-        return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("signup", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("sign-up", StringComparison.OrdinalIgnoreCase);
+        if (endpoint?.IsAuthRelated != true)
+        {
+            return false;
+        }
+
+        var hasCredentialInputs = (endpoint.ParameterNames ?? Array.Empty<string>())
+            .Any(x => IsCredentialLikeName(x));
+
+        return hasCredentialInputs || HasTokenLikeResponse(endpoint);
     }
 
-    private static bool IsLoginLikeEndpoint(ApiEndpointMetadataDto endpoint)
+    private static bool IsCredentialLikeName(string value)
     {
-        var signature = BuildEndpointSignature(endpoint);
-        return signature.Contains("login", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
-            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized.Contains("email", StringComparison.Ordinal)
+            || normalized.Contains("password", StringComparison.Ordinal)
+            || normalized.Contains("username", StringComparison.Ordinal)
+            || normalized.Contains("credential", StringComparison.Ordinal)
+            || normalized.Contains("secret", StringComparison.Ordinal);
+    }
+
+    private static bool HasTokenLikeResponse(ApiEndpointMetadataDto endpoint)
+    {
+        if (endpoint == null)
+        {
+            return false;
+        }
+
+        return (endpoint.ResponseSchemaRefs ?? Array.Empty<string>()).Any(IsTokenLikeText)
+            || (endpoint.ResponseSchemaPayloads ?? Array.Empty<string>()).Any(IsTokenLikeText);
+    }
+
+    private static bool IsTokenLikeText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("accessToken", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("idToken", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("authToken", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("bearer", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("\"token\"", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool AreAuthEndpointsCompatible(ApiEndpointMetadataDto authEndpoint, ApiEndpointMetadataDto otherEndpoint)
     {
-        var authPath = authEndpoint?.Path ?? string.Empty;
-        var otherPath = otherEndpoint?.Path ?? string.Empty;
-
-        if (authPath.Contains("/auth", StringComparison.OrdinalIgnoreCase) && otherPath.Contains("/auth", StringComparison.OrdinalIgnoreCase))
+        if (authEndpoint?.IsAuthRelated != true || otherEndpoint?.IsAuthRelated != true)
         {
-            return true;
+            return false;
         }
 
+        var authPath = authEndpoint?.Path ?? string.Empty;
+        var otherPath = otherEndpoint?.Path ?? string.Empty;
         var authResource = ExtractResourceTokensFromPath(authPath);
         var otherResource = ExtractResourceTokensFromPath(otherPath);
-        return authResource.Intersect(otherResource, StringComparer.OrdinalIgnoreCase).Any();
-    }
 
-    private static string BuildEndpointSignature(ApiEndpointMetadataDto endpoint)
-    {
-        return string.Join(" ", endpoint?.HttpMethod, endpoint?.Path, endpoint?.OperationId).Trim();
+        // Prefer domain/resource compatibility over keyword/path literals.
+        return authResource.Intersect(otherResource, StringComparer.OrdinalIgnoreCase).Any();
     }
 
     /// <summary>

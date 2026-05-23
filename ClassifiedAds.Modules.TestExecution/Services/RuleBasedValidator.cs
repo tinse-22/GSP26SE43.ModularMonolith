@@ -736,6 +736,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         var normalizedPatterns = patterns?
             .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
             .Select(pattern => ResolveExpectationPlaceholders(pattern, variableBag))
+            .Select(NormalizeBodyContainsPattern)
             .ToList();
 
         if (normalizedPatterns == null || normalizedPatterns.Count == 0)
@@ -772,6 +773,19 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         foreach (var pattern in normalizedPatterns)
         {
+            if (ContainsUnresolvedPlaceholder(pattern))
+            {
+                allPassed = false;
+                result.Failures.Add(new ValidationFailureModel
+                {
+                    Code = "BODY_CONTAINS_UNRESOLVED_PLACEHOLDER",
+                    Message = $"BodyContains chứa placeholder chưa resolve: '{Truncate(pattern, 100)}'.",
+                    Target = "BodyContains",
+                    Expected = Truncate(pattern, 200),
+                });
+                continue;
+            }
+
             var compactPattern = NormalizeJsonWhitespace(pattern);
             var matched =
                 body.Contains(pattern, StringComparison.OrdinalIgnoreCase) ||
@@ -828,6 +842,39 @@ public class RuleBasedValidator : IRuleBasedValidator
                     ? resolved ?? string.Empty
                     : match.Value;
             });
+    }
+
+    private static string NormalizeBodyContainsPattern(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var normalized = value.Trim();
+
+        // Support markdown-wrapped expected tokens from LLM/n8n, e.g. "*{{name}}*" or "`{{name}}`".
+        while (normalized.Length >= 2)
+        {
+            var startsEndsWithAsterisk = normalized.StartsWith('*') && normalized.EndsWith('*');
+            var startsEndsWithBacktick = normalized.StartsWith('`') && normalized.EndsWith('`');
+            var startsEndsWithQuote = normalized.StartsWith('"') && normalized.EndsWith('"');
+            if (!startsEndsWithAsterisk && !startsEndsWithBacktick && !startsEndsWithQuote)
+            {
+                break;
+            }
+
+            normalized = normalized[1..^1].Trim();
+        }
+
+        return normalized;
+    }
+
+    private static bool ContainsUnresolvedPlaceholder(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value)
+            && value.Contains("{{", StringComparison.Ordinal)
+            && value.Contains("}}", StringComparison.Ordinal);
     }
 
     private static bool ValidateBodyNotContains(

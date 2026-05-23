@@ -671,48 +671,8 @@ public static class GeneratedTestCaseDependencyEnricher
 
         if (node is JsonObject obj)
         {
-            var authProducer = allowAuthBootstrapBindings
-                ? SelectAuthProducer(dependencyCandidates, allCandidates, testCase.Id, preferRegister: true)
-                : null;
             foreach (var property in obj.ToList())
             {
-                if (property.Value is JsonValue && authProducer != null)
-                {
-                    if (string.Equals(property.Key, "email", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var variableName = EnsureRequestBodyVariable(
-                            authProducer,
-                            "registeredEmail",
-                            "$.email",
-                            pendingExistingVariables);
-                        var rawEmailValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
-                        if (!string.IsNullOrWhiteSpace(rawEmailValue) && ShouldSetPlaceholderValue(property.Value, variableName))
-                        {
-                            obj[property.Key] = $"{{{{{variableName}}}}}";
-                            EnsureDependency(testCase, authProducer.TestCaseId);
-                            changed = true;
-                            continue;
-                        }
-                    }
-
-                    if (string.Equals(property.Key, "password", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var variableName = EnsureRequestBodyVariable(
-                            authProducer,
-                            "registeredPassword",
-                            "$.password",
-                            pendingExistingVariables);
-                        var rawPasswordValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
-                        if (!string.IsNullOrWhiteSpace(rawPasswordValue) && ShouldSetPlaceholderValue(property.Value, variableName))
-                        {
-                            obj[property.Key] = $"{{{{{variableName}}}}}";
-                            EnsureDependency(testCase, authProducer.TestCaseId);
-                            changed = true;
-                            continue;
-                        }
-                    }
-                }
-
                 if (!allowAuthBootstrapBindings && IsCredentialField(property.Key))
                 {
                     continue;
@@ -905,6 +865,18 @@ public static class GeneratedTestCaseDependencyEnricher
             return null;
         }
 
+        // Non-identifier placeholders (notably auth credentials like email/password)
+        // should be sourced from the producer request body, not response ID paths.
+        if (ShouldExtractFromRequestBody(token, preferredVariableName, variableName))
+        {
+            var jsonPath = ResolveRequestBodyJsonPath(producer.SourceTestCase?.Request?.Body, token, preferredVariableName, variableName);
+            if (!string.IsNullOrWhiteSpace(jsonPath))
+            {
+                EnsureRequestBodyVariable(producer, variableName, jsonPath, pendingExistingVariables);
+                return variableName;
+            }
+        }
+
         foreach (var jsonPath in IdentifierJsonPaths)
         {
             EnsureVariableRule(
@@ -924,6 +896,128 @@ public static class GeneratedTestCaseDependencyEnricher
             regex: "([^/?#]+)$");
 
         return variableName;
+    }
+
+    private static bool ShouldExtractFromRequestBody(
+        string token,
+        string preferredVariableName,
+        string variableName)
+    {
+        if (IsIdentifierToken(token) || IsIdentifierSemanticVariableName(variableName))
+        {
+            return false;
+        }
+
+        if (IsCredentialField(token) || IsCredentialField(preferredVariableName))
+        {
+            return true;
+        }
+
+        // Generic placeholder relay for non-ID fields between dependent APIs.
+        return !string.IsNullOrWhiteSpace(preferredVariableName);
+    }
+
+    private static string ResolveRequestBodyJsonPath(
+        string requestBody,
+        string token,
+        string preferredVariableName,
+        string variableName)
+    {
+        var fieldCandidates = new[]
+        {
+            token,
+            preferredVariableName,
+            variableName,
+            StripKnownVariablePrefixes(preferredVariableName),
+            StripKnownVariablePrefixes(variableName),
+        }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+        if (!string.IsNullOrWhiteSpace(requestBody))
+        {
+            try
+            {
+                var root = JsonNode.Parse(requestBody);
+                if (root != null)
+                {
+                    foreach (var field in fieldCandidates)
+                    {
+                        if (TryFindJsonPath(root, field, "$", out var foundPath))
+                        {
+                            return foundPath;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fall back to inferred path.
+            }
+        }
+
+        var inferredField = fieldCandidates.FirstOrDefault();
+        return string.IsNullOrWhiteSpace(inferredField) ? null : "$." + inferredField;
+    }
+
+    private static string StripKnownVariablePrefixes(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return name;
+        }
+
+        var normalized = name.Trim();
+        foreach (var prefix in new[] { "registered", "request", "created", "generated", "new", "saved" })
+        {
+            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && normalized.Length > prefix.Length)
+            {
+                normalized = normalized[prefix.Length..];
+                break;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(normalized)
+            ? normalized
+            : char.ToLowerInvariant(normalized[0]) + normalized[1..];
+    }
+
+    private static bool TryFindJsonPath(JsonNode node, string propertyName, string currentPath, out string jsonPath)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var property in obj)
+            {
+                var propertyPath = currentPath + "." + property.Key;
+                if (string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    jsonPath = propertyPath;
+                    return true;
+                }
+
+                if (property.Value != null &&
+                    TryFindJsonPath(property.Value, propertyName, propertyPath, out jsonPath))
+                {
+                    return true;
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            for (var i = 0; i < array.Count; i++)
+            {
+                var item = array[i];
+                if (item != null &&
+                    TryFindJsonPath(item, propertyName, $"{currentPath}[{i}]", out jsonPath))
+                {
+                    return true;
+                }
+            }
+        }
+
+        jsonPath = null;
+        return false;
     }
 
     private static string EnsureRequestBodyVariable(
@@ -1310,6 +1404,18 @@ public static class GeneratedTestCaseDependencyEnricher
             && (string.Equals(token, "id", StringComparison.OrdinalIgnoreCase)
                 || token.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
                 || token.EndsWith("Ids", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsIdentifierSemanticVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int GetMethodPriority(string method)

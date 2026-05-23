@@ -27,14 +27,29 @@ public class N8nGeneratedTestCase
     public N8nTestCaseRequest Request { get; set; }
     public N8nTestCaseExpectation Expectation { get; set; }
     public List<N8nTestCaseVariable> Variables { get; set; } = new();
+
+    /// <summary>
+    /// Optional credential rewrite intent from n8n.
+    /// Supported values: preserve, rewrite_email, rewrite_password, rewrite_both.
+    /// </summary>
+    public string CredentialPolicy { get; set; }
+
+    /// <summary>
+    /// Optional list of request fields that must never be rewritten by BE resolver.
+    /// Example: ["request.body.password", "request.body.email"].
+    /// </summary>
+    public List<string> LockedFields { get; set; } = new();
 }
 
 public class N8nTestCaseRequest
 {
     public string HttpMethod { get; set; }
     public string Url { get; set; }
+    [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> Headers { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> PathParams { get; set; } = new();
+    [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> QueryParams { get; set; } = new();
     public string BodyType { get; set; }
     public string Body { get; set; }
