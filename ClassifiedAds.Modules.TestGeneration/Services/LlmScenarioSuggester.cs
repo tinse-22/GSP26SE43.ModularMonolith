@@ -27,9 +27,10 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int LeanScenarioTargetPerEndpoint = 5;
-    private const int StandardScenarioTargetPerEndpoint = 15;
+    private const int LeanScenarioTargetPerEndpoint = 3;
+    private const int StandardScenarioTargetPerEndpoint = 10;
     private const int MaxScenarioTargetPerBatch = 20;
+    private const string ScenarioQualityPolicyVersion = "scenario-quality-v2";
 
     private const int MaxBusinessContextLength = 1200;
     private const int MaxFeedbackContextLength = 1200;
@@ -51,8 +52,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. Generate scenarios by HTTP method: GET and DELETE endpoints need exactly 5 scenarios total; POST, PUT, and PATCH endpoints need exactly 15 scenarios total; other methods default to 15 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
-        "   - For GET/DELETE, include the 5 highest-value checks covering happy-path, boundary, and negative cases.\n" +
+        "1. Generate only high-value scenarios by HTTP method: GET and DELETE endpoints may produce up to 3 scenarios total; POST, PUT, and PATCH endpoints may produce up to 10 scenarios total; other methods default to up to 10 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "   - Do not pad weak, duplicate, or near-duplicate variants just to reach a count. Fewer strong scenarios are better than repeated data.\n" +
+        "   - Each kept scenario must cover a distinct field, constraint, status, auth, resource-not-found, or business-rule dimension.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
         "3. Boundary: values at the edge of valid range (e.g. empty string, max length, 0, -1, very large number).\n" +
         "3b. If the boundary value equals a valid minimum/maximum per SRS, expectedStatus must be 2xx (success). Use 4xx only when the constraint is violated or when SRS explicitly says the boundary value fails.\n" +
@@ -136,6 +138,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private static readonly Regex EmailLiteralRegex = new(
         @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex JavaScriptRepeatExpressionRegex = new(
+        @"\.repeat\s*\(",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -244,7 +250,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             if (algorithmProfile.UseObservationConfirmationPrompting)
             {
                 var promptContexts = EndpointPromptContextMapper.Map(orderedMetadata, context.Suite);
-                prompts = _promptBuilder.BuildForSequence(promptContexts);
+                prompts = _promptBuilder.BuildForSequence(promptContexts) ?? Array.Empty<ObservationConfirmationPrompt>();
             }
 
             var payload = BuildN8nPayload(
@@ -268,6 +274,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             var stopwatch = Stopwatch.StartNew();
             N8nBoundaryNegativeResponse n8nResponse;
+            IReadOnlyList<LlmSuggestedScenario> localFallbackScenarios = null;
 
             try
             {
@@ -293,6 +300,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     Model = "local-fallback",
                     TokensUsed = 0,
                 };
+
+                localFallbackScenarios = (await SuggestLocalDraftAsync(
+                    CreateBatchContext(context, batch),
+                    cancellationToken)).Scenarios;
             }
 
             stopwatch.Stop();
@@ -300,10 +311,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             await SaveInteractionAsync(context, payload, n8nResponse, latencyMs, cancellationToken);
 
-            var batchScenarios = ParseScenarios(n8nResponse, context.SrsRequirements);
+            var batchScenarios = localFallbackScenarios
+                ?? ParseRefinementResponse(CreateBatchContext(context, batch), n8nResponse).Scenarios;
             allScenarios.AddRange(batchScenarios);
 
-            if (algorithmProfile.UseFeedbackLoopContext)
+            if (algorithmProfile.UseFeedbackLoopContext && localFallbackScenarios == null)
             {
                 await CacheResultsAsync(context, batch, cacheKey, batchScenarios, cancellationToken);
             }
@@ -336,14 +348,50 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             feedbackContext.FeedbackFingerprint,
             cacheKey);
 
+        var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
+        var filteredScenarios = EnsureAdaptiveCoverage(
+            allScenarios,
+            orderedSequence,
+            metadataMap,
+            endpointContracts,
+            context.SrsRequirements);
+        if (filteredScenarios.Count != allScenarios.Count)
+        {
+            _logger.LogWarning(
+                "Filtered LLM scenario suggestions before returning result. TestSuiteId={TestSuiteId}, RawCount={RawCount}, KeptCount={KeptCount}",
+                context.TestSuiteId,
+                allScenarios.Count,
+                filteredScenarios.Count);
+        }
+
         return new LlmScenarioSuggestionResult
         {
-            Scenarios = allScenarios,
+            Scenarios = filteredScenarios,
             LlmModel = modelUsed,
             TokensUsed = totalTokens,
             LatencyMs = totalLatencyMs,
             FromCache = false,
             UsedLocalFallback = usedLocalFallback,
+        };
+    }
+
+    private static LlmScenarioSuggestionContext CreateBatchContext(
+        LlmScenarioSuggestionContext context,
+        IReadOnlyList<ApiOrderItemModel> orderedEndpoints)
+    {
+        return new LlmScenarioSuggestionContext
+        {
+            TestSuiteId = context.TestSuiteId,
+            UserId = context.UserId,
+            Suite = context.Suite,
+            EndpointMetadata = context.EndpointMetadata,
+            OrderedEndpoints = orderedEndpoints ?? Array.Empty<ApiOrderItemModel>(),
+            SpecificationId = context.SpecificationId,
+            EndpointParameterDetails = context.EndpointParameterDetails,
+            AlgorithmProfile = context.AlgorithmProfile,
+            BypassCache = context.BypassCache,
+            SrsDocument = context.SrsDocument,
+            SrsRequirements = context.SrsRequirements,
         };
     }
 
@@ -898,7 +946,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
         sb.AppendLine();
         sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
-        sb.AppendLine($"Target scenario count for this endpoint: {target} total scenario(s).");
+        sb.AppendLine($"Generate up to {target} high-value scenario(s) for this endpoint; do not pad weak or duplicate variants.");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -985,7 +1033,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     : "HappyPath, Negative";
 
                 sb.AppendLine(
-                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: target {target} scenarios, prioritize {expectedTypes}.");
+                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: up to {target} scenarios, prioritize {expectedTypes}; do not pad duplicates.");
             }
         }
 
@@ -1237,17 +1285,230 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             return rawScenarios ?? Array.Empty<LlmSuggestedScenario>();
         }
 
-        // Only order the LLM-returned scenarios by endpoint order — no synthetic padding.
+        // Order the LLM-returned scenarios by endpoint order, then remove duplicates and low-quality padded cases.
         var byEndpoint = (rawScenarios ?? Array.Empty<LlmSuggestedScenario>())
             .GroupBy(x => x.EndpointId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        return orderedEndpoints
-            .OrderBy(x => x.OrderIndex)
-            .SelectMany(x => byEndpoint.TryGetValue(x.EndpointId, out var list)
-                ? list
-                : Enumerable.Empty<LlmSuggestedScenario>())
+        var result = new List<LlmSuggestedScenario>();
+        var seenFingerprints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var endpoint in orderedEndpoints.OrderBy(x => x.OrderIndex))
+        {
+            if (!byEndpoint.TryGetValue(endpoint.EndpointId, out var list) || list.Count == 0)
+            {
+                continue;
+            }
+
+            ApiEndpointMetadataDto metadata = null;
+            metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
+            var candidates = new List<LlmSuggestedScenario>();
+            foreach (var scenario in list)
+            {
+                if (scenario == null)
+                {
+                    continue;
+                }
+
+                RepairScenarioRequestContract(scenario, endpoint, metadata);
+                if (!IsScenarioRequestUsable(scenario))
+                {
+                    continue;
+                }
+
+                if (ContainsInvalidJsonBodyExpression(scenario.SuggestedBody, scenario.SuggestedBodyType))
+                {
+                    continue;
+                }
+
+                var fingerprint = BuildScenarioFingerprint(scenario);
+                if (!seenFingerprints.Add(fingerprint))
+                {
+                    continue;
+                }
+
+                candidates.Add(scenario);
+            }
+
+            var cap = ComputeAdaptiveScenarioTarget(endpoint, metadata);
+            result.AddRange(SelectHighValueScenarios(candidates, cap));
+        }
+
+        return result;
+    }
+
+    private static void RepairScenarioRequestContract(
+        LlmSuggestedScenario scenario,
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata)
+    {
+        if (scenario == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(scenario.SuggestedHttpMethod))
+        {
+            scenario.SuggestedHttpMethod = endpoint?.HttpMethod ?? metadata?.HttpMethod;
+        }
+
+        if (string.IsNullOrWhiteSpace(scenario.SuggestedUrl))
+        {
+            scenario.SuggestedUrl = endpoint?.Path ?? metadata?.Path;
+        }
+    }
+
+    private static bool IsScenarioRequestUsable(LlmSuggestedScenario scenario)
+    {
+        return !string.IsNullOrWhiteSpace(scenario?.SuggestedHttpMethod)
+            && !string.IsNullOrWhiteSpace(scenario.SuggestedUrl);
+    }
+
+    private static bool ContainsInvalidJsonBodyExpression(string body, string bodyType)
+    {
+        return !string.IsNullOrWhiteSpace(body)
+            && !IsRawBodyType(bodyType)
+            && JavaScriptRepeatExpressionRegex.IsMatch(body);
+    }
+
+    private static bool IsRawBodyType(string bodyType)
+    {
+        return string.Equals(bodyType?.Trim(), "Raw", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<LlmSuggestedScenario> SelectHighValueScenarios(
+        IReadOnlyList<LlmSuggestedScenario> candidates,
+        int cap)
+    {
+        if (candidates == null || candidates.Count == 0)
+        {
+            return Array.Empty<LlmSuggestedScenario>();
+        }
+
+        if (cap <= 0 || candidates.Count <= cap)
+        {
+            return candidates.ToList();
+        }
+
+        var indexed = candidates
+            .Select((scenario, index) => new { Scenario = scenario, Index = index })
             .ToList();
+        var selectedIndexes = new HashSet<int>();
+        var selected = new List<(LlmSuggestedScenario Scenario, int Index)>();
+
+        var firstHappyPath = indexed.FirstOrDefault(x => x.Scenario.SuggestedTestType == TestType.HappyPath);
+        if (firstHappyPath != null)
+        {
+            selected.Add((firstHappyPath.Scenario, firstHappyPath.Index));
+            selectedIndexes.Add(firstHappyPath.Index);
+        }
+
+        foreach (var item in indexed
+            .Where(x => !selectedIndexes.Contains(x.Index))
+            .OrderBy(x => GetScenarioValueRank(x.Scenario))
+            .ThenBy(x => GetPriorityRank(x.Scenario.Priority))
+            .ThenBy(x => x.Index))
+        {
+            if (selected.Count >= cap)
+            {
+                break;
+            }
+
+            selected.Add((item.Scenario, item.Index));
+            selectedIndexes.Add(item.Index);
+        }
+
+        return selected
+            .OrderBy(x => x.Index)
+            .Select(x => x.Scenario)
+            .ToList();
+    }
+
+    private static int GetScenarioValueRank(LlmSuggestedScenario scenario)
+    {
+        return scenario?.SuggestedTestType switch
+        {
+            TestType.Negative => 0,
+            TestType.Boundary => 1,
+            TestType.HappyPath => 2,
+            TestType.Security => 3,
+            TestType.Performance => 4,
+            _ => 5,
+        };
+    }
+
+    private static int GetPriorityRank(string priority)
+    {
+        return priority?.Trim().ToLowerInvariant() switch
+        {
+            "critical" => 0,
+            "high" => 1,
+            "medium" or "normal" => 2,
+            "low" => 3,
+            _ => 4,
+        };
+    }
+
+    private static string BuildScenarioFingerprint(LlmSuggestedScenario scenario)
+    {
+        if (scenario == null)
+        {
+            return string.Empty;
+        }
+
+        return string.Join("|", new[]
+        {
+            scenario.EndpointId.ToString("N"),
+            NormalizeFingerprintText(scenario.SuggestedHttpMethod).ToUpperInvariant(),
+            NormalizeFingerprintText(scenario.SuggestedUrl),
+            NormalizeFingerprintDictionary(scenario.SuggestedPathParams),
+            NormalizeFingerprintDictionary(scenario.SuggestedQueryParams),
+            NormalizeFingerprintDictionary(scenario.SuggestedHeaders),
+            NormalizeFingerprintText(scenario.SuggestedBodyType).ToUpperInvariant(),
+            NormalizeJsonOrTextForFingerprint(scenario.SuggestedBody),
+            scenario.SuggestedTestType.ToString(),
+            string.Join(",", scenario.GetEffectiveExpectedStatusCodes().OrderBy(x => x)),
+            string.Join(",", (scenario.CoveredRequirementIds ?? new List<Guid>()).Where(x => x != Guid.Empty).OrderBy(x => x)),
+        });
+    }
+
+    private static string NormalizeFingerprintDictionary(Dictionary<string, string> values)
+    {
+        if (values == null || values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        return string.Join("&", values
+            .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+            .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(x => $"{NormalizeFingerprintText(x.Key)}={NormalizeJsonOrTextForFingerprint(x.Value)}"));
+    }
+
+    private static string NormalizeJsonOrTextForFingerprint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return JsonSerializer.Serialize(doc.RootElement, JsonOpts);
+        }
+        catch
+        {
+            return trimmed;
+        }
+    }
+
+    private static string NormalizeFingerprintText(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim();
     }
 
     private static int ComputeAdaptiveScenarioTarget(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
@@ -1360,6 +1621,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ScenarioName = $"{namePrefix}: {method} {path} ({index})",
             Description = desc,
             SuggestedTestType = type,
+            SuggestedHttpMethod = method,
+            SuggestedUrl = path,
             SuggestedBodyType = requestData.BodyType,
             SuggestedBody = requestData.Body,
             SuggestedPathParams = requestData.PathParams,
@@ -2151,6 +2414,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         string feedbackFingerprint)
     {
         var sb = new StringBuilder();
+        sb.Append(ScenarioQualityPolicyVersion).Append(':');
         sb.Append(context.TestSuiteId).Append(':');
         sb.Append(context.SpecificationId).Append(':');
         sb.Append(string.IsNullOrWhiteSpace(feedbackFingerprint)

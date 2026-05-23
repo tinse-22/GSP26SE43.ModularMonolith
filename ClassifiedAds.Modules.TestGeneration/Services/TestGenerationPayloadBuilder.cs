@@ -51,10 +51,10 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "=== RULES ===\n" +
         "1. OpenAPI is the structural contract: method, path, parameters, request fields/types/content type, required fields, constraints, documented response statuses, and response/error schemas.\n" +
         "2. SRS is the business source for endpoint-relevant scenario intent, meaningful test data, semantic behavior, and requirement coverage. SRS must not invent fields or undocumented statuses.\n" +
-        "3. Generate up to 3 scenarios for GET/DELETE and up to 10 for POST/PUT/PATCH. Always include one HappyPath when executable. Add Boundary/Negative only when supported by OpenAPI or endpoint-relevant SRS; do not pad duplicates.\n" +
+        "3. Generate up to 3 scenarios for GET/DELETE and up to 10 for POST/PUT/PATCH. Always include one HappyPath when executable. Add Boundary/Negative only when supported by OpenAPI or endpoint-relevant SRS; do not pad weak or duplicate variants.\n" +
         "4. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
         "5. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
-        "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes.\n" +
+        "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes. Duplicate/conflict tests must reuse prior variables such as {{email}} or {{name}}, not create another unique value.\n" +
         "7. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword plus email/password from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}} or {{email}}.\n" +
         "8. request.body must be a serialized JSON string or null using exact OpenAPI field names. request.bodyType must match the OpenAPI content type.\n" +
         "9. expectation.expectedStatus must use documented OpenAPI responses. If an SRS business rule has no compatible documented status, omit that scenario.\n" +
@@ -63,7 +63,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "12. Distinguish auth-negative from business-negative: missing/invalid Authorization expects 401; authenticated validation/business failures use 400/404/409 when SRS or endpoint rules state them. Do not use 401 as a generic negative status.\n" +
         "13. Login wrong-password and non-existent-email tests must use credentials that cannot match the registered setup account. Do not reuse {{registeredPassword}} for wrong-password cases.\n" +
         "14. For dependent resources such as product.categoryId, create or reference a setup variable for existing IDs; non-existent ID tests must use a syntactically valid ID that was not produced by setup.\n" +
-        "15. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
+        "15. Each kept case must cover a distinct field, constraint, status, auth, resource-not-found, or endpoint-specific business dimension.\n" +
+        "16. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +

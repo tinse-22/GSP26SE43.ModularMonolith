@@ -60,6 +60,11 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
 
     private static readonly string[] SecurityTokens = { "security", "secure", "auth", "authentication", "authorization", "password", "credential", "token", "jwt" };
     private static readonly string[] ValidationTokens = { "required", "format", "min", "max", "minimum", "maximum", "length", "enum", "pattern", "unique", "duplicate", "validation" };
+    private static readonly HashSet<string> DirectActionTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "register",
+        "login",
+    };
 
     public IReadOnlyList<RequirementMatch> MapRequirementsToEndpoint(
         ApiEndpointMetadataDto endpoint,
@@ -110,6 +115,31 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
         if (fieldOverlap.Count > 0)
         {
             signals.AddRange(fieldOverlap.Select(x => $"field:{x}"));
+        }
+
+        var endpointActions = endpointSignals.SemanticTokens
+            .Where(DirectActionTokens.Contains)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requirementActions = requirementTokens
+            .Where(DirectActionTokens.Contains)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var actionOverlap = endpointActions.Intersect(requirementActions, StringComparer.OrdinalIgnoreCase).ToList();
+        if (actionOverlap.Count > 0)
+        {
+            signals.AddRange(actionOverlap.Select(x => $"action:{x}"));
+            return Build(requirement, RequirementRelevance.Direct, RequirementMatchConfidence.High, signals);
+        }
+
+        if (endpointActions.Contains("login") && requirementActions.Contains("register"))
+        {
+            signals.Add("dependency:register-before-login");
+            return Build(requirement, RequirementRelevance.Dependency, RequirementMatchConfidence.High, signals);
+        }
+
+        if (endpointActions.Count > 0 && requirementActions.Count > 0)
+        {
+            signals.Add("action:mismatch");
+            return Build(requirement, RequirementRelevance.None, RequirementMatchConfidence.Low, signals);
         }
 
         var isCrossCutting = IsCrossCuttingRequirement(requirement, requirementTokens);
@@ -238,6 +268,13 @@ public sealed class EndpointRequirementMapper : IEndpointRequirementMapper
         }
 
         var normalized = token.Trim().Trim('{', '}', '[', ']', '"', '\'').ToLowerInvariant();
+        normalized = normalized switch
+        {
+            "registration" or "registered" or "registering" or "signup" => "register",
+            "signin" or "loggedin" => "login",
+            _ => normalized,
+        };
+
         if (normalized.EndsWith("ies", StringComparison.Ordinal) && normalized.Length > 4)
         {
             return normalized[..^3] + "y";
