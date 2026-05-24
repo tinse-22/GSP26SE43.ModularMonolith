@@ -1639,8 +1639,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     $"AI-generated test case '{dto.Name ?? $"index {item.Index}"}' references unknown endpointId '{endpointId}' for specification '{specId}'.");
             }
 
-            ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index);
-            ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index);
+            var hasSrsTraceability = HasSrsTraceability(dto);
+            ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index, hasSrsTraceability);
+            ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index, hasSrsTraceability);
             ValidateRequestBodyAgainstOpenApi(dto, endpoint, item.Index);
             ValidateVariableDependencies(dto, producedVariables, item.Index);
             RegisterProducedVariables(dto, producedVariables);
@@ -1676,7 +1677,8 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static void ValidateExpectedStatusesAgainstOpenApi(
         AiGeneratedTestCaseDto dto,
         ApiEndpointMetadataDto endpoint,
-        int index)
+        int index,
+        bool hasSrsTraceability)
     {
         var expectedStatuses = ParseStatusCodesFromExpectation(dto?.Expectation?.ExpectedStatus);
         if (expectedStatuses.Count == 0)
@@ -1697,7 +1699,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
 
         var invalid = expectedStatuses.Where(x => !allowedStatuses.Contains(x)).Distinct().ToList();
-        if (invalid.Count > 0)
+        if (invalid.Count > 0 && !hasSrsTraceability)
         {
             throw new ValidationException(
                 $"AI-generated test case '{dto?.Name ?? $"index {index}"}' has expectedStatus [{string.Join(", ", expectedStatuses)}] " +
@@ -1708,9 +1710,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static void ValidateAuthorizationHeaderAgainstOpenApi(
         AiGeneratedTestCaseDto dto,
         ApiEndpointMetadataDto endpoint,
-        int index)
+        int index,
+        bool hasSrsTraceability)
     {
-        if (endpoint?.IsAuthRelated == true)
+        if (endpoint?.IsAuthRelated == true || hasSrsTraceability)
         {
             return;
         }
@@ -1743,6 +1746,30 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             // Ignore malformed header JSON here; persistence normalization will handle invalid shapes.
         }
     }
+
+    private static bool HasSrsTraceability(AiGeneratedTestCaseDto dto)
+    {
+        if (dto == null)
+        {
+            return false;
+        }
+
+        if (dto.CoveredRequirementIds?.Any(x => x != Guid.Empty) == true ||
+            dto.CoveredRequirementCodes?.Any(x => !string.IsNullOrWhiteSpace(x)) == true)
+        {
+            return true;
+        }
+
+        var expectation = dto.Expectation;
+        return !string.IsNullOrWhiteSpace(expectation?.RequirementCode) ||
+               expectation?.PrimaryRequirementId is Guid requirementId && requirementId != Guid.Empty ||
+               string.Equals(expectation?.ExpectationSource, "Srs", StringComparison.OrdinalIgnoreCase) ||
+               ContainsSrsProvenance(expectation?.ExpectedProvenance);
+    }
+
+    private static bool ContainsSrsProvenance(string expectedProvenance)
+        => !string.IsNullOrWhiteSpace(expectedProvenance) &&
+           expectedProvenance.Contains("srs", StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateVariableDependencies(
         AiGeneratedTestCaseDto dto,

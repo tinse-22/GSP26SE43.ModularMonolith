@@ -864,6 +864,84 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_NotRejectAuthHeader_WhenSrsRequiresAuthButOpenApiIsPublic()
+    {
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.ApiSpecId = specId;
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "DELETE",
+                    Path = "/api/products/{id}",
+                    IsAuthRelated = false,
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 204 },
+                    },
+                },
+            });
+
+        var requirement = new SrsRequirement
+        {
+            Id = reqId,
+            SrsDocumentId = srsDocId,
+            EndpointId = endpointId,
+            RequirementCode = "REQ-AUTH-DELETE",
+            RequirementType = SrsRequirementType.Security,
+            Title = "Delete product requires authentication",
+            TestableConstraints = """[{ "constraint": "missing bearer token -> 401", "expectedOutcome": "401 Unauthorized", "priority": "High" }]""",
+        };
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement> { requirement }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement> { requirement });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Name = "Delete product with auth per SRS";
+        command.TestCases[0].TestType = "HappyPath";
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { reqId };
+        command.TestCases[0].Request = new AiTestCaseRequestDto
+        {
+            HttpMethod = "DELETE",
+            Url = "/api/products/123",
+            Headers = """{"Authorization":"Bearer srs-token"}""",
+            BodyType = "None",
+        };
+        command.TestCases[0].Expectation = new AiTestCaseExpectationDto
+        {
+            ExpectedStatus = "[204]",
+            ExpectationSource = "Srs",
+            RequirementCode = "REQ-AUTH-DELETE",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().NotThrowAsync();
+
+        _expectationRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseExpectation>(e => e.ExpectedStatus == "[204]" && e.ExpectationSource == "Srs"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_LogWarning_WhenNoCoveredRequirementIds_ButSuiteHasSrsDoc()
     {
         var srsDocId = Guid.NewGuid();

@@ -3,13 +3,16 @@ using ClassifiedAds.Contracts.LlmAssistant.DTOs;
 using ClassifiedAds.Contracts.LlmAssistant.Services;
 using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -27,9 +30,6 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 /// </summary>
 public class LlmScenarioSuggester : ILlmScenarioSuggester
 {
-    private const int LeanScenarioTargetPerEndpoint = 3;
-    private const int StandardScenarioTargetPerEndpoint = 10;
-    private const int MaxScenarioTargetPerBatch = 20;
     private const string ScenarioQualityPolicyVersion = "scenario-quality-v2";
 
     private const int MaxBusinessContextLength = 1200;
@@ -52,7 +52,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private const string SuggestionRulesBlock =
         "=== RULES ===\n" +
-        "1. Generate only high-value scenarios by HTTP method: GET and DELETE endpoints may produce up to 3 scenarios total; POST, PUT, and PATCH endpoints may produce up to 10 scenarios total; other methods default to up to 10 scenarios. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
+        "1. Use the provided per-endpoint scenarioBudget. Treat softLimit/target as the preferred budget. Do not exceed hardLimit. Always include at least one HappyPath when endpoint is executable, plus Boundary/Negative where applicable.\n" +
         "   - Do not pad weak, duplicate, or near-duplicate variants just to reach a count. Fewer strong scenarios are better than repeated data.\n" +
         "   - Each kept scenario must cover a distinct field, constraint, status, auth, resource-not-found, or business-rule dimension.\n" +
         "2. HappyPath: valid request payload and expected success status (2xx) with realistic data.\n" +
@@ -97,7 +97,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "   - coveredRequirementCodes MUST include requirements[n].code.\n" +
         "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
         "   - Example: constraint='password >= 6 chars → 400' → Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'].\n" +
-        "   - If no testableConstraints, ignore this rule.\n";
+        "   - If no testableConstraints, ignore this rule.\n" +
+        "19. SRS OVERRIDES SECURITY EXPECTATIONS: If SRS says POST/PUT/PATCH/DELETE or a mapped endpoint requires auth, generate the auth happy path with Authorization even when OpenAPI omits security. Also generate a missing-auth Negative using X-Test-Auth-Mode:none and the SRS-backed 401/403 expectation.\n";
 
     private const string SuggestionResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -163,6 +164,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly IExpectationResolver _expectationResolver;
     private readonly ILogger<LlmScenarioSuggester> _logger;
+    private readonly ScenarioGenerationBudgetOptions _scenarioBudgetOptions;
+    private readonly ScenarioBudgetResolver _scenarioBudgetResolver;
 
     public LlmScenarioSuggester(
         IObservationConfirmationPromptBuilder promptBuilder,
@@ -171,7 +174,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ILlmSuggestionFeedbackContextService feedbackContextService,
         IEndpointRequirementMapper requirementMapper,
         IExpectationResolver expectationResolver,
-        ILogger<LlmScenarioSuggester> logger)
+        ILogger<LlmScenarioSuggester> logger,
+        IOptions<ScenarioGenerationBudgetOptions> scenarioBudgetOptions = null)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
@@ -180,6 +184,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         _requirementMapper = requirementMapper ?? throw new ArgumentNullException(nameof(requirementMapper));
         _expectationResolver = expectationResolver ?? throw new ArgumentNullException(nameof(expectationResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _scenarioBudgetOptions = ScenarioBudgetResolver.Normalize(scenarioBudgetOptions?.Value);
+        _scenarioBudgetResolver = new ScenarioBudgetResolver(_scenarioBudgetOptions);
     }
 
     public async Task<LlmScenarioSuggestionResult> SuggestScenariosAsync(
@@ -230,7 +236,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         // Step 2: Build prompts and call n8n in batches to avoid output truncation.
         var metadataMap = context.EndpointMetadata.ToDictionary(e => e.EndpointId);
-        var endpointBatches = BuildEndpointBatches(orderedSequence, metadataMap);
+        var scenarioBudgets = BuildScenarioBudgets(context, orderedSequence, metadataMap);
+        var endpointBatches = BuildEndpointBatches(orderedSequence, scenarioBudgets);
 
         var allScenarios = new List<LlmSuggestedScenario>();
         var totalTokens = 0;
@@ -258,7 +265,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 batch,
                 metadataMap,
                 prompts,
-                feedbackContext.EndpointFeedbackContexts);
+                feedbackContext.EndpointFeedbackContexts,
+                scenarioBudgets);
             var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts).Length;
 
             _logger.LogInformation(
@@ -349,10 +357,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             cacheKey);
 
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
-        var filteredScenarios = EnsureAdaptiveCoverage(
+        var filteredScenarios = ApplyScenarioBudgetPolicy(
             allScenarios,
             orderedSequence,
             metadataMap,
+            scenarioBudgets,
             endpointContracts,
             context.SrsRequirements);
         if (filteredScenarios.Count != allScenarios.Count)
@@ -422,6 +431,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         var metadataMap = context.EndpointMetadata?.ToDictionary(e => e.EndpointId)
             ?? new Dictionary<Guid, ApiEndpointMetadataDto>();
+        var scenarioBudgets = BuildScenarioBudgets(context, orderedSequence, metadataMap);
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
         var scenarios = new List<LlmSuggestedScenario>();
 
@@ -432,11 +442,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             var method = ResolveHttpMethod(endpoint, metadata);
             var hasErrorResponse = metadata?.Responses?.Any(r => r.StatusCode >= 400 && r.StatusCode <= 599) == true;
+            var hasSrsErrorExpectation = HasSrsErrorExpectation(endpoint, metadata, context.SrsRequirements);
             var hasSuccessResponse = metadata?.Responses?.Any(r => r.StatusCode >= 200 && r.StatusCode <= 299) == true
                 || metadata?.Responses == null;
 
-            if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase) ||
-                (!hasErrorResponse && !HasBoundarySurface(endpoint, metadata)))
+            if ((string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase) && !hasSrsErrorExpectation) ||
+                (!hasErrorResponse && !hasSrsErrorExpectation && !HasBoundarySurface(endpoint, metadata)))
             {
                 continue;
             }
@@ -464,7 +475,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     context.SrsRequirements));
             }
 
-            if (hasErrorResponse)
+            if (hasErrorResponse || hasSrsErrorExpectation)
             {
                 scenarios.Add(CreateFallbackScenario(
                     endpoint,
@@ -476,10 +487,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             }
         }
 
-        var orderedScenarios = EnsureAdaptiveCoverage(
+        var orderedScenarios = ApplyScenarioBudgetPolicy(
             scenarios,
             orderedSequence,
             metadataMap,
+            scenarioBudgets,
             endpointContracts,
             context.SrsRequirements);
 
@@ -510,6 +522,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         var metadataMap = context.EndpointMetadata?.ToDictionary(e => e.EndpointId)
             ?? new Dictionary<Guid, ApiEndpointMetadataDto>();
+        var scenarioBudgets = BuildScenarioBudgets(context, orderedSequence, metadataMap);
 
         var feedbackContext = algorithmProfile.UseFeedbackLoopContext
             ? await BuildFeedbackContextSafeAsync(context, orderedSequence, cancellationToken)
@@ -532,7 +545,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             orderedSequence,
             metadataMap,
             prompts,
-            feedbackContext.EndpointFeedbackContexts);
+            feedbackContext.EndpointFeedbackContexts,
+            scenarioBudgets);
 
         payload.RefinementJobId = refinementJobId;
         payload.CallbackUrl = callbackUrl;
@@ -554,6 +568,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         var metadataMap = context.EndpointMetadata?.ToDictionary(e => e.EndpointId)
             ?? new Dictionary<Guid, ApiEndpointMetadataDto>();
+        var scenarioBudgets = BuildScenarioBudgets(context, orderedSequence, metadataMap);
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
         var orderItemMap = orderedSequence.ToDictionary(e => e.EndpointId);
 
@@ -674,10 +689,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             repaired.Add(scenario);
         }
 
-        var orderedScenarios = EnsureAdaptiveCoverage(
+        var orderedScenarios = ApplyScenarioBudgetPolicy(
             repaired,
             orderedSequence,
             metadataMap,
+            scenarioBudgets,
             endpointContracts,
             context.SrsRequirements);
 
@@ -728,9 +744,50 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return scenario;
     }
 
-    private static List<List<ApiOrderItemModel>> BuildEndpointBatches(
+    private IReadOnlyDictionary<Guid, ScenarioBudget> BuildScenarioBudgets(
+        LlmScenarioSuggestionContext context,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        var result = new Dictionary<Guid, ScenarioBudget>();
+        if (orderedEndpoints == null || orderedEndpoints.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var endpoint in orderedEndpoints)
+        {
+            ApiEndpointMetadataDto metadata = null;
+            metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
+
+            string businessContext = null;
+            context?.Suite?.EndpointBusinessContexts?.TryGetValue(endpoint.EndpointId, out businessContext);
+
+            var coverableRequirementCount = 0;
+            var dependencyRequirementCount = 0;
+            if (metadata != null && context?.SrsRequirements?.Count > 0)
+            {
+                var matches = _requirementMapper.MapRequirementsToEndpoint(metadata, context.SrsRequirements);
+                coverableRequirementCount = matches.Count(x => x.IsCoverable);
+                dependencyRequirementCount = matches.Count(x =>
+                    x.Relevance == RequirementRelevance.Dependency &&
+                    x.Confidence != RequirementMatchConfidence.Low);
+            }
+
+            result[endpoint.EndpointId] = _scenarioBudgetResolver.Resolve(
+                endpoint,
+                metadata,
+                businessContext,
+                coverableRequirementCount,
+                dependencyRequirementCount);
+        }
+
+        return result;
+    }
+
+    private List<List<ApiOrderItemModel>> BuildEndpointBatches(
+        IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets)
     {
         var batches = new List<List<ApiOrderItemModel>>();
         if (orderedEndpoints == null || orderedEndpoints.Count == 0)
@@ -743,14 +800,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         foreach (var endpoint in orderedEndpoints)
         {
-            ApiEndpointMetadataDto metadata = null;
-            if (metadataMap != null)
-            {
-                metadataMap.TryGetValue(endpoint.EndpointId, out metadata);
-            }
-            var target = ComputeAdaptiveScenarioTarget(endpoint, metadata);
+            var target = ResolveBudgetEstimate(endpoint, scenarioBudgets);
 
-            if (current.Count > 0 && currentTarget + target > MaxScenarioTargetPerBatch)
+            if (current.Count > 0 && currentTarget + target > _scenarioBudgetOptions.MaxScenarioBudgetPerBatch)
             {
                 batches.Add(current);
                 current = new List<ApiOrderItemModel>();
@@ -767,6 +819,23 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         return batches;
+    }
+
+    private static int ResolveBudgetEstimate(
+        ApiOrderItemModel endpoint,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets)
+    {
+        if (endpoint != null &&
+            scenarioBudgets != null &&
+            scenarioBudgets.TryGetValue(endpoint.EndpointId, out var budget) &&
+            budget != null)
+        {
+            return Math.Max(1, Math.Min(
+                budget.HardLimit <= 0 ? budget.Target : budget.HardLimit,
+                budget.Target > 0 ? budget.Target : budget.SoftLimit));
+        }
+
+        return 1;
     }
 
     private async Task<LlmScenarioSuggestionResult> TryGetCachedResultAsync(
@@ -817,7 +886,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         Dictionary<Guid, ApiEndpointMetadataDto> metadataMap,
         IReadOnlyList<ObservationConfirmationPrompt> prompts,
-        IReadOnlyDictionary<Guid, string> endpointFeedbackContexts)
+        IReadOnlyDictionary<Guid, string> endpointFeedbackContexts,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets)
     {
         var endpointPayloads = new List<N8nBoundaryEndpointPayload>();
 
@@ -825,6 +895,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             var orderItem = orderedEndpoints[i];
             metadataMap.TryGetValue(orderItem.EndpointId, out var metadata);
+            ScenarioBudget scenarioBudget = null;
+            scenarioBudgets?.TryGetValue(orderItem.EndpointId, out scenarioBudget);
 
             context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var businessContext);
 
@@ -839,7 +911,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 context.Suite,
                 metadata,
                 businessContext,
-                prompt);
+                prompt,
+                scenarioBudget);
 
             endpointPayloads.Add(new N8nBoundaryEndpointPayload
             {
@@ -849,9 +922,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 OperationId = metadata?.OperationId,
                 OrderIndex = orderItem.OrderIndex,
                 BusinessContext = TruncateForPayload(businessContext, MaxBusinessContextLength),
-                FeedbackContext = endpointFeedbackContexts.TryGetValue(orderItem.EndpointId, out var feedbackContext)
+                FeedbackContext = endpointFeedbackContexts != null && endpointFeedbackContexts.TryGetValue(orderItem.EndpointId, out var feedbackContext)
                     ? TruncateForPayload(feedbackContext, MaxFeedbackContextLength)
                     : string.Empty,
+                ScenarioBudget = scenarioBudget,
                 Prompt = promptPayload,
                 ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
                 ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
@@ -867,7 +941,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             GlobalBusinessRules = TruncateForPayload(context.Suite.GlobalBusinessRules, MaxBusinessContextLength),
             SrsContext = BuildSrsContext(context),
             AlgorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile(),
-            PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap),
+            PromptConfig = BuildSuggestionPromptConfig(context, prompts, orderedEndpoints, metadataMap, scenarioBudgets),
             Endpoints = endpointPayloads,
         };
     }
@@ -911,10 +985,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         TestSuite suite,
         ApiEndpointMetadataDto metadata,
         string businessContext,
-        ObservationConfirmationPrompt prompt)
+        ObservationConfirmationPrompt prompt,
+        ScenarioBudget scenarioBudget)
     {
         var combinedPrompt = string.IsNullOrWhiteSpace(prompt?.CombinedPrompt)
-            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext)
+            ? BuildFallbackCombinedPrompt(orderItem, suite, metadata, businessContext, scenarioBudget)
             : prompt.CombinedPrompt;
 
         return new N8nPromptPayload
@@ -936,9 +1011,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ApiOrderItemModel orderItem,
         TestSuite suite,
         ApiEndpointMetadataDto metadata,
-        string businessContext)
+        string businessContext,
+        ScenarioBudget scenarioBudget)
     {
-        var target = ComputeAdaptiveScenarioTarget(orderItem, metadata);
         var sb = new StringBuilder();
         sb.AppendLine("# Endpoint Context (Fallback)");
         sb.AppendLine($"Method: {orderItem?.HttpMethod ?? metadata?.HttpMethod ?? "GET"}");
@@ -946,7 +1021,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         sb.AppendLine($"OperationId: {metadata?.OperationId ?? "N/A"}");
         sb.AppendLine();
         sb.AppendLine("Generate boundary and negative scenarios for this endpoint only.");
-        sb.AppendLine($"Generate up to {target} high-value scenario(s) for this endpoint; do not pad weak or duplicate variants.");
+        if (scenarioBudget != null)
+        {
+            sb.AppendLine($"Scenario budget: target={scenarioBudget.Target}, softLimit={scenarioBudget.SoftLimit}, hardLimit={scenarioBudget.HardLimit}. Reason: {scenarioBudget.Reason}");
+        }
+
+        sb.AppendLine("Use the scenario budget as the preferred limit; do not pad weak or duplicate variants and do not exceed hardLimit.");
 
         if (!string.IsNullOrWhiteSpace(suite?.GlobalBusinessRules))
         {
@@ -989,7 +1069,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         LlmScenarioSuggestionContext context,
         IReadOnlyList<ObservationConfirmationPrompt> prompts,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
-        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets)
     {
         var systemPrompt = prompts?
             .Select(x => x?.SystemPrompt)
@@ -1001,7 +1082,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ? DefaultSuggestionSystemPrompt
                 : systemPrompt, MaxSystemPromptLength),
             TaskInstruction = TruncateForPayload(
-                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap),
+                BuildSuggestionTaskInstruction(context?.Suite, orderedEndpoints, metadataMap, scenarioBudgets, context?.SrsRequirements),
                 MaxTaskInstructionLength),
             Rules = TruncateForPayload(SuggestionRulesBlock, MaxRulesLength),
             ResponseFormat = TruncateForPayload(SuggestionResponseFormatBlock, MaxResponseFormatLength),
@@ -1011,29 +1092,44 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private static string BuildSuggestionTaskInstruction(
         TestSuite suite,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
-        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets,
+        IReadOnlyList<SrsRequirement> srsRequirements)
     {
         var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
         var sb = new StringBuilder();
         sb.Append($"Generate happy-path, boundary, and negative test scenarios for this ordered REST API sequence (suite: {suiteName}).");
+        sb.AppendLine();
+        sb.Append("Use OpenAPI for method/path/request shape. Use mapped SRS requirements as the oracle for auth/security/business expectations when OpenAPI is incomplete or conflicts with SRS.");
 
         if (orderedEndpoints != null && orderedEndpoints.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine("=== COVERAGE TARGET GUIDE (adaptive, not hard cap) ===");
+            sb.AppendLine("=== SCENARIO BUDGET GUIDE ===");
             foreach (var endpoint in orderedEndpoints.OrderBy(x => x.OrderIndex))
             {
                 ApiEndpointMetadataDto metadata = null;
                 metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
-                var target = ComputeAdaptiveScenarioTarget(endpoint, metadata);
+                ScenarioBudget budget = null;
+                scenarioBudgets?.TryGetValue(endpoint.EndpointId, out budget);
                 var hasBoundarySurface = HasBoundarySurface(endpoint, metadata);
+                var hasSrsErrorExpectation = HasSrsErrorExpectation(endpoint, metadata, srsRequirements);
                 var expectedTypes = hasBoundarySurface
                     ? "HappyPath, Boundary, Negative"
+                    : hasSrsErrorExpectation
+                        ? "HappyPath, Negative"
                     : "HappyPath, Negative";
 
+                if (budget == null)
+                {
+                    sb.AppendLine(
+                        $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: prioritize {expectedTypes}; do not pad duplicates.");
+                    continue;
+                }
+
                 sb.AppendLine(
-                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: up to {target} scenarios, prioritize {expectedTypes}; do not pad duplicates.");
+                    $"- [{endpoint.OrderIndex}] {endpoint.HttpMethod} {endpoint.Path}: target={budget.Target}, softLimit={budget.SoftLimit}, hardLimit={budget.HardLimit}; reason={budget.Reason}; prioritize {expectedTypes}; do not pad duplicates.");
             }
         }
 
@@ -1273,10 +1369,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return missingParts.Count == 0;
     }
 
-    private IReadOnlyList<LlmSuggestedScenario> EnsureAdaptiveCoverage(
+    private IReadOnlyList<LlmSuggestedScenario> ApplyScenarioBudgetPolicy(
         IReadOnlyList<LlmSuggestedScenario> rawScenarios,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets,
         IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
         IReadOnlyList<SrsRequirement> srsRequirements)
     {
@@ -1302,6 +1399,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             ApiEndpointMetadataDto metadata = null;
             metadataMap?.TryGetValue(endpoint.EndpointId, out metadata);
+            ScenarioBudget budget = null;
+            scenarioBudgets?.TryGetValue(endpoint.EndpointId, out budget);
             var candidates = new List<LlmSuggestedScenario>();
             foreach (var scenario in list)
             {
@@ -1330,11 +1429,46 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 candidates.Add(scenario);
             }
 
-            var cap = ComputeAdaptiveScenarioTarget(endpoint, metadata);
-            result.AddRange(SelectHighValueScenarios(candidates, cap));
+            var cap = ResolveScenarioBudgetCap(budget);
+            var selected = SelectHighValueScenarios(candidates, cap, metadata);
+            if (candidates.Count > selected.Count)
+            {
+                _logger.LogInformation(
+                    "Dropped {DroppedCount} LLM scenario suggestion(s) due to scenario budget. EndpointId={EndpointId}, Target={Target}, SoftLimit={SoftLimit}, HardLimit={HardLimit}, CandidateCount={CandidateCount}, KeptCount={KeptCount}",
+                    candidates.Count - selected.Count,
+                    endpoint.EndpointId,
+                    budget?.Target,
+                    budget?.SoftLimit,
+                    budget?.HardLimit,
+                    candidates.Count,
+                    selected.Count);
+            }
+
+            result.AddRange(selected);
         }
 
         return result;
+    }
+
+    private static int ResolveScenarioBudgetCap(ScenarioBudget budget)
+    {
+        if (budget == null)
+        {
+            return int.MaxValue;
+        }
+
+        var preferred = budget.Target > 0 ? budget.Target : budget.SoftLimit;
+        if (preferred <= 0)
+        {
+            preferred = budget.HardLimit;
+        }
+
+        if (budget.HardLimit > 0)
+        {
+            preferred = Math.Min(preferred, budget.HardLimit);
+        }
+
+        return preferred <= 0 ? int.MaxValue : preferred;
     }
 
     private static void RepairScenarioRequestContract(
@@ -1378,7 +1512,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
     private static IReadOnlyList<LlmSuggestedScenario> SelectHighValueScenarios(
         IReadOnlyList<LlmSuggestedScenario> candidates,
-        int cap)
+        int cap,
+        ApiEndpointMetadataDto metadata)
     {
         if (candidates == null || candidates.Count == 0)
         {
@@ -1405,7 +1540,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         foreach (var item in indexed
             .Where(x => !selectedIndexes.Contains(x.Index))
-            .OrderBy(x => GetScenarioValueRank(x.Scenario))
+            .OrderBy(x => GetScenarioValueRank(x.Scenario, metadata))
             .ThenBy(x => GetPriorityRank(x.Scenario.Priority))
             .ThenBy(x => x.Index))
         {
@@ -1424,17 +1559,79 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             .ToList();
     }
 
-    private static int GetScenarioValueRank(LlmSuggestedScenario scenario)
+    private static int GetScenarioValueRank(LlmSuggestedScenario scenario, ApiEndpointMetadataDto metadata)
     {
+        if (IsRequirementBackedScenario(scenario))
+        {
+            return 0;
+        }
+
+        if (IsAuthOrSecurityScenario(scenario))
+        {
+            return 1;
+        }
+
+        if (UsesDocumentedStatus(scenario, metadata))
+        {
+            return 2;
+        }
+
         return scenario?.SuggestedTestType switch
         {
-            TestType.Negative => 0,
-            TestType.Boundary => 1,
-            TestType.HappyPath => 2,
-            TestType.Security => 3,
-            TestType.Performance => 4,
-            _ => 5,
+            TestType.Negative => 3,
+            TestType.Boundary => 4,
+            TestType.HappyPath => 5,
+            TestType.Security => 6,
+            TestType.Performance => 7,
+            _ => 8,
         };
+    }
+
+    private static bool IsRequirementBackedScenario(LlmSuggestedScenario scenario)
+    {
+        return scenario?.PrimaryRequirementId.HasValue == true
+            || scenario?.CoveredRequirementIds?.Any(x => x != Guid.Empty) == true
+            || !string.IsNullOrWhiteSpace(scenario?.RequirementCode);
+    }
+
+    private static bool IsAuthOrSecurityScenario(LlmSuggestedScenario scenario)
+    {
+        if (scenario == null)
+        {
+            return false;
+        }
+
+        if (scenario.SuggestedTestType == TestType.Security)
+        {
+            return true;
+        }
+
+        if (scenario.GetEffectiveExpectedStatusCodes().Any(x => x is 401 or 403))
+        {
+            return true;
+        }
+
+        var text = string.Join(" ", new[]
+        {
+            scenario.ScenarioName,
+            scenario.Description,
+            string.Join(" ", scenario.Tags ?? new List<string>()),
+        });
+
+        return text.Contains("auth", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("security", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool UsesDocumentedStatus(LlmSuggestedScenario scenario, ApiEndpointMetadataDto metadata)
+    {
+        var documentedStatuses = metadata?.Responses?
+            .Select(x => x.StatusCode)
+            .ToHashSet()
+            ?? new HashSet<int>();
+
+        return documentedStatuses.Count > 0
+            && scenario?.GetEffectiveExpectedStatusCodes().Any(documentedStatuses.Contains) == true;
     }
 
     private static int GetPriorityRank(string priority)
@@ -1511,23 +1708,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             : value.Trim();
     }
 
-    private static int ComputeAdaptiveScenarioTarget(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
-    {
-        var method = ResolveHttpMethod(endpoint, metadata);
-        return IsLeanScenarioMethod(method)
-            ? LeanScenarioTargetPerEndpoint
-            : StandardScenarioTargetPerEndpoint;
-    }
-
     private static string ResolveHttpMethod(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
     {
         return (endpoint?.HttpMethod ?? metadata?.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
-    }
-
-    private static bool IsLeanScenarioMethod(string method)
-    {
-        return string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasBoundarySurface(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
@@ -1638,6 +1821,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             Priority = type == TestType.HappyPath ? "Medium" : "High",
             Tags = tags,
             Variables = requestData.Variables,
+            CoveredRequirementIds = resolvedExpectation?.PrimaryRequirementId is Guid requirementId
+                ? new List<Guid> { requirementId }
+                : new List<Guid>(),
             ExpectationSource = (resolvedExpectation?.Source ?? Models.ExpectationSource.Default).ToString(),
             RequirementCode = resolvedExpectation?.RequirementCode,
             PrimaryRequirementId = resolvedExpectation?.PrimaryRequirementId,
@@ -1719,13 +1905,15 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
             }
 
+            var requiresAuthFromSrs = HasSrsAuthRequirement(endpoint, metadata, context.SrsRequirements);
             var requestContext = new ContractAwareRequestContext
             {
                 HttpMethod = endpoint.HttpMethod ?? metadata?.HttpMethod,
                 Path = endpoint.Path ?? metadata?.Path,
                 OperationId = metadata?.OperationId,
                 RequiresBody = requiresBody,
-                RequiresAuth = RequiresAuth(endpoint, metadata, orderItemMap, metadataMap),
+                RequiresAuth = RequiresAuth(endpoint, metadata, orderItemMap, metadataMap) || requiresAuthFromSrs,
+                RequiresAuthFromSrs = requiresAuthFromSrs,
                 IsRegisterLikeEndpoint = IsRegisterLikeEndpoint(endpoint, metadata),
                 IsLoginLikeEndpoint = IsLoginLikeEndpoint(endpoint, metadata),
                 RequiredPathParams = requiredPathParams.ToList(),
@@ -1926,6 +2114,171 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         return false;
     }
+
+    private static bool HasSrsAuthRequirement(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyList<SrsRequirement> srsRequirements)
+    {
+        if (IsAuthLikeEndpoint(endpoint, metadata) || srsRequirements == null || srsRequirements.Count == 0)
+        {
+            return false;
+        }
+
+        return srsRequirements.Any(requirement =>
+            IsSrsRequirementRelevantToEndpoint(requirement, endpoint, metadata) &&
+            RequirementMentionsAuth(requirement));
+    }
+
+    private static bool HasSrsErrorExpectation(
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata,
+        IReadOnlyList<SrsRequirement> srsRequirements)
+    {
+        if (srsRequirements == null || srsRequirements.Count == 0)
+        {
+            return false;
+        }
+
+        if (HasSrsAuthRequirement(endpoint, metadata, srsRequirements))
+        {
+            return true;
+        }
+
+        return srsRequirements.Any(requirement =>
+            IsSrsRequirementRelevantToEndpoint(requirement, endpoint, metadata) &&
+            ExtractStatusCodesFromRequirement(requirement).Any(status => status >= 400 && status <= 599));
+    }
+
+    private static bool IsSrsRequirementRelevantToEndpoint(
+        SrsRequirement requirement,
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata)
+    {
+        if (requirement == null)
+        {
+            return false;
+        }
+
+        var endpointId = endpoint?.EndpointId ?? metadata?.EndpointId ?? Guid.Empty;
+        if (endpointId != Guid.Empty && requirement.EndpointId == endpointId)
+        {
+            return true;
+        }
+
+        if (MatchesMappedEndpointPath(requirement.MappedEndpointPath, endpoint, metadata))
+        {
+            return true;
+        }
+
+        if (requirement.EndpointId.HasValue || !string.IsNullOrWhiteSpace(requirement.MappedEndpointPath))
+        {
+            return false;
+        }
+
+        var method = endpoint?.HttpMethod ?? metadata?.HttpMethod;
+        return requirement.RequirementType == SrsRequirementType.Security &&
+               IsMutationMethod(method) &&
+               RequirementMentionsAuth(requirement);
+    }
+
+    private static bool MatchesMappedEndpointPath(
+        string mappedEndpointPath,
+        ApiOrderItemModel endpoint,
+        ApiEndpointMetadataDto metadata)
+    {
+        if (string.IsNullOrWhiteSpace(mappedEndpointPath))
+        {
+            return false;
+        }
+
+        var mapped = mappedEndpointPath.Trim();
+        var method = endpoint?.HttpMethod ?? metadata?.HttpMethod;
+        var path = endpoint?.Path ?? metadata?.Path;
+        return !string.IsNullOrWhiteSpace(method) &&
+               !string.IsNullOrWhiteSpace(path) &&
+               mapped.Contains(method, StringComparison.OrdinalIgnoreCase) &&
+               mapped.Contains(path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool RequirementMentionsAuth(SrsRequirement requirement)
+    {
+        if (requirement == null)
+        {
+            return false;
+        }
+
+        if (requirement.RequirementType == SrsRequirementType.Security)
+        {
+            return true;
+        }
+
+        var text = NormalizeForSearch(BuildSrsRequirementText(requirement));
+        return text.Contains("auth", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("authorization", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("authentication", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("bearer", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("jwt", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("xac thuc", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("phan quyen", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("bao mat", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("dang nhap", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<int> ExtractStatusCodesFromRequirement(SrsRequirement requirement)
+    {
+        var text = BuildSrsRequirementText(requirement);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Array.Empty<int>();
+        }
+
+        return Regex.Matches(text, @"\b[1-5][0-9]{2}\b")
+            .Select(match => int.TryParse(match.Value, out var status) ? status : 0)
+            .Where(status => status >= 100 && status <= 599)
+            .Distinct()
+            .ToList();
+    }
+
+    private static string BuildSrsRequirementText(SrsRequirement requirement)
+        => string.Join(" ", new[]
+        {
+            requirement?.RequirementCode,
+            requirement?.Title,
+            requirement?.Description,
+            requirement?.RequirementType.ToString(),
+            requirement?.TestableConstraints,
+            requirement?.RefinedConstraints,
+            requirement?.MappedEndpointPath,
+        });
+
+    private static string NormalizeForSearch(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            {
+                builder.Append(character);
+            }
+        }
+
+        return builder.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
+    }
+
+    private static bool IsMutationMethod(string method)
+        => string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRegisterLikeEndpoint(ApiOrderItemModel endpoint, ApiEndpointMetadataDto metadata)
     {
@@ -2220,6 +2573,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             .OrderByDescending(p => p.IsRequired)
             .ThenBy(p => p.Location)
             .ThenBy(p => p.Name)
+            .GroupBy(p => $"{p.Location?.Trim().ToLowerInvariant()}:{p.Name?.Trim().ToLowerInvariant()}")
+            .Select(g => g.First())
             .Take(MaxParameterDetailCount)
             .Select(p => new N8nParameterDetail
             {
@@ -2408,7 +2763,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
     }
 
-    private static string BuildCacheKey(
+    private string BuildCacheKey(
         LlmScenarioSuggestionContext context,
         IReadOnlyList<ApiOrderItemModel> orderedEndpoints,
         string feedbackFingerprint)
@@ -2432,6 +2787,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         // Include algorithm switches that affect generation behavior.
         sb.Append(BuildAlgorithmProfileSignature(context.AlgorithmProfile));
+        sb.Append(':');
+
+        // Include budget policy values so count-policy changes invalidate cached suggestions.
+        sb.Append(BuildScenarioBudgetOptionsSignature(_scenarioBudgetOptions));
         sb.Append(':');
 
         foreach (var ep in orderedEndpoints)
@@ -2484,6 +2843,17 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             profile.UseSchemaRelationshipAnalysis ? '1' : '0',
             profile.UseSemanticTokenMatching ? '1' : '0',
             profile.UseFeedbackLoopContext ? '1' : '0');
+    }
+
+    private static string BuildScenarioBudgetOptionsSignature(ScenarioGenerationBudgetOptions options)
+    {
+        options = ScenarioBudgetResolver.Normalize(options);
+
+        return string.Join('|',
+            options.SimpleEndpointSoftLimit,
+            options.ComplexEndpointSoftLimit,
+            options.DefaultHardLimitPerEndpoint,
+            options.MaxScenarioBudgetPerBatch);
     }
 
     private static string NormalizeCacheText(string value)

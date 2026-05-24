@@ -157,6 +157,23 @@ public class N8nIntegrationServiceTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task TriggerWebhookWithResultAsync_Should_CaptureSuccessResponseBody()
+    {
+        var sut = CreateSut(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"accepted\":true}", Encoding.UTF8, "application/json"),
+            });
+
+        var result = await sut.TriggerWebhookWithResultAsync(
+            "test-hook",
+            new { Name = "payload" });
+
+        result.Success.Should().BeTrue();
+        result.ResponseBody.Should().Be("{\"accepted\":true}");
+    }
+
     private static N8nIntegrationService CreateSut(
         HttpResponseMessage response,
         Action<HttpRequestMessage>? onRequest = null)

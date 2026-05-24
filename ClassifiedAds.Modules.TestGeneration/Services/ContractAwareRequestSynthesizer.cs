@@ -22,6 +22,8 @@ internal sealed class ContractAwareRequestContext
 
     public bool RequiresAuth { get; set; }
 
+    public bool RequiresAuthFromSrs { get; set; }
+
     public bool IsRegisterLikeEndpoint { get; set; }
 
     public bool IsLoginLikeEndpoint { get; set; }
@@ -83,15 +85,19 @@ internal static class ContractAwareRequestSynthesizer
     {
         var result = new ContractAwareRequestData
         {
-            PathParams = BuildPathParams(context),
-            QueryParams = BuildQueryParams(context),
-            Headers = BuildHeaders(context),
+            PathParams = BuildPathParams(context, testType),
+            QueryParams = BuildQueryParams(context, testType),
+            Headers = BuildHeaders(context, testType),
         };
 
         var bodyNode = BuildBodyNode(context, testType);
         if (bodyNode != null)
         {
-            ApplyPlaceholderHints(bodyNode, context, testType);
+            if (ShouldReuseDependencyValues(testType))
+            {
+                ApplyPlaceholderHints(bodyNode, context, testType);
+            }
+
             result.BodyType = InferBodyType(context, bodyNode);
             result.Body = bodyNode.ToJsonString(JsonOptions);
         }
@@ -149,7 +155,11 @@ internal static class ContractAwareRequestSynthesizer
             }
 
             PruneNodeToSchema(node, schemaRoot);
-            ApplyPlaceholderHints(node, context, testType);
+            if (ShouldReuseDependencyValues(testType))
+            {
+                ApplyPlaceholderHints(node, context, testType);
+            }
+
             return node.ToJsonString(JsonOptions);
         }
         catch
@@ -243,7 +253,7 @@ internal static class ContractAwareRequestSynthesizer
         return result;
     }
 
-    private static Dictionary<string, string> BuildPathParams(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildPathParams(ContractAwareRequestContext context, TestType testType)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameterName in context.RequiredPathParams ?? Array.Empty<string>())
@@ -253,13 +263,13 @@ internal static class ContractAwareRequestSynthesizer
                 continue;
             }
 
-            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName);
+            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, testType: testType);
         }
 
         return result;
     }
 
-    private static Dictionary<string, string> BuildQueryParams(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildQueryParams(ContractAwareRequestContext context, TestType testType)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameterName in context.RequiredQueryParams ?? Array.Empty<string>())
@@ -271,17 +281,23 @@ internal static class ContractAwareRequestSynthesizer
 
             var parameter = context.Parameters.FirstOrDefault(p =>
                 string.Equals(p.Name, parameterName, StringComparison.OrdinalIgnoreCase));
-            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, parameter);
+            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, parameter, testType);
         }
 
         return result;
     }
 
-    private static Dictionary<string, string> BuildHeaders(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildHeaders(ContractAwareRequestContext context, TestType testType)
     {
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (context.RequiresAuth)
         {
+            if (testType == TestType.Negative && context.RequiresAuthFromSrs)
+            {
+                headers["X-Test-Auth-Mode"] = "none";
+                return headers;
+            }
+
             headers["Authorization"] = "Bearer {{authToken}}";
         }
 
@@ -332,24 +348,27 @@ internal static class ContractAwareRequestSynthesizer
 
         if (bodyNode != null)
         {
-            foreach (var mapping in context.PlaceholderByFieldName ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+            if (ShouldReuseDependencyValues(testType))
             {
-                if (string.IsNullOrWhiteSpace(mapping.Key) || string.IsNullOrWhiteSpace(mapping.Value))
+                foreach (var mapping in context.PlaceholderByFieldName ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
                 {
-                    continue;
-                }
+                    if (string.IsNullOrWhiteSpace(mapping.Key) || string.IsNullOrWhiteSpace(mapping.Value))
+                    {
+                        continue;
+                    }
 
-                if (!TryFindJsonPath(bodyNode, mapping.Key, out var mappedPath))
-                {
-                    continue;
-                }
+                    if (!TryFindJsonPath(bodyNode, mapping.Key, out var mappedPath))
+                    {
+                        continue;
+                    }
 
-                result.Add(new N8nTestCaseVariable
-                {
-                    VariableName = mapping.Value,
-                    ExtractFrom = "RequestBody",
-                    JsonPath = mappedPath,
-                });
+                    result.Add(new N8nTestCaseVariable
+                    {
+                        VariableName = mapping.Value,
+                        ExtractFrom = "RequestBody",
+                        JsonPath = mappedPath,
+                    });
+                }
             }
 
             // Backward-compatible auth aliases for legacy auth flows only.
@@ -599,12 +618,16 @@ internal static class ContractAwareRequestSynthesizer
     private static string BuildScalarPlaceholderOrSample(
         ContractAwareRequestContext context,
         string fieldName,
-        ParameterDetailDto parameter = null)
+        ParameterDetailDto parameter = null,
+        TestType testType = TestType.HappyPath)
     {
-        var placeholder = GetPlaceholder(context, fieldName);
-        if (!string.IsNullOrWhiteSpace(placeholder))
+        if (ShouldReuseDependencyValues(testType))
         {
-            return placeholder;
+            var placeholder = GetPlaceholder(context, fieldName);
+            if (!string.IsNullOrWhiteSpace(placeholder))
+            {
+                return placeholder;
+            }
         }
 
         if (parameter != null)
@@ -631,6 +654,11 @@ internal static class ContractAwareRequestSynthesizer
         }
 
         return BuildHeuristicStringValue(fieldName, parameter?.DataType, parameter?.Format, null, null);
+    }
+
+    private static bool ShouldReuseDependencyValues(TestType testType)
+    {
+        return testType == TestType.HappyPath;
     }
 
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
