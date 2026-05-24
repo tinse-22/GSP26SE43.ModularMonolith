@@ -58,6 +58,58 @@ function Wait-ForTcpEndpoint {
     throw "Timed out waiting for TCP endpoint ${HostName}:$Port"
 }
 
+function Test-DockerDaemon {
+    if (-not (Test-Command -Name "docker")) {
+        return $false
+    }
+
+    & docker info --format '{{.ServerVersion}}' *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Get-DockerDesktopPath {
+    $candidatePaths = @(
+        (Join-Path $env:ProgramFiles "Docker/Docker/Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker/Docker/Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Docker/Docker Desktop.exe")
+    )
+
+    foreach ($path in $candidatePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
+            return $path
+        }
+    }
+
+    return $null
+}
+
+function Wait-ForDockerDaemon {
+    param([int]$TimeoutSeconds = 120)
+
+    if (Test-DockerDaemon) {
+        return
+    }
+
+    $dockerDesktopPath = Get-DockerDesktopPath
+    if ([string]::IsNullOrWhiteSpace($dockerDesktopPath)) {
+        throw "Docker daemon is not running and Docker Desktop was not found. Start Docker Desktop or start RabbitMQ manually on 127.0.0.1:5672, then rerun this script."
+    }
+
+    Write-Host "Docker daemon is not running. Starting Docker Desktop ..."
+    Start-Process -FilePath $dockerDesktopPath -WindowStyle Hidden | Out-Null
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-DockerDaemon) {
+            return
+        }
+
+        Start-Sleep -Seconds 3
+    }
+
+    throw "Docker Desktop was started, but Docker daemon was not ready within $TimeoutSeconds seconds. Open Docker Desktop until it finishes starting, then rerun this script."
+}
+
 function Ensure-LocalRabbitMq {
     if (Test-TcpEndpoint -HostName "127.0.0.1" -Port 5672) {
         return
@@ -67,12 +119,18 @@ function Ensure-LocalRabbitMq {
         throw "RabbitMQ is not reachable at 127.0.0.1:5672 and Docker CLI was not found. Start RabbitMQ or install Docker."
     }
 
+    Wait-ForDockerDaemon
+
     Write-Host "RabbitMQ is not reachable at 127.0.0.1:5672. Starting docker compose service rabbitmq ..."
     Push-Location $repoRoot
     try {
-        & docker compose up -d rabbitmq
+        $composeOutput = (& docker compose up -d rabbitmq 2>&1) -join [Environment]::NewLine
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to start RabbitMQ with docker compose up -d rabbitmq."
+            throw "Failed to start RabbitMQ with docker compose up -d rabbitmq.`n$composeOutput"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($composeOutput)) {
+            Write-Host $composeOutput.Trim()
         }
     }
     finally {

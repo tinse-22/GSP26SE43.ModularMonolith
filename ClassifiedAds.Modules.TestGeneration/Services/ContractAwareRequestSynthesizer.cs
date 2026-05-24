@@ -22,6 +22,8 @@ internal sealed class ContractAwareRequestContext
 
     public bool RequiresAuth { get; set; }
 
+    public bool RequiresAuthFromSrs { get; set; }
+
     public bool IsRegisterLikeEndpoint { get; set; }
 
     public bool IsLoginLikeEndpoint { get; set; }
@@ -83,9 +85,9 @@ internal static class ContractAwareRequestSynthesizer
     {
         var result = new ContractAwareRequestData
         {
-            PathParams = BuildPathParams(context),
-            QueryParams = BuildQueryParams(context),
-            Headers = BuildHeaders(context),
+            PathParams = BuildPathParams(context, testType),
+            QueryParams = BuildQueryParams(context, testType),
+            Headers = BuildHeaders(context, testType),
         };
 
         var bodyNode = BuildBodyNode(context, testType);
@@ -243,7 +245,7 @@ internal static class ContractAwareRequestSynthesizer
         return result;
     }
 
-    private static Dictionary<string, string> BuildPathParams(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildPathParams(ContractAwareRequestContext context, TestType testType)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameterName in context.RequiredPathParams ?? Array.Empty<string>())
@@ -253,13 +255,13 @@ internal static class ContractAwareRequestSynthesizer
                 continue;
             }
 
-            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName);
+            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, testType: testType);
         }
 
         return result;
     }
 
-    private static Dictionary<string, string> BuildQueryParams(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildQueryParams(ContractAwareRequestContext context, TestType testType)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameterName in context.RequiredQueryParams ?? Array.Empty<string>())
@@ -271,17 +273,23 @@ internal static class ContractAwareRequestSynthesizer
 
             var parameter = context.Parameters.FirstOrDefault(p =>
                 string.Equals(p.Name, parameterName, StringComparison.OrdinalIgnoreCase));
-            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, parameter);
+            result[parameterName] = BuildScalarPlaceholderOrSample(context, parameterName, parameter, testType);
         }
 
         return result;
     }
 
-    private static Dictionary<string, string> BuildHeaders(ContractAwareRequestContext context)
+    private static Dictionary<string, string> BuildHeaders(ContractAwareRequestContext context, TestType testType)
     {
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (context.RequiresAuth)
         {
+            if (testType == TestType.Negative && context.RequiresAuthFromSrs)
+            {
+                headers["X-Test-Auth-Mode"] = "none";
+                return headers;
+            }
+
             headers["Authorization"] = "Bearer {{authToken}}";
         }
 
@@ -599,12 +607,16 @@ internal static class ContractAwareRequestSynthesizer
     private static string BuildScalarPlaceholderOrSample(
         ContractAwareRequestContext context,
         string fieldName,
-        ParameterDetailDto parameter = null)
+        ParameterDetailDto parameter = null,
+        TestType testType = TestType.HappyPath)
     {
-        var placeholder = GetPlaceholder(context, fieldName);
-        if (!string.IsNullOrWhiteSpace(placeholder))
+        if (ShouldReuseDependencyValues(testType))
         {
-            return placeholder;
+            var placeholder = GetPlaceholder(context, fieldName);
+            if (!string.IsNullOrWhiteSpace(placeholder))
+            {
+                return placeholder;
+            }
         }
 
         if (parameter != null)
