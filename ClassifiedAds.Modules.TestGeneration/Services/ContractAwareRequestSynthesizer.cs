@@ -93,11 +93,7 @@ internal static class ContractAwareRequestSynthesizer
         var bodyNode = BuildBodyNode(context, testType);
         if (bodyNode != null)
         {
-            if (ShouldReuseDependencyValues(testType))
-            {
-                ApplyPlaceholderHints(bodyNode, context, testType);
-            }
-
+            ApplyPlaceholderHints(bodyNode, context, testType);
             result.BodyType = InferBodyType(context, bodyNode);
             result.Body = bodyNode.ToJsonString(JsonOptions);
         }
@@ -155,11 +151,7 @@ internal static class ContractAwareRequestSynthesizer
             }
 
             PruneNodeToSchema(node, schemaRoot);
-            if (ShouldReuseDependencyValues(testType))
-            {
-                ApplyPlaceholderHints(node, context, testType);
-            }
-
+            ApplyPlaceholderHints(node, context, testType);
             return node.ToJsonString(JsonOptions);
         }
         catch
@@ -348,27 +340,24 @@ internal static class ContractAwareRequestSynthesizer
 
         if (bodyNode != null)
         {
-            if (ShouldReuseDependencyValues(testType))
+            foreach (var mapping in context.PlaceholderByFieldName ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
             {
-                foreach (var mapping in context.PlaceholderByFieldName ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(mapping.Key) || string.IsNullOrWhiteSpace(mapping.Value))
                 {
-                    if (string.IsNullOrWhiteSpace(mapping.Key) || string.IsNullOrWhiteSpace(mapping.Value))
-                    {
-                        continue;
-                    }
-
-                    if (!TryFindJsonPath(bodyNode, mapping.Key, out var mappedPath))
-                    {
-                        continue;
-                    }
-
-                    result.Add(new N8nTestCaseVariable
-                    {
-                        VariableName = mapping.Value,
-                        ExtractFrom = "RequestBody",
-                        JsonPath = mappedPath,
-                    });
+                    continue;
                 }
+
+                if (!TryFindJsonPath(bodyNode, mapping.Key, out var mappedPath))
+                {
+                    continue;
+                }
+
+                result.Add(new N8nTestCaseVariable
+                {
+                    VariableName = mapping.Value,
+                    ExtractFrom = "RequestBody",
+                    JsonPath = mappedPath,
+                });
             }
 
             // Backward-compatible auth aliases for legacy auth flows only.
@@ -654,11 +643,6 @@ internal static class ContractAwareRequestSynthesizer
         }
 
         return BuildHeuristicStringValue(fieldName, parameter?.DataType, parameter?.Format, null, null);
-    }
-
-    private static bool ShouldReuseDependencyValues(TestType testType)
-    {
-        return testType == TestType.HappyPath;
     }
 
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
