@@ -29,6 +29,14 @@ public static class TestGenerationServiceCollectionExtensions
         var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
+        services.Configure<ScenarioGenerationBudgetOptions>(options =>
+        {
+            var budget = ScenarioBudgetResolver.Normalize(settings.ScenarioGenerationBudget);
+            options.SimpleEndpointSoftLimit = budget.SimpleEndpointSoftLimit;
+            options.ComplexEndpointSoftLimit = budget.ComplexEndpointSoftLimit;
+            options.DefaultHardLimitPerEndpoint = budget.DefaultHardLimitPerEndpoint;
+            options.MaxScenarioBudgetPerBatch = budget.MaxScenarioBudgetPerBatch;
+        });
 
         services.AddDbContext<TestGenerationDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {

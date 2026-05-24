@@ -50,20 +50,22 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
     private const string UnifiedRulesBlock =
         "=== RULES ===\n" +
         "1. OpenAPI is the structural contract: method, path, parameters, request fields/types/content type, required fields, constraints, documented response statuses, and response/error schemas.\n" +
-        "2. SRS is the business source for endpoint-relevant scenario intent, meaningful test data, semantic behavior, and requirement coverage. SRS must not invent fields or undocumented statuses.\n" +
-        "3. Generate up to 3 scenarios for GET/DELETE and up to 10 for POST/PUT/PATCH. Always include one HappyPath when executable. Add Boundary/Negative only when supported by OpenAPI or endpoint-relevant SRS; do not pad duplicates.\n" +
+        "2. SRS is the business source for endpoint-relevant scenario intent, meaningful test data, semantic behavior, security/auth expectations, expected statuses, and requirement coverage. Do not invent fields outside OpenAPI request shape.\n" +
+        "3. Use the provided per-endpoint scenarioBudget. Treat softLimit/target as the preferred budget. Do not pad weak duplicates. Include only distinct executable scenarios supported by OpenAPI and endpoint-relevant SRS/business rules. Do not exceed hardLimit.\n" +
         "4. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
         "5. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
-        "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes.\n" +
+        "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes. Duplicate/conflict tests must reuse prior variables such as {{email}} or {{name}}, not create another unique value.\n" +
         "7. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword plus email/password from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}} or {{email}}.\n" +
         "8. request.body must be a serialized JSON string or null using exact OpenAPI field names. request.bodyType must match the OpenAPI content type.\n" +
-        "9. expectation.expectedStatus must use documented OpenAPI responses. If an SRS business rule has no compatible documented status, omit that scenario.\n" +
+        "9. expectation.expectedStatus should use documented OpenAPI responses when compatible. If endpoint-relevant SRS explicitly requires a different auth/security/business status, keep the SRS-backed scenario and link its requirement.\n" +
         "10. coveredRequirementIds may include only endpoint-relevant direct/partial SRS requirements; dependency requirements are setup context only.\n" +
         "11. Do not generate a Negative test unless the request data is actually invalid for this endpoint; valid boundary values are Boundary or HappyPath, not Negative.\n" +
         "12. Distinguish auth-negative from business-negative: missing/invalid Authorization expects 401; authenticated validation/business failures use 400/404/409 when SRS or endpoint rules state them. Do not use 401 as a generic negative status.\n" +
+        "12b. If SRS says a mapped POST/PUT/PATCH/DELETE endpoint requires auth but OpenAPI marks it public, follow SRS: authorized HappyPath/Boundary cases send Authorization, and missing-auth Negative cases use X-Test-Auth-Mode:none without Authorization.\n" +
         "13. Login wrong-password and non-existent-email tests must use credentials that cannot match the registered setup account. Do not reuse {{registeredPassword}} for wrong-password cases.\n" +
         "14. For dependent resources such as product.categoryId, create or reference a setup variable for existing IDs; non-existent ID tests must use a syntactically valid ID that was not produced by setup.\n" +
-        "15. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
+        "15. Each kept case must cover a distinct field, constraint, status, auth, resource-not-found, or endpoint-specific business dimension.\n" +
+        "16. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -83,6 +85,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
     private readonly IApiTestOrderService _apiTestOrderService;
     private readonly IEndpointRequirementMapper _requirementMapper;
     private readonly N8nIntegrationOptions _n8nOptions;
+    private readonly ScenarioBudgetResolver _scenarioBudgetResolver;
     private readonly ILogger<TestGenerationPayloadBuilder> _logger;
 
     public string WebhookName => N8nWebhookNames.GenerateTestCasesUnified;
@@ -96,7 +99,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         IApiTestOrderService apiTestOrderService,
         IEndpointRequirementMapper requirementMapper,
         IOptions<N8nIntegrationOptions> n8nOptions,
-        ILogger<TestGenerationPayloadBuilder> logger)
+        ILogger<TestGenerationPayloadBuilder> logger,
+        IOptions<ScenarioGenerationBudgetOptions> scenarioBudgetOptions = null)
     {
         _suiteRepository = suiteRepository;
         _proposalRepository = proposalRepository;
@@ -106,6 +110,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         _apiTestOrderService = apiTestOrderService;
         _requirementMapper = requirementMapper;
         _n8nOptions = n8nOptions.Value;
+        _scenarioBudgetResolver = new ScenarioBudgetResolver(ScenarioBudgetResolver.Normalize(scenarioBudgetOptions?.Value));
         _logger = logger;
     }
 
@@ -161,6 +166,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
 
         var metadataByEndpointId = new Dictionary<Guid, ApiEndpointMetadataDto>();
         var promptByEndpointId = new Dictionary<Guid, ObservationConfirmationPrompt>();
+        var requirements = new List<SrsRequirement>();
 
         if (suite.ApiSpecId.HasValue && suite.ApiSpecId.Value != Guid.Empty)
         {
@@ -195,6 +201,16 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             }
         }
 
+        if (suite.SrsDocumentId.HasValue)
+        {
+            requirements = await _srsRequirementRepository.ToListAsync(
+                _srsRequirementRepository.GetQueryableSet()
+                    .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
+                    .OrderBy(x => x.DisplayOrder));
+        }
+
+        var requirementCountsByEndpointId = BuildRequirementCountsByEndpointId(metadataByEndpointId, requirements);
+
         var payload = new N8nGenerateTestsPayload
         {
             TestSuiteId = suite.Id,
@@ -216,6 +232,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     businessContext = contextValue;
                 }
 
+                requirementCountsByEndpointId.TryGetValue(x.EndpointId, out var requirementCounts);
+
                 return new N8nOrderedEndpoint
                 {
                     EndpointId = x.EndpointId,
@@ -227,6 +245,12 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     ReasonCodes = x.ReasonCodes?.ToList() ?? new List<string>(),
                     IsAuthRelated = x.IsAuthRelated,
                     BusinessContext = businessContext,
+                    ScenarioBudget = _scenarioBudgetResolver.Resolve(
+                        x,
+                        metadata,
+                        businessContext,
+                        requirementCounts.Coverable,
+                        requirementCounts.Dependency),
                     Prompt = BuildEndpointPromptPayload(x, suite, metadata, businessContext, prompt),
                     ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
                     ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
@@ -240,13 +264,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         };
 
         // Include SRS requirements so LLM can populate coveredRequirementIds.
-        if (suite.SrsDocumentId.HasValue)
+        if (requirements.Count > 0)
         {
-            var requirements = await _srsRequirementRepository.ToListAsync(
-                _srsRequirementRepository.GetQueryableSet()
-                    .Where(x => x.SrsDocumentId == suite.SrsDocumentId.Value)
-                    .OrderBy(x => x.DisplayOrder));
-
             var maxRequirementCount = _n8nOptions.GenerationMaxSrsRequirementCount <= 0
                 ? 30
                 : _n8nOptions.GenerationMaxSrsRequirementCount;
@@ -359,13 +378,35 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         return result;
     }
 
+    private Dictionary<Guid, (int Coverable, int Dependency)> BuildRequirementCountsByEndpointId(
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        IReadOnlyList<SrsRequirement> requirements)
+    {
+        var result = new Dictionary<Guid, (int Coverable, int Dependency)>();
+        if (metadataByEndpointId == null || metadataByEndpointId.Count == 0 || requirements == null || requirements.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var endpoint in metadataByEndpointId.Values)
+        {
+            var matches = _requirementMapper.MapRequirementsToEndpoint(endpoint, requirements);
+            result[endpoint.EndpointId] = (
+                matches.Count(m => m.IsCoverable),
+                matches.Count(m => m.Relevance == RequirementRelevance.Dependency && m.Confidence != RequirementMatchConfidence.Low));
+        }
+
+        return result;
+    }
+
     private static string BuildUnifiedTaskInstruction(TestSuite suite, int maxBusinessContextLength)
     {
         var suiteName = string.IsNullOrWhiteSpace(suite?.Name) ? "N/A" : suite.Name;
         var sb = new StringBuilder();
         sb.Append($"Generate mixed test cases for this ordered REST API sequence (suite: {suiteName}).");
         sb.AppendLine();
-        sb.AppendLine("Use OpenAPI for request shape and documented responses, and use direct endpoint SRS/business rules to supplement expected statuses when OpenAPI is incomplete.");
+        sb.AppendLine("Use OpenAPI for request shape, and use direct endpoint SRS/business rules as the oracle for auth/security/business expectations when OpenAPI is incomplete or conflicts with SRS.");
+        sb.AppendLine("If SRS requires auth on a mapped POST/PUT/PATCH/DELETE endpoint but OpenAPI omits security, still generate authorized cases and a missing-auth Negative case linked to that SRS requirement.");
         sb.AppendLine("Never turn every Negative case on protected endpoints into 401: only authorization failures are 401; authenticated validation and business-rule failures should use the endpoint-relevant 400/404/409 expectation when provided.");
         sb.AppendLine("Preserve dependency intent: setup-created IDs represent existing resources, while non-existent-resource tests must use distinct valid IDs that setup did not create.");
 
@@ -479,6 +520,8 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
             .OrderByDescending(p => p.IsRequired)
             .ThenBy(p => p.Location)
             .ThenBy(p => p.Name)
+            .GroupBy(p => $"{p.Location?.Trim().ToLowerInvariant()}:{p.Name?.Trim().ToLowerInvariant()}")
+            .Select(g => g.First())
             .Take(20)
             .Select(p => new Models.N8nParameterDetail
             {
