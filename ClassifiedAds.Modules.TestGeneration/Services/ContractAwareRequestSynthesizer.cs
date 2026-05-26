@@ -645,8 +645,18 @@ internal static class ContractAwareRequestSynthesizer
         return BuildHeuristicStringValue(fieldName, parameter?.DataType, parameter?.Format, null, null);
     }
 
+    private static bool ShouldReuseDependencyValues(TestType testType)
+    {
+        return testType == TestType.HappyPath;
+    }
+
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
     {
+        if (!ShouldReuseDependencyValues(testType))
+        {
+            return;
+        }
+
         if (node is JsonObject obj)
         {
             foreach (var property in obj.ToList())
