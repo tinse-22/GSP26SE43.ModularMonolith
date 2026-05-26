@@ -208,7 +208,7 @@ public class TestOrderController : ControllerBase
             JobId = command.JobId,
             TestSuiteId = suiteId,
             Mode = "callback",
-            Message = "Ðã t?o job và dua yêu c?u trigger n8n vào hàng d?i. S? d?ng GET /generation-status d? ki?m tra tr?ng thái."
+            Message = "ï¿½ï¿½ t?o job vï¿½ dua yï¿½u c?u trigger n8n vï¿½o hï¿½ng d?i. S? d?ng GET /generation-status d? ki?m tra tr?ng thï¿½i."
         });
     }
 
@@ -342,7 +342,26 @@ public class TestOrderController : ControllerBase
 
 public class N8nTestCasesCallbackRequest
 {
-    public List<AiGeneratedTestCaseDto> TestCases { get; set; } = new List<AiGeneratedTestCaseDto>();
+    private List<AiGeneratedTestCaseDto> _testCases = new List<AiGeneratedTestCaseDto>();
+
+    public List<AiGeneratedTestCaseDto> TestCases
+    {
+        get => _testCases;
+        set => _testCases = value ?? new List<AiGeneratedTestCaseDto>();
+    }
+
+    /// <summary>Legacy n8n response shape. Prefer testCases when both are present.</summary>
+    public List<AiGeneratedTestCaseDto> Scenarios
+    {
+        get => _testCases;
+        set
+        {
+            if ((_testCases == null || _testCases.Count == 0) && value != null)
+            {
+                _testCases = value;
+            }
+        }
+    }
 }
 
 public class GenerateTestsAcceptedResponse

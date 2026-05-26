@@ -25,6 +25,7 @@ public class WebhookTriggerResult
     public string ResolvedUrl { get; set; }
     public string ErrorMessage { get; set; }
     public string ErrorDetails { get; set; }
+    public string ResponseBody { get; set; }
     public bool IsTimeout { get; set; }
     public bool IsNetworkError { get; set; }
 }
@@ -429,11 +430,11 @@ public class N8nIntegrationService : IN8nIntegrationService
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
 
+            var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
 
             if (!response.IsSuccessStatusCode)
             {
-                var body = await ReadResponseBodyAsync(response, cancellationToken).ConfigureAwait(false);
                 _logger.LogError(
                     "n8n webhook {WebhookName} failed. Status={Status}, Url={Url}, DurationMs={DurationMs}, RequestId={RequestId}, Body={Body}",
                     webhookName,
@@ -465,7 +466,8 @@ public class N8nIntegrationService : IN8nIntegrationService
             {
                 Success = true,
                 WebhookName = webhookName,
-                ResolvedUrl = url
+                ResolvedUrl = url,
+                ResponseBody = body
             };
         }
         catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)

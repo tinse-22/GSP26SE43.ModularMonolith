@@ -111,6 +111,112 @@ public class ContractAwareRequestSynthesizerTests
     }
 
     [Fact]
+    public void BuildRequestData_Should_NotReuseDependencyPlaceholders_ForBoundaryOrNegative()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/products/{id}",
+            RequiresBody = true,
+            RequiredPathParams = new[] { "id" },
+            RequiredQueryParams = new[] { "categoryId" },
+            PlaceholderByFieldName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["id"] = "productId",
+                ["categoryId"] = "categoryId",
+            },
+            Parameters = new List<ParameterDetailDto>
+            {
+                new() { Name = "categoryId", Location = "Query", DataType = "string", Format = "uuid", IsRequired = true },
+            },
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["categoryId", "name"],
+              "properties": {
+                "categoryId": { "type": "string", "format": "uuid" },
+                "name": { "type": "string", "minLength": 1 }
+              }
+            }
+            """,
+        };
+
+        var boundary = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Boundary);
+        var negative = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Negative);
+
+        boundary.PathParams["id"].Should().NotBe("{{productId}}");
+        boundary.QueryParams["categoryId"].Should().NotBe("{{categoryId}}");
+        negative.PathParams["id"].Should().NotBe("{{productId}}");
+        negative.QueryParams["categoryId"].Should().NotBe("{{categoryId}}");
+
+        using var boundaryDocument = JsonDocument.Parse(boundary.Body);
+        boundaryDocument.RootElement.GetProperty("categoryId").GetString().Should().NotBe("{{categoryId}}");
+
+        using var negativeDocument = JsonDocument.Parse(negative.Body);
+        negativeDocument.RootElement.TryGetProperty("categoryId", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void BuildRequestData_Should_UseSrsAuthModeSentinel_ForMissingAuthNegative()
+    {
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "DELETE",
+            Path = "/api/products/{id}",
+            RequiresAuth = true,
+            RequiresAuthFromSrs = true,
+            RequiredPathParams = new[] { "id" },
+        };
+
+        var negative = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Negative);
+        var boundary = ContractAwareRequestSynthesizer.BuildRequestData(context, TestType.Boundary);
+
+        negative.Headers.Should().ContainKey("X-Test-Auth-Mode")
+            .WhoseValue.Should().Be("none");
+        negative.Headers.Should().NotContainKey("Authorization");
+        boundary.Headers.Should().ContainKey("Authorization")
+            .WhoseValue.Should().Be("Bearer {{authToken}}");
+    }
+
+    [Fact]
+    public void RepairScenario_Should_NotOverwriteFailureValue_WithDependencyPlaceholder()
+    {
+        var scenario = new LlmSuggestedScenario
+        {
+            SuggestedTestType = TestType.Negative,
+            SuggestedBodyType = "JSON",
+            SuggestedBody = """{"categoryId":"nonexistent_{{tcUniqueId}}","name":"Auto Name"}""",
+        };
+
+        var context = new ContractAwareRequestContext
+        {
+            HttpMethod = "POST",
+            Path = "/api/products",
+            RequiresBody = true,
+            RequestContentType = "application/json",
+            PlaceholderByFieldName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["categoryId"] = "categoryId",
+            },
+            RequestBodySchema = """
+            {
+              "type": "object",
+              "required": ["categoryId", "name"],
+              "properties": {
+                "categoryId": { "type": "string", "format": "uuid" },
+                "name": { "type": "string" }
+              }
+            }
+            """,
+        };
+
+        ContractAwareRequestSynthesizer.RepairScenario(scenario, context);
+
+        using var document = JsonDocument.Parse(scenario.SuggestedBody);
+        document.RootElement.GetProperty("categoryId").GetString().Should().Be("nonexistent_{{tcUniqueId}}");
+    }
+
+    [Fact]
     public void BuildRequestData_Should_FallBackToHeuristics_WhenSchemaHasNoExamples()
     {
         var context = new ContractAwareRequestContext

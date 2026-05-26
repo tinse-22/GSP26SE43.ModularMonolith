@@ -103,4 +103,39 @@ public class N8nTestCasesCallbackRequestTests
         testCase.Expectation.ExpectedStatus.Should().Be("[200]");
         testCase.Expectation.BodyContains.Should().Be("""["items"]""");
     }
+
+    [Fact]
+    public void Deserialize_Should_AcceptLegacyScenariosShape_WithRequirementCodes()
+    {
+        const string json = """
+        {
+          "scenarios": [
+            {
+              "endpointId": "11111111-1111-1111-1111-111111111111",
+              "scenarioName": "Duplicate email should fail",
+              "testType": "Negative",
+              "request": {
+                "httpMethod": "POST",
+                "url": "/api/auth/register",
+                "bodyType": "JSON",
+                "body": { "email": "{{email}}" }
+              },
+              "expectation": {
+                "expectedStatus": [409]
+              },
+              "coveredRequirementCodes": ["REQ-AUTH-001", "REQ-IGNORED"]
+            }
+          ]
+        }
+        """;
+
+        var request = JsonSerializer.Deserialize<N8nTestCasesCallbackRequest>(json, JsonOptions);
+
+        request.Should().NotBeNull();
+        request!.TestCases.Should().ContainSingle();
+        request.TestCases[0].Name.Should().Be("Duplicate email should fail");
+        request.TestCases[0].ScenarioName.Should().Be("Duplicate email should fail");
+        request.TestCases[0].CoveredRequirementCodes.Should().BeEquivalentTo("REQ-AUTH-001", "REQ-IGNORED");
+        request.TestCases[0].Request.Body.Should().Be("""{ "email": "{{email}}" }""");
+    }
 }

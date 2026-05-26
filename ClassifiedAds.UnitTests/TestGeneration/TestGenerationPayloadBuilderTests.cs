@@ -217,6 +217,27 @@ public class TestGenerationPayloadBuilderTests
                     {
                         "{ \"type\": \"object\", \"properties\": { \"id\": { \"type\": \"string\" } } }",
                     },
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "categoryId",
+                            Location = "Query",
+                            DataType = "string",
+                            Format = "uuid",
+                            IsRequired = true,
+                            DefaultValue = "11111111-1111-1111-1111-111111111111",
+                        },
+                        new()
+                        {
+                            Name = "categoryId",
+                            Location = "Query",
+                            DataType = "string",
+                            Format = "uuid",
+                            IsRequired = false,
+                            DefaultValue = "duplicate",
+                        },
+                    },
                 },
             });
 
@@ -265,7 +286,7 @@ public class TestGenerationPayloadBuilderTests
         payload.PromptConfig.Rules.Should().Contain("Do not generate a Negative test unless the request data is actually invalid");
         payload.PromptConfig.Rules.Should().Contain("Do not use 401 as a generic negative status");
         payload.PromptConfig.Rules.Should().Contain("non-existent ID tests must use a syntactically valid ID that was not produced by setup");
-        payload.PromptConfig.TaskInstruction.Should().Contain("use direct endpoint SRS/business rules to supplement expected statuses");
+        payload.PromptConfig.TaskInstruction.Should().Contain("use direct endpoint SRS/business rules as the oracle");
         payload.GlobalBusinessRules.Should().HaveLength(40);
         payload.EndpointBusinessContexts[endpointId].Should().HaveLength(40);
 
@@ -273,6 +294,9 @@ public class TestGenerationPayloadBuilderTests
         endpoint.ParameterSchemaPayloads.Should().ContainSingle();
         endpoint.ParameterSchemaPayloads[0].Length.Should().BeLessThanOrEqualTo(60);
         endpoint.ParameterSchemaPayloads[0].Should().NotContain("ignored");
+        endpoint.ParameterDetails.Should().ContainSingle();
+        endpoint.ParameterDetails[0].Name.Should().Be("categoryId");
+        endpoint.ParameterDetails[0].DefaultValue.Should().Be("11111111-1111-1111-1111-111111111111");
         endpoint.ResponseSchemaPayloads.Should().ContainSingle();
         endpoint.Prompt.CombinedPrompt.Should().HaveLength(50);
         endpoint.Prompt.ObservationPrompt.Should().HaveLength(50);

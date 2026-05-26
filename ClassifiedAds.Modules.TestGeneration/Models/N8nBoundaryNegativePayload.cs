@@ -123,6 +123,8 @@ public class N8nBoundaryEndpointPayload
 
     public string FeedbackContext { get; set; }
 
+    public ScenarioBudget ScenarioBudget { get; set; } = new();
+
     public N8nPromptPayload Prompt { get; set; }
 
     public List<string> ParameterSchemaPayloads { get; set; } = new();

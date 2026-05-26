@@ -3,11 +3,13 @@ using ClassifiedAds.Contracts.LlmAssistant.DTOs;
 using ClassifiedAds.Contracts.LlmAssistant.Services;
 using ClassifiedAds.Modules.TestGeneration.Algorithms;
 using ClassifiedAds.Modules.TestGeneration.Algorithms.Models;
+using ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 using ClassifiedAds.Modules.TestGeneration.Constants;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -56,17 +58,23 @@ public class LlmScenarioSuggesterTests
             .Setup(x => x.BuildAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(LlmSuggestionFeedbackContextResult.Empty);
 
+        _sut = CreateSut();
+    }
+
+    private LlmScenarioSuggester CreateSut(ScenarioGenerationBudgetOptions budgetOptions = null)
+    {
         var expectationResolver = new ExpectationResolver(
             new Mock<ILogger<ExpectationResolver>>().Object);
 
-        _sut = new LlmScenarioSuggester(
+        return new LlmScenarioSuggester(
             _promptBuilderMock.Object,
             _n8nServiceMock.Object,
             _llmGatewayServiceMock.Object,
             _feedbackContextServiceMock.Object,
-            expectationResolver,
             new EndpointRequirementMapper(),
-            _loggerMock.Object);
+            expectationResolver,
+            _loggerMock.Object,
+            Options.Create(budgetOptions ?? new ScenarioGenerationBudgetOptions()));
     }
 
     [Fact]
@@ -127,7 +135,7 @@ public class LlmScenarioSuggesterTests
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.AtLeast(2));
+            Times.Once);
     }
 
     [Fact]
@@ -184,6 +192,44 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestLocalDraftAsync_Should_GenerateMissingAuthNegative_WhenSrsRequiresAuthEvenIfSwaggerIsPublic()
+    {
+        var requirementId = Guid.NewGuid();
+        var context = CreateSingleEndpointContext();
+        context.EndpointMetadata[0].HttpMethod = "DELETE";
+        context.EndpointMetadata[0].Path = "/api/products/{id}";
+        context.EndpointMetadata[0].OperationId = "deleteProduct";
+        context.EndpointMetadata[0].IsAuthRelated = false;
+        context.EndpointMetadata[0].RequiredPathParameterNames = new List<string> { "id" };
+        context.EndpointMetadata[0].Responses = new List<ApiEndpointResponseDescriptorDto>
+        {
+            new() { StatusCode = 204 },
+        };
+        context.OrderedEndpoints[0].HttpMethod = "DELETE";
+        context.OrderedEndpoints[0].Path = "/api/products/{id}";
+        context.SrsRequirements = new List<SrsRequirement>
+        {
+            new()
+            {
+                Id = requirementId,
+                EndpointId = EndpointId1,
+                RequirementCode = "REQ-AUTH-DELETE",
+                RequirementType = SrsRequirementType.Security,
+                Title = "Delete product requires authentication",
+                TestableConstraints = """[{ "constraint": "missing bearer token -> 401", "expectedOutcome": "401 Unauthorized", "priority": "High" }]""",
+            },
+        };
+
+        var result = await _sut.SuggestLocalDraftAsync(context);
+
+        var negative = result.Scenarios.Should().ContainSingle(x => x.SuggestedTestType == TestType.Negative).Subject;
+        negative.SuggestedHeaders.Should().ContainKey("X-Test-Auth-Mode")
+            .WhoseValue.Should().Be("none");
+        negative.SuggestedHeaders.Should().NotContainKey("Authorization");
+        negative.CoveredRequirementIds.Should().Contain(requirementId);
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_NotAddFallback_ForSuccessOnlyGetEndpoints()
     {
         // Arrange
@@ -221,7 +267,7 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
-    public async Task SuggestScenariosAsync_Should_EmitMethodBasedScenarioTargets_InPromptPayload()
+    public async Task SuggestScenariosAsync_Should_EmitScenarioBudgets_InPromptPayload()
     {
         // Arrange
         var context = CreateDefaultContext();
@@ -248,9 +294,105 @@ public class LlmScenarioSuggesterTests
 
         // Assert
         capturedPayload.Should().NotBeNull();
-        capturedPayload.PromptConfig.Rules.Should().Contain("produce 4-10 scenarios total");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target 4-10 scenarios");
-        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target 4-10 scenarios");
+        capturedPayload.PromptConfig.Rules.Should().Contain("Use the provided per-endpoint scenarioBudget");
+        capturedPayload.PromptConfig.Rules.Should().NotContain("GET and DELETE endpoints may produce");
+        capturedPayload.PromptConfig.Rules.Should().NotContain("POST, PUT, and PATCH endpoints may produce");
+        capturedPayload.Endpoints.Should().OnlyContain(x => x.ScenarioBudget != null);
+        capturedPayload.Endpoints.Single(x => x.EndpointId == EndpointId1).ScenarioBudget.Target.Should().BeGreaterThanOrEqualTo(10);
+        capturedPayload.Endpoints.Single(x => x.EndpointId == EndpointId2).ScenarioBudget.Target.Should().Be(3);
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("POST /api/auth/login: target=");
+        capturedPayload.PromptConfig.TaskInstruction.Should().Contain("GET /api/users: target=3");
+        capturedPayload.PromptConfig.TaskInstruction.Should().NotContain("exactly");
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_FilterDuplicateWeakAndInvalidScenarios()
+    {
+        // Arrange
+        var context = CreateSingleEndpointContext();
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        var scenarios = Enumerable.Range(0, 12)
+            .Select(i => new N8nSuggestedScenario
+            {
+                EndpointId = EndpointId1,
+                ScenarioName = $"Invalid email variant {i}",
+                Description = "Invalid email should fail.",
+                TestType = "Negative",
+                Priority = "Medium",
+                Request = new N8nTestCaseRequest
+                {
+                    HttpMethod = "POST",
+                    Url = "/api/auth/login",
+                    BodyType = "JSON",
+                    Body = $@"{{""email"":""invalid{i}@example.com""}}",
+                },
+                Expectation = new N8nTestCaseExpectation
+                {
+                    ExpectedStatus = new List<int> { 400 },
+                },
+            })
+            .ToList();
+
+        scenarios[1].Request.Body = scenarios[0].Request.Body;
+        scenarios.Add(new N8nSuggestedScenario
+        {
+            EndpointId = EndpointId1,
+            ScenarioName = "JavaScript repeat body",
+            TestType = "Boundary",
+            Priority = "High",
+            Request = new N8nTestCaseRequest
+            {
+                HttpMethod = "POST",
+                Url = "/api/auth/login",
+                BodyType = "JSON",
+                Body = """{"email":"x".repeat(1000)}""",
+            },
+            Expectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 400 },
+            },
+        });
+        scenarios.Add(new N8nSuggestedScenario
+        {
+            EndpointId = EndpointId1,
+            ScenarioName = "Login succeeds",
+            TestType = "HappyPath",
+            Priority = "High",
+            Request = new N8nTestCaseRequest
+            {
+                HttpMethod = "POST",
+                Url = "/api/auth/login",
+                BodyType = "JSON",
+                Body = """{"email":"user_{{tcUniqueId}}@example.com","password":"P@ssw0rd!"}""",
+            },
+            Expectation = new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 200 },
+            },
+        });
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                It.IsAny<string>(), It.IsAny<N8nBoundaryNegativePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = scenarios,
+                Model = "gpt-4o",
+                TokensUsed = 100,
+            });
+
+        // Act
+        var result = await _sut.SuggestScenariosAsync(context);
+
+        // Assert
+        result.Scenarios.Should().HaveCount(10);
+        result.Scenarios.Should().ContainSingle(x => x.SuggestedTestType == TestType.HappyPath);
+        result.Scenarios.Should().NotContain(x =>
+            x.SuggestedBody != null &&
+            x.SuggestedBody.Contains(".repeat(", StringComparison.OrdinalIgnoreCase));
+        result.Scenarios.Select(x => x.SuggestedBody).Should().OnlyHaveUniqueItems();
     }
 
     [Fact]
@@ -606,7 +748,7 @@ public class LlmScenarioSuggesterTests
                 false));
 
         // Act
-        var act = () => _sut.SuggestScenariosAsync(context);
+        var result = await _sut.SuggestScenariosAsync(context);
 
         // Assert
         result.UsedLocalFallback.Should().BeTrue();
@@ -620,7 +762,7 @@ public class LlmScenarioSuggesterTests
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Once);
 
         _llmGatewayServiceMock.Verify(
             x => x.CacheSuggestionsAsync(
@@ -689,14 +831,14 @@ public class LlmScenarioSuggesterTests
 
         // Assert
         result.UsedLocalFallback.Should().BeTrue();
-        result.Scenarios.Select(x => x.EndpointId).Should().BeEquivalentTo(new[] { EndpointId1, EndpointId2 });
+        result.Scenarios.Select(x => x.EndpointId).Distinct().Should().BeEquivalentTo(new[] { EndpointId1, EndpointId2 });
 
         _n8nServiceMock.Verify(
             x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
                 N8nWebhookNames.GenerateLlmSuggestions,
                 It.IsAny<N8nBoundaryNegativePayload>(),
                 It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Once);
     }
 
     [Fact]
@@ -868,6 +1010,73 @@ public class LlmScenarioSuggesterTests
     }
 
     [Fact]
+    public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenScenarioBudgetOptionsChange()
+    {
+        var context = CreateDefaultContext();
+        var capturedKeys = new List<string>();
+
+        _llmGatewayServiceMock
+            .Setup(x => x.CacheSuggestionsAsync(
+                It.IsAny<Guid>(),
+                1,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Guid, int, string, string, TimeSpan, CancellationToken>((_, _, key, _, _, _) => capturedKeys.Add(key))
+            .Returns(Task.CompletedTask);
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(2);
+        SetupN8nReturnsScenarios();
+
+        await CreateSut(new ScenarioGenerationBudgetOptions()).SuggestScenariosAsync(context);
+        await CreateSut(new ScenarioGenerationBudgetOptions
+        {
+            ComplexEndpointSoftLimit = 12,
+        }).SuggestScenariosAsync(context);
+
+        capturedKeys.Should().HaveCount(4);
+        capturedKeys.Take(2).Should().OnlyContain(x => x == capturedKeys[0]);
+        capturedKeys.Skip(2).Should().OnlyContain(x => x == capturedKeys[2]);
+        capturedKeys[0].Should().NotBe(capturedKeys[2]);
+    }
+
+    [Fact]
+    public async Task SuggestScenariosAsync_Should_BatchUsingConfiguredScenarioBudgetLimit()
+    {
+        var context = CreateThreeGetEndpointContext();
+        var sut = CreateSut(new ScenarioGenerationBudgetOptions
+        {
+            MaxScenarioBudgetPerBatch = 5,
+        });
+
+        SetupAllCacheMiss();
+        SetupPromptBuilder(1);
+
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions,
+                It.IsAny<N8nBoundaryNegativePayload>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nBoundaryNegativeResponse
+            {
+                Scenarios = new List<N8nSuggestedScenario>(),
+                Model = "gpt-4o",
+                TokensUsed = 10,
+            });
+
+        await sut.SuggestScenariosAsync(context);
+
+        _n8nServiceMock.Verify(
+            x => x.TriggerWebhookAsync<N8nBoundaryNegativePayload, N8nBoundaryNegativeResponse>(
+                N8nWebhookNames.GenerateLlmSuggestions,
+                It.IsAny<N8nBoundaryNegativePayload>(),
+                It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
     public async Task SuggestScenariosAsync_Should_ChangeCacheKey_WhenFeedbackFingerprintChanges()
     {
         var context = CreateDefaultContext();
@@ -1027,6 +1236,16 @@ public class LlmScenarioSuggesterTests
                             Location = "Body",
                             DataType = "string",
                             IsRequired = true,
+                        },
+                        new()
+                        {
+                            ParameterId = Guid.NewGuid(),
+                            Name = "email",
+                            Location = "Body",
+                            DataType = "string",
+                            Format = "email",
+                            IsRequired = false,
+                            DefaultValue = "duplicate@example.com",
                         },
                     },
                 }
@@ -1444,10 +1663,11 @@ public class LlmScenarioSuggesterTests
         // Act
         await _sut.SuggestScenariosAsync(context);
 
-        // Assert — compact rules keep OpenAPI as frame and SRS as endpoint-scoped business source.
-        capturedPayload.PromptConfig.Rules.Should().Contain("OpenAPI is the structural contract");
-        capturedPayload.PromptConfig.Rules.Should().Contain("SRS is the business scenario driver");
-        capturedPayload.PromptConfig.Rules.Should().NotContain("SRS constraints OVERRIDE");
+        // Assert — quality policy prefers bounded, distinct coverage over padded counts.
+        capturedPayload.PromptConfig.Rules.Should().Contain("Use the provided per-endpoint scenarioBudget");
+        capturedPayload.PromptConfig.Rules.Should().Contain("Do not exceed hardLimit");
+        capturedPayload.PromptConfig.Rules.Should().Contain("Do not pad weak, duplicate, or near-duplicate variants");
+        capturedPayload.PromptConfig.Rules.Should().Contain("Each kept scenario must cover a distinct field");
     }
 
     #endregion
@@ -1541,6 +1761,46 @@ public class LlmScenarioSuggesterTests
             {
                 new() { EndpointId = EndpointId1, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 0 },
             },
+        };
+    }
+
+    private static LlmScenarioSuggestionContext CreateThreeGetEndpointContext()
+    {
+        var endpointIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+
+        return new LlmScenarioSuggestionContext
+        {
+            TestSuiteId = TestSuiteId,
+            UserId = UserId,
+            SpecificationId = SpecificationId,
+            Suite = new TestSuite
+            {
+                Id = TestSuiteId,
+                Name = "Three GET Endpoint Suite",
+                EndpointBusinessContexts = new Dictionary<Guid, string>(),
+            },
+            EndpointMetadata = endpointIds
+                .Select((id, index) => new ApiEndpointMetadataDto
+                {
+                    EndpointId = id,
+                    HttpMethod = "GET",
+                    Path = $"/api/items/{index}",
+                    OperationId = $"getItems{index}",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200, Schema = "{\"type\":\"array\"}" },
+                    },
+                })
+                .ToList(),
+            OrderedEndpoints = endpointIds
+                .Select((id, index) => new ApiOrderItemModel
+                {
+                    EndpointId = id,
+                    HttpMethod = "GET",
+                    Path = $"/api/items/{index}",
+                    OrderIndex = index,
+                })
+                .ToList(),
         };
     }
 

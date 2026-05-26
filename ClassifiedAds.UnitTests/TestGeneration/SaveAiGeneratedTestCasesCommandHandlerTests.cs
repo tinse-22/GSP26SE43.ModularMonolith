@@ -461,6 +461,139 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_FilterDuplicateInvalidAndOverCapGeneratedCases()
+    {
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var suite = CreateSuite();
+        suite.ApiSpecId = specId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/items",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201 },
+                        new() { StatusCode = 400 },
+                    },
+                },
+            });
+
+        var capturedBodies = new List<string>();
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedBodies.Add(request.Body))
+            .Returns(Task.CompletedTask);
+
+        var command = new SaveAiGeneratedTestCasesCommand
+        {
+            TestSuiteId = DefaultSuiteId,
+            TestCases = new List<AiGeneratedTestCaseDto>(),
+        };
+
+        command.TestCases.Add(new AiGeneratedTestCaseDto
+        {
+            EndpointId = endpointId,
+            Name = "Create item",
+            TestType = "HappyPath",
+            Request = new AiTestCaseRequestDto
+            {
+                HttpMethod = "POST",
+                Url = "/api/items",
+                BodyType = "JSON",
+                Body = """{"name":"item_{{tcUniqueId}}"}""",
+            },
+            Expectation = new AiTestCaseExpectationDto { ExpectedStatus = "[201]" },
+        });
+
+        for (var i = 0; i < 12; i++)
+        {
+            command.TestCases.Add(new AiGeneratedTestCaseDto
+            {
+                EndpointId = endpointId,
+                Name = $"Invalid item {i}",
+                TestType = "Negative",
+                Request = new AiTestCaseRequestDto
+                {
+                    HttpMethod = "POST",
+                    Url = "/api/items",
+                    BodyType = "JSON",
+                    Body = $@"{{""name"":""bad-{i}""}}",
+                },
+                Expectation = new AiTestCaseExpectationDto { ExpectedStatus = "[400]" },
+            });
+        }
+
+        command.TestCases[2].Request.Body = command.TestCases[1].Request.Body;
+        command.TestCases.Add(new AiGeneratedTestCaseDto
+        {
+            EndpointId = endpointId,
+            Name = "Invalid JavaScript repeat",
+            TestType = "Boundary",
+            Request = new AiTestCaseRequestDto
+            {
+                HttpMethod = "POST",
+                Url = "/api/items",
+                BodyType = "JSON",
+                Body = """{"name":"x".repeat(1000)}""",
+            },
+            Expectation = new AiTestCaseExpectationDto { ExpectedStatus = "[400]" },
+        });
+
+        await _handler.HandleAsync(command);
+
+        _testCaseRepoMock.Verify(x => x.AddAsync(
+            It.IsAny<TestCase>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(10));
+        capturedBodies.Should().HaveCount(10);
+        capturedBodies.Should().NotContain(body => body.Contains(".repeat(", StringComparison.OrdinalIgnoreCase));
+        capturedBodies.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_MapCoveredRequirementCodes_ToRequirementIds()
+    {
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+        var suite = CreateSuite();
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement>
+            {
+                new() { Id = reqId, SrsDocumentId = srsDocId, RequirementCode = "REQ-AUTH-001" },
+            }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement>
+            {
+                new() { Id = reqId, SrsDocumentId = srsDocId, RequirementCode = "REQ-AUTH-001" },
+            });
+        _testCaseRepoMock.Setup(x => x.UpdateAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].CoveredRequirementCodes = new List<string> { "REQ-AUTH-001", "REQ-UNKNOWN" };
+
+        await _handler.HandleAsync(command);
+
+        _linkRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseRequirementLink>(link => link.SrsRequirementId == reqId),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ThrowValidation_WhenSuiteIsArchived()
     {
         var suite = CreateSuite();
@@ -727,6 +860,84 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
 
         _expectationRepoMock.Verify(x => x.AddAsync(
             It.Is<TestCaseExpectation>(e => e.ExpectedStatus == "[200]"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_NotRejectAuthHeader_WhenSrsRequiresAuthButOpenApiIsPublic()
+    {
+        var specId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var srsDocId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        var suite = CreateSuite();
+        suite.ApiSpecId = specId;
+        suite.SrsDocumentId = srsDocId;
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                specId,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "DELETE",
+                    Path = "/api/products/{id}",
+                    IsAuthRelated = false,
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 204 },
+                    },
+                },
+            });
+
+        var requirement = new SrsRequirement
+        {
+            Id = reqId,
+            SrsDocumentId = srsDocId,
+            EndpointId = endpointId,
+            RequirementCode = "REQ-AUTH-DELETE",
+            RequirementType = SrsRequirementType.Security,
+            Title = "Delete product requires authentication",
+            TestableConstraints = """[{ "constraint": "missing bearer token -> 401", "expectedOutcome": "401 Unauthorized", "priority": "High" }]""",
+        };
+
+        _srsRequirementRepoMock.Setup(x => x.GetQueryableSet())
+            .Returns(new List<SrsRequirement> { requirement }.AsQueryable());
+        _srsRequirementRepoMock.Setup(x => x.ToListAsync(It.IsAny<IQueryable<SrsRequirement>>()))
+            .ReturnsAsync(new List<SrsRequirement> { requirement });
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Name = "Delete product with auth per SRS";
+        command.TestCases[0].TestType = "HappyPath";
+        command.TestCases[0].CoveredRequirementIds = new List<Guid> { reqId };
+        command.TestCases[0].Request = new AiTestCaseRequestDto
+        {
+            HttpMethod = "DELETE",
+            Url = "/api/products/123",
+            Headers = """{"Authorization":"Bearer srs-token"}""",
+            BodyType = "None",
+        };
+        command.TestCases[0].Expectation = new AiTestCaseExpectationDto
+        {
+            ExpectedStatus = "[204]",
+            ExpectationSource = "Srs",
+            RequirementCode = "REQ-AUTH-DELETE",
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().NotThrowAsync();
+
+        _expectationRepoMock.Verify(x => x.AddAsync(
+            It.Is<TestCaseExpectation>(e => e.ExpectedStatus == "[204]" && e.ExpectationSource == "Srs"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

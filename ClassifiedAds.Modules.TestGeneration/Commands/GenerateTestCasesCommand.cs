@@ -242,6 +242,7 @@ public class N8nOrderedEndpoint
     public List<string> ReasonCodes { get; set; } = new();
     public bool IsAuthRelated { get; set; }
     public string BusinessContext { get; set; }
+    public ScenarioBudget ScenarioBudget { get; set; } = new();
     public Models.N8nPromptPayload Prompt { get; set; }
     public List<string> ParameterSchemaPayloads { get; set; } = new();
     public List<string> ResponseSchemaPayloads { get; set; } = new();
