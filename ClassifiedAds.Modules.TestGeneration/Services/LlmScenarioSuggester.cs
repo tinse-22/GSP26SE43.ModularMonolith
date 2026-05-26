@@ -174,7 +174,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ILlmSuggestionFeedbackContextService feedbackContextService,
         IEndpointRequirementMapper requirementMapper,
         IExpectationResolver expectationResolver,
-        ILogger<LlmScenarioSuggester> logger)
+        ILogger<LlmScenarioSuggester> logger,
+        IOptions<ScenarioGenerationBudgetOptions> scenarioBudgetOptions = null)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
