@@ -139,8 +139,18 @@ public class AiTestCaseVariableDto
 
 public class AiGeneratedTestCaseDto
 {
+    private string _name;
+
     public Guid? EndpointId { get; set; }
-    public string Name { get; set; }
+    public string Name
+    {
+        get => !string.IsNullOrWhiteSpace(_name) ? _name : ScenarioName;
+        set => _name = value;
+    }
+
+    /// <summary>Legacy n8n scenario shape uses scenarioName instead of name.</summary>
+    public string ScenarioName { get; set; }
+
     public string Description { get; set; }
 
     /// <summary>e.g. "HappyPath", "Boundary", "Negative", "Performance", "Security"</summary>
@@ -160,6 +170,11 @@ public class AiGeneratedTestCaseDto
     /// Populated by the LLM when the generation payload includes SRS requirements context.
     /// </summary>
     public List<Guid> CoveredRequirementIds { get; set; } = new();
+
+    /// <summary>
+    /// Legacy n8n/SRS requirement codes. Mapped to <see cref="CoveredRequirementIds"/> before validation.
+    /// </summary>
+    public List<string> CoveredRequirementCodes { get; set; } = new();
 
     /// <summary>
     /// LLM-provided traceability score (0.0–1.0) for the primary covered requirement.
@@ -202,6 +217,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static readonly Regex SingleBraceTokenRegex = new(
         @"\{[A-Za-z_][A-Za-z0-9_]*\}",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex JavaScriptRepeatExpressionRegex = new(
+        @"\.repeat\s*\(",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly ProposalStatus[] ActiveProposalStatuses =
     {
@@ -310,7 +329,23 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     .GroupBy(x => x.Id)
                     .Select(x => x.First())
                     .ToDictionary(x => x.Id);
+            }
 
+            MapCoveredRequirementCodesToIds(command.TestCases, requirementsById);
+
+            var filteredTestCases = await ApplyGeneratedTestCaseQualityFilterAsync(
+                suite,
+                command.TestCases,
+                ct);
+            command.TestCases = filteredTestCases.ToList();
+
+            if (command.TestCases.Count == 0)
+            {
+                throw new ValidationException("All AI-generated test cases were filtered out by backend quality checks.");
+            }
+
+            if (suite.SrsDocumentId.HasValue)
+            {
                 var endpointRequirementMap = await BuildEndpointRequirementMapAsync(
                     suite,
                     validTestCases,
@@ -931,6 +966,475 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
     }
 
+    private static void NormalizeLegacyGeneratedTestCaseFields(IReadOnlyList<AiGeneratedTestCaseDto> testCases)
+    {
+        if (testCases == null || testCases.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var testCase in testCases)
+        {
+            if (testCase == null)
+            {
+                continue;
+            }
+
+            if (testCase.Request == null)
+            {
+                testCase.Request = new AiTestCaseRequestDto();
+            }
+
+            if (testCase.Expectation == null)
+            {
+                testCase.Expectation = new AiTestCaseExpectationDto();
+            }
+
+            testCase.Variables ??= new List<AiTestCaseVariableDto>();
+            testCase.CoveredRequirementIds ??= new List<Guid>();
+            testCase.CoveredRequirementCodes ??= new List<string>();
+        }
+    }
+
+    private static void MapCoveredRequirementCodesToIds(
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        IReadOnlyDictionary<Guid, SrsRequirement> requirementsById)
+    {
+        if (testCases == null || testCases.Count == 0 || requirementsById == null || requirementsById.Count == 0)
+        {
+            return;
+        }
+
+        var codeToRequirementId = requirementsById.Values
+            .Where(x => !string.IsNullOrWhiteSpace(x.RequirementCode))
+            .GroupBy(x => x.RequirementCode.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First().Id, StringComparer.OrdinalIgnoreCase);
+
+        if (codeToRequirementId.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var testCase in testCases)
+        {
+            if (testCase == null)
+            {
+                continue;
+            }
+
+            var mappedIds = testCase.CoveredRequirementIds?
+                .Where(x => x != Guid.Empty)
+                .Distinct()
+                .ToList()
+                ?? new List<Guid>();
+
+            foreach (var code in testCase.CoveredRequirementCodes ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    continue;
+                }
+
+                if (codeToRequirementId.TryGetValue(code.Trim(), out var requirementId) &&
+                    !mappedIds.Contains(requirementId))
+                {
+                    mappedIds.Add(requirementId);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(testCase.Expectation?.RequirementCode) &&
+                codeToRequirementId.TryGetValue(testCase.Expectation.RequirementCode.Trim(), out var expectationRequirementId) &&
+                !mappedIds.Contains(expectationRequirementId))
+            {
+                mappedIds.Add(expectationRequirementId);
+            }
+
+            testCase.CoveredRequirementIds = mappedIds;
+        }
+    }
+
+    private async Task<IReadOnlyList<AiGeneratedTestCaseDto>> ApplyGeneratedTestCaseQualityFilterAsync(
+        TestSuite suite,
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        CancellationToken cancellationToken)
+    {
+        if (testCases == null || testCases.Count == 0)
+        {
+            return Array.Empty<AiGeneratedTestCaseDto>();
+        }
+
+        var metadataByEndpointId = await LoadEndpointMetadataForQualityFilterAsync(
+            suite,
+            testCases,
+            cancellationToken);
+
+        var seenFingerprints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new List<GeneratedTestCaseQualityCandidate>();
+        var droppedCount = 0;
+
+        for (var index = 0; index < testCases.Count; index++)
+        {
+            var testCase = testCases[index];
+            if (!TryPrepareGeneratedTestCaseForQualityFilter(
+                    suite,
+                    testCase,
+                    metadataByEndpointId,
+                    index,
+                    out var endpointKey,
+                    out var reason))
+            {
+                droppedCount++;
+                LogDroppedGeneratedTestCase(index, testCase?.Name, reason);
+                continue;
+            }
+
+            var fingerprint = BuildGeneratedTestCaseFingerprint(testCase);
+            if (!seenFingerprints.Add(fingerprint))
+            {
+                droppedCount++;
+                LogDroppedGeneratedTestCase(index, testCase.Name, "duplicate request/expectation fingerprint");
+                continue;
+            }
+
+            candidates.Add(new GeneratedTestCaseQualityCandidate(
+                testCase,
+                index,
+                endpointKey,
+                GetGeneratedTestCaseEndpointCap(testCase.Request?.HttpMethod)));
+        }
+
+        var selected = SelectQualityFilteredTestCases(candidates);
+        droppedCount += candidates.Count - selected.Count;
+
+        if (selected.Count == 0)
+        {
+            throw new ValidationException("All AI-generated test cases were filtered out by backend quality checks.");
+        }
+
+        var kept = selected
+            .OrderBy(x => x.OriginalIndex)
+            .Select(x => x.TestCase)
+            .ToList();
+
+        for (var i = 0; i < kept.Count; i++)
+        {
+            kept[i].OrderIndex = i;
+        }
+
+        if (droppedCount > 0)
+        {
+            _logger.LogWarning(
+                "Filtered AI-generated test cases before saving. TestSuiteId={TestSuiteId}, RawCount={RawCount}, KeptCount={KeptCount}, DroppedCount={DroppedCount}",
+                suite?.Id,
+                testCases.Count,
+                kept.Count,
+                droppedCount);
+        }
+
+        return kept;
+    }
+
+    private async Task<Dictionary<Guid, ApiEndpointMetadataDto>> LoadEndpointMetadataForQualityFilterAsync(
+        TestSuite suite,
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        CancellationToken cancellationToken)
+    {
+        if (suite?.ApiSpecId is not Guid specId || specId == Guid.Empty)
+        {
+            return new Dictionary<Guid, ApiEndpointMetadataDto>();
+        }
+
+        var endpointIds = testCases
+            .Where(x => x?.EndpointId is Guid id && id != Guid.Empty)
+            .Select(x => x.EndpointId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (endpointIds.Count == 0)
+        {
+            return new Dictionary<Guid, ApiEndpointMetadataDto>();
+        }
+
+        var metadata = await _apiEndpointMetadataService.GetEndpointMetadataAsync(
+            specId,
+            endpointIds,
+            cancellationToken);
+
+        return (metadata ?? Array.Empty<ApiEndpointMetadataDto>())
+            .GroupBy(x => x.EndpointId)
+            .Select(x => x.First())
+            .ToDictionary(x => x.EndpointId);
+    }
+
+    private bool TryPrepareGeneratedTestCaseForQualityFilter(
+        TestSuite suite,
+        AiGeneratedTestCaseDto testCase,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        int index,
+        out Guid endpointKey,
+        out string reason)
+    {
+        endpointKey = testCase?.EndpointId ?? Guid.Empty;
+        reason = null;
+
+        if (testCase == null)
+        {
+            reason = "test case is null";
+            return false;
+        }
+
+        if (testCase.EndpointId is not Guid endpointId || endpointId == Guid.Empty)
+        {
+            reason = "missing endpointId";
+            return false;
+        }
+
+        ApiEndpointMetadataDto endpoint = null;
+        if (suite?.ApiSpecId is Guid specId && specId != Guid.Empty)
+        {
+            if (metadataByEndpointId == null || !metadataByEndpointId.TryGetValue(endpointId, out endpoint))
+            {
+                reason = $"unknown endpointId '{endpointId}' for specification '{specId}'";
+                return false;
+            }
+        }
+
+        testCase.Request ??= new AiTestCaseRequestDto();
+        testCase.Expectation ??= new AiTestCaseExpectationDto();
+
+        if (string.IsNullOrWhiteSpace(testCase.Request.HttpMethod))
+        {
+            testCase.Request.HttpMethod = endpoint?.HttpMethod;
+        }
+
+        if (string.IsNullOrWhiteSpace(testCase.Request.Url))
+        {
+            testCase.Request.Url = endpoint?.Path;
+        }
+
+        if (!TryParseHttpMethod(testCase.Request.HttpMethod, out var parsedMethod) &&
+            (TryParseHttpMethod(testCase.Name, out parsedMethod) ||
+             TryParseHttpMethod(testCase.Description, out parsedMethod)))
+        {
+            testCase.Request.HttpMethod = parsedMethod.ToString();
+        }
+
+        if (string.IsNullOrWhiteSpace(testCase.Request.HttpMethod))
+        {
+            reason = "missing request.httpMethod";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(testCase.Request.Url))
+        {
+            reason = "missing request.url";
+            return false;
+        }
+
+        if (!TryParseHttpMethod(testCase.Request.HttpMethod, out _))
+        {
+            reason = $"invalid request.httpMethod '{testCase.Request.HttpMethod}'";
+            return false;
+        }
+
+        if (endpoint != null &&
+            !string.IsNullOrWhiteSpace(endpoint.HttpMethod) &&
+            !HttpMethodsEquivalent(testCase.Request.HttpMethod, endpoint.HttpMethod))
+        {
+            reason = $"request.httpMethod '{testCase.Request.HttpMethod}' does not match endpoint contract '{endpoint.HttpMethod}'";
+            return false;
+        }
+
+        if (ContainsInvalidJsonBodyExpression(testCase.Request.Body, testCase.Request.BodyType))
+        {
+            reason = "JSON request.body contains JavaScript expression";
+            return false;
+        }
+
+        if (endpoint != null && !ExpectedStatusesAreAllowed(testCase, endpoint))
+        {
+            reason = "expectedStatus is not declared by endpoint contract";
+            return false;
+        }
+
+        endpointKey = endpointId;
+        return true;
+    }
+
+    private static bool HttpMethodsEquivalent(string left, string right)
+    {
+        return TryParseHttpMethod(left, out var leftMethod)
+            && TryParseHttpMethod(right, out var rightMethod)
+            && leftMethod == rightMethod;
+    }
+
+    private static bool ContainsInvalidJsonBodyExpression(string body, string bodyType)
+    {
+        return !string.IsNullOrWhiteSpace(body)
+            && ParseBodyType(bodyType) != BodyType.Raw
+            && JavaScriptRepeatExpressionRegex.IsMatch(body);
+    }
+
+    private static bool ExpectedStatusesAreAllowed(AiGeneratedTestCaseDto testCase, ApiEndpointMetadataDto endpoint)
+    {
+        var allowedStatuses = endpoint?.Responses?
+            .Select(x => x.StatusCode)
+            .Where(code => code >= 100 && code <= 599)
+            .Distinct()
+            .ToHashSet() ?? new HashSet<int>();
+
+        if (allowedStatuses.Count == 0)
+        {
+            return true;
+        }
+
+        var expectedStatuses = ParseStatusCodesFromExpectation(testCase?.Expectation?.ExpectedStatus);
+        return expectedStatuses.Count > 0 && expectedStatuses.All(allowedStatuses.Contains);
+    }
+
+    private static IReadOnlyList<GeneratedTestCaseQualityCandidate> SelectQualityFilteredTestCases(
+        IReadOnlyList<GeneratedTestCaseQualityCandidate> candidates)
+    {
+        if (candidates == null || candidates.Count == 0)
+        {
+            return Array.Empty<GeneratedTestCaseQualityCandidate>();
+        }
+
+        var selected = new List<GeneratedTestCaseQualityCandidate>();
+        foreach (var group in candidates.GroupBy(x => x.EndpointKey))
+        {
+            var cap = group.First().EndpointCap;
+            var ordered = group.OrderBy(x => x.OriginalIndex).ToList();
+            if (ordered.Count <= cap)
+            {
+                selected.AddRange(ordered);
+                continue;
+            }
+
+            var selectedForEndpoint = new List<GeneratedTestCaseQualityCandidate>();
+            var firstHappyPath = ordered.FirstOrDefault(x => ParseTestType(x.TestCase.TestType) == TestType.HappyPath);
+            if (firstHappyPath != null)
+            {
+                selectedForEndpoint.Add(firstHappyPath);
+            }
+
+            foreach (var candidate in ordered
+                .Where(x => firstHappyPath == null || !ReferenceEquals(x, firstHappyPath))
+                .OrderBy(x => GetGeneratedTestCaseValueRank(x.TestCase))
+                .ThenBy(x => GetPriorityRank(x.TestCase.Priority))
+                .ThenBy(x => x.OriginalIndex))
+            {
+                if (selectedForEndpoint.Count >= cap)
+                {
+                    break;
+                }
+
+                selectedForEndpoint.Add(candidate);
+            }
+
+            selected.AddRange(selectedForEndpoint);
+        }
+
+        return selected;
+    }
+
+    private static int GetGeneratedTestCaseEndpointCap(string httpMethod)
+    {
+        return IsLeanGeneratedMethod(httpMethod)
+            ? 3
+            : 10;
+    }
+
+    private static bool IsLeanGeneratedMethod(string httpMethod)
+    {
+        return TryParseHttpMethod(httpMethod, out var method)
+            && (method == HttpMethod.GET || method == HttpMethod.DELETE);
+    }
+
+    private static int GetGeneratedTestCaseValueRank(AiGeneratedTestCaseDto testCase)
+    {
+        return ParseTestType(testCase?.TestType) switch
+        {
+            TestType.Negative => 0,
+            TestType.Boundary => 1,
+            TestType.HappyPath => 2,
+            TestType.Security => 3,
+            TestType.Performance => 4,
+            _ => 5,
+        };
+    }
+
+    private static int GetPriorityRank(string priority)
+    {
+        return priority?.Trim().ToLowerInvariant() switch
+        {
+            "critical" => 0,
+            "high" => 1,
+            "medium" or "normal" => 2,
+            "low" => 3,
+            _ => 4,
+        };
+    }
+
+    private static string BuildGeneratedTestCaseFingerprint(AiGeneratedTestCaseDto testCase)
+    {
+        return string.Join("|", new[]
+        {
+            testCase.EndpointId?.ToString("N") ?? string.Empty,
+            NormalizeFingerprintText(testCase.Request?.HttpMethod).ToUpperInvariant(),
+            NormalizeFingerprintText(testCase.Request?.Url),
+            NormalizeJsonOrTextForFingerprint(testCase.Request?.PathParams),
+            NormalizeJsonOrTextForFingerprint(testCase.Request?.QueryParams),
+            NormalizeJsonOrTextForFingerprint(testCase.Request?.Headers),
+            NormalizeFingerprintText(testCase.Request?.BodyType).ToUpperInvariant(),
+            NormalizeJsonOrTextForFingerprint(testCase.Request?.Body),
+            ParseTestType(testCase.TestType).ToString(),
+            string.Join(",", ParseStatusCodesFromExpectation(testCase.Expectation?.ExpectedStatus).OrderBy(x => x)),
+            string.Join(",", (testCase.CoveredRequirementIds ?? new List<Guid>()).Where(x => x != Guid.Empty).OrderBy(x => x)),
+        });
+    }
+
+    private static string NormalizeJsonOrTextForFingerprint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            return JsonSerializer.Serialize(doc.RootElement, JsonOpts);
+        }
+        catch
+        {
+            return trimmed;
+        }
+    }
+
+    private static string NormalizeFingerprintText(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim();
+    }
+
+    private void LogDroppedGeneratedTestCase(int index, string name, string reason)
+    {
+        _logger.LogWarning(
+            "Dropped AI-generated test case before saving. Index={Index}, Name={Name}, Reason={Reason}",
+            index,
+            name,
+            reason);
+    }
+
+    private sealed record GeneratedTestCaseQualityCandidate(
+        AiGeneratedTestCaseDto TestCase,
+        int OriginalIndex,
+        Guid EndpointKey,
+        int EndpointCap);
+
     private async Task<Dictionary<Guid, HashSet<Guid>>> BuildEndpointRequirementMapAsync(
         TestSuite suite,
         IReadOnlyList<AiGeneratedTestCaseDto> testCases,
@@ -1327,7 +1831,8 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static void ValidateExpectedStatusesAgainstOpenApi(
         AiGeneratedTestCaseDto dto,
         ApiEndpointMetadataDto endpoint,
-        int index)
+        int index,
+        bool hasSrsTraceability)
     {
         var expectedStatuses = ParseStatusCodesFromExpectation(dto?.Expectation?.ExpectedStatus);
         if (expectedStatuses.Count == 0)
@@ -1348,7 +1853,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
 
         var invalid = expectedStatuses.Where(x => !allowedStatuses.Contains(x)).Distinct().ToList();
-        if (invalid.Count > 0)
+        if (invalid.Count > 0 && !hasSrsTraceability)
         {
             throw new ValidationException(
                 $"AI-generated test case '{dto?.Name ?? $"index {index}"}' has expectedStatus [{string.Join(", ", expectedStatuses)}] " +
@@ -1359,9 +1864,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static void ValidateAuthorizationHeaderAgainstOpenApi(
         AiGeneratedTestCaseDto dto,
         ApiEndpointMetadataDto endpoint,
-        int index)
+        int index,
+        bool hasSrsTraceability)
     {
-        if (endpoint?.IsAuthRelated == true)
+        if (endpoint?.IsAuthRelated == true || hasSrsTraceability)
         {
             return;
         }
@@ -1394,6 +1900,30 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             // Ignore malformed header JSON here; persistence normalization will handle invalid shapes.
         }
     }
+
+    private static bool HasSrsTraceability(AiGeneratedTestCaseDto dto)
+    {
+        if (dto == null)
+        {
+            return false;
+        }
+
+        if (dto.CoveredRequirementIds?.Any(x => x != Guid.Empty) == true ||
+            dto.CoveredRequirementCodes?.Any(x => !string.IsNullOrWhiteSpace(x)) == true)
+        {
+            return true;
+        }
+
+        var expectation = dto.Expectation;
+        return !string.IsNullOrWhiteSpace(expectation?.RequirementCode) ||
+               expectation?.PrimaryRequirementId is Guid requirementId && requirementId != Guid.Empty ||
+               string.Equals(expectation?.ExpectationSource, "Srs", StringComparison.OrdinalIgnoreCase) ||
+               ContainsSrsProvenance(expectation?.ExpectedProvenance);
+    }
+
+    private static bool ContainsSrsProvenance(string expectedProvenance)
+        => !string.IsNullOrWhiteSpace(expectedProvenance) &&
+           expectedProvenance.Contains("srs", StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateVariableDependencies(
         AiGeneratedTestCaseDto dto,

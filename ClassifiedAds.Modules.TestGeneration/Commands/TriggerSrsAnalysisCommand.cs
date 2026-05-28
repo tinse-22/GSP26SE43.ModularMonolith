@@ -136,8 +136,23 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
 
         command.JobId = job.Id;
 
-        // Build n8n payload (no callbackUrl needed — synchronous response)
         var endpoints = await GetEndpointsAsync(doc, cancellationToken);
+        var callbackBaseUrl = _n8nOptions.BeBaseUrl?.TrimEnd('/');
+
+        if (string.IsNullOrWhiteSpace(callbackBaseUrl) || string.IsNullOrWhiteSpace(_n8nOptions.CallbackApiKey))
+        {
+            job.Status = SrsAnalysisJobStatus.Failed;
+            job.ErrorMessage = "N8nIntegration BeBaseUrl/CallbackApiKey is required for async SRS analysis callbacks.";
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            throw new ValidationException(
+                "N8nIntegration:BeBaseUrl va CallbackApiKey phai duoc cau hinh de n8n callback ket qua phan tich SRS.");
+        }
+
+        var callbackUrl = $"{callbackBaseUrl}/api/srs-analysis-callback/{job.Id}";
 
         var payload = new N8nSrsAnalysisPayload
         {
@@ -146,51 +161,66 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
             RawContent = rawContent,
             ProjectContext = $"ProjectId: {doc.ProjectId}",
             Endpoints = endpoints,
+            CallbackUrl = callbackUrl,
+            CallbackApiKey = _n8nOptions.CallbackApiKey,
         };
 
-        // Call n8n synchronously — wait for full result (like LLM suggestion flow)
+        // n8n accepts the job, processes asynchronously, then posts results to callbackUrl.
         job.Status = SrsAnalysisJobStatus.Triggering;
         job.TriggeredAt = DateTimeOffset.UtcNow;
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
-        SrsAnalysisCallbackRequest callbackData;
-        try
+        var result = await _n8nService.TriggerWebhookWithResultAsync(WebhookName, payload, cancellationToken);
+
+        if (result.Success)
         {
-            callbackData = await _n8nService.TriggerWebhookAsync<N8nSrsAnalysisPayload, SrsAnalysisCallbackRequest>(
-                WebhookName, payload, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            var result = new WebhookTriggerResult { ErrorMessage = ex.Message, ErrorDetails = ex.ToString() };
-            if (ShouldUseLocalFallback(result))
+            if (TryReadSrsAnalysisCallback(result.ResponseBody, out var callbackData))
             {
-                await ApplyLocalFallbackAsync(job, doc, rawContent, endpoints, cancellationToken);
+                await _dispatcher.DispatchAsync(new ProcessSrsAnalysisCallbackCommand
+                {
+                    JobId = job.Id,
+                    Requirements = callbackData.Requirements ?? new List<N8nSrsRequirementResult>(),
+                    ClarificationQuestions = callbackData.ClarificationQuestions ?? new List<N8nSrsClarificationQuestion>(),
+                    ErrorMessage = callbackData.ErrorMessage,
+                }, cancellationToken);
+
+                _logger.LogInformation(
+                    "SRS analysis completed from synchronous n8n response. JobId={JobId}, SrsDocumentId={SrsDocumentId}",
+                    job.Id,
+                    command.SrsDocumentId);
+
                 return;
             }
-            else
-            {
-                job.Status = SrsAnalysisJobStatus.Failed;
-                job.ErrorMessage = ex.Message;
-                job.CompletedAt = DateTimeOffset.UtcNow;
-                doc.AnalysisStatus = SrsAnalysisStatus.Failed;
-                await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
-                await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-                _logger.LogError(ex, "SRS analysis n8n call failed. JobId={JobId}", job.Id);
-                throw;
-            }
+
+            job.Status = SrsAnalysisJobStatus.Processing;
+            _logger.LogInformation(
+                "SRS analysis job triggered. JobId={JobId}, SrsDocumentId={SrsDocumentId}, CallbackUrl={CallbackUrl}, HasResponseBody={HasResponseBody}",
+                job.Id,
+                command.SrsDocumentId,
+                callbackUrl,
+                !string.IsNullOrWhiteSpace(result.ResponseBody));
+        }
+        else if (ShouldUseLocalFallback(result))
+        {
+            await ApplyLocalFallbackAsync(job, doc, rawContent, endpoints, cancellationToken);
+            return;
+        }
+        else
+        {
+            job.Status = SrsAnalysisJobStatus.Failed;
+            job.ErrorMessage = result.ErrorMessage;
+            job.ErrorDetails = result.ErrorDetails;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+
+            _logger.LogError(
+                "Failed to trigger SRS analysis via n8n. JobId={JobId}, Error={Error}",
+                job.Id,
+                result.ErrorMessage);
         }
 
-        // n8n returned results — process them via the callback handler
-        await _dispatcher.DispatchAsync(new ProcessSrsAnalysisCallbackCommand
-        {
-            JobId = job.Id,
-            Requirements = callbackData?.Requirements ?? new List<N8nSrsRequirementResult>(),
-            ClarificationQuestions = callbackData?.ClarificationQuestions ?? new List<N8nSrsClarificationQuestion>(),
-        }, cancellationToken);
-
-        _logger.LogInformation(
-            "SRS analysis completed synchronously. JobId={JobId}, SrsDocumentId={SrsDocumentId}",
-            job.Id, command.SrsDocumentId);
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     private async Task ApplyLocalFallbackAsync(
@@ -226,6 +256,41 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
 
         return ContainsIgnoreCase(result.ErrorMessage, "Status: NotFound")
             || ContainsIgnoreCase(result.ErrorDetails, "not registered");
+    }
+
+    private static bool TryReadSrsAnalysisCallback(string responseBody, out SrsAnalysisCallbackRequest callbackData)
+    {
+        callbackData = null;
+
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!document.RootElement.TryGetProperty("requirements", out _)
+                && !document.RootElement.TryGetProperty("clarificationQuestions", out _)
+                && !document.RootElement.TryGetProperty("errorMessage", out _))
+            {
+                return false;
+            }
+
+            callbackData = JsonSerializer.Deserialize<SrsAnalysisCallbackRequest>(responseBody)
+                ?? new SrsAnalysisCallbackRequest();
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static List<N8nSrsRequirementResult> BuildLocalRequirements(
