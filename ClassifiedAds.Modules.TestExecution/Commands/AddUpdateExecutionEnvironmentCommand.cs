@@ -45,7 +45,7 @@ public class AddUpdateExecutionEnvironmentCommand : ICommand
 
 public class AddUpdateExecutionEnvironmentCommandHandler : ICommandHandler<AddUpdateExecutionEnvironmentCommand>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,

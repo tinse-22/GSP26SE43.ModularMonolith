@@ -86,7 +86,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "12d. NEGATIVE INTENT: Negative login/auth tests must actually mutate the credential or auth header under test. Do not reuse both {{registeredEmail}} and {{registeredPassword}} unchanged while expecting failure. Use 401 only for missing/invalid authentication; use 400/404/409 for validation, not-found, or conflict cases.\n" +
         "13. Treat expectation as a CANDIDATE oracle only. Propose the best expectedStatus/bodyContains/bodyNotContains/jsonPathChecks/headerChecks you can infer from contract + SRS, but backend will reconcile the final authoritative expectation.\n" +
         "14. EXPECTATION TOKENS (GENERALIZED): For jsonPathChecks values, use canonical tokens only: \"present\", \"not null\", \"non-empty\", \"string\", \"number\", \"boolean\", \"array\", \"object\", \"uuid\", \"datetime\", or regex:<pattern>. Avoid camelCase tokens like nonEmpty/notEmpty. Do not assert full message strings or session-specific values (token/id/timestamp); use existence/type/regex instead.\n" +
-        "15. AUTH MODE: For Unauthorized/Missing Token tests, set request.headers to include \"X-Test-Auth-Mode\": \"none\" and do NOT send Authorization. For Invalid Token tests, set Authorization to an invalid value and do NOT set X-Test-Auth-Mode.\n" +
+        "15. AUTH MODE (MACHINE-READABLE): Use executionHints.authMode with one of: none|optional|required.\n" +
+        "   - Unauthorized/Missing Token tests: executionHints.authMode='none', request.headers must NOT contain Authorization.\n" +
+        "   - Invalid token tests: executionHints.authMode='required' and set Authorization to an invalid literal.\n" +
+        "   - Auth-required happy-path tests: executionHints.authMode='required'.\n" +
+        "   - Legacy compatibility: you MAY also set X-Test-Auth-Mode header, but executionHints.authMode is the source of truth.\n" +
+        "15b. CREDENTIAL REWRITE CONTROL: For scenarios that must preserve exact email/password from prompt intent, set executionHints.credentialPolicy and executionHints.lockedFields.\n" +
+        "   - credentialPolicy values: preserve|rewrite_email|rewrite_password|rewrite_both.\n" +
+        "   - lockedFields example: [\"request.body.email\",\"request.body.password\"].\n" +
         "16. For HappyPath, propose 1-3 bodyContains substrings and 1-2 JSONPath assertions on critical success fields when the response contract or SRS makes them inferable. Prefer contract-backed field names; use \"*\" only to assert existence.\n" +
         "17. For Boundary/Negative, propose 1-2 bodyContains substrings and 1 JSONPath assertion on the error payload when inferable. Prefer keywords and fields grounded in SRS constraints or errorResponses schema; avoid invented fields.\n" +
         "17b. If errorResponses[statusCode].schemaJson is provided, derive candidate bodyContains/jsonPathChecks from that schema instead of free-form guessing.\n" +
@@ -124,6 +131,11 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "        \"bodyContains\": [\"error\", \"required\"],\n" +
         "        \"bodyNotContains\": null,\n" +
         "        \"jsonPathChecks\": {\"$.success\": \"false\"}\n" +
+        "      },\n" +
+        "      \"executionHints\": {\n" +
+        "        \"authMode\": \"none|optional|required\",\n" +
+        "        \"credentialPolicy\": \"preserve|rewrite_email|rewrite_password|rewrite_both\",\n" +
+        "        \"lockedFields\": [\"request.body.email\", \"request.body.password\"]\n" +
         "      },\n" +
         "      \"coveredRequirementCodes\": [\"REQ-001\"],\n" +
         "      \"variables\": []\n" +
@@ -498,6 +510,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         N8nBoundaryNegativeResponse response)
     {
         context ??= new LlmScenarioSuggestionContext();
+        var preserveN8nAsIs = true;
 
         var algorithmProfile = context.AlgorithmProfile ?? new GenerationAlgorithmProfile();
         var orderedSequence = algorithmProfile.UseDependencyAwareOrdering
@@ -554,51 +567,54 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
             }
 
-            var llmExpectation = new N8nTestCaseExpectation
+            if (!preserveN8nAsIs)
             {
-                ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
-                BodyContains = scenario.SuggestedBodyContains ?? new List<string>(),
-                BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
-                JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
-                HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
-                ExpectationSource = scenario.ExpectationSource,
-                RequirementCode = scenario.RequirementCode,
-                PrimaryRequirementId = scenario.PrimaryRequirementId,
-            };
-
-            var resolved = _expectationResolver.Resolve(new GeneratedScenarioContext
-            {
-                EndpointId = scenario.EndpointId,
-                TestType = scenario.SuggestedTestType,
-                HttpMethod = scenario.SuggestedHttpMethod ?? orderItem?.HttpMethod ?? metadata?.HttpMethod,
-                SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
-                LlmExpectation = llmExpectation,
-                SrsRequirements = context.SrsRequirements ?? Array.Empty<SrsRequirement>(),
-                CoveredRequirementIds = scenario.CoveredRequirementIds ?? new List<Guid>(),
-                PreferredDefaultStatuses = scenario.GetEffectiveExpectedStatusCodes(),
-                SrsDocumentContent = context.SrsDocument?.ParsedMarkdown ?? context.SrsDocument?.RawContent,
-            });
-
-            if (resolved != null)
-            {
-                scenario.ExpectedStatusCodes = resolved.ExpectedStatusCodes?.ToList() ?? scenario.ExpectedStatusCodes;
-                if (scenario.ExpectedStatusCodes?.Count > 0)
+                var llmExpectation = new N8nTestCaseExpectation
                 {
-                    scenario.ExpectedStatusCode = scenario.ExpectedStatusCodes[0];
-                }
+                    ExpectedStatus = scenario.GetEffectiveExpectedStatusCodes(),
+                    BodyContains = scenario.SuggestedBodyContains ?? new List<string>(),
+                    BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
+                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
+                    HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
+                    ExpectationSource = scenario.ExpectationSource,
+                    RequirementCode = scenario.RequirementCode,
+                    PrimaryRequirementId = scenario.PrimaryRequirementId,
+                };
 
-                scenario.SuggestedBodyContains = resolved.BodyContains?.ToList() ?? scenario.SuggestedBodyContains;
-                scenario.SuggestedBodyNotContains = resolved.BodyNotContains?.ToList() ?? scenario.SuggestedBodyNotContains;
-                scenario.SuggestedJsonPathChecks = resolved.JsonPathChecks != null
-                    ? new Dictionary<string, string>(resolved.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
-                    : scenario.SuggestedJsonPathChecks;
-                scenario.SuggestedHeaderChecks = resolved.HeaderChecks != null
-                    ? new Dictionary<string, string>(resolved.HeaderChecks, StringComparer.OrdinalIgnoreCase)
-                    : scenario.SuggestedHeaderChecks;
-                scenario.ExpectationSource = resolved.Source.ToString();
-                scenario.RequirementCode = resolved.RequirementCode ?? scenario.RequirementCode;
-                scenario.PrimaryRequirementId = resolved.PrimaryRequirementId ?? scenario.PrimaryRequirementId;
-                scenario.ExpectedProvenance = resolved.ExpectedProvenance ?? scenario.ExpectedProvenance;
+                var resolved = _expectationResolver.Resolve(new GeneratedScenarioContext
+                {
+                    EndpointId = scenario.EndpointId,
+                    TestType = scenario.SuggestedTestType,
+                    HttpMethod = scenario.SuggestedHttpMethod ?? orderItem?.HttpMethod ?? metadata?.HttpMethod,
+                    SwaggerResponses = metadata?.Responses ?? Array.Empty<ApiEndpointResponseDescriptorDto>(),
+                    LlmExpectation = llmExpectation,
+                    SrsRequirements = context.SrsRequirements ?? Array.Empty<SrsRequirement>(),
+                    CoveredRequirementIds = scenario.CoveredRequirementIds ?? new List<Guid>(),
+                    PreferredDefaultStatuses = scenario.GetEffectiveExpectedStatusCodes(),
+                    SrsDocumentContent = context.SrsDocument?.ParsedMarkdown ?? context.SrsDocument?.RawContent,
+                });
+
+                if (resolved != null)
+                {
+                    scenario.ExpectedStatusCodes = resolved.ExpectedStatusCodes?.ToList() ?? scenario.ExpectedStatusCodes;
+                    if (scenario.ExpectedStatusCodes?.Count > 0)
+                    {
+                        scenario.ExpectedStatusCode = scenario.ExpectedStatusCodes[0];
+                    }
+
+                    scenario.SuggestedBodyContains = resolved.BodyContains?.ToList() ?? scenario.SuggestedBodyContains;
+                    scenario.SuggestedBodyNotContains = resolved.BodyNotContains?.ToList() ?? scenario.SuggestedBodyNotContains;
+                    scenario.SuggestedJsonPathChecks = resolved.JsonPathChecks != null
+                        ? new Dictionary<string, string>(resolved.JsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                        : scenario.SuggestedJsonPathChecks;
+                    scenario.SuggestedHeaderChecks = resolved.HeaderChecks != null
+                        ? new Dictionary<string, string>(resolved.HeaderChecks, StringComparer.OrdinalIgnoreCase)
+                        : scenario.SuggestedHeaderChecks;
+                    scenario.ExpectationSource = resolved.Source.ToString();
+                    scenario.RequirementCode = resolved.RequirementCode ?? scenario.RequirementCode;
+                    scenario.PrimaryRequirementId = resolved.PrimaryRequirementId ?? scenario.PrimaryRequirementId;
+                    scenario.ExpectedProvenance = resolved.ExpectedProvenance ?? scenario.ExpectedProvenance;
+                }
             }
 
             var request = new N8nTestCaseRequest
@@ -612,15 +628,18 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 QueryParams = scenario.SuggestedQueryParams ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             };
 
-            scenario.SuggestedBodyContains = NormalizeRegisterBodyContains(
-                scenario.SuggestedBodyContains,
-                request,
-                scenario.ScenarioName);
-            scenario.ExpectedBehavior = scenario.SuggestedBodyContains?.FirstOrDefault() ?? scenario.ExpectedBehavior;
-
-            if (metadata?.Responses != null)
+            if (!preserveN8nAsIs)
             {
-                scenario = RepairAssertionsFromSchema(scenario, metadata.Responses);
+                scenario.SuggestedBodyContains = NormalizeRegisterBodyContains(
+                    scenario.SuggestedBodyContains,
+                    request,
+                    scenario.ScenarioName);
+                scenario.ExpectedBehavior = scenario.SuggestedBodyContains?.FirstOrDefault() ?? scenario.ExpectedBehavior;
+
+                if (metadata?.Responses != null)
+                {
+                    scenario = RepairAssertionsFromSchema(scenario, metadata.Responses);
+                }
             }
 
             repaired.Add(scenario);
@@ -1064,14 +1083,34 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                         codeToId.TryGetValue(s.Expectation.RequirementCode.Trim(), out var requirementId)
                             ? requirementId
                             : null),
-                CredentialPolicy = s.CredentialPolicy,
-                LockedFields = s.LockedFields ?? new List<string>(),
+                CredentialPolicy = s.ExecutionHints?.CredentialPolicy ?? s.CredentialPolicy,
+                LockedFields = s.ExecutionHints?.LockedFields?.Count > 0
+                    ? s.ExecutionHints.LockedFields
+                    : s.LockedFields ?? new List<string>(),
+                ScenarioKey = !string.IsNullOrWhiteSpace(s.ScenarioKey)
+                    ? NormalizeScenarioKeyFromName(s.ScenarioKey)
+                    : (string.IsNullOrWhiteSpace(s.ScenarioName)
+                        ? null
+                        : NormalizeScenarioKeyFromName(s.ScenarioName)),
+                FlowRequired = s.ExecutionHints?.FlowRequired,
+                FlowId = s.ExecutionHints?.FlowId,
+                DependsOn = s.ExecutionHints?.DependsOn?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                    ?? new List<string>(),
+                Produces = s.ExecutionHints?.Produces?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                    ?? new List<string>(),
+                Consumes = s.ExecutionHints?.Consumes?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                    ?? new List<string>(),
+                AbortIfDependencyFailed = s.ExecutionHints?.AbortIfDependencyFailed,
             };
 
             parsedScenario.Tags = MergeCredentialControlTags(
                 parsedScenario.Tags,
                 parsedScenario.CredentialPolicy,
                 parsedScenario.LockedFields);
+            parsedScenario.Tags = MergeAuthModeTag(
+                parsedScenario.Tags,
+                s.ExecutionHints?.AuthMode ?? s.AuthMode);
+            parsedScenario.Tags = MergeFlowDependencyTags(parsedScenario.Tags, parsedScenario);
 
             if (parsedScenario.PrimaryRequirementId.HasValue &&
                 !parsedScenario.CoveredRequirementIds.Contains(parsedScenario.PrimaryRequirementId.Value))
@@ -1127,6 +1166,119 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return merged;
     }
 
+    private static List<string> MergeAuthModeTag(
+        List<string> tags,
+        string authMode)
+    {
+        var merged = new List<string>(tags ?? new List<string>());
+        var normalized = NormalizeAuthMode(authMode);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return merged;
+        }
+
+        var authTag = $"auth-mode:{normalized}";
+        if (!merged.Contains(authTag, StringComparer.OrdinalIgnoreCase))
+        {
+            merged.Add(authTag);
+        }
+
+        return merged;
+    }
+
+    private static List<string> MergeFlowDependencyTags(
+        List<string> tags,
+        LlmSuggestedScenario scenario)
+    {
+        var merged = new List<string>(tags ?? new List<string>());
+        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(scenario?.ScenarioKey))
+        {
+            var scenarioKeyTag = $"flow-scenario-key:{scenario.ScenarioKey.Trim()}";
+            if (seen.Add(scenarioKeyTag))
+            {
+                merged.Add(scenarioKeyTag);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(scenario?.FlowId))
+        {
+            var flowIdTag = $"flow-id:{scenario.FlowId.Trim()}";
+            if (seen.Add(flowIdTag))
+            {
+                merged.Add(flowIdTag);
+            }
+        }
+
+        if (scenario?.FlowRequired.HasValue == true)
+        {
+            var flowRequiredTag = $"flow-required:{(scenario.FlowRequired.Value ? "true" : "false")}";
+            if (seen.Add(flowRequiredTag))
+            {
+                merged.Add(flowRequiredTag);
+            }
+        }
+
+        if (scenario?.AbortIfDependencyFailed.HasValue == true)
+        {
+            var abortTag = $"flow-abort-on-dep-fail:{(scenario.AbortIfDependencyFailed.Value ? "true" : "false")}";
+            if (seen.Add(abortTag))
+            {
+                merged.Add(abortTag);
+            }
+        }
+
+        foreach (var dependsOnKey in scenario?.DependsOn ?? new List<string>())
+        {
+            var depTag = $"flow-depends-on:{dependsOnKey}";
+            if (seen.Add(depTag))
+            {
+                merged.Add(depTag);
+            }
+        }
+
+        foreach (var produces in scenario?.Produces ?? new List<string>())
+        {
+            var producesTag = $"flow-produces:{produces}";
+            if (seen.Add(producesTag))
+            {
+                merged.Add(producesTag);
+            }
+        }
+
+        foreach (var consumes in scenario?.Consumes ?? new List<string>())
+        {
+            var consumesTag = $"flow-consumes:{consumes}";
+            if (seen.Add(consumesTag))
+            {
+                merged.Add(consumesTag);
+            }
+        }
+
+        return merged;
+    }
+
+    private static string NormalizeScenarioKeyFromName(string scenarioName)
+    {
+        if (string.IsNullOrWhiteSpace(scenarioName))
+        {
+            return null;
+        }
+
+        var chars = scenarioName.Trim().ToLowerInvariant()
+            .Select(c => char.IsLetterOrDigit(c) ? c : '-')
+            .ToArray();
+        var normalized = new string(chars);
+
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim('-');
+    }
+
     private static string NormalizeCredentialPolicy(string policy)
     {
         var normalized = policy?.Trim().ToLowerInvariant();
@@ -1136,6 +1288,22 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             "rewrite_email" => "rewrite_email",
             "rewrite_password" => "rewrite_password",
             "rewrite_both" => "rewrite_both",
+            _ => string.Empty,
+        };
+    }
+
+    private static string NormalizeAuthMode(string authMode)
+    {
+        var normalized = authMode?.Trim().ToLowerInvariant()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(" ", string.Empty);
+
+        return normalized switch
+        {
+            "none" or "noauth" or "disableauth" => "none",
+            "optional" => "optional",
+            "required" or "default" => "required",
             _ => string.Empty,
         };
     }
@@ -2039,7 +2207,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             && !string.IsNullOrWhiteSpace(matchingResponse.Schema))
         {
             scenario.SuggestedJsonPathChecks = ErrorResponseSchemaAnalyzer.BuildJsonPathAssertions(
-                matchingResponse.Schema, scenario.SuggestedTestType);
+                matchingResponse.Schema,
+                scenario.SuggestedTestType,
+                primaryCode);
         }
 
         if ((scenario.SuggestedBodyContains == null || scenario.SuggestedBodyContains.Count == 0)

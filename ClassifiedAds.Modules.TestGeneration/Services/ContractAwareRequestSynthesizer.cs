@@ -148,7 +148,14 @@ internal static class ContractAwareRequestSynthesizer
                 return body;
             }
 
-            PruneNodeToSchema(node, schemaRoot);
+            // Keep negative payloads intact. Negative scenarios often intentionally include
+            // schema-violating fields (e.g. extra properties) and must execute exactly as generated.
+            // Pruning is only safe for non-negative scenarios.
+            if (testType != TestType.Negative)
+            {
+                PruneNodeToSchema(node, schemaRoot);
+            }
+
             ApplyPlaceholderHints(node, context, testType);
             return node.ToJsonString(JsonOptions);
         }

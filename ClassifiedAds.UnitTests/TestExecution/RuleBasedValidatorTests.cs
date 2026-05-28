@@ -571,6 +571,21 @@ public class RuleBasedValidatorTests
         result.Failures[0].Actual.Should().BeNull();
     }
 
+    [Fact]
+    public void Validate_JsonPathArrayContainsOperator_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"errors":{"fieldErrors":{"password":["String must contain at least 6 character(s)"]}}}""");
+        var testCase = CreateTestCase(jsonPathChecks: """{"$.errors.fieldErrors.password":"array_contains:String must contain at least 6 character(s)"}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.JsonPathChecksPassed.Should().BeTrue();
+    }
+
     #endregion
 
     #region Response Time

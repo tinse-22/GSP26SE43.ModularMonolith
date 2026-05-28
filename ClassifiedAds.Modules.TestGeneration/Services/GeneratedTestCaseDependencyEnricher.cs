@@ -123,19 +123,24 @@ public static class GeneratedTestCaseDependencyEnricher
                 continue;
             }
 
+            var allowHeuristicRewrite = IsRewritePolicyEnabled(testCase);
             AddDeclaredDependencies(testCase, orderItem, producersByEndpoint);
-            EnsureSameEndpointPostHappyPathDependency(testCase, orderItem, producersByEndpoint);
+            if (allowHeuristicRewrite)
+            {
+                EnsureSameEndpointPostHappyPathDependency(testCase, orderItem, producersByEndpoint);
+            }
             FillMissingRouteParams(
                 testCase,
                 orderItem,
                 producerCandidates,
                 producersByEndpoint,
-                pendingExistingVariables);
+                pendingExistingVariables,
+                allowHeuristicRewrite);
 
             // Skip body enrichment for HTTP methods that don't accept request bodies.
             // This prevents false dependency links from being created for DELETE/GET/HEAD/OPTIONS endpoints.
             var httpMethod = (orderItem.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
-            if (httpMethod is not ("DELETE" or "GET" or "HEAD" or "OPTIONS"))
+            if (allowHeuristicRewrite && httpMethod is not ("DELETE" or "GET" or "HEAD" or "OPTIONS"))
             {
                 FillMissingBodyBindings(
                     testCase,
@@ -145,12 +150,15 @@ public static class GeneratedTestCaseDependencyEnricher
                     pendingExistingVariables);
             }
 
-            FillMissingAuthBindings(
-                testCase,
-                orderItem,
-                producerCandidates,
-                producersByEndpoint,
-                pendingExistingVariables);
+            if (allowHeuristicRewrite)
+            {
+                FillMissingAuthBindings(
+                    testCase,
+                    orderItem,
+                    producerCandidates,
+                    producersByEndpoint,
+                    pendingExistingVariables);
+            }
         }
 
         return pendingExistingVariables.Count == 0
@@ -275,7 +283,8 @@ public static class GeneratedTestCaseDependencyEnricher
         ApiOrderItemModel orderItem,
         IReadOnlyList<ProducerCandidate> producerCandidates,
         IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
-        ICollection<TestCaseVariable> pendingExistingVariables)
+        ICollection<TestCaseVariable> pendingExistingVariables,
+        bool allowHeuristicRewrite)
     {
         if (testCase.Request == null)
         {
@@ -340,7 +349,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
                 // For HappyPath identifier tokens, replace hardcoded route values (e.g. 12345)
                 // with dependency placeholders so update/delete cases target resources created earlier in the run.
-                if (!ShouldReplaceRouteParamValue(testCase, token, existingValue))
+                if (!allowHeuristicRewrite || !ShouldReplaceRouteParamValue(testCase, token, existingValue))
                 {
                     continue;
                 }
@@ -717,7 +726,14 @@ public static class GeneratedTestCaseDependencyEnricher
                             preferredVariableName);
 
                         var shouldReplace = preferredVariableName != null
-                            || (IsIdentifierToken(property.Key) && ShouldReplaceIdentifierValue(currentValue));
+                            || (IsIdentifierToken(property.Key)
+                                && ShouldRebindIdentifierField(
+                                    testCase,
+                                    property.Key,
+                                    currentValue,
+                                    placeholderVariable,
+                                    hasPlaceholder,
+                                    producerResourceScore));
 
                         if (!string.IsNullOrWhiteSpace(variableName) &&
                             shouldReplace)
@@ -1396,6 +1412,216 @@ public static class GeneratedTestCaseDependencyEnricher
     private static bool IsHappyPathTestCase(TestCase testCase)
     {
         return testCase.TestType == TestType.HappyPath;
+    }
+
+    private static bool ShouldRebindIdentifierField(
+        TestCase testCase,
+        string propertyName,
+        string currentValue,
+        string placeholderVariable,
+        bool hasPlaceholder,
+        int producerResourceScore)
+    {
+        // For client-error intent cases (4xx), keep identifier payload exactly as authored.
+        if (testCase?.TestType == TestType.Negative && IsLikelyClientErrorExpectation(testCase))
+        {
+            return false;
+        }
+
+        // If existing placeholder is explicitly declared by flow-consumes, trust n8n payload.
+        if (hasPlaceholder && IsConsumedVariable(testCase, placeholderVariable))
+        {
+            return false;
+        }
+
+        // If placeholder semantically matches the target field (e.g. categoryId -> {{categoryId}})
+        // and producer resource match is weak, keep original placeholder to avoid cross-resource rewrites.
+        if (hasPlaceholder
+            && IsSameIdentifierFamily(propertyName, placeholderVariable)
+            && producerResourceScore < 60)
+        {
+            return false;
+        }
+
+        return ShouldReplaceIdentifierValue(currentValue);
+    }
+
+    private static bool IsLikelyClientErrorExpectation(TestCase testCase)
+    {
+        var raw = testCase?.Expectation?.ExpectedStatus;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    if (item.TryGetInt32(out var code) && code >= 400 && code < 500)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (doc.RootElement.TryGetInt32(out var single))
+            {
+                return single >= 400 && single < 500;
+            }
+        }
+        catch
+        {
+            // fall through to text parsing
+        }
+
+        return raw.Contains("400", StringComparison.Ordinal)
+            || raw.Contains("401", StringComparison.Ordinal)
+            || raw.Contains("403", StringComparison.Ordinal)
+            || raw.Contains("404", StringComparison.Ordinal)
+            || raw.Contains("409", StringComparison.Ordinal)
+            || raw.Contains("422", StringComparison.Ordinal);
+    }
+
+    private static bool IsConsumedVariable(TestCase testCase, string variableName)
+    {
+        if (testCase == null || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        foreach (var tag in ParseSerializedTags(testCase.Tags))
+        {
+            if (!tag.StartsWith("flow-consumes:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag["flow-consumes:".Length..].Trim();
+            if (string.Equals(value, variableName, StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith("." + variableName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSameIdentifierFamily(string fieldName, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName) || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(StripIdSuffix(fieldName), StripIdSuffix(variableName), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<string> ParseSerializedTags(string serializedTags)
+    {
+        if (string.IsNullOrWhiteSpace(serializedTags))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            if (serializedTags.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                var tags = JsonSerializer.Deserialize<string[]>(serializedTags, JsonOpts);
+                return tags?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList()
+                    ?? new List<string>();
+            }
+        }
+        catch
+        {
+            // fallback below
+        }
+
+        return serializedTags
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+    }
+
+    private static bool IsRewritePolicyEnabled(TestCase testCase)
+    {
+        if (testCase == null)
+        {
+            return false;
+        }
+
+        foreach (var tag in ParseSerializedTags(testCase.Tags))
+        {
+            if (!tag.StartsWith("rewrite-policy:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag["rewrite-policy:".Length..].Trim().ToLowerInvariant();
+            return value is "safe" or "minimal";
+        }
+
+        // Default: preserve n8n payload, do not apply heuristic rewrite.
+        return false;
+    }
+
+    private static bool IsIdentifierErrorIntentCase(TestCase testCase)
+    {
+        if (testCase == null)
+        {
+            return false;
+        }
+
+        // Negative identifier intent should preserve literal IDs from n8n
+        // (e.g. valid-format-but-missing, invalid format), not auto-bind placeholders.
+        var surface = $"{testCase.Name ?? string.Empty} {testCase.Description ?? string.Empty}";
+        if (ContainsAny(surface,
+                "not found",
+                "non-existent",
+                "non existent",
+                "does not exist",
+                "doesn't exist",
+                "invalid id",
+                "invalid identifier",
+                "invalid format",
+                "invalid objectid",
+                "invalid object id",
+                "malformed id",
+                "wrong id format"))
+        {
+            return true;
+        }
+
+        var expectedStatus = testCase.Expectation?.ExpectedStatus ?? string.Empty;
+        return expectedStatus.Contains("404", StringComparison.Ordinal)
+            || (testCase.TestType == TestType.Negative && expectedStatus.Contains("400", StringComparison.Ordinal));
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        if (string.IsNullOrWhiteSpace(value) || tokens == null || tokens.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var token in tokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token)
+                && value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsIdentifierToken(string token)

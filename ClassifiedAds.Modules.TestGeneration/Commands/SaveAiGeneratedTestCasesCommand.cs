@@ -199,6 +199,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private static readonly Regex PlaceholderRegex = new(
         @"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex SingleBraceTokenRegex = new(
+        @"\{[A-Za-z_][A-Za-z0-9_]*\}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly ProposalStatus[] ActiveProposalStatuses =
     {
@@ -283,6 +286,17 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             throw new ValidationException("Cannot save AI-generated test cases for an archived test suite.");
         }
 
+        var validTestCases = await SanitizeAndFilterTestCasesAsync(
+            suite,
+            command.TestCases,
+            cancellationToken);
+
+        if (validTestCases.Count == 0)
+        {
+            throw new ValidationException(
+                "All AI-generated test cases were dropped because request.httpMethod/request.url could not be resolved from endpointId.");
+        }
+
         await _testCaseRepository.UnitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             var requirementsById = new Dictionary<Guid, SrsRequirement>();
@@ -299,19 +313,19 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
                 var endpointRequirementMap = await BuildEndpointRequirementMapAsync(
                     suite,
-                    command.TestCases,
+                    validTestCases,
                     requirementsById,
                     ct);
 
                 ValidateGeneratedTestCasesAgainstSrs(
-                    command.TestCases,
+                    validTestCases,
                     requirementsById,
                     endpointRequirementMap);
             }
 
             await ValidateGeneratedTestCasesAgainstOpenApiContractAsync(
                 suite,
-                command.TestCases,
+                validTestCases,
                 ct);
 
             // Replace any previously AI-generated test cases for this suite.
@@ -337,9 +351,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             // Create new entities from the n8n payload.
             var now = DateTimeOffset.UtcNow;
             var actorUserId = suite.LastModifiedById ?? suite.CreatedById;
-            var persistedTestCases = new List<TestCase>(command.TestCases.Count);
+            var persistedTestCases = new List<TestCase>(validTestCases.Count);
             var orderIdx = 0;
-            foreach (var dto in command.TestCases)
+            foreach (var dto in validTestCases)
             {
                 var testCase = new TestCase
                 {
@@ -465,7 +479,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
             // Insert traceability links for test cases that reported coveredRequirementIds.
             // Validate all IDs against the suite's SRS document to prevent FK violations.
-            var dtoList = command.TestCases;
+            var dtoList = validTestCases;
             for (var i = 0; i < dtoList.Count && i < persistedTestCases.Count; i++)
             {
                 var dto = dtoList[i];
@@ -552,22 +566,106 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             {
                 latestJob.Status = GenerationJobStatus.Completed;
                 latestJob.CompletedAt = now;
-                latestJob.TestCasesGenerated = command.TestCases.Count;
+                latestJob.TestCasesGenerated = validTestCases.Count;
                 latestJob.RowVersion = Guid.NewGuid().ToByteArray();
                 await _jobRepository.UpdateAsync(latestJob, ct);
 
                 _logger.LogInformation(
                     "Updated generation job to Completed. JobId={JobId}, TestCasesGenerated={Count}",
-                    latestJob.Id, command.TestCases.Count);
+                    latestJob.Id, validTestCases.Count);
             }
 
             await _testCaseRepository.UnitOfWork.SaveChangesAsync(ct);
 
             _logger.LogInformation(
                 "Saved {Count} AI-generated test cases and marked suite Ready for TestSuiteId={TestSuiteId}",
-                command.TestCases.Count,
+                validTestCases.Count,
                 command.TestSuiteId);
         }, cancellationToken: cancellationToken);
+    }
+
+    private async Task<List<AiGeneratedTestCaseDto>> SanitizeAndFilterTestCasesAsync(
+        TestSuite suite,
+        IReadOnlyList<AiGeneratedTestCaseDto> testCases,
+        CancellationToken cancellationToken)
+    {
+        if (testCases == null || testCases.Count == 0)
+        {
+            return new List<AiGeneratedTestCaseDto>();
+        }
+
+        var metadataByEndpointId = new Dictionary<Guid, ApiEndpointMetadataDto>();
+        if (suite?.ApiSpecId is Guid specId && specId != Guid.Empty)
+        {
+            var endpointIds = testCases
+                .Where(x => x?.EndpointId is Guid id && id != Guid.Empty)
+                .Select(x => x.EndpointId!.Value)
+                .Distinct()
+                .ToList();
+
+            if (endpointIds.Count > 0)
+            {
+                var metadata = await _apiEndpointMetadataService.GetEndpointMetadataAsync(specId, endpointIds, cancellationToken);
+                metadataByEndpointId = metadata
+                    .GroupBy(x => x.EndpointId)
+                    .Select(x => x.First())
+                    .ToDictionary(x => x.EndpointId);
+            }
+        }
+
+        var valid = new List<AiGeneratedTestCaseDto>(testCases.Count);
+        for (var i = 0; i < testCases.Count; i++)
+        {
+            var dto = testCases[i];
+            if (dto == null || dto.EndpointId is not Guid endpointId || endpointId == Guid.Empty)
+            {
+                _logger.LogWarning("Drop AI test case at index {Index}: missing endpointId.", i);
+                continue;
+            }
+
+            if (!metadataByEndpointId.TryGetValue(endpointId, out var endpoint))
+            {
+                _logger.LogWarning("Drop AI test case '{Name}' (index {Index}): endpointId {EndpointId} not found in metadata.", dto.Name ?? $"index {i}", i, endpointId);
+                continue;
+            }
+
+            dto.Request ??= new AiTestCaseRequestDto();
+
+            if (!TryParseHttpMethod(dto.Request.HttpMethod, out _) && !string.IsNullOrWhiteSpace(endpoint.HttpMethod))
+            {
+                dto.Request.HttpMethod = endpoint.HttpMethod.Trim().ToUpperInvariant();
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.Request.Url) && !string.IsNullOrWhiteSpace(endpoint.Path))
+            {
+                dto.Request.Url = endpoint.Path.Trim();
+            }
+
+            if (!TryParseHttpMethod(dto.Request.HttpMethod, out _) || string.IsNullOrWhiteSpace(dto.Request.Url))
+            {
+                _logger.LogWarning(
+                    "Drop AI test case '{Name}' (index {Index}): unresolved request shape after auto-fill. endpointId={EndpointId}, method='{Method}', url='{Url}'.",
+                    dto.Name ?? $"index {i}",
+                    i,
+                    endpointId,
+                    dto.Request.HttpMethod,
+                    dto.Request.Url);
+                continue;
+            }
+
+            valid.Add(dto);
+        }
+
+        if (valid.Count != testCases.Count)
+        {
+            _logger.LogWarning(
+                "Sanitized AI test cases. Input={InputCount}, Valid={ValidCount}, Dropped={DroppedCount}.",
+                testCases.Count,
+                valid.Count,
+                testCases.Count - valid.Count);
+        }
+
+        return valid;
     }
 
     private static TestType ParseTestType(string value) =>
@@ -1133,11 +1231,70 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     $"AI-generated test case '{dto.Name ?? $"index {item.Index}"}' references unknown endpointId '{endpointId}' for specification '{specId}'.");
             }
 
+            ValidateRequestShape(dto, endpoint, item.Index);
             ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index);
             ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index);
             ValidateRequestBodyAgainstOpenApi(dto, endpoint, item.Index);
             ValidateVariableDependencies(dto, producedVariables, item.Index);
             RegisterProducedVariables(dto, producedVariables);
+        }
+    }
+
+    private static void ValidateRequestShape(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint,
+        int index)
+    {
+        var request = dto?.Request;
+        if (request == null)
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing request object.");
+        }
+
+        if (!TryParseHttpMethod(request.HttpMethod, out _))
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing/invalid request.httpMethod.");
+        }
+
+        var url = request.Url?.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing request.url.");
+        }
+
+        // Disallow unresolved pseudo tokens such as {RequestBody} that runtime cannot resolve.
+        if (SingleBraceTokenRegex.IsMatch(url))
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' contains unresolved token in request.url: '{url}'.");
+        }
+
+        if (request.BodyType != null &&
+            ParseBodyType(request.BodyType) == BodyType.JSON &&
+            !string.IsNullOrWhiteSpace(request.Body))
+        {
+            var body = request.Body.Trim();
+            if (SingleBraceTokenRegex.IsMatch(body))
+            {
+                throw new ValidationException(
+                    $"AI-generated test case '{dto?.Name ?? $"index {index}"}' contains unresolved token in request.body: '{body}'.");
+            }
+
+            // For normal JSON body cases, body must be parseable JSON.
+            // If malformed JSON is intended, it should use BodyType=Raw.
+            try
+            {
+                using var _ = JsonDocument.Parse(body);
+            }
+            catch (JsonException)
+            {
+                throw new ValidationException(
+                    $"AI-generated test case '{dto?.Name ?? $"index {index}"}' has BodyType=JSON but request.body is invalid JSON. " +
+                    "Use BodyType=Raw for intentionally malformed payload tests.");
+            }
         }
     }
 

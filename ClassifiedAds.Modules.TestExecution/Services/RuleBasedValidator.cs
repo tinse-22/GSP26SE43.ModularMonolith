@@ -95,7 +95,15 @@ public class RuleBasedValidator : IRuleBasedValidator
         var checksSkipped = 0;
 
         // 1. Status code check
-        TrackCheck(ValidateStatusCode(response, testCase, expectation, result, profile != ValidationProfile.SrsStrict), ref checksPerformed, ref checksSkipped);
+        TrackCheck(
+            ValidateStatusCode(
+                response,
+                testCase,
+                expectation,
+                result,
+                ShouldAllowAdaptiveStatusMatching(testCase, profile)),
+            ref checksPerformed,
+            ref checksSkipped);
 
         // 2. Response schema validation
         TrackCheck(ValidateResponseSchema(response, expectation, endpointMetadata, result, strictMode), ref checksPerformed, ref checksSkipped);
@@ -110,7 +118,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
-        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result, variableBag), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result, profile, variableBag), ref checksPerformed, ref checksSkipped);
 
         // 7. Max response time
         TrackCheck(ValidateResponseTime(response, expectation, result), ref checksPerformed, ref checksSkipped);
@@ -131,8 +139,103 @@ public class RuleBasedValidator : IRuleBasedValidator
                 testCase.TestCaseId);
         }
 
-        result.IsPassed = result.Failures.Count == 0;
+        var scoreThreshold = ResolveValidationScoreThreshold(profile);
+        var hardChecksPassed = EvaluateHardChecksPassed(result);
+        var validationScore = ComputeValidationScore(result);
+
+        result.ValidationScoreThreshold = scoreThreshold;
+        result.HardChecksPassed = hardChecksPassed;
+        result.ValidationScore = validationScore;
+
+        result.IsPassed = result.Failures.Count == 0
+            && hardChecksPassed
+            && validationScore >= scoreThreshold;
         return result;
+    }
+
+    private static decimal ResolveValidationScoreThreshold(ValidationProfile profile)
+    {
+        return profile switch
+        {
+            ValidationProfile.SrsStrict => 0.95m,
+            ValidationProfile.DemoAdaptive => 0.70m,
+            _ => 0.80m,
+        };
+    }
+
+    private static bool EvaluateHardChecksPassed(TestCaseValidationResult result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        // Hard gates: status code must pass; schema (if checked) must pass.
+        if (!result.StatusCodeMatched)
+        {
+            return false;
+        }
+
+        if (result.SchemaMatched == false)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static decimal ComputeValidationScore(TestCaseValidationResult result)
+    {
+        if (result == null)
+        {
+            return 0m;
+        }
+
+        decimal weightedTotal = 0m;
+        decimal weightsApplied = 0m;
+
+        AddWeightedCheck(result.StatusCodeMatched, 0.35m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.SchemaMatched, 0.20m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.HeaderChecksPassed, 0.10m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.BodyContainsPassed, 0.10m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.BodyNotContainsPassed, 0.10m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.JsonPathChecksPassed, 0.10m, ref weightedTotal, ref weightsApplied);
+        AddWeightedNullableCheck(result.ResponseTimePassed, 0.05m, ref weightedTotal, ref weightsApplied);
+
+        var baseScore = weightsApplied > 0m ? weightedTotal / weightsApplied : 1m;
+
+        // Warning penalty keeps semantics strict but avoids brittle hard-fail behavior.
+        var warningPenalty = Math.Min(0.10m, (result.Warnings?.Count ?? 0) * 0.02m);
+        var penalized = baseScore - warningPenalty;
+        if (penalized < 0m)
+        {
+            penalized = 0m;
+        }
+
+        return Math.Round(penalized, 4);
+    }
+
+    private static void AddWeightedCheck(bool passed, decimal weight, ref decimal weightedTotal, ref decimal weightsApplied)
+    {
+        weightsApplied += weight;
+        if (passed)
+        {
+            weightedTotal += weight;
+        }
+    }
+
+    private static void AddWeightedNullableCheck(bool? passed, decimal weight, ref decimal weightedTotal, ref decimal weightsApplied)
+    {
+        if (!passed.HasValue)
+        {
+            return;
+        }
+
+        weightsApplied += weight;
+        if (passed.Value)
+        {
+            weightedTotal += weight;
+        }
     }
 
     private static bool ValidateStatusCode(
@@ -844,6 +947,32 @@ public class RuleBasedValidator : IRuleBasedValidator
             });
     }
 
+    private static bool ShouldAllowAdaptiveStatusMatching(
+        ExecutionTestCaseDto testCase,
+        ValidationProfile profile)
+    {
+        if (profile == ValidationProfile.SrsStrict)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(testCase?.Tags))
+        {
+            return false;
+        }
+
+        try
+        {
+            var tags = JsonSerializer.Deserialize<string[]>(testCase.Tags) ?? Array.Empty<string>();
+            return tags.Any(t =>
+                string.Equals(t?.Trim(), "status-adaptive:allow", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string NormalizeBodyContainsPattern(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -955,11 +1084,127 @@ public class RuleBasedValidator : IRuleBasedValidator
             variableBag.TryGetValue(m.Groups[1].Value, out var v) && !string.IsNullOrEmpty(v) ? v : m.Value);
     }
 
+    private static string ResolveExpectedJsonPathCheck(JsonElement expectedElement, IReadOnlyDictionary<string, string> variableBag)
+    {
+        if (expectedElement.ValueKind == JsonValueKind.String)
+        {
+            return ResolveExpectedValue(expectedElement.GetString(), variableBag);
+        }
+
+        return expectedElement.GetRawText();
+    }
+
+    private static bool TryResolveIdentifierAliasExpectedValue(
+        string jsonPath,
+        string rawExpected,
+        IReadOnlyDictionary<string, string> variableBag,
+        string actualValue,
+        out string matchedExpected)
+    {
+        matchedExpected = null;
+        if (string.IsNullOrWhiteSpace(jsonPath)
+            || string.IsNullOrWhiteSpace(rawExpected)
+            || variableBag == null
+            || string.IsNullOrWhiteSpace(actualValue))
+        {
+            return false;
+        }
+
+        var placeholderMatch = Regex.Match(rawExpected, @"^\s*\{\{\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*$");
+        if (!placeholderMatch.Success)
+        {
+            return false;
+        }
+
+        var leaf = ExtractJsonPathLeaf(jsonPath);
+        if (string.IsNullOrWhiteSpace(leaf) || !leaf.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var candidates = BuildIdentifierAliasKeys(leaf, placeholderMatch.Groups["name"].Value, variableBag.Keys);
+        foreach (var key in candidates)
+        {
+            if (!variableBag.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (string.Equals(value, actualValue, StringComparison.OrdinalIgnoreCase))
+            {
+                matchedExpected = value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ExtractJsonPathLeaf(string jsonPath)
+    {
+        var path = jsonPath?.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var lastDot = path.LastIndexOf('.');
+        if (lastDot >= 0 && lastDot < path.Length - 1)
+        {
+            return path[(lastDot + 1)..].Trim(' ', '"', '\'', '[', ']');
+        }
+
+        return path.Trim(' ', '$', '.', '"', '\'', '[', ']');
+    }
+
+    private static IEnumerable<string> BuildIdentifierAliasKeys(
+        string leafKey,
+        string placeholderKey,
+        IEnumerable<string> allKeys)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(placeholderKey))
+        {
+            keys.Add(placeholderKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(leafKey))
+        {
+            keys.Add(leafKey);
+            var pascal = char.ToUpperInvariant(leafKey[0]) + leafKey[1..];
+            keys.Add($"first{pascal}");
+            keys.Add($"created{pascal}");
+            keys.Add($"new{pascal}");
+            keys.Add($"last{pascal}");
+        }
+
+        if (allKeys != null)
+        {
+            foreach (var key in allKeys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(leafKey)
+                    && key.EndsWith(leafKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    keys.Add(key);
+                }
+            }
+        }
+
+        return keys;
+    }
+
     private static bool ValidateJsonPathChecks(
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ExecutionTestCaseDto testCase,
         TestCaseValidationResult result,
+        ValidationProfile profile,
         IReadOnlyDictionary<string, string> variableBag = null)
     {
         if (string.IsNullOrWhiteSpace(expectation.JsonPathChecks))
@@ -967,10 +1212,10 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        Dictionary<string, string> checks;
+        Dictionary<string, JsonElement> checks;
         try
         {
-            checks = JsonSerializer.Deserialize<Dictionary<string, string>>(expectation.JsonPathChecks);
+            checks = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(expectation.JsonPathChecks);
         }
         catch (JsonException)
         {
@@ -1021,11 +1266,34 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             foreach (var check in checks)
             {
-                var resolvedExpected = ResolveExpectedValue(check.Value, variableBag);
-                var element = VariableExtractor.NavigateJsonPath(doc.RootElement, check.Key);
-                var actualValue = element?.ToString();
+                if (!string.IsNullOrWhiteSpace(check.Key)
+                    && check.Key.IndexOf("expectationSource", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
 
-                if (actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
+                var resolvedExpected = ResolveExpectedJsonPathCheck(check.Value, variableBag);
+                var element = TryNavigateJsonPathWithAliases(doc.RootElement, check.Key, out var matchedJsonPath);
+                var actualValue = element?.ToString();
+                var matchedByIdentifierAlias = false;
+                var wildcardMatched = false;
+
+                if ((actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
+                    && check.Value.ValueKind == JsonValueKind.String
+                    && TryResolveIdentifierAliasExpectedValue(check.Key, check.Value.GetString(), variableBag, actualValue, out var aliasMatchedExpected))
+                {
+                    resolvedExpected = aliasMatchedExpected;
+                    matchedByIdentifierAlias = true;
+                }
+
+                if ((actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
+                    && TryEvaluateWildcardJsonPathCheck(doc.RootElement, check.Key, resolvedExpected, out var wildcardActualPreview))
+                {
+                    wildcardMatched = true;
+                    actualValue = wildcardActualPreview;
+                }
+
+                if (!wildcardMatched && (actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element)))
                 {
                     // Treat "notnull", "*", "*.+", ".+", empty, and JWT-like values as existence checks.
                     var isExistenceCheck = string.IsNullOrWhiteSpace(resolvedExpected)
@@ -1047,12 +1315,29 @@ public class RuleBasedValidator : IRuleBasedValidator
                     // presence, so null is never soft-forgiven for them either.
                     var canSoftForgive = jsonPathSoftMode && actualValue == null && !isExistenceCheck;
 
+                    var shouldDowngradeMessageMismatch =
+                        ShouldDowngradeJsonPathMismatchToWarning(
+                            check.Key,
+                            resolvedExpected,
+                            actualValue,
+                            result.StatusCodeMatched,
+                            ResolveJsonPathLeniencyMode(testCase, profile));
+
                     if (canSoftForgive)
                     {
                         result.Warnings.Add(new ValidationWarningModel
                         {
                             Code = "JSONPATH_PARTIAL_MISMATCH",
                             Message = $"JSONPath '{check.Key}' không tìm thấy, nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
+                            Target = check.Key,
+                        });
+                    }
+                    else if (shouldDowngradeMessageMismatch)
+                    {
+                        result.Warnings.Add(new ValidationWarningModel
+                        {
+                            Code = "JSONPATH_MESSAGE_MISMATCH_WARNING",
+                            Message = $"JSONPath '{check.Key}' không khớp exact text (mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'). Đã hạ severity xuống warning vì status code đúng.",
                             Target = check.Key,
                         });
                     }
@@ -1065,17 +1350,311 @@ public class RuleBasedValidator : IRuleBasedValidator
                             Message = isExistenceCheck
                                 ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
                                 : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'.",
-                            Target = check.Key,
+                            Target = matchedJsonPath ?? check.Key,
                             Expected = resolvedExpected,
                             Actual = actualValue,
                         });
                     }
+                }
+                else if (matchedByIdentifierAlias)
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "JSONPATH_ALIAS_MATCH",
+                        Message = $"JSONPath '{check.Key}' matched by identifier alias value.",
+                        Target = matchedJsonPath ?? check.Key,
+                    });
                 }
             }
         }
 
         result.JsonPathChecksPassed = allPassed;
         return true;
+    }
+
+    private static bool TryEvaluateWildcardJsonPathCheck(
+        JsonElement root,
+        string jsonPath,
+        string expected,
+        out string actualPreview)
+    {
+        actualPreview = null;
+        if (string.IsNullOrWhiteSpace(jsonPath) || string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var marker = "[*].";
+        var markerIndex = jsonPath.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex <= 0)
+        {
+            return false;
+        }
+
+        var arrayPath = jsonPath[..(markerIndex + 3)];
+        var leaf = jsonPath[(markerIndex + marker.Length)..];
+        if (string.IsNullOrWhiteSpace(leaf))
+        {
+            return false;
+        }
+
+        var arrayElement = VariableExtractor.NavigateJsonPath(root, arrayPath);
+        if (!arrayElement.HasValue)
+        {
+            return false;
+        }
+
+        var values = new List<string>();
+        if (arrayElement.Value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in arrayElement.Value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.Object
+                    && item.TryGetProperty(leaf, out var prop)
+                    && prop.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+                {
+                    var text = prop.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        values.Add(text);
+                    }
+                }
+            }
+        }
+        else if (arrayElement.Value.ValueKind == JsonValueKind.Object
+            && arrayElement.Value.TryGetProperty(leaf, out var singleProp)
+            && singleProp.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+        {
+            // Tolerate schema drift where API returns object instead of array for the same semantic payload.
+            var text = singleProp.ToString();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                values.Add(text);
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        if (values.Count == 0)
+        {
+            return false;
+        }
+
+        actualPreview = string.Join(", ", values.Take(5));
+
+        if (TryParseExpectationOperator(expected, out var op, out var operand)
+            && string.Equals(op, "array_contains", StringComparison.OrdinalIgnoreCase))
+        {
+            return values.Any(v => ValuesEqual(v, operand));
+        }
+
+        // Fallback: check whether any value matches the same expected semantic.
+        return values.Any(v => ValuesEqual(v, expected));
+    }
+
+    private static bool ShouldDowngradeJsonPathMismatchToWarning(
+        string jsonPath,
+        string expected,
+        string actual,
+        bool? statusCodeMatched,
+        JsonPathLeniencyMode leniencyMode)
+    {
+        if (statusCodeMatched != true)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return false;
+        }
+
+        var normalizedPath = jsonPath.Trim().ToLowerInvariant();
+        if (leniencyMode == JsonPathLeniencyMode.Strict)
+        {
+            return false;
+        }
+
+        if (IsCriticalJsonPath(normalizedPath))
+        {
+            return false;
+        }
+
+        // Downgrade only text-like mismatches. Keep structural/semantic checks strict.
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(actual))
+        {
+            return false;
+        }
+
+        if (LooksLikeExistenceExpectation(expected)
+            || LooksLikeNonEmptyExpectation(expected)
+            || LooksLikeStringExpectation(expected)
+            || LooksLikeBooleanExpectation(expected)
+            || LooksLikeNumberExpectation(expected)
+            || LooksLikeArrayExpectation(expected)
+            || LooksLikeObjectExpectation(expected)
+            || LooksLikeDateTimeExpectation(expected)
+            || LooksLikeGuidExpectation(expected)
+            || LooksLikeRegexPattern(expected))
+        {
+            return false;
+        }
+
+        // Loose mode: nearly all non-critical textual mismatches become warning.
+        if (leniencyMode == JsonPathLeniencyMode.Loose)
+        {
+            return true;
+        }
+
+        // Balanced mode: keep current conservative downgrade behavior.
+        return IsMessageLikeJsonPath(normalizedPath)
+            || IsDescriptionLikeJsonPath(normalizedPath);
+    }
+
+    private static bool IsCriticalJsonPath(string normalizedPath)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedPath))
+        {
+            return true;
+        }
+
+        return normalizedPath.Contains(".success", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".success", StringComparison.Ordinal)
+            || normalizedPath.Contains(".status", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".status", StringComparison.Ordinal)
+            || normalizedPath.Contains(".code", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".code", StringComparison.Ordinal)
+            || normalizedPath.Contains(".role", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".role", StringComparison.Ordinal)
+            || normalizedPath.Contains(".id", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".id", StringComparison.Ordinal)
+            || normalizedPath.Contains("token", StringComparison.Ordinal)
+            || normalizedPath.Contains("price", StringComparison.Ordinal)
+            || normalizedPath.Contains("stock", StringComparison.Ordinal)
+            || normalizedPath.Contains("quantity", StringComparison.Ordinal)
+            || normalizedPath.Contains("count", StringComparison.Ordinal)
+            || normalizedPath.Contains("total", StringComparison.Ordinal);
+    }
+
+    private static bool IsMessageLikeJsonPath(string normalizedPath)
+    {
+        return normalizedPath == "$.message"
+            || normalizedPath.EndsWith(".message", StringComparison.Ordinal)
+            || normalizedPath.Contains("[\"message\"]", StringComparison.Ordinal);
+    }
+
+    private static bool IsDescriptionLikeJsonPath(string normalizedPath)
+    {
+        return normalizedPath.EndsWith(".description", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".detail", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".details", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".reason", StringComparison.Ordinal)
+            || normalizedPath.EndsWith(".title", StringComparison.Ordinal);
+    }
+
+    private static JsonPathLeniencyMode ResolveJsonPathLeniencyMode(
+        ExecutionTestCaseDto testCase,
+        ValidationProfile profile)
+    {
+        // Optional override per test case via tag:
+        // jsonpath-mode:strict|balanced|loose
+        if (!string.IsNullOrWhiteSpace(testCase?.Tags))
+        {
+            try
+            {
+                var tags = JsonSerializer.Deserialize<string[]>(testCase.Tags) ?? Array.Empty<string>();
+                foreach (var rawTag in tags)
+                {
+                    var tag = rawTag?.Trim();
+                    if (string.IsNullOrWhiteSpace(tag) ||
+                        !tag.StartsWith("jsonpath-mode:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var mode = tag["jsonpath-mode:".Length..].Trim().ToLowerInvariant();
+                    return mode switch
+                    {
+                        "strict" => JsonPathLeniencyMode.Strict,
+                        "loose" => JsonPathLeniencyMode.Loose,
+                        _ => JsonPathLeniencyMode.Balanced,
+                    };
+                }
+            }
+            catch
+            {
+                // Ignore malformed tags; use profile mapping.
+            }
+        }
+
+        return profile switch
+        {
+            ValidationProfile.SrsStrict => JsonPathLeniencyMode.Strict,
+            ValidationProfile.DemoAdaptive => JsonPathLeniencyMode.Loose,
+            _ => JsonPathLeniencyMode.Balanced,
+        };
+    }
+
+    private enum JsonPathLeniencyMode
+    {
+        Strict = 0,
+        Balanced = 1,
+        Loose = 2,
+    }
+
+    private static JsonElement? TryNavigateJsonPathWithAliases(
+        JsonElement root,
+        string jsonPath,
+        out string matchedJsonPath)
+    {
+        matchedJsonPath = jsonPath;
+        var direct = VariableExtractor.NavigateJsonPath(root, jsonPath);
+        if (direct.HasValue)
+        {
+            return direct;
+        }
+
+        foreach (var alias in BuildJsonPathAliases(jsonPath))
+        {
+            var candidate = VariableExtractor.NavigateJsonPath(root, alias);
+            if (candidate.HasValue)
+            {
+                matchedJsonPath = alias;
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> BuildJsonPathAliases(string jsonPath)
+    {
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            yield break;
+        }
+
+        var path = jsonPath.Trim();
+        var lastDot = path.LastIndexOf('.');
+        if (lastDot <= 0 || lastDot >= path.Length - 1)
+        {
+            yield break;
+        }
+
+        var prefix = path[..lastDot];
+        var leaf = path[(lastDot + 1)..];
+        if (string.IsNullOrWhiteSpace(leaf))
+        {
+            yield break;
+        }
+
+        // Common API response aliasing: category -> categoryId, product -> productId, etc.
+        if (!leaf.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return $"{prefix}.{leaf}Id";
+        }
     }
 
     private static bool ValidateResponseTime(
@@ -1148,6 +1727,47 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static bool ValuesEqual(string actual, string expected, JsonElement? actualElement = null)
     {
+        if (TryEvaluateCanonicalAssertion(expected, actual, actualElement, out var canonicalResult))
+        {
+            return canonicalResult;
+        }
+
+        if (TryParseExpectationOperator(expected, out var op, out var operand))
+        {
+            if (string.Equals(op, "array_contains", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!actualElement.HasValue || actualElement.Value.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                foreach (var item in actualElement.Value.EnumerateArray())
+                {
+                    var itemText = item.ToString();
+                    if (ValuesEqual(itemText, operand, item))
+                    {
+                        return true;
+                    }
+
+                    if (!string.IsNullOrEmpty(itemText)
+                        && !string.IsNullOrEmpty(operand)
+                        && itemText.Contains(operand, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (string.Equals(op, "contains", StringComparison.OrdinalIgnoreCase))
+            {
+                return !string.IsNullOrEmpty(actual)
+                    && !string.IsNullOrEmpty(operand)
+                    && actual.Contains(operand, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
         // Wildcards: "*", "notnull", and empty/null all mean "field must exist with any non-null value".
         // Empty expected value is treated as an existence check (not a literal empty-string match)
         // because the DB sometimes stores "" when the LLM generated a token field assertion
@@ -1330,15 +1950,17 @@ public class RuleBasedValidator : IRuleBasedValidator
             }
         }
 
-        // Regex check: LLMs sometimes generate `{"regex":"^pattern$"}` as the expected value
-        // to describe a structural assertion (e.g. JWT format, UUID, email).
+        // Regex check: LLMs sometimes generate `{"regex":"^pattern$"}` (or legacy `{"match":"^pattern$"}`)
+        // as the expected value to describe a structural assertion (e.g. JWT format, UUID, email).
         // Extract the pattern and test it against actual.
-        if (expected.StartsWith("{", StringComparison.Ordinal) && expected.Contains("\"regex\"", StringComparison.Ordinal))
+        if (expected.StartsWith("{", StringComparison.Ordinal) &&
+            (expected.Contains("\"regex\"", StringComparison.Ordinal) || expected.Contains("\"match\"", StringComparison.Ordinal)))
         {
             try
             {
                 var regexDoc = JsonDocument.Parse(expected);
-                if (regexDoc.RootElement.TryGetProperty("regex", out var patternEl))
+                if (regexDoc.RootElement.TryGetProperty("regex", out var patternEl) ||
+                    regexDoc.RootElement.TryGetProperty("match", out patternEl))
                 {
                     var pattern = patternEl.GetString();
                     if (!string.IsNullOrEmpty(pattern) && actual != null)
@@ -1367,12 +1989,25 @@ public class RuleBasedValidator : IRuleBasedValidator
                     return true;
                 }
 
+                if (actualElement.HasValue && TryMatchRegexAgainstElement(actualElement.Value, inlinePattern, RegexOptions.None))
+                {
+                    return true;
+                }
+
                 // Some LLM/n8n pipelines over-escape regex strings (e.g. "\\\\." instead of "\\.").
                 // Try once with a normalized pattern before failing hard.
                 var normalizedInlinePattern = NormalizePossiblyOverEscapedRegex(inlinePattern);
                 if (!string.Equals(normalizedInlinePattern, inlinePattern, StringComparison.Ordinal))
                 {
-                    return Regex.IsMatch(actual, normalizedInlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                    if (Regex.IsMatch(actual, normalizedInlinePattern, RegexOptions.None, TimeSpan.FromMilliseconds(500)))
+                    {
+                        return true;
+                    }
+
+                    if (actualElement.HasValue && TryMatchRegexAgainstElement(actualElement.Value, normalizedInlinePattern, RegexOptions.None))
+                    {
+                        return true;
+                    }
                 }
 
                 return false;
@@ -1389,7 +2024,25 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             try
             {
-                return Regex.IsMatch(actual, expected, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+                var pattern = expected;
+                var options = RegexOptions.None;
+                if (TryParseSlashDelimitedRegex(expected, out var slashPattern, out var slashOptions))
+                {
+                    pattern = slashPattern;
+                    options = slashOptions;
+                }
+
+                if (Regex.IsMatch(actual, pattern, options, TimeSpan.FromMilliseconds(500)))
+                {
+                    return true;
+                }
+
+                if (actualElement.HasValue && TryMatchRegexAgainstElement(actualElement.Value, pattern, options))
+                {
+                    return true;
+                }
+
+                return false;
             }
             catch
             {
@@ -1400,6 +2053,289 @@ public class RuleBasedValidator : IRuleBasedValidator
         return string.Equals(actual, expected, StringComparison.Ordinal);
     }
 
+    private static bool TryEvaluateCanonicalAssertion(
+        string expected,
+        string actual,
+        JsonElement? actualElement,
+        out bool result)
+    {
+        result = false;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var trimmed = expected.Trim();
+        if (!(trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            result = EvaluateCanonicalAssertionNode(doc.RootElement, actual, actualElement);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool EvaluateCanonicalAssertionNode(JsonElement node, string actual, JsonElement? actualElement)
+    {
+        if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty("op", out var opElement))
+        {
+            return false;
+        }
+
+        var op = opElement.GetString()?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(op))
+        {
+            return false;
+        }
+
+        switch (op)
+        {
+            case "exists":
+                return actualElement.HasValue;
+            case "not_exists":
+                return !actualElement.HasValue;
+            case "eq":
+                return node.TryGetProperty("value", out var eqValue)
+                    && ValuesEqual(actual, eqValue.ValueKind == JsonValueKind.String ? eqValue.GetString() : eqValue.GetRawText(), actualElement);
+            case "neq":
+                return node.TryGetProperty("value", out var neqValue)
+                    && !ValuesEqual(actual, neqValue.ValueKind == JsonValueKind.String ? neqValue.GetString() : neqValue.GetRawText(), actualElement);
+            case "contains":
+                return node.TryGetProperty("value", out var containsValue)
+                    && !string.IsNullOrEmpty(actual)
+                    && actual.Contains(containsValue.ToString(), StringComparison.OrdinalIgnoreCase);
+            case "not_contains":
+                return node.TryGetProperty("value", out var notContainsValue)
+                    && (string.IsNullOrEmpty(actual) || !actual.Contains(notContainsValue.ToString(), StringComparison.OrdinalIgnoreCase));
+            case "regex":
+                if (!node.TryGetProperty("value", out var regexValue))
+                {
+                    return false;
+                }
+
+                var pattern = regexValue.ToString();
+                if (string.IsNullOrWhiteSpace(pattern))
+                {
+                    return false;
+                }
+
+                return (!string.IsNullOrEmpty(actual) && Regex.IsMatch(actual, pattern, RegexOptions.None, TimeSpan.FromMilliseconds(500)))
+                    || (actualElement.HasValue && TryMatchRegexAgainstElement(actualElement.Value, pattern, RegexOptions.None));
+            case "type":
+                if (!node.TryGetProperty("value", out var typeValue) || !actualElement.HasValue)
+                {
+                    return false;
+                }
+
+                return TypeMatches(actualElement.Value, typeValue.ToString());
+            case "in":
+                return node.TryGetProperty("value", out var inValue)
+                    && inValue.ValueKind == JsonValueKind.Array
+                    && inValue.EnumerateArray().Any(v => ValuesEqual(actual, v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText(), actualElement));
+            case "not_in":
+                return node.TryGetProperty("value", out var notInValue)
+                    && notInValue.ValueKind == JsonValueKind.Array
+                    && !notInValue.EnumerateArray().Any(v => ValuesEqual(actual, v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText(), actualElement));
+            case "length":
+                return EvaluateLengthOp(node, actual, actualElement);
+            case "numeric":
+                return EvaluateNumericOp(node, actual);
+            case "any_of":
+                return node.TryGetProperty("value", out var anyOf)
+                    && anyOf.ValueKind == JsonValueKind.Array
+                    && anyOf.EnumerateArray().Any(x => EvaluateCanonicalAssertionNode(x, actual, actualElement));
+            case "all_of":
+                return node.TryGetProperty("value", out var allOf)
+                    && allOf.ValueKind == JsonValueKind.Array
+                    && allOf.EnumerateArray().All(x => EvaluateCanonicalAssertionNode(x, actual, actualElement));
+            default:
+                return false;
+        }
+    }
+
+    private static bool TypeMatches(JsonElement element, string expectedType)
+    {
+        var normalized = expectedType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "string" => element.ValueKind == JsonValueKind.String,
+            "number" => element.ValueKind == JsonValueKind.Number,
+            "boolean" => element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False,
+            "object" => element.ValueKind == JsonValueKind.Object,
+            "array" => element.ValueKind == JsonValueKind.Array,
+            "null" => element.ValueKind == JsonValueKind.Null,
+            _ => false,
+        };
+    }
+
+    private static bool EvaluateLengthOp(JsonElement node, string actual, JsonElement? actualElement)
+    {
+        var length = actual?.Length ?? 0;
+        if (actualElement.HasValue)
+        {
+            if (actualElement.Value.ValueKind == JsonValueKind.Array)
+            {
+                length = actualElement.Value.GetArrayLength();
+            }
+            else if (actualElement.Value.ValueKind == JsonValueKind.String)
+            {
+                length = actualElement.Value.GetString()?.Length ?? 0;
+            }
+        }
+
+        if (node.TryGetProperty("eq", out var eq) && eq.TryGetInt32(out var eqLen) && length != eqLen)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("min", out var min) && min.TryGetInt32(out var minLen) && length < minLen)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("max", out var max) && max.TryGetInt32(out var maxLen) && length > maxLen)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool EvaluateNumericOp(JsonElement node, string actual)
+    {
+        if (!decimal.TryParse(actual, out var value))
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("eq", out var eq) && eq.TryGetDecimal(out var eqNum) && value != eqNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("min", out var min) && min.TryGetDecimal(out var minNum) && value < minNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("max", out var max) && max.TryGetDecimal(out var maxNum) && value > maxNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("gt", out var gt) && gt.TryGetDecimal(out var gtNum) && value <= gtNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("gte", out var gte) && gte.TryGetDecimal(out var gteNum) && value < gteNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("lt", out var lt) && lt.TryGetDecimal(out var ltNum) && value >= ltNum)
+        {
+            return false;
+        }
+
+        if (node.TryGetProperty("lte", out var lte) && lte.TryGetDecimal(out var lteNum) && value > lteNum)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryMatchRegexAgainstElement(JsonElement element, string pattern, RegexOptions options)
+    {
+        var candidates = EnumeratePrimitiveStrings(element);
+        foreach (var candidate in candidates)
+        {
+            if (Regex.IsMatch(candidate, pattern, options, TimeSpan.FromMilliseconds(500)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> EnumeratePrimitiveStrings(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                var s = element.GetString();
+                if (!string.IsNullOrWhiteSpace(s))
+                {
+                    yield return s;
+                }
+
+                yield break;
+
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                yield return element.ToString();
+                yield break;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    foreach (var nested in EnumeratePrimitiveStrings(item))
+                    {
+                        yield return nested;
+                    }
+                }
+
+                yield break;
+
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    foreach (var nested in EnumeratePrimitiveStrings(property.Value))
+                    {
+                        yield return nested;
+                    }
+                }
+
+                yield break;
+
+            default:
+                yield break;
+        }
+    }
+
+    private static bool TryParseExpectationOperator(string expected, out string op, out string operand)
+    {
+        op = null;
+        operand = null;
+
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim();
+        var separatorIndex = text.IndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex >= text.Length - 1)
+        {
+            return false;
+        }
+
+        op = text[..separatorIndex].Trim();
+        operand = text[(separatorIndex + 1)..].Trim();
+        return !string.IsNullOrWhiteSpace(op) && operand != null;
+    }
+
     private static bool LooksLikeExistenceExpectation(string expected)
     {
         if (string.IsNullOrWhiteSpace(expected))
@@ -1408,7 +2344,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var text = expected.Trim().ToLowerInvariant();
-        var normalized = Regex.Replace(text, @"[\s_-]+", string.Empty);
+        var normalized = Regex.Replace(text, @"[^a-z0-9]+", string.Empty);
         return text == "exists"
             || text == "exist"
             || text == "must exist"
@@ -1432,7 +2368,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var text = expected.Trim().ToLowerInvariant();
-        var normalized = Regex.Replace(text, @"[\s_-]+", string.Empty);
+        var normalized = Regex.Replace(text, @"[^a-z0-9]+", string.Empty);
         return text.Contains("non-empty", StringComparison.Ordinal)
             || text.Contains("not empty", StringComparison.Ordinal)
             || text.Contains("not blank", StringComparison.Ordinal)
@@ -1569,6 +2505,13 @@ public class RuleBasedValidator : IRuleBasedValidator
             return text[7..].Trim();
         }
 
+        // Backward-compat: legacy expectations from n8n/LLM may use
+        // "typeof string|number|boolean|array|object".
+        if (text.StartsWith("typeof ", StringComparison.Ordinal))
+        {
+            return text[7..].Trim();
+        }
+
         return text;
     }
 
@@ -1653,6 +2596,59 @@ public class RuleBasedValidator : IRuleBasedValidator
             || candidate.Contains(".+", StringComparison.Ordinal)
             || candidate.Contains("(?:", StringComparison.Ordinal)
             || (candidate.Contains("[", StringComparison.Ordinal) && candidate.Contains("]", StringComparison.Ordinal));
+    }
+
+    private static bool TryParseSlashDelimitedRegex(string expected, out string pattern, out RegexOptions options)
+    {
+        pattern = null;
+        options = RegexOptions.None;
+
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var candidate = expected.Trim();
+        if (!candidate.StartsWith("/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var lastSlash = candidate.LastIndexOf('/');
+        if (lastSlash <= 0)
+        {
+            return false;
+        }
+
+        var innerPattern = candidate[1..lastSlash];
+        if (string.IsNullOrWhiteSpace(innerPattern))
+        {
+            return false;
+        }
+
+        var flags = candidate[(lastSlash + 1)..];
+        foreach (var flag in flags)
+        {
+            switch (char.ToLowerInvariant(flag))
+            {
+                case 'i':
+                    options |= RegexOptions.IgnoreCase;
+                    break;
+                case 'm':
+                    options |= RegexOptions.Multiline;
+                    break;
+                case 's':
+                    options |= RegexOptions.Singleline;
+                    break;
+                case ' ':
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        pattern = innerPattern;
+        return true;
     }
 
     private static string NormalizePossiblyOverEscapedRegex(string pattern)

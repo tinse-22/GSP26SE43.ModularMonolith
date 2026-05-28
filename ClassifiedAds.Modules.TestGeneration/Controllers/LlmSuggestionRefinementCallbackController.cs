@@ -213,6 +213,12 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
             Request = testCase.Request,
             Expectation = testCase.Expectation,
             Variables = testCase.Variables ?? new List<N8nTestCaseVariable>(),
+            CredentialPolicy = testCase.ExecutionHints?.CredentialPolicy ?? testCase.CredentialPolicy,
+            LockedFields = testCase.ExecutionHints?.LockedFields?.Count > 0
+                ? testCase.ExecutionHints.LockedFields
+                : testCase.LockedFields ?? new List<string>(),
+            AuthMode = testCase.ExecutionHints?.AuthMode ?? testCase.AuthMode,
+            ExecutionHints = testCase.ExecutionHints,
         };
     }
 

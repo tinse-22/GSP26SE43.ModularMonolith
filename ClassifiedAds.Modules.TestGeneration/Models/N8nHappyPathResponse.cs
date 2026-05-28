@@ -18,6 +18,8 @@ public class N8nHappyPathResponse
 
 public class N8nGeneratedTestCase
 {
+    public string ScenarioKey { get; set; }
+
     public Guid EndpointId { get; set; }
     public string Name { get; set; }
     public string Description { get; set; }
@@ -39,6 +41,38 @@ public class N8nGeneratedTestCase
     /// Example: ["request.body.password", "request.body.email"].
     /// </summary>
     public List<string> LockedFields { get; set; } = new();
+
+    /// <summary>
+    /// Optional auth mode hint from n8n.
+    /// Supported values: none, optional, required.
+    /// </summary>
+    public string AuthMode { get; set; }
+
+    /// <summary>
+    /// Optional structured execution hints to keep callback extensible.
+    /// </summary>
+    public N8nExecutionHints ExecutionHints { get; set; }
+}
+
+public class N8nExecutionHints
+{
+    public string AuthMode { get; set; }
+
+    public string CredentialPolicy { get; set; }
+
+    public List<string> LockedFields { get; set; } = new();
+
+    public bool? FlowRequired { get; set; }
+
+    public string FlowId { get; set; }
+
+    public List<string> DependsOn { get; set; } = new();
+
+    public List<string> Produces { get; set; } = new();
+
+    public List<string> Consumes { get; set; } = new();
+
+    public bool? AbortIfDependencyFailed { get; set; }
 }
 
 public class N8nTestCaseRequest

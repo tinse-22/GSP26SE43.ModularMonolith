@@ -83,7 +83,9 @@ public sealed class ExpectationResolver : IExpectationResolver
 
         if (llm != null && llm.ExpectedStatusCodes?.Count > 0)
         {
-            return WithProvenance(ConstrainToOpenApi(EnrichFromSrsAndSwagger(llm, context), context), context);
+            // Pure n8n mode: keep LLM/n8n expectation as-is (status + assertions),
+            // only attach provenance metadata.
+            return WithProvenance(llm, context);
         }
 
         if (!string.IsNullOrWhiteSpace(srsReason))
@@ -109,11 +111,11 @@ public sealed class ExpectationResolver : IExpectationResolver
         if (llm != null)
         {
             _logger.LogInformation(
-                "[ExpectationResolver] LLM -> {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
+                "[ExpectationResolver] LLM (pure n8n) -> {Endpoint} | TestType={TestType} | ExpectedStatus=[{Statuses}]",
                 endpointInfo,
                 context.TestType,
                 string.Join(",", llm.ExpectedStatusCodes ?? new List<int>()));
-            return WithProvenance(ConstrainToOpenApi(llm, context), context);
+            return WithProvenance(llm, context);
         }
 
         var def = BuildDefault(context);
@@ -171,19 +173,11 @@ public sealed class ExpectationResolver : IExpectationResolver
         GeneratedScenarioContext context)
     {
         var swagger = srs.ResponseSchema == null ? TryResolveFromSwagger(context) : null;
-        var bodyContains = srs.BodyContains?.Count > 0
-            ? srs.BodyContains
-            : llm.BodyContains?.Count > 0
-                ? llm.BodyContains
-                : swagger?.BodyContains ?? new List<string>();
-        var jsonPathChecks = srs.JsonPathChecks?.Count > 0
-            ? srs.JsonPathChecks
-            : llm.JsonPathChecks?.Count > 0
-                ? llm.JsonPathChecks
-                : swagger?.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var bodyNotContains = srs.BodyNotContains?.Count > 0
-            ? srs.BodyNotContains
-            : llm.BodyNotContains ?? new List<string>();
+        // Keep n8n/LLM assertions authoritative.
+        // SRS override in this branch is only for status + traceability, not for rewriting body/json assertions.
+        var bodyContains = llm.BodyContains ?? new List<string>();
+        var jsonPathChecks = llm.JsonPathChecks ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var bodyNotContains = llm.BodyNotContains ?? new List<string>();
 
         return new ResolvedExpectation
         {
@@ -215,12 +209,10 @@ public sealed class ExpectationResolver : IExpectationResolver
             ? llm.ExpectedStatusCodes
             : swagger?.ExpectedStatusCodes ?? new List<int>();
 
-        // Supplement bodyContains only when LLM provided none.
-        var bodyContains = llm.BodyContains?.Count > 0
-            ? llm.BodyContains
-            : srs?.BodyContains?.Count > 0
-                ? srs.BodyContains
-                : swagger?.BodyContains ?? new List<string>();
+        // Preserve n8n intent:
+        // - LLM/n8n bodyContains is authoritative.
+        // - If missing/null/empty from LLM, keep empty and do NOT auto-supplement from SRS/Swagger.
+        var bodyContains = llm.BodyContains ?? new List<string>();
 
         // Supplement jsonPathChecks only when LLM provided none.
         var jsonPathChecks = llm.JsonPathChecks?.Count > 0
@@ -994,7 +986,10 @@ public sealed class ExpectationResolver : IExpectationResolver
         var jsonPathChecks = !string.IsNullOrWhiteSpace(primaryResponse?.Schema)
             ? context.TestType == TestType.HappyPath
                 ? BuildRequiredJsonPathAssertions(primaryResponse.Schema)
-                : ErrorResponseSchemaAnalyzer.BuildJsonPathAssertions(primaryResponse.Schema, context.TestType)
+                : ErrorResponseSchemaAnalyzer.BuildJsonPathAssertions(
+                    primaryResponse.Schema,
+                    context.TestType,
+                    statuses[0])
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         return new ResolvedExpectation
