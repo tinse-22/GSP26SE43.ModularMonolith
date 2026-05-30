@@ -143,7 +143,7 @@ public static class TestGenerationServiceCollectionExtensions
             options.GenerationMaxSchemaPayloadLength = n8n.GenerationMaxSchemaPayloadLength <= 0 ? 800 : n8n.GenerationMaxSchemaPayloadLength;
             options.GenerationMaxPromptLength = n8n.GenerationMaxPromptLength <= 0 ? 1200 : n8n.GenerationMaxPromptLength;
             options.GenerationMaxBusinessContextLength = n8n.GenerationMaxBusinessContextLength <= 0 ? 700 : n8n.GenerationMaxBusinessContextLength;
-            options.GenerationMaxSrsRequirementCount = n8n.GenerationMaxSrsRequirementCount <= 0 ? 15 : n8n.GenerationMaxSrsRequirementCount;
+            options.GenerationMaxSrsRequirementCount = n8n.GenerationMaxSrsRequirementCount <= 0 ? 60 : n8n.GenerationMaxSrsRequirementCount;
             options.GenerationMaxSrsFieldLength = n8n.GenerationMaxSrsFieldLength <= 0 ? 500 : n8n.GenerationMaxSrsFieldLength;
         });
 

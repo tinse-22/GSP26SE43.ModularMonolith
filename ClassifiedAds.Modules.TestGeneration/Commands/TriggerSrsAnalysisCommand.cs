@@ -138,21 +138,11 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
 
         var endpoints = await GetEndpointsAsync(doc, cancellationToken);
         var callbackBaseUrl = _n8nOptions.BeBaseUrl?.TrimEnd('/');
-
-        if (string.IsNullOrWhiteSpace(callbackBaseUrl) || string.IsNullOrWhiteSpace(_n8nOptions.CallbackApiKey))
-        {
-            job.Status = SrsAnalysisJobStatus.Failed;
-            job.ErrorMessage = "N8nIntegration BeBaseUrl/CallbackApiKey is required for async SRS analysis callbacks.";
-            job.CompletedAt = DateTimeOffset.UtcNow;
-            doc.AnalysisStatus = SrsAnalysisStatus.Failed;
-            await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
-            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
-
-            throw new ValidationException(
-                "N8nIntegration:BeBaseUrl va CallbackApiKey phai duoc cau hinh de n8n callback ket qua phan tich SRS.");
-        }
-
-        var callbackUrl = $"{callbackBaseUrl}/api/srs-analysis-callback/{job.Id}";
+        var hasCallbackConfig = !string.IsNullOrWhiteSpace(callbackBaseUrl)
+            && !string.IsNullOrWhiteSpace(_n8nOptions.CallbackApiKey);
+        var callbackUrl = hasCallbackConfig
+            ? $"{callbackBaseUrl}/api/srs-analysis-callback/{job.Id}"
+            : string.Empty;
 
         var payload = new N8nSrsAnalysisPayload
         {
@@ -165,7 +155,7 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
             CallbackApiKey = _n8nOptions.CallbackApiKey,
         };
 
-        // n8n accepts the job, processes asynchronously, then posts results to callbackUrl.
+        // Prefer a synchronous n8n response. Callback fields are optional for backward compatibility.
         job.Status = SrsAnalysisJobStatus.Triggering;
         job.TriggeredAt = DateTimeOffset.UtcNow;
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
@@ -199,6 +189,15 @@ public class TriggerSrsAnalysisCommandHandler : ICommandHandler<TriggerSrsAnalys
                 command.SrsDocumentId,
                 callbackUrl,
                 !string.IsNullOrWhiteSpace(result.ResponseBody));
+
+            if (!hasCallbackConfig)
+            {
+                job.Status = SrsAnalysisJobStatus.Failed;
+                job.ErrorMessage = "n8n analyze-srs response did not contain requirements and callback config is not available.";
+                job.CompletedAt = DateTimeOffset.UtcNow;
+                doc.AnalysisStatus = SrsAnalysisStatus.Failed;
+                await _srsDocumentRepository.UpdateAsync(doc, cancellationToken);
+            }
         }
         else if (ShouldUseLocalFallback(result))
         {

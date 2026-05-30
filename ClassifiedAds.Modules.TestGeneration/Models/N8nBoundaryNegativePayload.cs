@@ -67,6 +67,12 @@ public class SrsTestableConstraintBrief
     public string Priority { get; set; }
 
     public string SourceText { get; set; }
+
+    public string RequirementScope { get; set; }
+
+    public string FlowDependencies { get; set; }
+
+    public string NegativeCases { get; set; }
 }
 
 /// <summary>

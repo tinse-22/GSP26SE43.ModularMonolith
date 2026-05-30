@@ -165,6 +165,18 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
         var parseStopwatch = Stopwatch.StartNew();
         var llmResult = _llmSuggester.ParseRefinementResponse(llmContext, command.Response);
         parseStopwatch.Stop();
+        var callbackScenarioCount = command.Response?.Scenarios?.Count ?? 0;
+        var parsedScenarioCount = llmResult?.Scenarios?.Count ?? 0;
+        var droppedDuringParse = Math.Max(0, callbackScenarioCount - parsedScenarioCount);
+        if (droppedDuringParse > 0)
+        {
+            _logger.LogInformation(
+                "LLM refinement parse filtered scenarios. JobId={JobId}, CallbackScenarioCount={CallbackScenarioCount}, ParsedScenarioCount={ParsedScenarioCount}, DroppedDuringParse={DroppedDuringParse}",
+                job.Id,
+                callbackScenarioCount,
+                parsedScenarioCount,
+                droppedDuringParse);
+        }
 
         var persistStopwatch = Stopwatch.StartNew();
         var suggestions = await _persistenceService.ReplacePendingSuggestionsAsync(
@@ -185,7 +197,16 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
 
         if (command.Response?.ValidationSummary?.Warnings != null && command.Response.ValidationSummary.Warnings.Count > 0)
         {
-            job.ErrorMessage = string.Join("; ", command.Response.ValidationSummary.Warnings);
+            var warningSummary = string.Join("; ", command.Response.ValidationSummary.Warnings);
+            if (warningSummary.Length > 1000)
+            {
+                job.ErrorMessage = warningSummary.Substring(0, 1000);
+                job.ErrorDetails = warningSummary;
+            }
+            else
+            {
+                job.ErrorMessage = warningSummary;
+            }
         }
 
         job.Status = GenerationJobStatus.Completed;
@@ -196,6 +217,17 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
         await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
         persistStopwatch.Stop();
         totalStopwatch.Stop();
+        var persistedSuggestionCount = suggestions.Count;
+        var droppedDuringPersist = Math.Max(0, parsedScenarioCount - persistedSuggestionCount);
+        if (droppedDuringPersist > 0)
+        {
+            _logger.LogInformation(
+                "LLM refinement persistence filtered scenarios. JobId={JobId}, ParsedScenarioCount={ParsedScenarioCount}, PersistedSuggestionCount={PersistedSuggestionCount}, DroppedDuringPersist={DroppedDuringPersist}",
+                job.Id,
+                parsedScenarioCount,
+                persistedSuggestionCount,
+                droppedDuringPersist);
+        }
 
         var callbackAgeMs = job.TriggeredAt.HasValue
             ? (long?)Math.Max(0, (job.CompletedAt.Value - job.TriggeredAt.Value).TotalMilliseconds)
