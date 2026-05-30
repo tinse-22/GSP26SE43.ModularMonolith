@@ -280,12 +280,20 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 : _n8nOptions.GenerationMaxSrsFieldLength;
 
             var matchesByRequirementId = BuildRequirementMatchesByRequirementId(metadataByEndpointId, requirements);
-            payload.SrsRequirements = requirements
-                .Where(r => matchesByRequirementId.ContainsKey(r.Id))
+            var prioritizedRequirements = requirements
+                .OrderByDescending(r => matchesByRequirementId.ContainsKey(r.Id))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.RefinedConstraints))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.TestableConstraints))
+                .ThenByDescending(r => r.RefinedConfidenceScore ?? r.ConfidenceScore ?? 0)
+                .ThenBy(r => r.DisplayOrder)
                 .Take(maxRequirementCount)
+                .ToList();
+
+            payload.SrsRequirements = prioritizedRequirements
                 .Select(r =>
                 {
-                    var matches = matchesByRequirementId[r.Id];
+                    matchesByRequirementId.TryGetValue(r.Id, out var matches);
+                    matches ??= new List<EndpointRequirementMatchSummary>();
                     return new N8nSrsRequirement
                 {
                     Id = r.Id,
@@ -316,8 +324,13 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 .ToList();
 
             _logger.LogInformation(
-                "Included {Count}/{TotalCount} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
-                payload.SrsRequirements.Count, requirements.Count, suite.Id, suite.SrsDocumentId);
+                "Included {Count}/{TotalCount} SRS requirements in generation payload. Mapped={MappedCount}, GlobalOrUnmapped={UnmappedCount}. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
+                payload.SrsRequirements.Count,
+                requirements.Count,
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count > 0 || x.DependencyEndpointIds.Count > 0),
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count == 0 && x.DependencyEndpointIds.Count == 0),
+                suite.Id,
+                suite.SrsDocumentId);
         }
 
         _logger.LogInformation(

@@ -581,9 +581,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
         var metadataMap = context.EndpointMetadata?.ToDictionary(e => e.EndpointId)
             ?? new Dictionary<Guid, ApiEndpointMetadataDto>();
-        var scenarioBudgets = BuildScenarioBudgets(context, orderedSequence, metadataMap);
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
         var orderItemMap = orderedSequence.ToDictionary(e => e.EndpointId);
+        var firstOrderItem = orderedSequence.FirstOrDefault();
 
         var parsedScenarios = ParseScenarios(response, context.SrsRequirements);
         if (parsedScenarios.Count == 0)
@@ -605,7 +605,21 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
 
             if (!orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem))
             {
-                continue;
+                // Keep scenario count consistent with n8n callback:
+                // try to infer endpoint by method+url, fallback to first ordered endpoint.
+                orderItem = orderedSequence.FirstOrDefault(x =>
+                    string.Equals(x.HttpMethod, scenario.SuggestedHttpMethod, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Path, scenario.SuggestedUrl, StringComparison.OrdinalIgnoreCase));
+
+                if (orderItem == null)
+                {
+                    orderItem = firstOrderItem;
+                }
+
+                if (orderItem != null)
+                {
+                    scenario.EndpointId = orderItem.EndpointId;
+                }
             }
 
             metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
@@ -708,13 +722,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             repaired.Add(scenario);
         }
 
-        var orderedScenarios = ApplyScenarioBudgetPolicy(
-            repaired,
-            orderedSequence,
-            metadataMap,
-            scenarioBudgets,
-            endpointContracts,
-            context.SrsRequirements);
+        // For callback refinement flow, preserve callback cardinality:
+        // do not deduplicate/drop after repair.
+        var orderedScenarios = repaired;
+
+        _logger.LogInformation(
+            "Parsed refinement scenarios. InputCount={InputCount}, RepairedCount={RepairedCount}, FinalCount={FinalCount}, BudgetCapApplied={BudgetCapApplied}",
+            parsedScenarios.Count,
+            repaired.Count,
+            orderedScenarios.Count,
+            false);
 
         return new LlmScenarioSuggestionResult
         {
@@ -1586,7 +1603,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
         IReadOnlyDictionary<Guid, ScenarioBudget> scenarioBudgets,
         IReadOnlyDictionary<Guid, EndpointRequestContract> endpointContracts,
-        IReadOnlyList<SrsRequirement> srsRequirements)
+        IReadOnlyList<SrsRequirement> srsRequirements,
+        bool enforceBudgetCap = true)
     {
         if (orderedEndpoints == null || orderedEndpoints.Count == 0)
         {
@@ -1638,6 +1656,12 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 }
 
                 candidates.Add(scenario);
+            }
+
+            if (!enforceBudgetCap)
+            {
+                result.AddRange(candidates);
+                continue;
             }
 
             var cap = ResolveScenarioBudgetCap(budget);
@@ -2914,6 +2938,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 var testType = item.TryGetProperty("testType", out var testTypeElement) ? ElementToCompactString(testTypeElement) : null;
                 var priority = item.TryGetProperty("priority", out var p) ? p.GetString() : "Medium";
                 var sourceText = item.TryGetProperty("sourceText", out var sourceTextElement) ? ElementToCompactString(sourceTextElement) : null;
+                var requirementScope = item.TryGetProperty("requirementScope", out var requirementScopeElement) ? ElementToCompactString(requirementScopeElement) : null;
+                var flowDependencies = item.TryGetProperty("flowDependencies", out var flowDependenciesElement) ? ElementToCompactString(flowDependenciesElement) : null;
+                var negativeCases = item.TryGetProperty("negativeCases", out var negativeCasesElement) ? ElementToCompactString(negativeCasesElement) : null;
                 var outcome = expectedOutcome ?? expectedStatus ?? ExtractExpectedOutcome(constraint);
 
                 result.Add(new SrsTestableConstraintBrief
@@ -2927,6 +2954,9 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                     TestType = TruncateForPayload(testType, 40),
                     Priority = priority,
                     SourceText = TruncateForPayload(sourceText, 180),
+                    RequirementScope = TruncateForPayload(requirementScope, 40),
+                    FlowDependencies = TruncateForPayload(flowDependencies, 240),
+                    NegativeCases = TruncateForPayload(negativeCases, 240),
                 });
             }
             return result.Take(5).ToList();
