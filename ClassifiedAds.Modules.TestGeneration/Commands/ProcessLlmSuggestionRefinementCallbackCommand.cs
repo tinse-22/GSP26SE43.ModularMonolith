@@ -1,4 +1,4 @@
-using ClassifiedAds.Application;
+﻿using ClassifiedAds.Application;
 using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Contracts.Subscription.DTOs;
 using ClassifiedAds.Contracts.Subscription.Enums;
@@ -76,7 +76,7 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
 
         if (job == null)
         {
-            throw new NotFoundException($"LLM suggestion refinement job '{command.JobId}' không tồn tại.");
+            throw new NotFoundException($"LLM suggestion refinement job '{command.JobId}' khÃ´ng tá»“n táº¡i.");
         }
 
         if (job.Status == GenerationJobStatus.Completed
@@ -90,11 +90,21 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
             return;
         }
 
+        if (command.Response?.QualityGate?.HardFail == true)
+        {
+            job.Status = GenerationJobStatus.Failed;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            job.ErrorMessage = $"n8n quality gate hard-fail. {command.Response.Warning}".Trim();
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
         if (command.Response?.Scenarios == null || command.Response.Scenarios.Count == 0)
         {
             job.Status = GenerationJobStatus.Failed;
             job.CompletedAt = DateTimeOffset.UtcNow;
-            job.ErrorMessage = "n8n refinement callback không có scenarios.";
+            job.ErrorMessage = "n8n refinement callback khÃ´ng cÃ³ scenarios.";
             job.RowVersion = Guid.NewGuid().ToByteArray();
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
             return;
@@ -105,12 +115,12 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
 
         if (suite == null)
         {
-            throw new NotFoundException($"Không tìm thấy test suite với mã '{job.TestSuiteId}'.");
+            throw new NotFoundException($"KhÃ´ng tÃ¬m tháº¥y test suite vá»›i mÃ£ '{job.TestSuiteId}'.");
         }
 
         var approvedOrder = await _gateService.RequireApprovedOrderAsync(job.TestSuiteId, cancellationToken);
         var specificationId = suite.ApiSpecId ?? Guid.Empty;
-        ValidationException.Requires(specificationId != Guid.Empty, "Test suite chưa liên kết API specification.");
+        ValidationException.Requires(specificationId != Guid.Empty, "Test suite chÆ°a liÃªn káº¿t API specification.");
 
         var endpointIds = approvedOrder.Select(x => x.EndpointId).Distinct().ToList();
         var endpointMetadata = await _endpointMetadataService.GetEndpointMetadataAsync(
@@ -173,6 +183,11 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
             },
             cancellationToken);
 
+        if (command.Response?.ValidationSummary?.Warnings != null && command.Response.ValidationSummary.Warnings.Count > 0)
+        {
+            job.ErrorMessage = string.Join("; ", command.Response.ValidationSummary.Warnings);
+        }
+
         job.Status = GenerationJobStatus.Completed;
         job.CompletedAt = DateTimeOffset.UtcNow;
         job.TestCasesGenerated = suggestions.Count;
@@ -201,3 +216,5 @@ public class ProcessLlmSuggestionRefinementCallbackCommandHandler : ICommandHand
             llmResult.LlmModel);
     }
 }
+
+

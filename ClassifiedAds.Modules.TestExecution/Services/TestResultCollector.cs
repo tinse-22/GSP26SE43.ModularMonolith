@@ -105,6 +105,9 @@ public class TestResultCollector : ITestResultCollector
             BodyNotContainsPassed = r.BodyNotContainsPassed,
             JsonPathChecksPassed = r.JsonPathChecksPassed,
             ResponseTimePassed = r.ResponseTimePassed,
+            ValidationScore = r.ValidationScore,
+            ValidationScoreThreshold = r.ValidationScoreThreshold,
+            HardChecksPassed = r.HardChecksPassed,
             TotalAttempts = attemptCountByCase.TryGetValue(r.TestCaseId, out var cnt) ? cnt : 1,
         }).ToList();
 
