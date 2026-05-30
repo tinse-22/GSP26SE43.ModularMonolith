@@ -213,30 +213,44 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
     {
         var refined = TryDeserializeConstraints(requirement.RefinedConstraints)
             ?? TryDeserializeConstraints(requirement.TestableConstraints)
-            ?? new List<Dictionary<string, string>>();
+            ?? new List<Dictionary<string, object>>();
 
         if (refined.Count == 0)
         {
-            refined.Add(new Dictionary<string, string>
+            refined.Add(new Dictionary<string, object>
             {
                 ["constraint"] = requirement.Description ?? requirement.Title,
+                ["field"] = null,
+                ["operator"] = "businessRule",
+                ["value"] = null,
+                ["expectedStatus"] = null,
+                ["expectedOutcome"] = null,
+                ["testType"] = "Negative",
                 ["priority"] = "High",
+                ["sourceText"] = requirement.Description ?? requirement.Title,
             });
         }
 
         foreach (var clarification in clarifications.Where(x => x.IsAnswered))
         {
-            refined.Add(new Dictionary<string, string>
+            refined.Add(new Dictionary<string, object>
             {
-                ["constraint"] = $"Clarified: {clarification.Question} => {clarification.UserAnswer}",
+                ["constraint"] = $"Clarified requirement answer: {clarification.UserAnswer}",
+                ["field"] = null,
+                ["operator"] = "businessRule",
+                ["value"] = clarification.UserAnswer,
+                ["expectedStatus"] = null,
+                ["expectedOutcome"] = clarification.UserAnswer,
+                ["testType"] = "Negative",
                 ["priority"] = clarification.IsCritical ? "High" : "Medium",
+                ["sourceText"] = $"{clarification.Question} => {clarification.UserAnswer}",
             });
         }
 
         return JsonSerializer.Serialize(refined);
     }
 
-    private static List<Dictionary<string, string>> TryDeserializeConstraints(string json)
+    private static List<Dictionary<string, object>> TryDeserializeConstraints(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -245,7 +259,7 @@ public class TriggerSrsRefinementCommandHandler : ICommandHandler<TriggerSrsRefi
 
         try
         {
-            return JsonSerializer.Deserialize<List<Dictionary<string, string>>>(json);
+            return JsonSerializer.Deserialize<List<Dictionary<string, object>>>(json);
         }
         catch (JsonException)
         {

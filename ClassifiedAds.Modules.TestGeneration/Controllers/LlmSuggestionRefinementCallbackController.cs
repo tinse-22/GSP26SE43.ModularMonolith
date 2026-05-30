@@ -167,6 +167,7 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
                 {
                     Model = TryGetString(normalized, "model"),
                     TokensUsed = TryGetInt(normalized, "tokensUsed"),
+                    Warning = TryGetString(normalized, "warning"),
                     Scenarios = testCases?
                         .Select(MapTestCaseToScenario)
                         .Where(x => x.EndpointId != Guid.Empty)
@@ -213,6 +214,12 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
             Request = testCase.Request,
             Expectation = testCase.Expectation,
             Variables = testCase.Variables ?? new List<N8nTestCaseVariable>(),
+            CredentialPolicy = testCase.ExecutionHints?.CredentialPolicy ?? testCase.CredentialPolicy,
+            LockedFields = testCase.ExecutionHints?.LockedFields?.Count > 0
+                ? testCase.ExecutionHints.LockedFields
+                : testCase.LockedFields ?? new List<string>(),
+            AuthMode = testCase.ExecutionHints?.AuthMode ?? testCase.AuthMode,
+            ExecutionHints = testCase.ExecutionHints,
         };
     }
 

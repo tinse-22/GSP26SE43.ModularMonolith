@@ -20,6 +20,8 @@ namespace ClassifiedAds.Modules.TestGeneration.Services;
 public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 {
     private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions();
+    private const string FlowScenarioKeyTagPrefix = "flow-scenario-key:";
+    private const string FlowDependsOnTagPrefix = "flow-depends-on:";
 
     static LlmSuggestionReviewService()
     {
@@ -342,6 +344,13 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                         approvedOrder,
                         existingTestCases,
                         existingProducerVariables);
+
+                    // Apply explicit scenario-level flow dependencies from n8n tags.
+                    // This allows execution order to follow declared flow graph
+                    // instead of relying only on endpoint-order heuristics.
+                    ApplyExplicitFlowDependenciesFromTags(
+                        materializedTestCases,
+                        existingTestCases);
                     dependencyEnrichStopwatch.Stop();
                     dependencyEnrichMs = dependencyEnrichStopwatch.ElapsedMilliseconds;
 
@@ -665,6 +674,132 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
         catch
         {
             return value.Trim();
+        }
+    }
+
+    private void ApplyExplicitFlowDependenciesFromTags(
+        IReadOnlyCollection<TestCase> materializedTestCases,
+        IReadOnlyCollection<TestCase> existingTestCases)
+    {
+        if (materializedTestCases == null || materializedTestCases.Count == 0)
+        {
+            return;
+        }
+
+        var scenarioKeyToTestCaseId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var existing in existingTestCases ?? Array.Empty<TestCase>())
+        {
+            var existingScenarioKey = GetSingleTagValue(existing.Tags, FlowScenarioKeyTagPrefix);
+            if (!string.IsNullOrWhiteSpace(existingScenarioKey))
+            {
+                scenarioKeyToTestCaseId[existingScenarioKey] = existing.Id;
+            }
+        }
+
+        foreach (var current in materializedTestCases)
+        {
+            var currentScenarioKey = GetSingleTagValue(current.Tags, FlowScenarioKeyTagPrefix);
+            if (!string.IsNullOrWhiteSpace(currentScenarioKey))
+            {
+                scenarioKeyToTestCaseId[currentScenarioKey] = current.Id;
+            }
+        }
+
+        foreach (var testCase in materializedTestCases)
+        {
+            var depKeys = GetMultiTagValues(testCase.Tags, FlowDependsOnTagPrefix);
+            if (depKeys.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var depKey in depKeys)
+            {
+                if (!scenarioKeyToTestCaseId.TryGetValue(depKey, out var depTestCaseId))
+                {
+                    _logger.LogWarning(
+                        "Flow dependency key not resolved. TestCaseId={TestCaseId}, DependencyScenarioKey={DependencyScenarioKey}",
+                        testCase.Id,
+                        depKey);
+                    continue;
+                }
+
+                if (depTestCaseId == testCase.Id)
+                {
+                    continue;
+                }
+
+                if (testCase.Dependencies.Any(x => x.DependsOnTestCaseId == depTestCaseId))
+                {
+                    continue;
+                }
+
+                testCase.Dependencies.Add(new TestCaseDependency
+                {
+                    Id = Guid.NewGuid(),
+                    TestCaseId = testCase.Id,
+                    DependsOnTestCaseId = depTestCaseId,
+                });
+            }
+        }
+    }
+
+    private static string GetSingleTagValue(string tagsJson, string prefix)
+    {
+        var tags = DeserializeTags(tagsJson);
+        foreach (var tag in tags)
+        {
+            if (tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var value = tag[prefix.Length..].Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static List<string> GetMultiTagValues(string tagsJson, string prefix)
+    {
+        var tags = DeserializeTags(tagsJson);
+        var values = new List<string>();
+        foreach (var tag in tags)
+        {
+            if (!tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag[prefix.Length..].Trim();
+            if (!string.IsNullOrWhiteSpace(value)
+                && !values.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
+    private static List<string> DeserializeTags(string tagsJson)
+    {
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOpts)
+                ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
         }
     }
 }

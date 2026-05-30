@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 
 public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 {
+    private const int MaxDuplicateConflictMitigationAttempts = 3;
     private readonly IRepository<TestRun, Guid> _runRepository;
     private readonly IRepository<ExecutionEnvironment, Guid> _envRepository;
     private readonly ITestExecutionReadGatewayService _gatewayService;
@@ -468,6 +470,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 DependencyIds = testCase.DependencyIds,
                 FailureReasons = preValidation.ToFailureReasons(),
                 Warnings = preValidation.Warnings,
+                ValidationScore = 0m,
+                ValidationScoreThreshold = 0.80m,
+                HardChecksPassed = false,
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
@@ -507,6 +512,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 {
                     new ValidationFailureModel { Code = "UNRESOLVED_VARIABLE", Message = ex.Message },
                 },
+                ValidationScore = 0m,
+                ValidationScoreThreshold = 0.80m,
+                HardChecksPassed = false,
                 ExpectationSource = testCase.Expectation?.ExpectationSource,
                 RequirementCode = testCase.Expectation?.RequirementCode,
                 PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
@@ -520,7 +528,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag["tcUniqueId"] = resolvedRequest.TcUniqueId;
 
         var httpSw = Stopwatch.StartNew();
-        var response = await _httpExecutor.ExecuteAsync(resolvedRequest, ct);
+        var httpResult = await ExecuteWithDuplicateConflictMitigationAsync(testCase, resolvedRequest, ct);
+        var response = httpResult.Response;
+        resolvedRequest = httpResult.Request;
         httpSw.Stop();
 
         var extractionSw = Stopwatch.StartNew();
@@ -570,7 +580,39 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
+        if (resolvedRequest.VariableResolutionTrace != null
+            && resolvedRequest.VariableResolutionTrace.Count > 0)
+        {
+            foreach (var trace in resolvedRequest.VariableResolutionTrace)
+            {
+                extracted[$"__resolved.{trace.Key}"] = trace.Value;
+            }
+        }
+
+        ApplyFlowVariableAliasesFromTags(testCase, context.VariableBag);
+
         extractionSw.Stop();
+
+        // Ensure validator sees runtime-resolved request values (not raw template),
+        // so JSONPath expected placeholders like ["{{trackId}}"] can be resolved
+        // using sent request payload values when variableBag is missing that key.
+        if (testCase?.Request != null)
+        {
+            testCase.Request.HttpMethod = resolvedRequest.HttpMethod ?? testCase.Request.HttpMethod;
+            testCase.Request.Url = resolvedRequest.ResolvedUrl ?? testCase.Request.Url;
+            testCase.Request.Body = resolvedRequest.Body ?? testCase.Request.Body;
+            testCase.Request.BodyType = resolvedRequest.BodyType ?? testCase.Request.BodyType;
+
+            if (resolvedRequest.Headers != null)
+            {
+                testCase.Request.Headers = JsonSerializer.Serialize(resolvedRequest.Headers);
+            }
+
+            if (resolvedRequest.QueryParams != null)
+            {
+                testCase.Request.QueryParams = JsonSerializer.Serialize(resolvedRequest.QueryParams);
+            }
+        }
 
         var validationSw = Stopwatch.StartNew();
         var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile, context.VariableBag);
@@ -638,6 +680,9 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             BodyNotContainsPassed = validation.BodyNotContainsPassed,
             JsonPathChecksPassed = validation.JsonPathChecksPassed,
             ResponseTimePassed = validation.ResponseTimePassed,
+            ValidationScore = validation.ValidationScore,
+            ValidationScoreThreshold = validation.ValidationScoreThreshold,
+            HardChecksPassed = validation.HardChecksPassed,
         };
     }
 
@@ -1592,6 +1637,503 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
     private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
     {
+    }
+
+    private async Task<(ResolvedTestCaseRequest Request, HttpTestResponse Response)> ExecuteWithDuplicateConflictMitigationAsync(
+        ExecutionTestCaseDto testCase,
+        ResolvedTestCaseRequest initialRequest,
+        CancellationToken ct)
+    {
+        var request = CloneResolvedRequest(initialRequest);
+        var response = await _httpExecutor.ExecuteAsync(request, ct);
+
+        for (var attempt = 1; attempt <= MaxDuplicateConflictMitigationAttempts; attempt++)
+        {
+            if (!ShouldMitigateDuplicateConflict(testCase, request, response))
+            {
+                break;
+            }
+
+            if (!TryMutateRequestBodyForDuplicateRetry(request.Body, attempt, out var mutatedBody))
+            {
+                break;
+            }
+
+            request.Body = mutatedBody;
+            response = await _httpExecutor.ExecuteAsync(request, ct);
+
+            _logger.LogInformation(
+                "Applied generic duplicate-conflict mitigation retry. TestCaseId={TestCaseId}, Attempt={Attempt}, StatusCode={StatusCode}",
+                testCase.TestCaseId,
+                attempt,
+                response?.StatusCode);
+        }
+
+        return (request, response);
+    }
+
+    private static bool ShouldMitigateDuplicateConflict(
+        ExecutionTestCaseDto testCase,
+        ResolvedTestCaseRequest request,
+        HttpTestResponse response)
+    {
+        if (testCase == null || request == null || response == null)
+        {
+            return false;
+        }
+
+        if (response.StatusCode != 409)
+        {
+            return false;
+        }
+
+        var method = request.HttpMethod?.Trim().ToUpperInvariant();
+        if (method is not ("POST" or "PUT" or "PATCH"))
+        {
+            return false;
+        }
+
+        if (!LooksLikeJsonBody(request.BodyType, request.Body))
+        {
+            return false;
+        }
+
+        if (!IsExpectingSuccessStatus(testCase.Expectation?.ExpectedStatus))
+        {
+            return false;
+        }
+
+        return LooksLikeDuplicateConflictPayload(response.Body);
+    }
+
+    private static ResolvedTestCaseRequest CloneResolvedRequest(ResolvedTestCaseRequest source)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        return new ResolvedTestCaseRequest
+        {
+            TestCaseId = source.TestCaseId,
+            Name = source.Name,
+            HttpMethod = source.HttpMethod,
+            ResolvedUrl = source.ResolvedUrl,
+            Headers = source.Headers != null
+                ? new Dictionary<string, string>(source.Headers, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            QueryParams = source.QueryParams != null
+                ? new Dictionary<string, string>(source.QueryParams, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            Body = source.Body,
+            BodyType = source.BodyType,
+            TimeoutMs = source.TimeoutMs,
+            DependencyIds = source.DependencyIds ?? Array.Empty<Guid>(),
+            TcUniqueId = source.TcUniqueId,
+        };
+    }
+
+    private static bool TryMutateRequestBodyForDuplicateRetry(string body, int attempt, out string mutatedBody)
+    {
+        mutatedBody = body;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        JsonNode root;
+        try
+        {
+            root = JsonNode.Parse(body);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (root == null)
+        {
+            return false;
+        }
+
+        var changed = MutateDuplicateSensitiveStrings(root, attempt);
+        if (!changed)
+        {
+            return false;
+        }
+
+        mutatedBody = root.ToJsonString();
+        return true;
+    }
+
+    private static bool MutateDuplicateSensitiveStrings(JsonNode node, int attempt)
+    {
+        if (node is JsonObject obj)
+        {
+            var changed = false;
+            foreach (var property in obj.ToList())
+            {
+                if (property.Value is JsonValue value && value.TryGetValue<string>(out var stringValue))
+                {
+                    if (ShouldMutateDuplicateCandidate(property.Key, stringValue))
+                    {
+                        obj[property.Key] = BuildLengthPreservingVariant(stringValue, property.Key, attempt);
+                        changed = true;
+                    }
+
+                    continue;
+                }
+
+                if (property.Value != null && MutateDuplicateSensitiveStrings(property.Value, attempt))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        if (node is JsonArray array)
+        {
+            var changed = false;
+            foreach (var item in array)
+            {
+                if (item != null && MutateDuplicateSensitiveStrings(item, attempt))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldMutateDuplicateCandidate(string propertyName, string value)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName) || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (value.Contains("{{", StringComparison.Ordinal) && value.Contains("}}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var key = propertyName.Trim().ToLowerInvariant();
+        if (key.Contains("password", StringComparison.Ordinal)
+            || key.Contains("token", StringComparison.Ordinal)
+            || key.Contains("secret", StringComparison.Ordinal)
+            || key.Contains("auth", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return key.Contains("name", StringComparison.Ordinal)
+            || key.Contains("title", StringComparison.Ordinal)
+            || key.Contains("code", StringComparison.Ordinal)
+            || key.Contains("slug", StringComparison.Ordinal)
+            || key.Contains("sku", StringComparison.Ordinal)
+            || key.Contains("username", StringComparison.Ordinal);
+    }
+
+    private static string BuildLengthPreservingVariant(string original, string propertyName, int attempt)
+    {
+        if (string.IsNullOrEmpty(original))
+        {
+            return original;
+        }
+
+        const string alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+        if (original.Length == 1)
+        {
+            var seed = Math.Abs(HashCode.Combine(propertyName, attempt));
+            return alphabet[seed % alphabet.Length].ToString();
+        }
+
+        var hash = Math.Abs(HashCode.Combine(original, propertyName, attempt));
+        var suffix = hash.ToString("x");
+        var suffixLength = Math.Min(Math.Max(1, original.Length / 2), Math.Min(6, original.Length));
+        var replacement = suffix.Length >= suffixLength
+            ? suffix[..suffixLength]
+            : suffix.PadRight(suffixLength, '0');
+
+        var prefixLength = original.Length - suffixLength;
+        return $"{original[..prefixLength]}{replacement}";
+    }
+
+    private static bool IsExpectingSuccessStatus(string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus))
+        {
+            return false;
+        }
+
+        try
+        {
+            var statuses = JsonSerializer.Deserialize<List<int>>(expectedStatus);
+            return statuses?.Any(code => code >= 200 && code < 300) == true;
+        }
+        catch
+        {
+            var trimmed = expectedStatus.Trim().Trim('[', ']');
+            return int.TryParse(trimmed, out var single) && single >= 200 && single < 300;
+        }
+    }
+
+    private static bool LooksLikeDuplicateConflictPayload(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        var normalized = body.ToLowerInvariant();
+        return normalized.Contains("already exists", StringComparison.Ordinal)
+            || normalized.Contains("duplicate", StringComparison.Ordinal)
+            || normalized.Contains("unique", StringComparison.Ordinal)
+            || normalized.Contains("conflict", StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeJsonBody(string bodyType, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(bodyType)
+            && bodyType.Equals("JSON", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var trimmed = body.TrimStart();
+        return trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal);
+    }
+
+    private static void ApplyFlowVariableAliasesFromTags(
+        ExecutionTestCaseDto testCase,
+        IDictionary<string, string> variableBag)
+    {
+        if (testCase == null || variableBag == null)
+        {
+            return;
+        }
+
+        var tags = ParseSerializedTags(testCase.Tags);
+        if (tags.Count == 0)
+        {
+            return;
+        }
+
+        var produces = GetTagValues(tags, "flow-produces:");
+        if (produces.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var alias in produces)
+        {
+            if (string.IsNullOrWhiteSpace(alias))
+            {
+                continue;
+            }
+
+            if (variableBag.ContainsKey(alias) && !string.IsNullOrWhiteSpace(variableBag[alias]))
+            {
+                continue;
+            }
+
+            var sourceKey = GuessSourceVariableKey(alias, variableBag, testCase.TestCaseId);
+            if (!string.IsNullOrWhiteSpace(sourceKey)
+                && variableBag.TryGetValue(sourceKey, out var value)
+                && !string.IsNullOrWhiteSpace(value))
+            {
+                variableBag[alias] = value;
+
+                // Contract-first dependency scope: ensure consumers can resolve
+                // case.<producerId>.<producedAlias> exactly as declared in flow-consumes.
+                if (testCase.TestCaseId != Guid.Empty)
+                {
+                    variableBag[$"case.{testCase.TestCaseId:N}.{alias}"] = value;
+                }
+            }
+        }
+    }
+
+    private static List<string> GetTagValues(
+        IReadOnlyCollection<string> tags,
+        string prefix)
+    {
+        var result = new List<string>();
+        foreach (var tag in tags)
+        {
+            if (string.IsNullOrWhiteSpace(tag) || !tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag[prefix.Length..].Trim();
+            if (!string.IsNullOrWhiteSpace(value)
+                && !result.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(value);
+            }
+        }
+
+        return result;
+    }
+
+    private static List<string> ParseSerializedTags(string serializedTags)
+    {
+        if (string.IsNullOrWhiteSpace(serializedTags))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            if (serializedTags.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                var tags = JsonSerializer.Deserialize<string[]>(serializedTags);
+                return tags?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList()
+                    ?? new List<string>();
+            }
+        }
+        catch
+        {
+            // Fallback to simple split when tag payload is not valid JSON.
+        }
+
+        return serializedTags
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+    }
+
+    private static string GuessSourceVariableKey(
+        string alias,
+        IDictionary<string, string> variableBag,
+        Guid producerCaseId)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+        {
+            return null;
+        }
+
+        if (producerCaseId != Guid.Empty)
+        {
+            var scopedAlias = $"case.{producerCaseId:N}.{alias}";
+            if (variableBag.ContainsKey(scopedAlias))
+            {
+                return scopedAlias;
+            }
+        }
+
+        if (variableBag.ContainsKey(alias))
+        {
+            return alias;
+        }
+
+        var baseName = alias;
+        var knownPrefixes = new[] { "registered", "created", "new", "latest", "saved" };
+        foreach (var prefix in knownPrefixes)
+        {
+            if (baseName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && baseName.Length > prefix.Length)
+            {
+                baseName = char.ToLowerInvariant(baseName[prefix.Length]) + baseName[(prefix.Length + 1)..];
+                break;
+            }
+        }
+
+        if (producerCaseId != Guid.Empty)
+        {
+            var scopedBaseName = $"case.{producerCaseId:N}.{baseName}";
+            if (variableBag.ContainsKey(scopedBaseName))
+            {
+                return scopedBaseName;
+            }
+        }
+
+        if (variableBag.ContainsKey(baseName))
+        {
+            return baseName;
+        }
+
+        var suffixCandidates = new[]
+        {
+            "Id",
+            "Email",
+            "Password",
+            "Token",
+            "Name",
+            "Code",
+        };
+
+        foreach (var suffix in suffixCandidates)
+        {
+            if (!alias.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var root = alias[..^suffix.Length];
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                continue;
+            }
+
+            var candidate = char.ToLowerInvariant(root[0]) + root[1..] + suffix;
+            if (variableBag.ContainsKey(candidate))
+            {
+                return candidate;
+            }
+
+            // Generic fallback: map role-specific aliases to canonical field names.
+            // Examples:
+            //   adminEmail -> email
+            //   customerToken -> token/authToken/accessToken
+            //   partnerId -> id
+            var canonical = suffix switch
+            {
+                "Email" => "email",
+                "Password" => "password",
+                "Token" => "token",
+                "Id" => "id",
+                "Name" => "name",
+                "Code" => "code",
+                _ => null,
+            };
+
+            if (!string.IsNullOrWhiteSpace(canonical)
+                && producerCaseId != Guid.Empty
+                && variableBag.ContainsKey($"case.{producerCaseId:N}.{canonical}"))
+            {
+                return $"case.{producerCaseId:N}.{canonical}";
+            }
+
+            if (!string.IsNullOrWhiteSpace(canonical) && variableBag.ContainsKey(canonical))
+            {
+                return canonical;
+            }
+
+            if (string.Equals(suffix, "Token", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var tokenAlias in new[] { "authToken", "accessToken", "jwt", "bearerToken" })
+                {
+                    if (variableBag.ContainsKey(tokenAlias))
+                    {
+                        return tokenAlias;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

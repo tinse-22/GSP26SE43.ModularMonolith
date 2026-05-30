@@ -95,7 +95,7 @@ public class N8nIntegrationOptions
     /// <summary>
     /// Maximum SRS requirements included in a single generation payload.
     /// </summary>
-    public int GenerationMaxSrsRequirementCount { get; set; } = 15;
+    public int GenerationMaxSrsRequirementCount { get; set; } = 60;
 
     /// <summary>
     /// Maximum characters kept for each text field of an SRS requirement.

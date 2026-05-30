@@ -251,27 +251,70 @@ public class TestSuitesControllerTests
     }
 
     [Fact]
-    public async Task Create_Should_MapEndpointSelectionsAndBusinessRules()
+    public async Task Create_Should_ThrowValidationException_WhenNoEndpointSelected()
     {
-        var projectId = Guid.NewGuid();
-        var suiteId = Guid.NewGuid();
         var request = CreateRequest();
-        AddUpdateTestSuiteScopeCommand capturedCommand = null!;
+        request.SelectedEndpointIds = new List<Guid>();
+        request.EndpointBusinessContexts = new Dictionary<Guid, string>();
 
         _addUpdateHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddUpdateTestSuiteScopeCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateScope(projectId, suiteId, request.Name);
-            })
-            .Returns(Task.CompletedTask);
+            .ThrowsAsync(new ValidationException("Phải chọn ít nhất một endpoint."));
 
-        await _controller.Create(projectId, request);
+        var act = () => _controller.Create(Guid.NewGuid(), request);
 
-        capturedCommand.SelectedEndpointIds.Should().BeEquivalentTo(request.SelectedEndpointIds);
-        capturedCommand.EndpointBusinessContexts.Should().BeEquivalentTo(request.EndpointBusinessContexts);
-        capturedCommand.GlobalBusinessRules.Should().Be(request.GlobalBusinessRules);
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Phải chọn ít nhất một endpoint.*");
+    }
+
+    [Fact]
+    public async Task Create_Should_ThrowValidationException_WhenNameMissing()
+    {
+        var request = CreateRequest();
+        request.Name = " ";
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test suite là bắt buộc."));
+
+        var act = () => _controller.Create(Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Tên test suite là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Create_Should_ThrowValidationException_WhenApiSpecIdMissing()
+    {
+        var request = CreateRequest();
+        request.ApiSpecId = Guid.Empty;
+        request.GenerationType = GenerationType.Manual;
+        request.SelectedEndpointIds = new List<Guid>();
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("ApiSpecId là bắt buộc."));
+
+        var act = () => _controller.Create(Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*ApiSpecId là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Create_Should_ThrowValidationException_WhenEndpointsDoNotBelongToSpecification()
+    {
+        var request = CreateRequest();
+        request.SelectedEndpointIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Các endpoint không thuộc specification đã chọn: endpoint-a, endpoint-b."));
+
+        var act = () => _controller.Create(Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Các endpoint không thuộc specification đã chọn:*");
     }
 
     [Fact]
@@ -381,6 +424,105 @@ public class TestSuitesControllerTests
     }
 
     [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenNameMissing()
+    {
+        var request = UpdateRequest();
+        request.Name = " ";
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test suite là bắt buộc."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Tên test suite là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenApiSpecIdMissing()
+    {
+        var request = UpdateRequest();
+        request.ApiSpecId = Guid.Empty;
+        request.GenerationType = GenerationType.Manual;
+        request.SelectedEndpointIds = new List<Guid>();
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("ApiSpecId là bắt buộc."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*ApiSpecId là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenNoEndpointSelected()
+    {
+        var request = UpdateRequest();
+        request.SelectedEndpointIds = new List<Guid>();
+        request.EndpointBusinessContexts = new Dictionary<Guid, string>();
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Phải chọn ít nhất một endpoint."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Phải chọn ít nhất một endpoint.*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenEndpointsDoNotBelongToSpecification()
+    {
+        var request = UpdateRequest();
+        request.SelectedEndpointIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Các endpoint không thuộc specification đã chọn: endpoint-a, endpoint-b."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Các endpoint không thuộc specification đã chọn:*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenRowVersionMissing()
+    {
+        var request = UpdateRequest();
+        request.RowVersion = null;
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("RowVersion là bắt buộc khi cập nhật."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RowVersion là bắt buộc khi cập nhật.*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenRowVersionInvalid()
+    {
+        var request = UpdateRequest();
+        request.RowVersion = "not-base64";
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("RowVersion không hợp lệ."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RowVersion không hợp lệ.*");
+    }
+
+    [Fact]
     public async Task Update_Should_ReturnCommandResult()
     {
         var projectId = Guid.NewGuid();
@@ -412,19 +554,6 @@ public class TestSuitesControllerTests
 
         await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage("*Test suite scope not found*");
-    }
-
-    [Fact]
-    public async Task Update_Should_ThrowConcurrencyException_WhenRowVersionConflicts()
-    {
-        _addUpdateHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ConcurrencyException("RowVersion conflict"));
-
-        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), UpdateRequest());
-
-        await act.Should().ThrowAsync<ConcurrencyException>()
-            .WithMessage("*RowVersion conflict*");
     }
 
     [Fact]
@@ -474,15 +603,15 @@ public class TestSuitesControllerTests
     }
 
     [Fact]
-    public async Task Archive_Should_ThrowConcurrencyException_WhenRowVersionConflicts()
+    public async Task Archive_Should_ThrowConflictException_WhenRowVersionConflicts()
     {
         _archiveHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<ArchiveTestSuiteScopeCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ConcurrencyException("Archive conflict"));
+            .ThrowsAsync(new ConflictException("CONCURRENCY_CONFLICT", "Archive conflict"));
 
         var act = () => _controller.Archive(Guid.NewGuid(), Guid.NewGuid(), "cm93");
 
-        await act.Should().ThrowAsync<ConcurrencyException>()
+        await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("*Archive conflict*");
     }
 

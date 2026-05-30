@@ -64,12 +64,18 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "12b. If SRS says a mapped POST/PUT/PATCH/DELETE endpoint requires auth but OpenAPI marks it public, follow SRS: authorized HappyPath/Boundary cases send Authorization, and missing-auth Negative cases use X-Test-Auth-Mode:none without Authorization.\n" +
         "13. Login wrong-password and non-existent-email tests must use credentials that cannot match the registered setup account. Do not reuse {{registeredPassword}} for wrong-password cases.\n" +
         "14. For dependent resources such as product.categoryId, create or reference a setup variable for existing IDs; non-existent ID tests must use a syntactically valid ID that was not produced by setup.\n" +
-        "15. Each kept case must cover a distinct field, constraint, status, auth, resource-not-found, or endpoint-specific business dimension.\n" +
-        "16. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.";
+        "15. Include mappingRationale and traceabilityScore when requirements are linked or ambiguous.\n" +
+        "16. Output must be EXACTLY one JSON object. No markdown, no code fences, no prefix/suffix text, no comments.\n" +
+        "17. jsonPathChecks must be a key-value object where key is JSONPath (e.g. $.success) and value is an exact literal (string/number/boolean/null). Do not use meta tokens such as <string>, <number>, <boolean>, <datetime>, regex literals, or prose.\n" +
+        "18. If a semantic/type check cannot be expressed as an exact literal, omit that jsonPathChecks entry instead of inventing placeholders.\n" +
+        "19. Every testCase must include all required fields in the response format. Keep field names and casing exactly as specified.\n" +
+        "20. For Boundary success cases, never use fixed collision-prone literals (e.g., \"A\", \"test\", \"code1\") on potentially unique fields. Generate per-case variants while preserving boundary intent (exact/min/max length).\n" +
+        "21. For NotFound/NonExistent negative cases (expected 404 or description mentions not found/non-existent), use a syntactically valid but intentionally unbound identifier literal; do NOT use placeholders that can resolve from setup flow (e.g., {{categoryId}}, {{productId}}), and do NOT reuse IDs produced by dependencies.\n" +
+        "22. In NotFound negative cases, variables.produces must not declare the missing identifier field as produced output; only declare produces for values actually created by a successful response path.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
-        "Return ONLY raw JSON: {\"testCases\":[{\"endpointId\":\"<uuid>\",\"name\":\"<short>\",\"description\":\"<one sentence>\",\"testType\":\"HappyPath|Boundary|Negative\",\"priority\":\"Critical|High|Medium|Low\",\"orderIndex\":0,\"tags\":[\"happy-path\"],\"request\":{\"httpMethod\":\"GET|POST|PUT|DELETE|PATCH\",\"url\":\"/path\",\"headers\":{},\"pathParams\":{},\"queryParams\":{},\"bodyType\":\"None|JSON|FormData|UrlEncoded|Raw\",\"body\":\"<serialized JSON or null>\",\"timeout\":30000},\"expectation\":{\"expectedStatus\":[200],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[],\"bodyNotContains\":[],\"jsonPathChecks\":{},\"maxResponseTime\":null},\"variables\":[],\"coveredRequirementIds\":[],\"traceabilityScore\":0.95,\"mappingRationale\":\"<why this validates linked requirements>\"}],\"model\":\"<model>\",\"tokensUsed\":0,\"reasoning\":\"<brief>\"}";
+        "Return ONLY raw JSON with this exact shape: {\"testCases\":[{\"endpointId\":\"<uuid>\",\"name\":\"<short>\",\"description\":\"<one sentence>\",\"testType\":\"HappyPath|Boundary|Negative\",\"priority\":\"Critical|High|Medium|Low\",\"orderIndex\":0,\"tags\":[\"happy-path\"],\"request\":{\"httpMethod\":\"GET|POST|PUT|DELETE|PATCH\",\"url\":\"/path\",\"headers\":{},\"pathParams\":{},\"queryParams\":{},\"bodyType\":\"None|JSON|FormData|UrlEncoded|Raw\",\"body\":\"<serialized JSON or null>\",\"timeout\":30000},\"expectation\":{\"expectedStatus\":[200],\"responseSchema\":null,\"headerChecks\":{},\"bodyContains\":[],\"bodyNotContains\":[],\"jsonPathChecks\":{\"$.success\":true},\"maxResponseTime\":null},\"variables\":[],\"coveredRequirementIds\":[],\"traceabilityScore\":0.95,\"mappingRationale\":\"<why this validates linked requirements>\"}],\"model\":\"<model>\",\"tokensUsed\":0,\"reasoning\":\"<brief>\"}. jsonPathChecks values must be exact JSON literals only.";
 
     private static readonly JsonSerializerOptions CompactJsonOptions = new ()
     {
@@ -274,12 +280,20 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 : _n8nOptions.GenerationMaxSrsFieldLength;
 
             var matchesByRequirementId = BuildRequirementMatchesByRequirementId(metadataByEndpointId, requirements);
-            payload.SrsRequirements = requirements
-                .Where(r => matchesByRequirementId.ContainsKey(r.Id))
+            var prioritizedRequirements = requirements
+                .OrderByDescending(r => matchesByRequirementId.ContainsKey(r.Id))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.RefinedConstraints))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.TestableConstraints))
+                .ThenByDescending(r => r.RefinedConfidenceScore ?? r.ConfidenceScore ?? 0)
+                .ThenBy(r => r.DisplayOrder)
                 .Take(maxRequirementCount)
+                .ToList();
+
+            payload.SrsRequirements = prioritizedRequirements
                 .Select(r =>
                 {
-                    var matches = matchesByRequirementId[r.Id];
+                    matchesByRequirementId.TryGetValue(r.Id, out var matches);
+                    matches ??= new List<EndpointRequirementMatchSummary>();
                     return new N8nSrsRequirement
                 {
                     Id = r.Id,
@@ -310,8 +324,13 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 .ToList();
 
             _logger.LogInformation(
-                "Included {Count}/{TotalCount} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
-                payload.SrsRequirements.Count, requirements.Count, suite.Id, suite.SrsDocumentId);
+                "Included {Count}/{TotalCount} SRS requirements in generation payload. Mapped={MappedCount}, GlobalOrUnmapped={UnmappedCount}. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
+                payload.SrsRequirements.Count,
+                requirements.Count,
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count > 0 || x.DependencyEndpointIds.Count > 0),
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count == 0 && x.DependencyEndpointIds.Count == 0),
+                suite.Id,
+                suite.SrsDocumentId);
         }
 
         _logger.LogInformation(

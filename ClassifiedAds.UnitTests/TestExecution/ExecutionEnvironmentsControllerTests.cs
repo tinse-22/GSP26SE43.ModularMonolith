@@ -102,6 +102,21 @@ public class ExecutionEnvironmentsControllerTests
     }
 
     [Fact]
+    public async Task GetAll_Should_ReturnOkWithEmptyEnvironmentList()
+    {
+        var projectId = Guid.NewGuid();
+
+        _getAllHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetExecutionEnvironmentsQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ExecutionEnvironmentModel>());
+
+        var result = await _controller.GetAll(projectId);
+
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        okResult.Value.Should().BeOfType<List<ExecutionEnvironmentModel>>().Subject.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetById_Should_ReturnOkWithEnvironmentPayload()
     {
         var projectId = Guid.NewGuid();
@@ -235,6 +250,23 @@ public class ExecutionEnvironmentsControllerTests
     }
 
     [Fact]
+    public async Task Create_Should_PropagateValidationException()
+    {
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateExecutionEnvironmentCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("BASE_URL_REQUIRED"));
+
+        var act = () => _controller.Create(Guid.NewGuid(), new CreateExecutionEnvironmentRequest
+        {
+            Name = "QA",
+            BaseUrl = null!,
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*BASE_URL_REQUIRED*");
+    }
+
+    [Fact]
     public async Task Update_Should_ReturnOkWithUpdatedEnvironment()
     {
         var projectId = Guid.NewGuid();
@@ -325,6 +357,23 @@ public class ExecutionEnvironmentsControllerTests
     }
 
     [Fact]
+    public async Task Update_Should_PropagateValidationException_WhenRowVersionMissing()
+    {
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdateExecutionEnvironmentCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("RowVersion la bat buoc khi cap nhat."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), new UpdateExecutionEnvironmentRequest
+        {
+            Name = "Prod",
+            BaseUrl = "https://prod.example.com",
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RowVersion*");
+    }
+
+    [Fact]
     public async Task Delete_Should_ReturnNoContent()
     {
         _deleteHandlerMock
@@ -358,16 +407,29 @@ public class ExecutionEnvironmentsControllerTests
     }
 
     [Fact]
-    public async Task Delete_Should_PropagateConflictException()
+    public async Task Delete_Should_PropagateValidationException_WhenRowVersionMissing()
     {
         _deleteHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<DeleteExecutionEnvironmentCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ConflictException("CONCURRENCY_CONFLICT", "row version mismatch"));
+            .ThrowsAsync(new ValidationException("RowVersion la bat buoc khi xoa."));
+
+        var act = () => _controller.Delete(Guid.NewGuid(), Guid.NewGuid(), null);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RowVersion*");
+    }
+
+    [Fact]
+    public async Task Delete_Should_PropagateNotFoundException()
+    {
+        _deleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<DeleteExecutionEnvironmentCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("ENVIRONMENT_NOT_FOUND"));
 
         var act = () => _controller.Delete(Guid.NewGuid(), Guid.NewGuid(), "dmVyc2lvbg==");
 
-        var ex = await act.Should().ThrowAsync<ConflictException>();
-        ex.Which.ReasonCode.Should().Be("CONCURRENCY_CONFLICT");
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*ENVIRONMENT_NOT_FOUND*");
     }
 
     private static ExecutionEnvironmentModel CreateEnvironmentModel(

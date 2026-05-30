@@ -11,10 +11,13 @@ public class N8nSrsContext
     /// <summary>Title of the SRS document.</summary>
     public string DocumentTitle { get; set; }
 
-    /// <summary>Full SRS content (ParsedMarkdown if available, else RawContent).</summary>
+    /// <summary>
+    /// Deprecated for generation payloads. Raw SRS content is intentionally omitted to keep
+    /// prompts bounded; use Requirements plus Endpoints[].SrsRequirements instead.
+    /// </summary>
     public string Content { get; set; }
 
-    /// <summary>Structured requirements extracted from the SRS.</summary>
+    /// <summary>Global structured requirements extracted from the SRS.</summary>
     public List<N8nSrsRequirementBrief> Requirements { get; set; } = new();
 }
 
@@ -40,17 +43,36 @@ public class N8nSrsRequirementBrief
 
 /// <summary>
 /// One testable constraint extracted from SRS by LLM analysis.
-/// Example: { Constraint = "password must be >= 6 characters", ExpectedOutcome = "400", Priority = "High" }
+/// Example: { Constraint = "password must be >= 6 characters", ExpectedStatus = "400", Priority = "High" }
 /// </summary>
 public class SrsTestableConstraintBrief
 {
     /// <summary>Human-readable constraint (e.g. "password must be >= 6 characters").</summary>
     public string Constraint { get; set; }
 
+    public string Field { get; set; }
+
+    public string Operator { get; set; }
+
+    public string Value { get; set; }
+
+    /// <summary>Expected HTTP status or outcome extracted from the SRS analysis.</summary>
+    public string ExpectedStatus { get; set; }
+
     /// <summary>Expected API outcome (e.g. "400" or "201"). Null if not specified.</summary>
     public string ExpectedOutcome { get; set; }
 
+    public string TestType { get; set; }
+
     public string Priority { get; set; }
+
+    public string SourceText { get; set; }
+
+    public string RequirementScope { get; set; }
+
+    public string FlowDependencies { get; set; }
+
+    public string NegativeCases { get; set; }
 }
 
 /// <summary>

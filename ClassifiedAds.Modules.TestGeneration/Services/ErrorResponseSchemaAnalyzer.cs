@@ -41,14 +41,15 @@ internal static class ErrorResponseSchemaAnalyzer
     }
 
     /// <summary>
-    /// Builds JSONPath assertions from error response schema.
-    /// For "success" field on error scenario: asserts "false".
+    /// Builds JSONPath assertions from schema.
+    /// For "success" field on error expectation (4xx/5xx): asserts "false".
     /// For other fields: asserts "*" (field exists).
     /// Returns at most 2 assertions.
     /// </summary>
     public static Dictionary<string, string> BuildJsonPathAssertions(
         string schemaJson,
-        TestType testType)
+        TestType testType,
+        int? expectedStatusCode = null)
     {
         var fields = ExtractFieldNames(schemaJson);
         if (fields.Count == 0) return new Dictionary<string, string>();
@@ -69,7 +70,9 @@ internal static class ErrorResponseSchemaAnalyzer
             // JSONPath key MUST match the actual response field casing. Schema is the source of truth.
             // Do NOT normalize to camelCase — if schema uses "Success", key should be "$.Success".
             var isSuccessField = string.Equals(field, "success", StringComparison.OrdinalIgnoreCase);
-            var isErrorTest = testType == TestType.Boundary || testType == TestType.Negative;
+            var isErrorByStatus = expectedStatusCode is >= 400 and <= 599;
+            var isErrorByType = testType == TestType.Negative;
+            var isErrorTest = isErrorByStatus || isErrorByType;
             result[$"$.{field}"] = isSuccessField && isErrorTest ? "false" : "*";
         }
         return result;

@@ -78,6 +78,12 @@ public class TestCaseExecutionResult
 
     public bool? ResponseTimePassed { get; set; }
 
+    public decimal ValidationScore { get; set; }
+
+    public decimal ValidationScoreThreshold { get; set; }
+
+    public bool HardChecksPassed { get; set; } = true;
+
     // ── Expectation snapshots (for FE Evidence panel) ────────────────────
     /// <summary>JSON array of strings the response body should contain (from test case expectation).</summary>
     public string ExpectedBodyContains { get; set; }

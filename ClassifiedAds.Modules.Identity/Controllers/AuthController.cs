@@ -362,7 +362,7 @@ public class AuthController : ControllerBase
         GoogleJsonWebSignature.Payload payload;
         try
         {
-            payload = await _googleIdentityProvider.VerifyIdTokenAsync(model.IdToken);
+            payload = await VerifyGoogleIdTokenAsync(model.IdToken);
         }
         catch (InvalidJwtException ex)
         {
@@ -454,6 +454,11 @@ public class AuthController : ControllerBase
             ExpiresIn = jwtExpiresIn,
             User = ToUserInfoModel(user, userProfile, roles),
         });
+    }
+
+    protected virtual Task<GoogleJsonWebSignature.Payload> VerifyGoogleIdTokenAsync(string idToken)
+    {
+        return _googleIdentityProvider.VerifyIdTokenAsync(idToken);
     }
 
     /// <summary>

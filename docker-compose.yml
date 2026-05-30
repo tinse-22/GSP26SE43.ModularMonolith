@@ -1,4 +1,4 @@
-services:
+﻿services:
   rabbitmq:
     image: "rabbitmq:3-management"
     environment:
@@ -100,7 +100,7 @@ services:
       Modules__TestGeneration__N8nIntegration__GenerationMaxSchemaPayloadLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSchemaPayloadLength:-800}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxPromptLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxPromptLength:-1200}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxBusinessContextLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxBusinessContextLength:-700}"
-      Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount:-15}"
+      Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount:-60}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxSrsFieldLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsFieldLength:-500}"
       Modules__TestGeneration__N8nIntegration__Webhooks__generate-test-cases-unified: "${N8N_WEBHOOK_GENERATE_TEST_CASES_UNIFIED:-generate-test-cases-unified}"
       Modules__TestGeneration__N8nIntegration__Webhooks__generate-llm-suggestions: "${N8N_WEBHOOK_GENERATE_LLM_SUGGESTIONS:-generate-llm-suggestions}"
@@ -180,7 +180,7 @@ services:
       Modules__TestGeneration__N8nIntegration__GenerationMaxSchemaPayloadLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSchemaPayloadLength:-800}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxPromptLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxPromptLength:-1200}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxBusinessContextLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxBusinessContextLength:-700}"
-      Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount:-15}"
+      Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsRequirementCount:-60}"
       Modules__TestGeneration__N8nIntegration__GenerationMaxSrsFieldLength: "${Modules__TestGeneration__N8nIntegration__GenerationMaxSrsFieldLength:-500}"
       Modules__TestGeneration__N8nIntegration__Webhooks__generate-test-cases-unified: "${N8N_WEBHOOK_GENERATE_TEST_CASES_UNIFIED:-generate-test-cases-unified}"
       Modules__TestGeneration__N8nIntegration__Webhooks__generate-llm-suggestions: "${N8N_WEBHOOK_GENERATE_LLM_SUGGESTIONS:-generate-llm-suggestions}"
@@ -197,3 +197,4 @@ services:
 
 volumes:
   redis_data:
+
