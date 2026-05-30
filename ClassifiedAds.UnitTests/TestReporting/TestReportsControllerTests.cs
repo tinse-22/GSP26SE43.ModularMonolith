@@ -160,6 +160,59 @@ public class TestReportsControllerTests
     }
 
     [Fact]
+    public async Task GenerateTestRunReport_Should_PropagateValidationException_WhenRecentHistoryLimitTooSmall()
+    {
+        _generateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GenerateTestReportCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("RecentHistoryLimit phải lớn hơn hoặc bằng 1."));
+
+        var act = () => _controller.GenerateTestRunReport(Guid.NewGuid(), Guid.NewGuid(), new GenerateTestReportRequest
+        {
+            ReportType = "Detailed",
+            Format = "JSON",
+            RecentHistoryLimit = 0,
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*RecentHistoryLimit*");
+    }
+
+    [Fact]
+    public async Task GenerateTestRunReport_Should_PropagateValidationException_WhenReportTypeMissing()
+    {
+        _generateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GenerateTestReportCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("ReportType là bắt buộc."));
+
+        var act = () => _controller.GenerateTestRunReport(Guid.NewGuid(), Guid.NewGuid(), new GenerateTestReportRequest
+        {
+            Format = "JSON",
+            RecentHistoryLimit = 5,
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*ReportType*");
+    }
+
+    [Fact]
+    public async Task GenerateTestRunReport_Should_PropagateValidationException_WhenFormatUnsupported()
+    {
+        _generateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GenerateTestReportCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Format 'DOCX' không được hỗ trợ."));
+
+        var act = () => _controller.GenerateTestRunReport(Guid.NewGuid(), Guid.NewGuid(), new GenerateTestReportRequest
+        {
+            ReportType = "Detailed",
+            Format = "DOCX",
+            RecentHistoryLimit = 5,
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*DOCX*");
+    }
+
+    [Fact]
     public async Task GetTestRunReports_Should_ReturnOkWithReportList()
     {
         var suiteId = Guid.NewGuid();
