@@ -86,6 +86,7 @@ public class N8nTestCaseRequest
     [JsonConverter(typeof(FlexibleStringDictionaryConverter))]
     public Dictionary<string, string> QueryParams { get; set; } = new();
     public string BodyType { get; set; }
+    [JsonConverter(typeof(FlexibleStringConverter))]
     public string Body { get; set; }
     public int? Timeout { get; set; }
 }

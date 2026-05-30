@@ -21,6 +21,16 @@ public class RuleBasedValidator : IRuleBasedValidator
     private static readonly System.Text.RegularExpressions.Regex JwtLikeRegex = new(
         @"^[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}$",
         System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex ObjectIdRegex = new(
+        @"^[0-9a-fA-F]{24}$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex LengthFunctionRegex = new(
+        @"^(?:len|length)\s*\(\s*(\d+)\s*\)$",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex NumericComparatorRegex = new(
+        @"^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly TimeSpan SemanticDateTimeTolerance = TimeSpan.FromSeconds(5);
 
     private readonly ILogger<RuleBasedValidator> _logger;
 
@@ -1081,7 +1091,12 @@ public class RuleBasedValidator : IRuleBasedValidator
         if (variableBag == null || string.IsNullOrEmpty(expected) || !expected.Contains("{{", StringComparison.Ordinal))
             return expected;
         return System.Text.RegularExpressions.Regex.Replace(expected, @"\{\{(\w+)\}\}", m =>
-            variableBag.TryGetValue(m.Groups[1].Value, out var v) && !string.IsNullOrEmpty(v) ? v : m.Value);
+        {
+            var key = m.Groups[1].Value;
+            return TryResolveVariableValue(variableBag, key, out var resolved) && !string.IsNullOrEmpty(resolved)
+                ? resolved
+                : m.Value;
+        });
     }
 
     private static string ResolveExpectedJsonPathCheck(JsonElement expectedElement, IReadOnlyDictionary<string, string> variableBag)
@@ -1091,7 +1106,59 @@ public class RuleBasedValidator : IRuleBasedValidator
             return ResolveExpectedValue(expectedElement.GetString(), variableBag);
         }
 
+        if (expectedElement.ValueKind == JsonValueKind.Object || expectedElement.ValueKind == JsonValueKind.Array)
+        {
+            var normalized = ResolvePlaceholdersInJsonElement(expectedElement, variableBag);
+            return normalized?.ToJsonString() ?? expectedElement.GetRawText();
+        }
+
         return expectedElement.GetRawText();
+    }
+
+    private static JsonNode ResolvePlaceholdersInJsonElement(JsonElement element, IReadOnlyDictionary<string, string> variableBag)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+            {
+                var obj = new JsonObject();
+                foreach (var prop in element.EnumerateObject())
+                {
+                    obj[prop.Name] = ResolvePlaceholdersInJsonElement(prop.Value, variableBag);
+                }
+                return obj;
+            }
+            case JsonValueKind.Array:
+            {
+                var arr = new JsonArray();
+                foreach (var item in element.EnumerateArray())
+                {
+                    arr.Add(ResolvePlaceholdersInJsonElement(item, variableBag));
+                }
+                return arr;
+            }
+            case JsonValueKind.String:
+                return JsonValue.Create(ResolveExpectedValue(element.GetString(), variableBag));
+            case JsonValueKind.Number:
+                if (element.TryGetInt64(out var l))
+                {
+                    return JsonValue.Create(l);
+                }
+                if (element.TryGetDouble(out var d))
+                {
+                    return JsonValue.Create(d);
+                }
+                return JsonValue.Create(element.GetRawText());
+            case JsonValueKind.True:
+                return JsonValue.Create(true);
+            case JsonValueKind.False:
+                return JsonValue.Create(false);
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                return null;
+            default:
+                return JsonValue.Create(element.GetRawText());
+        }
     }
 
     private static bool TryResolveIdentifierAliasExpectedValue(
@@ -1125,7 +1192,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         var candidates = BuildIdentifierAliasKeys(leaf, placeholderMatch.Groups["name"].Value, variableBag.Keys);
         foreach (var key in candidates)
         {
-            if (!variableBag.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value))
+            if (!TryResolveVariableValue(variableBag, key, out var value) || string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
@@ -1273,6 +1340,9 @@ public class RuleBasedValidator : IRuleBasedValidator
                 }
 
                 var resolvedExpected = ResolveExpectedJsonPathCheck(check.Value, variableBag);
+                resolvedExpected = ResolveExpectedFromRequestIfNeeded(
+                    resolvedExpected,
+                    testCase?.Request);
                 var element = TryNavigateJsonPathWithAliases(doc.RootElement, check.Key, out var matchedJsonPath);
                 var actualValue = element?.ToString();
                 var matchedByIdentifierAlias = false;
@@ -1295,6 +1365,11 @@ public class RuleBasedValidator : IRuleBasedValidator
 
                 if (!wildcardMatched && (actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element)))
                 {
+                    var hasUnresolvedPlaceholder =
+                        !string.IsNullOrWhiteSpace(resolvedExpected)
+                        && resolvedExpected.Contains("{{", StringComparison.Ordinal)
+                        && resolvedExpected.Contains("}}", StringComparison.Ordinal);
+
                     // Treat "notnull", "*", "*.+", ".+", empty, and JWT-like values as existence checks.
                     var isExistenceCheck = string.IsNullOrWhiteSpace(resolvedExpected)
                         || resolvedExpected == "*"
@@ -1322,7 +1397,26 @@ public class RuleBasedValidator : IRuleBasedValidator
                             actualValue,
                             result.StatusCodeMatched,
                             ResolveJsonPathLeniencyMode(testCase, profile));
+                    var shouldDowngradeIndexedCollectionGap =
+                        ShouldDowngradeIndexedCollectionGapToWarning(
+                            check.Key,
+                            actualValue,
+                            result.StatusCodeMatched,
+                            ResolveJsonPathLeniencyMode(testCase, profile));
 
+                    // If expected still contains unresolved template variables but actual has value,
+                    // don't hard-fail: this usually indicates variable extraction/template timing issue,
+                    // not a true API behavior mismatch.
+                    if (hasUnresolvedPlaceholder && actualValue != null)
+                    {
+                        result.Warnings.Add(new ValidationWarningModel
+                        {
+                            Code = "JSONPATH_UNRESOLVED_PLACEHOLDER",
+                            Message = $"JSONPath '{check.Key}' cÃ²n placeholder chÆ°a resolve trong expected ('{resolvedExpected}'), nhÆ°ng actual cÃ³ giÃ¡ trá»‹ nÃªn háº¡ xuá»‘ng warning.",
+                            Target = check.Key,
+                        });
+                    }
+                    else
                     if (canSoftForgive)
                     {
                         result.Warnings.Add(new ValidationWarningModel
@@ -1338,6 +1432,15 @@ public class RuleBasedValidator : IRuleBasedValidator
                         {
                             Code = "JSONPATH_MESSAGE_MISMATCH_WARNING",
                             Message = $"JSONPath '{check.Key}' không khớp exact text (mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'). Đã hạ severity xuống warning vì status code đúng.",
+                            Target = check.Key,
+                        });
+                    }
+                    else if (shouldDowngradeIndexedCollectionGap)
+                    {
+                        result.Warnings.Add(new ValidationWarningModel
+                        {
+                            Code = "JSONPATH_INDEXED_COLLECTION_EMPTY_WARNING",
+                            Message = $"JSONPath '{check.Key}' trỏ vào phần tử theo index nhưng collection không có dữ liệu phù hợp ở lần chạy này. Đã hạ xuống warning.",
                             Target = check.Key,
                         });
                     }
@@ -1477,11 +1580,6 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        if (IsCriticalJsonPath(normalizedPath))
-        {
-            return false;
-        }
-
         // Downgrade only text-like mismatches. Keep structural/semantic checks strict.
         if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(actual))
         {
@@ -1513,29 +1611,30 @@ public class RuleBasedValidator : IRuleBasedValidator
             || IsDescriptionLikeJsonPath(normalizedPath);
     }
 
-    private static bool IsCriticalJsonPath(string normalizedPath)
+    private static bool ShouldDowngradeIndexedCollectionGapToWarning(
+        string jsonPath,
+        string actual,
+        bool? statusCodeMatched,
+        JsonPathLeniencyMode leniencyMode)
     {
-        if (string.IsNullOrWhiteSpace(normalizedPath))
+        if (statusCodeMatched != true || leniencyMode == JsonPathLeniencyMode.Strict)
         {
-            return true;
+            return false;
         }
 
-        return normalizedPath.Contains(".success", StringComparison.Ordinal)
-            || normalizedPath.EndsWith(".success", StringComparison.Ordinal)
-            || normalizedPath.Contains(".status", StringComparison.Ordinal)
-            || normalizedPath.EndsWith(".status", StringComparison.Ordinal)
-            || normalizedPath.Contains(".code", StringComparison.Ordinal)
-            || normalizedPath.EndsWith(".code", StringComparison.Ordinal)
-            || normalizedPath.Contains(".role", StringComparison.Ordinal)
-            || normalizedPath.EndsWith(".role", StringComparison.Ordinal)
-            || normalizedPath.Contains(".id", StringComparison.Ordinal)
-            || normalizedPath.EndsWith(".id", StringComparison.Ordinal)
-            || normalizedPath.Contains("token", StringComparison.Ordinal)
-            || normalizedPath.Contains("price", StringComparison.Ordinal)
-            || normalizedPath.Contains("stock", StringComparison.Ordinal)
-            || normalizedPath.Contains("quantity", StringComparison.Ordinal)
-            || normalizedPath.Contains("count", StringComparison.Ordinal)
-            || normalizedPath.Contains("total", StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(actual))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return false;
+        }
+
+        // Generic rule: path uses explicit numeric index like $.data.items[0].id
+        // and target is missing/null for this run.
+        return Regex.IsMatch(jsonPath, @"\[\d+\]");
     }
 
     private static bool IsMessageLikeJsonPath(string normalizedPath)
@@ -1626,6 +1725,14 @@ public class RuleBasedValidator : IRuleBasedValidator
             }
         }
 
+        // Last-resort semantic leaf matching for cross-project naming drift:
+        // e.g. trackId vs trackID vs track_id vs storeID.
+        if (TryNavigateJsonPathBySemanticLeaf(root, jsonPath, out var semanticPath, out var semanticElement))
+        {
+            matchedJsonPath = semanticPath;
+            return semanticElement;
+        }
+
         return null;
     }
 
@@ -1655,6 +1762,210 @@ public class RuleBasedValidator : IRuleBasedValidator
         {
             yield return $"{prefix}.{leaf}Id";
         }
+
+        // Cross-style aliases for ID-like fields: trackId, trackID, track_id, track-id.
+        var normalizedLeaf = NormalizePathToken(leaf);
+        if (normalizedLeaf.EndsWith("id", StringComparison.Ordinal))
+        {
+            var baseName = normalizedLeaf[..^2];
+            if (!string.IsNullOrWhiteSpace(baseName))
+            {
+                yield return $"{prefix}.{baseName}Id";
+                yield return $"{prefix}.{baseName}ID";
+                yield return $"{prefix}.{baseName}_id";
+                yield return $"{prefix}.{baseName}-id";
+            }
+        }
+    }
+
+    private static bool TryNavigateJsonPathBySemanticLeaf(
+        JsonElement root,
+        string jsonPath,
+        out string matchedPath,
+        out JsonElement matchedElement)
+    {
+        matchedPath = jsonPath;
+        matchedElement = default;
+
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            return false;
+        }
+
+        var path = jsonPath.Trim();
+        var lastDot = path.LastIndexOf('.');
+        if (lastDot <= 1 || lastDot >= path.Length - 1)
+        {
+            return false;
+        }
+
+        var prefix = path[..lastDot];
+        var leaf = path[(lastDot + 1)..];
+        if (string.IsNullOrWhiteSpace(leaf))
+        {
+            return false;
+        }
+
+        var parent = VariableExtractor.NavigateJsonPath(root, prefix);
+        if (!parent.HasValue || parent.Value.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var expectedLeaf = NormalizePathToken(leaf);
+        foreach (var prop in parent.Value.EnumerateObject())
+        {
+            if (!string.Equals(NormalizePathToken(prop.Name), expectedLeaf, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            matchedPath = $"{prefix}.{prop.Name}";
+            matchedElement = prop.Value;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string ResolveExpectedFromRequestIfNeeded(
+        string expected,
+        ExecutionTestCaseRequestDto request)
+    {
+        if (string.IsNullOrWhiteSpace(expected) ||
+            !expected.Contains("{{", StringComparison.Ordinal))
+        {
+            return expected;
+        }
+
+        var requestValues = ExtractRequestPrimitiveValues(request);
+        if (requestValues.Count == 0)
+        {
+            return expected;
+        }
+
+        return Regex.Replace(expected, @"\{\{(\w+)\}\}", m =>
+        {
+            var key = m.Groups[1].Value;
+            var normalizedKey = NormalizeVariableKey(key);
+            foreach (var kv in requestValues)
+            {
+                if (!string.Equals(NormalizeVariableKey(kv.Key), normalizedKey, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return kv.Value ?? m.Value;
+            }
+
+            return m.Value;
+        });
+    }
+
+    private static Dictionary<string, string> ExtractRequestPrimitiveValues(ExecutionTestCaseRequestDto request)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (request == null)
+        {
+            return result;
+        }
+
+        MergePrimitiveObjectJson(result, request.Body);
+        MergePrimitiveObjectJson(result, request.PathParams);
+        MergePrimitiveObjectJson(result, request.QueryParams);
+        MergePrimitiveObjectJson(result, request.Headers);
+
+        return result;
+    }
+
+    private static void MergePrimitiveObjectJson(Dictionary<string, string> target, string jsonText)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(jsonText))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                var value = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => property.Value.ToString(),
+                    _ => null,
+                };
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    target[property.Name] = value;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore malformed request fragments; keep expected unchanged.
+        }
+    }
+
+    private static bool TryResolveVariableValue(
+        IReadOnlyDictionary<string, string> variableBag,
+        string key,
+        out string value)
+    {
+        value = null;
+        if (variableBag == null || string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        if (variableBag.TryGetValue(key, out value) && !string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var normalizedKey = NormalizeVariableKey(key);
+        foreach (var kv in variableBag)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key) || string.IsNullOrWhiteSpace(kv.Value))
+            {
+                continue;
+            }
+
+            if (string.Equals(NormalizeVariableKey(kv.Key), normalizedKey, StringComparison.Ordinal))
+            {
+                value = kv.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeVariableKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(key.Trim().ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
+    }
+
+    private static string NormalizePathToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(token.Trim().ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
     }
 
     private static bool ValidateResponseTime(
@@ -1730,6 +2041,11 @@ public class RuleBasedValidator : IRuleBasedValidator
         if (TryEvaluateCanonicalAssertion(expected, actual, actualElement, out var canonicalResult))
         {
             return canonicalResult;
+        }
+
+        if (TryEvaluateFunctionStyleExpectation(expected, actual, actualElement, out var functionStyleResult))
+        {
+            return functionStyleResult;
         }
 
         if (TryParseExpectationOperator(expected, out var op, out var operand))
@@ -1812,6 +2128,16 @@ public class RuleBasedValidator : IRuleBasedValidator
             };
         }
 
+        if (TryEvaluateLengthFunctionExpectation(expected, actual, actualElement, out var lengthResult))
+        {
+            return lengthResult;
+        }
+
+        if (TryEvaluateNumericComparatorExpectation(expected, actual, out var numericComparatorResult))
+        {
+            return numericComparatorResult;
+        }
+
         if (LooksLikeStringExpectation(expected))
         {
             return actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.String;
@@ -1852,9 +2178,19 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         if (LooksLikeGuidExpectation(expected))
         {
+            if (!actualElement.HasValue || actualElement.Value.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var raw = actualElement.Value.GetString();
+            if (LooksLikeObjectIdExpectation(expected))
+            {
+                return IsMongoObjectId(raw);
+            }
+
             return actualElement.HasValue
-                && actualElement.Value.ValueKind == JsonValueKind.String
-                && Guid.TryParse(actualElement.Value.GetString(), out _);
+                && Guid.TryParse(raw, out _);
         }
 
         // JWT guard: a stored JWT token will never match a newly-issued one (different
@@ -1873,7 +2209,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         // Try numeric comparison
         if (decimal.TryParse(actual, out var actualNum) && decimal.TryParse(expected, out var expectedNum))
         {
-            return actualNum == expectedNum;
+            return Math.Abs(actualNum - expectedNum) <= 0.000001m;
         }
 
         // Try boolean comparison
@@ -1948,6 +2284,20 @@ public class RuleBasedValidator : IRuleBasedValidator
                         return true;
                 }
             }
+        }
+
+        if (AreSemanticErrorCodesEquivalent(expected, actual))
+        {
+            return true;
+        }
+
+        // Date/time semantic equality: compare parsed instants with tolerance,
+        // so "2026-01-01T00:00:00Z" and "2026-01-01T07:00:00+07:00" pass.
+        if (TryParseDateTimeOffset(actual, out var actualDateTime) &&
+            TryParseDateTimeOffset(expected, out var expectedDateTime))
+        {
+            var delta = (actualDateTime - expectedDateTime).Duration();
+            return delta <= SemanticDateTimeTolerance;
         }
 
         // Regex check: LLMs sometimes generate `{"regex":"^pattern$"}` (or legacy `{"match":"^pattern$"}`)
@@ -2050,7 +2400,318 @@ public class RuleBasedValidator : IRuleBasedValidator
             }
         }
 
+        // Semantic JSON equality:
+        // - object: expected is subset of actual (extra actual fields are allowed)
+        // - array: order-insensitive multiset compare
+        // - number: tolerance compare
+        if (TrySemanticJsonEquality(actual, expected, out var jsonSemanticEqual))
+        {
+            return jsonSemanticEqual;
+        }
+
+        // Text semantic normalization fallback.
+        var normalizedActual = NormalizeSemanticText(actual);
+        var normalizedExpected = NormalizeSemanticText(expected);
+        if (!string.IsNullOrWhiteSpace(normalizedActual) &&
+            !string.IsNullOrWhiteSpace(normalizedExpected) &&
+            string.Equals(normalizedActual, normalizedExpected, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         return string.Equals(actual, expected, StringComparison.Ordinal);
+    }
+
+    private static bool TryEvaluateFunctionStyleExpectation(
+        string expected,
+        string actual,
+        JsonElement? actualElement,
+        out bool result)
+    {
+        result = false;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = expected.Trim();
+        if (!text.EndsWith(")", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var open = text.IndexOf('(');
+        if (open <= 0)
+        {
+            return false;
+        }
+
+        var fn = text[..open].Trim().ToLowerInvariant();
+        var argRaw = text[(open + 1)..^1].Trim();
+        var arg = TrimContainerSyntax(argRaw);
+
+        switch (fn)
+        {
+            case "contains":
+                if (actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in actualElement.Value.EnumerateArray())
+                    {
+                        var itemText = item.ToString();
+                        if (ValuesEqual(itemText, arg, item))
+                        {
+                            result = true;
+                            return true;
+                        }
+
+                        if (!string.IsNullOrEmpty(itemText) &&
+                            !string.IsNullOrEmpty(arg) &&
+                            NormalizeSemanticText(itemText).Contains(NormalizeSemanticText(arg), StringComparison.OrdinalIgnoreCase))
+                        {
+                            result = true;
+                            return true;
+                        }
+                    }
+
+                    result = false;
+                    return true;
+                }
+
+                result = !string.IsNullOrEmpty(actual) &&
+                    !string.IsNullOrEmpty(arg) &&
+                    NormalizeSemanticText(actual).Contains(NormalizeSemanticText(arg), StringComparison.OrdinalIgnoreCase);
+                return true;
+
+            case "notcontains":
+            case "not_contains":
+                if (actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Array)
+                {
+                    result = !actualElement.Value.EnumerateArray().Any(x =>
+                    {
+                        var itemText = x.ToString();
+                        return ValuesEqual(itemText, arg, x)
+                            || (!string.IsNullOrEmpty(itemText)
+                                && !string.IsNullOrEmpty(arg)
+                                && NormalizeSemanticText(itemText).Contains(NormalizeSemanticText(arg), StringComparison.OrdinalIgnoreCase));
+                    });
+                    return true;
+                }
+
+                result = string.IsNullOrEmpty(actual) ||
+                    string.IsNullOrEmpty(arg) ||
+                    !NormalizeSemanticText(actual).Contains(NormalizeSemanticText(arg), StringComparison.OrdinalIgnoreCase);
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string TrimContainerSyntax(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var s = value.Trim().Trim('"', '\'');
+        // tolerate LLM forms like contains([{{trackId}}]) or contains(["abc"])
+        if (s.Length >= 2 && s[0] == '[' && s[^1] == ']')
+        {
+            s = s[1..^1].Trim().Trim('"', '\'');
+        }
+
+        return s;
+    }
+
+    private static bool AreSemanticErrorCodesEquivalent(string expected, string actual)
+    {
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(actual))
+        {
+            return false;
+        }
+
+        var normalizedExpected = NormalizeErrorCodeToken(expected);
+        var normalizedActual = NormalizeErrorCodeToken(actual);
+        if (string.IsNullOrWhiteSpace(normalizedExpected) || string.IsNullOrWhiteSpace(normalizedActual))
+        {
+            return false;
+        }
+
+        if (normalizedExpected == normalizedActual)
+        {
+            return true;
+        }
+
+        // Generic -> specific mapping for validation domain
+        if (normalizedExpected == "VALIDATION_ERROR")
+        {
+            return normalizedActual.Contains("INVALID", StringComparison.Ordinal)
+                || normalizedActual.Contains("MISSING", StringComparison.Ordinal)
+                || normalizedActual.Contains("REQUIRED", StringComparison.Ordinal)
+                || normalizedActual.Contains("EXISTS", StringComparison.Ordinal)
+                || normalizedActual.Contains("DUPLICATE", StringComparison.Ordinal)
+                || normalizedActual.Contains("FORMAT", StringComparison.Ordinal)
+                || normalizedActual.Contains("CONFLICT", StringComparison.Ordinal)
+                || normalizedActual == "EMAIL_EXISTS";
+        }
+
+        return false;
+    }
+
+    private static string NormalizeErrorCodeToken(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var token = value.Trim().Trim('"', '\'');
+        return Regex.Replace(token.ToUpperInvariant(), @"[^A-Z0-9_]+", "_").Trim('_');
+    }
+
+    private static bool TrySemanticJsonEquality(string actual, string expected, out bool equals)
+    {
+        equals = false;
+        if (string.IsNullOrWhiteSpace(actual) || string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var actualDoc = JsonDocument.Parse(actual);
+            using var expectedDoc = JsonDocument.Parse(expected);
+            equals = JsonSemanticallyMatches(actualDoc.RootElement, expectedDoc.RootElement);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool JsonSemanticallyMatches(JsonElement actual, JsonElement expected)
+    {
+        if (expected.ValueKind == JsonValueKind.Null)
+        {
+            return actual.ValueKind == JsonValueKind.Null;
+        }
+
+        if (actual.ValueKind == JsonValueKind.Number && expected.ValueKind == JsonValueKind.Number)
+        {
+            if (actual.TryGetDecimal(out var a) && expected.TryGetDecimal(out var e))
+            {
+                return Math.Abs(a - e) <= 0.000001m;
+            }
+        }
+
+        if (actual.ValueKind == JsonValueKind.String && expected.ValueKind == JsonValueKind.String)
+        {
+            var a = actual.GetString();
+            var e = expected.GetString();
+            if (TryParseDateTimeOffset(a, out var ad) && TryParseDateTimeOffset(e, out var ed))
+            {
+                return (ad - ed).Duration() <= SemanticDateTimeTolerance;
+            }
+
+            return string.Equals(NormalizeSemanticText(a), NormalizeSemanticText(e), StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (expected.ValueKind == JsonValueKind.Object && actual.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var ep in expected.EnumerateObject())
+            {
+                if (!TryGetPropertyCaseInsensitive(actual, ep.Name, out var ap))
+                {
+                    return false;
+                }
+
+                if (!JsonSemanticallyMatches(ap, ep.Value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (expected.ValueKind == JsonValueKind.Array && actual.ValueKind == JsonValueKind.Array)
+        {
+            var actualItems = actual.EnumerateArray().ToList();
+            var expectedItems = expected.EnumerateArray().ToList();
+            if (actualItems.Count != expectedItems.Count)
+            {
+                return false;
+            }
+
+            var used = new bool[actualItems.Count];
+            foreach (var expectedItem in expectedItems)
+            {
+                var matched = false;
+                for (var i = 0; i < actualItems.Count; i++)
+                {
+                    if (used[i])
+                    {
+                        continue;
+                    }
+
+                    if (!JsonSemanticallyMatches(actualItems[i], expectedItem))
+                    {
+                        continue;
+                    }
+
+                    used[i] = true;
+                    matched = true;
+                    break;
+                }
+
+                if (!matched)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return string.Equals(actual.ToString(), expected.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryGetPropertyCaseInsensitive(JsonElement obj, string name, out JsonElement value)
+    {
+        foreach (var p in obj.EnumerateObject())
+        {
+            if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = p.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static bool TryParseDateTimeOffset(string value, out DateTimeOffset dto)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            dto = default;
+            return false;
+        }
+
+        return DateTimeOffset.TryParse(value.Trim(), out dto);
+    }
+
+    private static string NormalizeSemanticText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var lowered = value.Trim().ToLowerInvariant();
+        return Regex.Replace(lowered, @"\s+", " ");
     }
 
     private static bool TryEvaluateCanonicalAssertion(
@@ -2112,6 +2773,9 @@ public class RuleBasedValidator : IRuleBasedValidator
                 return node.TryGetProperty("value", out var containsValue)
                     && !string.IsNullOrEmpty(actual)
                     && actual.Contains(containsValue.ToString(), StringComparison.OrdinalIgnoreCase);
+            case "array_contains":
+                return node.TryGetProperty("value", out var arrayContainsValue)
+                    && EvaluateArrayContains(actualElement, actual, arrayContainsValue.ToString());
             case "not_contains":
                 return node.TryGetProperty("value", out var notContainsValue)
                     && (string.IsNullOrEmpty(actual) || !actual.Contains(notContainsValue.ToString(), StringComparison.OrdinalIgnoreCase));
@@ -2148,6 +2812,8 @@ public class RuleBasedValidator : IRuleBasedValidator
                 return EvaluateLengthOp(node, actual, actualElement);
             case "numeric":
                 return EvaluateNumericOp(node, actual);
+            case "datetime":
+                return EvaluateDateTimeOp(node, actual, actualElement);
             case "any_of":
                 return node.TryGetProperty("value", out var anyOf)
                     && anyOf.ValueKind == JsonValueKind.Array
@@ -2485,6 +3151,162 @@ public class RuleBasedValidator : IRuleBasedValidator
             || text.Contains("objectid", StringComparison.Ordinal)
             || text.Contains("object id", StringComparison.Ordinal)
             || text.Contains("mongo id", StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeObjectIdExpectation(string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var text = NormalizeTypeToken(expected);
+        return text.Contains("objectid", StringComparison.Ordinal)
+            || text.Contains("object id", StringComparison.Ordinal)
+            || text.Contains("mongo id", StringComparison.Ordinal);
+    }
+
+    private static bool IsMongoObjectId(string value) =>
+        !string.IsNullOrWhiteSpace(value) && ObjectIdRegex.IsMatch(value);
+
+    private static bool TryEvaluateLengthFunctionExpectation(
+        string expected,
+        string actual,
+        JsonElement? actualElement,
+        out bool result)
+    {
+        result = false;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var match = LengthFunctionRegex.Match(expected.Trim());
+        if (!match.Success || !int.TryParse(match.Groups[1].Value, out var expectedLength))
+        {
+            return false;
+        }
+
+        int actualLength;
+        if (actualElement.HasValue)
+        {
+            actualLength = actualElement.Value.ValueKind switch
+            {
+                JsonValueKind.String => actualElement.Value.GetString()?.Length ?? 0,
+                JsonValueKind.Array => actualElement.Value.GetArrayLength(),
+                JsonValueKind.Object => actualElement.Value.EnumerateObject().Count(),
+                JsonValueKind.Null or JsonValueKind.Undefined => 0,
+                _ => actual?.Length ?? 0,
+            };
+        }
+        else
+        {
+            actualLength = actual?.Length ?? 0;
+        }
+
+        result = actualLength == expectedLength;
+        return true;
+    }
+
+    private static bool EvaluateArrayContains(JsonElement? actualElement, string actual, string expectedValue)
+    {
+        if (string.IsNullOrWhiteSpace(expectedValue))
+        {
+            return false;
+        }
+
+        if (actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in actualElement.Value.EnumerateArray())
+            {
+                var itemText = item.ValueKind == JsonValueKind.String
+                    ? item.GetString()
+                    : item.GetRawText();
+
+                if (string.Equals(itemText, expectedValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Fallback for stringified arrays or non-array values.
+        return !string.IsNullOrEmpty(actual)
+            && actual.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool EvaluateDateTimeOp(JsonElement node, string actual, JsonElement? actualElement)
+    {
+        var actualText = actual;
+        if (string.IsNullOrWhiteSpace(actualText) && actualElement.HasValue && actualElement.Value.ValueKind == JsonValueKind.String)
+        {
+            actualText = actualElement.Value.GetString();
+        }
+
+        if (!TryParseDateTimeOffset(actualText, out var actualDt))
+        {
+            return false;
+        }
+
+        if (!node.TryGetProperty("value", out var expectedNode))
+        {
+            // If no explicit value, only assert "is valid datetime"
+            return true;
+        }
+
+        var expectedText = expectedNode.ToString();
+        if (!TryParseDateTimeOffset(expectedText, out var expectedDt))
+        {
+            return false;
+        }
+
+        var toleranceSeconds = 0d;
+        if (node.TryGetProperty("withinSeconds", out var withinSeconds) && withinSeconds.TryGetDouble(out var ws))
+        {
+            toleranceSeconds = Math.Max(0d, ws);
+        }
+        else
+        {
+            toleranceSeconds = SemanticDateTimeTolerance.TotalSeconds;
+        }
+
+        return (actualDt - expectedDt).Duration() <= TimeSpan.FromSeconds(toleranceSeconds);
+    }
+
+    private static bool TryEvaluateNumericComparatorExpectation(
+        string expected,
+        string actual,
+        out bool result)
+    {
+        result = false;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var match = NumericComparatorRegex.Match(expected.Trim());
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        if (!decimal.TryParse(actual, out var actualNum) ||
+            !decimal.TryParse(match.Groups[2].Value, out var expectedNum))
+        {
+            return false;
+        }
+
+        result = match.Groups[1].Value switch
+        {
+            ">" => actualNum > expectedNum,
+            ">=" => actualNum >= expectedNum,
+            "<" => actualNum < expectedNum,
+            "<=" => actualNum <= expectedNum,
+            "=" or "==" => actualNum == expectedNum,
+            _ => false,
+        };
+
+        return true;
     }
 
     private static string NormalizeTypeToken(string expected)

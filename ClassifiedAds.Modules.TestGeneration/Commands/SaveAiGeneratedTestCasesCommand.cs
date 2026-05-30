@@ -1735,9 +1735,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     $"AI-generated test case '{dto.Name ?? $"index {item.Index}"}' references unknown endpointId '{endpointId}' for specification '{specId}'.");
             }
 
+            var hasSrsTraceability = HasSrsTraceability(dto);
             ValidateRequestShape(dto, endpoint, item.Index);
-            ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index);
-            ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index);
+            ValidateExpectedStatusesAgainstOpenApi(dto, endpoint, item.Index, hasSrsTraceability);
+            ValidateAuthorizationHeaderAgainstOpenApi(dto, endpoint, item.Index, hasSrsTraceability);
             ValidateRequestBodyAgainstOpenApi(dto, endpoint, item.Index);
             ValidateVariableDependencies(dto, producedVariables, item.Index);
             RegisterProducedVariables(dto, producedVariables);

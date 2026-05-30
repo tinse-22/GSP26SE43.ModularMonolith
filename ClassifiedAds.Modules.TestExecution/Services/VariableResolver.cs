@@ -94,9 +94,17 @@ public class VariableResolver : IVariableResolver
 
         ApplyTokenAliases(mergedVars);
         var allowHeuristicRewrite = IsRewritePolicyEnabled(testCase);
+        var resolutionTrace = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // Resolve URL
-        var resolvedUrl = ResolvePlaceholders(request.Url ?? string.Empty, mergedVars);
+        var resolvedUrl = ResolvePlaceholdersWithProvenance(
+            request.Url ?? string.Empty,
+            "url",
+            mergedVars,
+            testCase,
+            variables,
+            environment?.Variables,
+            resolutionTrace);
 
         // Resolve path params and apply to URL
         var pathParams = DeserializeDictionary(request.PathParams);
@@ -106,7 +114,14 @@ public class VariableResolver : IVariableResolver
         var routeTokenApplied = false;
         foreach (var kvp in normalizedPathParams)
         {
-            var resolvedValue = ResolvePlaceholders(kvp.Value, mergedVars);
+            var resolvedValue = ResolvePlaceholdersWithProvenance(
+                kvp.Value,
+                $"path.{kvp.Key}",
+                mergedVars,
+                testCase,
+                variables,
+                environment?.Variables,
+                resolutionTrace);
             resolvedPathParams[kvp.Key] = resolvedValue;
 
             var token = $"{{{kvp.Key}}}";
@@ -136,7 +151,14 @@ public class VariableResolver : IVariableResolver
 
         foreach (var kvp in queryParams)
         {
-            resolvedQuery[kvp.Key] = ResolvePlaceholders(kvp.Value, mergedVars);
+            resolvedQuery[kvp.Key] = ResolvePlaceholdersWithProvenance(
+                kvp.Value,
+                $"query.{kvp.Key}",
+                mergedVars,
+                testCase,
+                variables,
+                environment?.Variables,
+                resolutionTrace);
         }
 
         // Resolve headers
@@ -153,7 +175,14 @@ public class VariableResolver : IVariableResolver
         var hasUnresolvedConsumedAuthPlaceholder = false;
         foreach (var kvp in requestHeaders)
         {
-            var resolvedValue = ResolvePlaceholders(kvp.Value, mergedVars);
+            var resolvedValue = ResolvePlaceholdersWithProvenance(
+                kvp.Value,
+                $"headers.{kvp.Key}",
+                mergedVars,
+                testCase,
+                variables,
+                environment?.Variables,
+                resolutionTrace);
             var unresolvedConsumedAuthPlaceholder =
                 IsAuthHeaderName(kvp.Key)
                 && ContainsUnresolvedPlaceholder(resolvedValue)
@@ -218,7 +247,14 @@ public class VariableResolver : IVariableResolver
 
         // Resolve body
         var resolvedBody = !string.IsNullOrEmpty(request.Body)
-            ? ResolvePlaceholders(request.Body, mergedVars)
+            ? ResolvePlaceholdersWithProvenance(
+                request.Body,
+                "body",
+                mergedVars,
+                testCase,
+                variables,
+                environment?.Variables,
+                resolutionTrace)
             : null;
 
         if (allowHeuristicRewrite)
@@ -302,7 +338,107 @@ public class VariableResolver : IVariableResolver
             TimeoutMs = timeout,
             DependencyIds = testCase.DependencyIds,
             TcUniqueId = mergedVars.TryGetValue("tcUniqueId", out var tcId) ? tcId : null,
+            VariableResolutionTrace = resolutionTrace,
         };
+    }
+
+    private static string ResolvePlaceholdersWithProvenance(
+        string template,
+        string surface,
+        Dictionary<string, string> mergedVars,
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> runVariables,
+        IReadOnlyDictionary<string, string> envVariables,
+        IDictionary<string, string> traceSink)
+    {
+        if (string.IsNullOrEmpty(template))
+        {
+            return template;
+        }
+
+        var resolved = ResolvePlaceholders(template, mergedVars);
+        if (traceSink == null)
+        {
+            return resolved;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match m in PlaceholderRegex.Matches(template))
+        {
+            if (!m.Success || m.Groups.Count < 2)
+            {
+                continue;
+            }
+
+            var placeholderName = m.Groups[1].Value;
+            if (string.IsNullOrWhiteSpace(placeholderName) || !seen.Add(placeholderName))
+            {
+                continue;
+            }
+
+            if (!mergedVars.TryGetValue(placeholderName, out var candidate)
+                || string.IsNullOrWhiteSpace(candidate)
+                || candidate.Contains("{{", StringComparison.Ordinal))
+            {
+                traceSink[$"{surface}.{placeholderName}"] = "unresolved";
+                continue;
+            }
+
+            traceSink[$"{surface}.{placeholderName}"] = ResolvePlaceholderSource(
+                placeholderName,
+                testCase,
+                runVariables,
+                envVariables);
+        }
+
+        return resolved;
+    }
+
+    private static string ResolvePlaceholderSource(
+        string placeholderName,
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> runVariables,
+        IReadOnlyDictionary<string, string> envVariables)
+    {
+        if (string.Equals(placeholderName, "tcUniqueId", StringComparison.OrdinalIgnoreCase))
+        {
+            return "runtime";
+        }
+
+        if (testCase?.DependencyIds != null
+            && runVariables != null
+            && testCase.DependencyIds.Count > 0)
+        {
+            for (var i = testCase.DependencyIds.Count - 1; i >= 0; i--)
+            {
+                var depId = testCase.DependencyIds[i];
+                var scopedKey = $"case.{depId:N}.{placeholderName}";
+                if (runVariables.TryGetValue(scopedKey, out var scopedValue)
+                    && !string.IsNullOrWhiteSpace(scopedValue)
+                    && !scopedValue.Contains("{{", StringComparison.Ordinal))
+                {
+                    return $"dependency-scoped(case.{depId:N})";
+                }
+            }
+        }
+
+        if (runVariables != null
+            && runVariables.TryGetValue(placeholderName, out var globalValue)
+            && !string.IsNullOrWhiteSpace(globalValue)
+            && !globalValue.Contains("{{", StringComparison.Ordinal))
+        {
+            return "global";
+        }
+
+        if (envVariables != null
+            && envVariables.TryGetValue(placeholderName, out var envValue)
+            && !string.IsNullOrWhiteSpace(envValue)
+            && !envValue.Contains("{{", StringComparison.Ordinal))
+        {
+            return "env";
+        }
+
+        return "merged";
     }
 
     private static string NormalizeCrossResourceIdentifierBindings(
@@ -2022,6 +2158,14 @@ public class VariableResolver : IVariableResolver
         bool allowGlobalFallback,
         out string resolved)
     {
+        // Flow-safe default: when case has explicit dependency chaining metadata,
+        // never fall back to global variable bag for consumed values.
+        // This prevents cross-flow value leaks (e.g. userEmail resolving to admin email).
+        if (ShouldEnforceDependencyScopedResolution(testCase))
+        {
+            allowGlobalFallback = false;
+        }
+
         if (testCase?.DependencyIds != null
             && testCase.DependencyIds.Count > 0
             && candidates != null
@@ -2068,6 +2212,21 @@ public class VariableResolver : IVariableResolver
         }
 
         return TryResolveVariableValue(candidates, variables, out resolved);
+    }
+
+    private static bool ShouldEnforceDependencyScopedResolution(ExecutionTestCaseDto testCase)
+    {
+        if (!HasDependencies(testCase))
+        {
+            return false;
+        }
+
+        if (HasFlowMetadata(testCase))
+        {
+            return true;
+        }
+
+        return true;
     }
 
     private static bool TryResolveSemanticScopedIdentifierAlias(

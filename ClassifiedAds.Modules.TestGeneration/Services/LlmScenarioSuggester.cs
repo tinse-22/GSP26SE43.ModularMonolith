@@ -102,8 +102,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "18. SRS-CONSTRAINT-DRIVEN: When srsContext.requirements[n].testableConstraints is non-empty, generate at least 1 scenario per meaningful constraint item. Rules:\n" +
         "   - The scenario's endpointId MUST be requirements[n].endpointId (if not null).\n" +
         "   - coveredRequirementCodes MUST include requirements[n].code.\n" +
-        "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedOutcome and wording as closely as possible.\n" +
-        "   - Example: constraint='password >= 6 chars → 400' → Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'].\n" +
+        "   - expectedStatus/bodyContains/jsonPathChecks should mirror the constraint's expectedStatus/expectedOutcome, field, operator, value, sourceText and wording as closely as possible.\n" +
+        "   - Example: constraint='password >= 6 chars', field='password', operator='minLength', value=6, expectedStatus=400 -> Boundary test, body={password:'12345'}, expectedStatus=[400], bodyContains=['password','minimum'].\n" +
         "   - If no testableConstraints, ignore this rule.\n" +
         "19. SRS OVERRIDES SECURITY EXPECTATIONS: If SRS says POST/PUT/PATCH/DELETE or a mapped endpoint requires auth, generate the auth happy path with Authorization even when OpenAPI omits security. Also generate a missing-auth Negative using X-Test-Auth-Mode:none and the SRS-backed 401/403 expectation.\n";
 
@@ -186,7 +186,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         ILlmSuggestionFeedbackContextService feedbackContextService,
         IEndpointRequirementMapper requirementMapper,
         IExpectationResolver expectationResolver,
-        ILogger<LlmScenarioSuggester> logger)
+        ILogger<LlmScenarioSuggester> logger,
+        IOptions<ScenarioGenerationBudgetOptions> scenarioBudgetOptions = null)
     {
         _promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         _n8nService = n8nService ?? throw new ArgumentNullException(nameof(n8nService));
@@ -917,6 +918,25 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             scenarioBudgets?.TryGetValue(orderItem.EndpointId, out scenarioBudget);
 
             context.Suite.EndpointBusinessContexts.TryGetValue(orderItem.EndpointId, out var businessContext);
+            var requirementMatches = metadata != null && context.SrsRequirements?.Count > 0
+                ? _requirementMapper.MapRequirementsToEndpoint(metadata, context.SrsRequirements)
+                : Array.Empty<RequirementMatch>();
+            var endpointRequirements = requirementMatches
+                .Where(x => x.IsCoverable)
+                .Select(x => x.Requirement)
+                .Where(x => x != null)
+                .DistinctBy(x => x.Id)
+                .Take(20)
+                .Select(ToN8nRequirementBrief)
+                .ToList();
+            var requirementMatchBriefs = requirementMatches
+                .Where(x =>
+                    x.IsCoverable ||
+                    (x.Relevance == RequirementRelevance.Dependency &&
+                     x.Confidence != RequirementMatchConfidence.Low))
+                .Take(20)
+                .Select(ToN8nRequirementMatchBrief)
+                .ToList();
 
             ObservationConfirmationPrompt prompt = null;
             if (i < prompts.Count)
@@ -948,6 +968,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 ParameterSchemaPayloads = CompactSchemaPayloads(metadata?.ParameterSchemaPayloads),
                 ResponseSchemaPayloads = CompactSchemaPayloads(metadata?.ResponseSchemaPayloads),
                 ParameterDetails = BuildParameterDetails(context, orderItem.EndpointId),
+                SrsRequirements = endpointRequirements,
+                RequirementMatches = requirementMatchBriefs,
                 ErrorResponses = BuildErrorResponseDescriptors(metadata?.Responses),
             });
         }
@@ -969,32 +991,54 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         if (context.SrsDocument == null)
             return null;
 
-        var content = !string.IsNullOrWhiteSpace(context.SrsDocument.ParsedMarkdown)
-            ? context.SrsDocument.ParsedMarkdown
-            : context.SrsDocument.RawContent;
-
-        // Truncate to avoid token overflow (~12 000 chars ≈ ~3 000 tokens)
-        const int MaxSrsContentLength = 12_000;
-        if (content?.Length > MaxSrsContentLength)
-            content = content.Substring(0, MaxSrsContentLength) + "\n...[truncated]";
-
-        var requirements = context.SrsRequirements
-            .Select(r => new N8nSrsRequirementBrief
-            {
-                Code = r.RequirementCode,
-                Title = r.Title,
-                Description = TruncateForPayload(r.Description, 400),
-                EndpointId = r.EndpointId,
-                TestableConstraints = DeserializeTestableConstraints(
-                    r.RefinedConstraints ?? r.TestableConstraints),
-            })
+        var requirements = (context.SrsRequirements ?? Array.Empty<SrsRequirement>())
+            .Where(IsGlobalRequirement)
+            .OrderBy(r => r.DisplayOrder)
+            .ThenBy(r => r.RequirementCode)
+            .Take(30)
+            .Select(ToN8nRequirementBrief)
             .ToList();
 
         return new N8nSrsContext
         {
             DocumentTitle = context.SrsDocument.Title,
-            Content = content,
+            Content = null,
             Requirements = requirements,
+        };
+    }
+
+    private static bool IsGlobalRequirement(SrsRequirement requirement)
+    {
+        return requirement != null &&
+               !requirement.EndpointId.HasValue &&
+               string.IsNullOrWhiteSpace(requirement.MappedEndpointPath);
+    }
+
+    private static N8nSrsRequirementBrief ToN8nRequirementBrief(SrsRequirement requirement)
+    {
+        return new N8nSrsRequirementBrief
+        {
+            Code = requirement.RequirementCode,
+            Title = requirement.Title,
+            Description = TruncateForPayload(requirement.Description, 400),
+            EndpointId = requirement.EndpointId,
+            TestableConstraints = DeserializeTestableConstraints(
+                requirement.RefinedConstraints ?? requirement.TestableConstraints),
+        };
+    }
+
+    private static N8nRequirementMatchBrief ToN8nRequirementMatchBrief(RequirementMatch match)
+    {
+        return new N8nRequirementMatchBrief
+        {
+            Code = match.RequirementCode,
+            Relevance = match.Relevance.ToString(),
+            Confidence = match.Confidence.ToString(),
+            MatchedSignals = match.MatchedSignals?
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToList() ?? new List<string>(),
         };
     }
 
@@ -2858,19 +2902,50 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
                 var constraint = item.TryGetProperty("constraint", out var c) ? c.GetString() : null;
                 if (string.IsNullOrWhiteSpace(constraint)) continue;
 
+                var field = item.TryGetProperty("field", out var fieldElement) ? ElementToCompactString(fieldElement) : null;
+                var operatorName = item.TryGetProperty("operator", out var operatorElement) ? ElementToCompactString(operatorElement) : null;
+                var value = item.TryGetProperty("value", out var valueElement) ? ElementToCompactString(valueElement) : null;
+                var expectedStatus = item.TryGetProperty("expectedStatus", out var expectedStatusElement)
+                    ? ElementToCompactString(expectedStatusElement)
+                    : null;
+                var expectedOutcome = item.TryGetProperty("expectedOutcome", out var expectedOutcomeElement)
+                    ? ElementToCompactString(expectedOutcomeElement)
+                    : null;
+                var testType = item.TryGetProperty("testType", out var testTypeElement) ? ElementToCompactString(testTypeElement) : null;
                 var priority = item.TryGetProperty("priority", out var p) ? p.GetString() : "Medium";
-                var outcome = ExtractExpectedOutcome(constraint);
+                var sourceText = item.TryGetProperty("sourceText", out var sourceTextElement) ? ElementToCompactString(sourceTextElement) : null;
+                var outcome = expectedOutcome ?? expectedStatus ?? ExtractExpectedOutcome(constraint);
 
                 result.Add(new SrsTestableConstraintBrief
                 {
                     Constraint = TruncateForPayload(constraint, 200),
-                    ExpectedOutcome = outcome,
+                    Field = TruncateForPayload(field, 80),
+                    Operator = TruncateForPayload(operatorName, 80),
+                    Value = TruncateForPayload(value, 120),
+                    ExpectedStatus = TruncateForPayload(expectedStatus, 40),
+                    ExpectedOutcome = TruncateForPayload(outcome, 80),
+                    TestType = TruncateForPayload(testType, 40),
                     Priority = priority,
+                    SourceText = TruncateForPayload(sourceText, 180),
                 });
             }
             return result.Take(5).ToList();
         }
         catch { return new List<SrsTestableConstraintBrief>(); }
+    }
+
+    private static string ElementToCompactString(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => null,
+            JsonValueKind.Undefined => null,
+            _ => element.GetRawText(),
+        };
     }
 
     /// <summary>

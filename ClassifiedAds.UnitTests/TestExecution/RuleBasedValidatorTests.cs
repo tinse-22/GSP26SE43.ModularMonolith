@@ -910,6 +910,296 @@ public class RuleBasedValidatorTests
 
     #endregion
 
+    #region Cross-domain Semantic Regression
+
+    [Fact]
+    public void Validate_JsonPath_ArrayContains_WithFunctionStyleAndVariablePlaceholder_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"trackIds":["abc123","xyz789"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.trackIds":"contains([{{trackid}}])"}""");
+        var variableBag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["trackId"] = "abc123",
+        };
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.Default,
+            variableBag: variableBag);
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_PlaceholderFallbackFromRequestBody_Should_PassWhenVariableBagMissing()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"trackIds":["65a195bf7b4bc60b67af0964"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.trackIds":"contains({{trackId}})"}""");
+        testCase.Request = new ExecutionTestCaseRequestDto
+        {
+            Body = """{"trackID":"65a195bf7b4bc60b67af0964"}""",
+        };
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.Default,
+            variableBag: new Dictionary<string, string>());
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_CanonicalObjectContains_WithPlaceholder_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"trackIds":["65a195bf7b4bc60b67af0964"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.trackIds":{"op":"contains","value":"{{trackId}}"}}""");
+        var variableBag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["trackId"] = "65a195bf7b4bc60b67af0964",
+        };
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.Default,
+            variableBag: variableBag);
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_CanonicalObjectArrayContains_WithPlaceholder_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"trackIds":["abc123","xyz789"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.trackIds":{"op":"array_contains","value":"{{trackId}}"}}""");
+        var variableBag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["trackId"] = "abc123",
+        };
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.Default,
+            variableBag: variableBag);
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_CanonicalAllOfArrayContains_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"trackIds":["abc123","xyz789","k9"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.trackIds":{"op":"all_of","value":[{"op":"array_contains","value":"abc123"},{"op":"array_contains","value":"xyz789"}]}}""");
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.Default,
+            variableBag: new Dictionary<string, string>());
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_IndexedCollectionMissing_InLooseMode_Should_DowngradeToWarning()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"items":[],"pagination":{"total":0}}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.items[0].id":"{{storeId}}"}""");
+        var variableBag = new Dictionary<string, string>
+        {
+            ["storeID"] = "507f1f77bcf86cd799439011",
+        };
+
+        // Act
+        var result = _validator.Validate(
+            response,
+            testCase,
+            endpointMetadata: null,
+            profile: ValidationProfile.DemoAdaptive,
+            variableBag: variableBag);
+
+        // Assert
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.Warnings.Should().Contain(w => w.Code == "JSONPATH_INDEXED_COLLECTION_EMPTY_WARNING");
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_GenericValidationCodeVsSpecificCode_Should_PassSemantically()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 400,
+            body: """{"error":{"code":"EMAIL_EXISTS"}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[400]",
+            jsonPathChecks: """{"$.error.code":"VALIDATION_ERROR"}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("""{"data":{"price":10.0000001}}""", """{"$.data.price":"10"}""")]
+    [InlineData("""{"data":{"price":10}}""", """{"$.data.price":">=9.5"}""")]
+    [InlineData("""{"data":{"price":10}}""", """{"$.data.price":"<=10.5"}""")]
+    public void Validate_JsonPath_NumericSemanticComparators_Should_Pass(
+        string responseBody,
+        string jsonPathChecks)
+    {
+        var response = CreateResponse(statusCode: 200, body: responseBody);
+        var testCase = CreateTestCase(expectedStatus: "[200]", jsonPathChecks: jsonPathChecks);
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_DateTimeEquivalentOffsets_Should_Pass()
+    {
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"createdAt":"2026-05-29T09:00:00+07:00"}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.createdAt":"2026-05-29T02:00:00Z"}""");
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_ObjectSubsetSemanticMatch_Should_Pass()
+    {
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"user":{"id":"u-01","name":"Alice","role":"admin","email":"a@x.com"}}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.user":"{\"id\":\"u-01\",\"role\":\"admin\"}"}""");
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_ArrayOrderDifference_Should_Pass()
+    {
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"tags":["beta","alpha","prod"]}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.tags":"[\"prod\",\"beta\",\"alpha\"]"}""");
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_EmailSemanticUniqueSuffix_Should_Pass()
+    {
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"user":{"email":"testuser_abcd1234@example.com"}}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.user.email":"upper_abcd1234@example.com"}""");
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_JsonPath_JwtLikeValue_Should_TreatAsExistenceAndPass()
+    {
+        var response = CreateResponse(
+            statusCode: 200,
+            body: """{"data":{"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcde12345.zyx987654"}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[200]",
+            jsonPathChecks: """{"$.data.token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.qwerty09876.asdfgh54321"}""");
+
+        var result = _validator.Validate(response, testCase, profile: ValidationProfile.Default);
+
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.IsPassed.Should().BeTrue();
+    }
+
+    #endregion
+
     #region Helpers
 
     private static HttpTestResponse CreateResponse(

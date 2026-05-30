@@ -167,6 +167,7 @@ public class LlmSuggestionRefinementCallbackController : ControllerBase
                 {
                     Model = TryGetString(normalized, "model"),
                     TokensUsed = TryGetInt(normalized, "tokensUsed"),
+                    Warning = TryGetString(normalized, "warning"),
                     Scenarios = testCases?
                         .Select(MapTestCaseToScenario)
                         .Where(x => x.EndpointId != Guid.Empty)

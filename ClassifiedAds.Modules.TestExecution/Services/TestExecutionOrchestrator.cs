@@ -580,9 +580,39 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
         }
 
+        if (resolvedRequest.VariableResolutionTrace != null
+            && resolvedRequest.VariableResolutionTrace.Count > 0)
+        {
+            foreach (var trace in resolvedRequest.VariableResolutionTrace)
+            {
+                extracted[$"__resolved.{trace.Key}"] = trace.Value;
+            }
+        }
+
         ApplyFlowVariableAliasesFromTags(testCase, context.VariableBag);
 
         extractionSw.Stop();
+
+        // Ensure validator sees runtime-resolved request values (not raw template),
+        // so JSONPath expected placeholders like ["{{trackId}}"] can be resolved
+        // using sent request payload values when variableBag is missing that key.
+        if (testCase?.Request != null)
+        {
+            testCase.Request.HttpMethod = resolvedRequest.HttpMethod ?? testCase.Request.HttpMethod;
+            testCase.Request.Url = resolvedRequest.ResolvedUrl ?? testCase.Request.Url;
+            testCase.Request.Body = resolvedRequest.Body ?? testCase.Request.Body;
+            testCase.Request.BodyType = resolvedRequest.BodyType ?? testCase.Request.BodyType;
+
+            if (resolvedRequest.Headers != null)
+            {
+                testCase.Request.Headers = JsonSerializer.Serialize(resolvedRequest.Headers);
+            }
+
+            if (resolvedRequest.QueryParams != null)
+            {
+                testCase.Request.QueryParams = JsonSerializer.Serialize(resolvedRequest.QueryParams);
+            }
+        }
 
         var validationSw = Stopwatch.StartNew();
         var validation = _validator.Validate(response, testCase, endpointMetadata, context.ValidationProfile, context.VariableBag);
@@ -1917,7 +1947,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 continue;
             }
 
-            var sourceKey = GuessSourceVariableKey(alias, variableBag);
+            var sourceKey = GuessSourceVariableKey(alias, variableBag, testCase.TestCaseId);
             if (!string.IsNullOrWhiteSpace(sourceKey)
                 && variableBag.TryGetValue(sourceKey, out var value)
                 && !string.IsNullOrWhiteSpace(value))
@@ -1987,11 +2017,21 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
 
     private static string GuessSourceVariableKey(
         string alias,
-        IDictionary<string, string> variableBag)
+        IDictionary<string, string> variableBag,
+        Guid producerCaseId)
     {
         if (string.IsNullOrWhiteSpace(alias))
         {
             return null;
+        }
+
+        if (producerCaseId != Guid.Empty)
+        {
+            var scopedAlias = $"case.{producerCaseId:N}.{alias}";
+            if (variableBag.ContainsKey(scopedAlias))
+            {
+                return scopedAlias;
+            }
         }
 
         if (variableBag.ContainsKey(alias))
@@ -2007,6 +2047,15 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             {
                 baseName = char.ToLowerInvariant(baseName[prefix.Length]) + baseName[(prefix.Length + 1)..];
                 break;
+            }
+        }
+
+        if (producerCaseId != Guid.Empty)
+        {
+            var scopedBaseName = $"case.{producerCaseId:N}.{baseName}";
+            if (variableBag.ContainsKey(scopedBaseName))
+            {
+                return scopedBaseName;
             }
         }
 
@@ -2059,6 +2108,13 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 "Code" => "code",
                 _ => null,
             };
+
+            if (!string.IsNullOrWhiteSpace(canonical)
+                && producerCaseId != Guid.Empty
+                && variableBag.ContainsKey($"case.{producerCaseId:N}.{canonical}"))
+            {
+                return $"case.{producerCaseId:N}.{canonical}";
+            }
 
             if (!string.IsNullOrWhiteSpace(canonical) && variableBag.ContainsKey(canonical))
             {

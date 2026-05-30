@@ -27,4 +27,11 @@ public class ResolvedTestCaseRequest
 
     /// <summary>The per-execution unique ID injected as {{tcUniqueId}} during resolution.</summary>
     public string TcUniqueId { get; set; }
+
+    /// <summary>
+    /// Variable resolution provenance map.
+    /// Key format: "&lt;surface&gt;.&lt;placeholder&gt;" (e.g. "body.userEmail", "headers.AuthorizationToken").
+    /// Value format: source label (e.g. "dependency-scoped(case.xxx)", "global", "env", "runtime").
+    /// </summary>
+    public Dictionary<string, string> VariableResolutionTrace { get; set; } = new();
 }

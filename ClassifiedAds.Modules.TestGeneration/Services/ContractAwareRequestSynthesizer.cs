@@ -652,6 +652,12 @@ internal static class ContractAwareRequestSynthesizer
         return BuildHeuristicStringValue(fieldName, parameter?.DataType, parameter?.Format, null, null);
     }
 
+    private static bool ShouldReuseDependencyValues(TestType testType)
+    {
+        // Negative scenarios commonly need intentionally invalid/non-reused values.
+        return testType != TestType.Negative;
+    }
+
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
     {
         if (node is JsonObject obj)

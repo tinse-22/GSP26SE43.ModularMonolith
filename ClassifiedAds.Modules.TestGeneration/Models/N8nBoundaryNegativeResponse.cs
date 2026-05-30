@@ -13,6 +13,36 @@ public class N8nBoundaryNegativeResponse
     public string Model { get; set; }
 
     public int? TokensUsed { get; set; }
+
+    public string Warning { get; set; }
+
+    public N8nValidationSummary ValidationSummary { get; set; }
+
+    public N8nQualityGate QualityGate { get; set; }
+}
+
+public class N8nValidationSummary
+{
+    public int TotalScenarios { get; set; }
+
+    public int ValidScenarios { get; set; }
+
+    public int DroppedScenarios { get; set; }
+
+    public int MissingRequiredFields { get; set; }
+
+    public int JsonPathNormalized { get; set; }
+
+    public int StrictRejectedAssertions { get; set; }
+
+    public int SrsCoverageMissing { get; set; }
+
+    public List<string> Warnings { get; set; } = new();
+}
+
+public class N8nQualityGate
+{
+    public bool HardFail { get; set; }
 }
 
 public class N8nSuggestedScenario
