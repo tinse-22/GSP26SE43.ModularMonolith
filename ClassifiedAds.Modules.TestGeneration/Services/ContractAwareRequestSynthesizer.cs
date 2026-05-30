@@ -660,6 +660,11 @@ internal static class ContractAwareRequestSynthesizer
 
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)
     {
+        if (!ShouldReuseDependencyValues(testType))
+        {
+            return;
+        }
+
         if (node is JsonObject obj)
         {
             foreach (var property in obj.ToList())

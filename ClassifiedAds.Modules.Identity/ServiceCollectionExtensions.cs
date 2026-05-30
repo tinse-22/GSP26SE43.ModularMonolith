@@ -217,6 +217,15 @@ public static class ServiceCollectionExtensions
         {
             options.Tokens.EmailConfirmationTokenProvider = "EmailConfirmation";
 
+            // Password requirements for registration.
+            // Only require minimum complexity: length, uppercase, lowercase, digit, special character.
+            options.Password.RequiredLength = 8;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireDigit = true;
+            options.Password.RequireNonAlphanumeric = true;
+            options.Password.RequiredUniqueChars = 1;
+
             // Default Lockout settings.
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
             options.Lockout.MaxFailedAccessAttempts = 5;
