@@ -167,6 +167,20 @@ public class LlmSuggestedScenario
     /// </summary>
     public List<string> LockedFields { get; set; } = new List<string>();
 
+    public string ScenarioKey { get; set; }
+
+    public bool? FlowRequired { get; set; }
+
+    public string FlowId { get; set; }
+
+    public List<string> DependsOn { get; set; } = new List<string>();
+
+    public List<string> Produces { get; set; } = new List<string>();
+
+    public List<string> Consumes { get; set; } = new List<string>();
+
+    public bool? AbortIfDependencyFailed { get; set; }
+
     /// <summary>
     /// Gets the effective list of expected status codes, preferring the full list if available.
     /// </summary>

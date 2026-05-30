@@ -80,6 +80,12 @@ public class TestCaseRunResultModel
 
     public bool? ResponseTimePassed { get; set; }
 
+    public decimal ValidationScore { get; set; }
+
+    public decimal ValidationScoreThreshold { get; set; }
+
+    public bool HardChecksPassed { get; set; } = true;
+
     // ── Expectation snapshots (for FE Evidence panel) ────────────────────
     public string ExpectedBodyContains { get; set; }
 

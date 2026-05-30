@@ -150,7 +150,14 @@ internal static class ContractAwareRequestSynthesizer
                 return body;
             }
 
-            PruneNodeToSchema(node, schemaRoot);
+            // Keep negative payloads intact. Negative scenarios often intentionally include
+            // schema-violating fields (e.g. extra properties) and must execute exactly as generated.
+            // Pruning is only safe for non-negative scenarios.
+            if (testType != TestType.Negative)
+            {
+                PruneNodeToSchema(node, schemaRoot);
+            }
+
             ApplyPlaceholderHints(node, context, testType);
             return node.ToJsonString(JsonOptions);
         }
@@ -647,7 +654,8 @@ internal static class ContractAwareRequestSynthesizer
 
     private static bool ShouldReuseDependencyValues(TestType testType)
     {
-        return testType == TestType.HappyPath;
+        // Negative scenarios commonly need intentionally invalid/non-reused values.
+        return testType != TestType.Negative;
     }
 
     private static void ApplyPlaceholderHints(JsonNode node, ContractAwareRequestContext context, TestType testType)

@@ -41,4 +41,19 @@ public class TestCaseValidationResult
     /// Number of validation checks that were skipped (e.g., empty expectation fields).
     /// </summary>
     public int ChecksSkipped { get; set; }
+
+    /// <summary>
+    /// Weighted semantic validation score in [0..1].
+    /// </summary>
+    public decimal ValidationScore { get; set; }
+
+    /// <summary>
+    /// Threshold used to evaluate semantic score for this run/profile.
+    /// </summary>
+    public decimal ValidationScoreThreshold { get; set; }
+
+    /// <summary>
+    /// Indicates critical checks passed (status/schema when applicable).
+    /// </summary>
+    public bool HardChecksPassed { get; set; } = true;
 }

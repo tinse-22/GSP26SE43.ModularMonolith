@@ -717,6 +717,53 @@ public class VariableResolverTests
     }
 
     [Fact]
+    public void Resolve_Should_NotFallbackToGlobalVariable_WhenCaseHasDependencies()
+    {
+        // Arrange
+        var dependencyId = Guid.NewGuid();
+        var testCase = CreateTestCase(body: "{\"email\":\"{{userEmail}}\"}", httpMethod: "POST", testType: "HappyPath");
+        testCase.DependencyIds = new[] { dependencyId };
+        testCase.Tags = "[\"flow-required:true\",\"flow-consumes:userEmail\"]";
+
+        // Only global value exists; dependency-scoped value is intentionally missing.
+        var variables = new Dictionary<string, string>
+        {
+            ["userEmail"] = "global_user@example.com",
+        };
+        var env = CreateEnvironment();
+
+        // Act
+        var act = () => _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        act.Should().Throw<UnresolvedVariableException>();
+    }
+
+    [Fact]
+    public void Resolve_Should_UseDependencyScopedVariable_WhenCaseHasDependencies()
+    {
+        // Arrange
+        var dependencyId = Guid.NewGuid();
+        var testCase = CreateTestCase(body: "{\"email\":\"{{userEmail}}\"}", httpMethod: "POST", testType: "HappyPath");
+        testCase.DependencyIds = new[] { dependencyId };
+        testCase.Tags = "[\"flow-required:true\",\"flow-consumes:userEmail\"]";
+
+        var variables = new Dictionary<string, string>
+        {
+            ["userEmail"] = "global_user@example.com",
+            [$"case.{dependencyId:N}.userEmail"] = "scoped_user@example.com",
+        };
+        var env = CreateEnvironment();
+
+        // Act
+        var result = _resolver.Resolve(testCase, variables, env);
+
+        // Assert
+        result.Body.Should().Contain("scoped_user@example.com");
+        result.Body.Should().NotContain("global_user@example.com");
+    }
+
+    [Fact]
     public void Resolve_Should_DefaultMissingNonIdentifierBodyPlaceholder()
     {
         // Arrange

@@ -19,6 +19,7 @@ public class PreExecutionValidator : IPreExecutionValidator
     private static readonly Regex PlaceholderRegex = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex DuplicatedIdentifierPlaceholderRegex = new(@"IdId(s)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private const string FlowConsumesTagPrefix = "flow-consumes:";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -56,6 +57,7 @@ public class PreExecutionValidator : IPreExecutionValidator
         ValidateBody(testCase, endpointMetadata, result);
         ValidateRequestBodySchema(testCase, endpointMetadata, variableBag, environment, result);
         ValidateUnresolvedPlaceholders(testCase, variableBag, environment, result);
+        ValidatePlaceholderConsumeContract(testCase, variableBag, environment, result);
         ValidateVariableChaining(testCase, variableBag, result);
 
         return result;
@@ -93,6 +95,17 @@ public class PreExecutionValidator : IPreExecutionValidator
                 continue;
             }
 
+            if (string.Equals(issue.Code, "REQUEST_SCHEMA_TYPE_MISMATCH", StringComparison.OrdinalIgnoreCase) &&
+                IsLlmSuggestedTestCase(testCase))
+            {
+                result.Warnings.Add(new ValidationWarningModel
+                {
+                    Code = "REQUEST_SCHEMA_TYPE_MISMATCH_WARNING",
+                    Message = issue.Message + " Request will continue because this test case is LLM-suggested.",
+                });
+                continue;
+            }
+
             result.Errors.Add(new ValidationFailureModel
             {
                 Code = issue.Code,
@@ -102,6 +115,23 @@ public class PreExecutionValidator : IPreExecutionValidator
                 Actual = issue.Actual,
             });
         }
+    }
+
+    private static bool IsLlmSuggestedTestCase(ExecutionTestCaseDto testCase)
+    {
+        var tags = testCase?.Tags;
+        if (string.IsNullOrWhiteSpace(tags))
+        {
+            return false;
+        }
+
+        if (tags.Contains("llm-suggested", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return tags.Contains("auto-generated", StringComparison.OrdinalIgnoreCase)
+            && !tags.Contains("rule-based", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ValidateEnvironment(
@@ -482,6 +512,129 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
     }
 
+    private static void ValidatePlaceholderConsumeContract(
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> variableBag,
+        ResolvedExecutionEnvironment environment,
+        PreExecutionValidationResult result)
+    {
+        if (testCase?.Request == null)
+        {
+            return;
+        }
+
+        var mergedVars = BuildMergedVariables(variableBag, environment);
+        var declaredConsumes = ParseFlowTagValues(testCase.Tags, FlowConsumesTagPrefix);
+        var surfaces = CollectPlaceholderSurfaces(testCase.Request);
+
+        foreach (var surface in surfaces)
+        {
+            foreach (Match match in PlaceholderRegex.Matches(surface.Value ?? string.Empty))
+            {
+                var variableName = match.Groups[1].Value;
+                if (string.IsNullOrWhiteSpace(variableName))
+                {
+                    continue;
+                }
+
+                if (HasResolvableVariable(mergedVars, variableName) || IsBuiltInRuntimeVariable(variableName))
+                {
+                    continue;
+                }
+
+                if (IsDeclaredInConsumes(variableName, declaredConsumes))
+                {
+                    var requiresDependencyScoped =
+                        testCase?.DependencyIds != null && testCase.DependencyIds.Count > 0;
+
+                    if (requiresDependencyScoped)
+                    {
+                        if (!HasDependencyScopedConsumeValue(testCase, variableBag, variableName))
+                        {
+                            result.Errors.Add(new ValidationFailureModel
+                            {
+                                Code = "FLOW_CONSUME_UNSATISFIED",
+                                Message = $"Variable '{{{{{variableName}}}}}' trong {surface.Surface} đã khai báo flow-consumes nhưng chưa có giá trị từ dependency chain. " +
+                                          "Hãy đảm bảo test producer trong dependsOn đã chạy thành công và produces đúng tên biến này.",
+                                Target = surface.Surface,
+                                Expected = $"case.<dependencyId>.{variableName}",
+                                Actual = $"{{{{{variableName}}}}}",
+                            });
+                        }
+                    }
+                    else if (!HasResolvableVariable(mergedVars, variableName))
+                    {
+                        result.Errors.Add(new ValidationFailureModel
+                        {
+                            Code = "FLOW_CONSUME_UNSATISFIED",
+                            Message = $"Variable '{{{{{variableName}}}}}' trong {surface.Surface} đã khai báo flow-consumes nhưng chưa có giá trị khả dụng.",
+                            Target = surface.Surface,
+                            Expected = variableName,
+                            Actual = $"{{{{{variableName}}}}}",
+                        });
+                    }
+
+                    continue;
+                }
+
+                result.Errors.Add(new ValidationFailureModel
+                {
+                    Code = "UNDECLARED_PLACEHOLDER_CONSUME",
+                    Message = $"Variable '{{{{{variableName}}}}}' trong {surface.Surface} không có trong flow-consumes. " +
+                              "Hãy khai báo flow-consumes tương ứng hoặc thay bằng biến runtime hợp lệ.",
+                    Target = surface.Surface,
+                    Expected = $"flow-consumes:{variableName}",
+                    Actual = $"{{{{{variableName}}}}}",
+                });
+            }
+        }
+    }
+
+    private static bool HasDependencyScopedConsumeValue(
+        ExecutionTestCaseDto testCase,
+        IReadOnlyDictionary<string, string> variableBag,
+        string variableName)
+    {
+        if (testCase?.DependencyIds == null
+            || testCase.DependencyIds.Count == 0
+            || variableBag == null
+            || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            variableName,
+        };
+
+        if (variableName.StartsWith("request.body.", StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add(variableName["request.body.".Length..]);
+        }
+
+        foreach (var dependencyId in testCase.DependencyIds)
+        {
+            foreach (var candidate in candidates)
+            {
+                var scopedKey = $"case.{dependencyId:N}.{candidate}";
+                if (!variableBag.TryGetValue(scopedKey, out var value) || string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (value.Contains("{{", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static Dictionary<string, string> BuildMergedVariables(
         IReadOnlyDictionary<string, string> variableBag,
         ResolvedExecutionEnvironment environment)
@@ -504,6 +657,107 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
 
         return mergedVars;
+    }
+
+    private static List<(string Surface, string Value)> CollectPlaceholderSurfaces(ExecutionTestCaseRequestDto request)
+    {
+        var surfaces = new List<(string Surface, string Value)>
+        {
+            ("URL", request.Url ?? string.Empty),
+            ("Body", request.Body ?? string.Empty),
+        };
+
+        var headers = DeserializeDictionary(request.Headers);
+        foreach (var kvp in headers)
+        {
+            surfaces.Add(($"Header:{kvp.Key}", kvp.Value ?? string.Empty));
+        }
+
+        var queryParams = DeserializeDictionary(request.QueryParams);
+        foreach (var kvp in queryParams)
+        {
+            surfaces.Add(($"QueryParam:{kvp.Key}", kvp.Value ?? string.Empty));
+        }
+
+        var pathParams = DeserializeDictionary(request.PathParams);
+        foreach (var kvp in pathParams)
+        {
+            surfaces.Add(($"PathParam:{kvp.Key}", kvp.Value ?? string.Empty));
+        }
+
+        return surfaces;
+    }
+
+    private static bool IsBuiltInRuntimeVariable(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "tcUniqueId", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runId", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runSuffix", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runTimestamp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDeclaredInConsumes(string variableName, IReadOnlyCollection<string> declaredConsumes)
+    {
+        if (string.IsNullOrWhiteSpace(variableName) || declaredConsumes == null || declaredConsumes.Count == 0)
+        {
+            return false;
+        }
+
+        if (declaredConsumes.Contains(variableName, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (IsAuthTokenAlias(variableName))
+        {
+            foreach (var alias in GetAuthTokenAliases(variableName))
+            {
+                if (declaredConsumes.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyCollection<string> ParseFlowTagValues(string serializedTags, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(serializedTags) || string.IsNullOrWhiteSpace(prefix))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var tags = JsonSerializer.Deserialize<string[]>(serializedTags, JsonOptions) ?? Array.Empty<string>();
+            var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tag in tags)
+            {
+                if (string.IsNullOrWhiteSpace(tag) || !tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var value = tag[prefix.Length..].Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    values.Add(value);
+                }
+            }
+
+            return values;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
     }
 
     private static void CheckPlaceholders(
