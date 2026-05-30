@@ -232,26 +232,20 @@ public class AuthController : ControllerBase
             await dbContext.SaveChangesAsync();
         }
 
-        // ── Step 6: Send confirmation email ──
-        var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
-        var frontendUrl = _moduleOptions.IdentityServer?.FrontendUrl ?? "http://localhost:5174";
-        var confirmationUrl = $"{frontendUrl}/verify-email?token={HttpUtility.UrlEncode(token)}&email={HttpUtility.UrlEncode(user.Email)}";
-
-        var displayName = profile?.DisplayName ?? user.Email.Split('@')[0];
-        await _emailMessageService.CreateEmailMessageAsync(new EmailMessageDTO
+        // ── Step 6: Auto-confirm email (skip sending confirmation) ──
+        // For simpler UX we mark the email as confirmed immediately on registration.
+        if (!user.EmailConfirmed)
         {
-            From = "noreply@classifiedads.com",
-            Tos = user.Email,
-            Subject = "Chào mừng bạn! Vui lòng xác nhận email",
-            Body = _emailTemplates.WelcomeConfirmEmail(displayName, confirmationUrl),
-        });
+            user.EmailConfirmed = true;
+            await userManager.UpdateAsync(user);
+        }
 
         return Created($"/api/auth/me", new RegisterResponseModel
         {
             UserId = user.Id,
             Email = user.Email,
-            Message = "Đăng ký thành công. Vui lòng kiểm tra email để xác nhận tài khoản.",
-            EmailConfirmationRequired = true,
+            Message = "Đăng ký thành công.",
+            EmailConfirmationRequired = false,
         });
     }
 
