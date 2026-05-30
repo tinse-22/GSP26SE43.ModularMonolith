@@ -1,16 +1,22 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.Subscription.DTOs;
+using ClassifiedAds.Contracts.Subscription.Enums;
+using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Commands;
 using ClassifiedAds.Modules.ApiDocumentation.Controllers;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using ClassifiedAds.Modules.ApiDocumentation.Models;
 using ClassifiedAds.Modules.ApiDocumentation.Queries;
+using ClassifiedAds.UnitTests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -474,6 +480,36 @@ public class ProjectsControllerTests
     }
 
     [Fact]
+    public async Task Archive_Should_ThrowNotFoundException_WhenProjectDoesNotExist()
+    {
+        var projectId = Guid.NewGuid();
+
+        _archiveHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<ArchiveProjectCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("Project not found"));
+
+        var act = () => _controller.Archive(projectId);
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*Project not found*");
+    }
+
+    [Fact]
+    public async Task Archive_Should_ThrowValidationException_WhenCurrentUserDoesNotOwnProject()
+    {
+        var projectId = Guid.NewGuid();
+
+        _archiveHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<ArchiveProjectCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Ban khong co quyen thao tac project nay."));
+
+        var act = () => _controller.Archive(projectId);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*khong co quyen thao tac project nay*");
+    }
+
+    [Fact]
     public async Task Unarchive_Should_DispatchArchiveCommandWithArchiveFalse()
     {
         var projectId = Guid.NewGuid();
@@ -503,6 +539,36 @@ public class ProjectsControllerTests
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
         var payload = okResult.Value.Should().BeOfType<ProjectDetailModel>().Subject;
         payload.Status.Should().Be(ProjectStatus.Active.ToString());
+    }
+
+    [Fact]
+    public async Task Unarchive_Should_ThrowNotFoundException_WhenProjectDoesNotExist()
+    {
+        var projectId = Guid.NewGuid();
+
+        _archiveHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<ArchiveProjectCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("Project not found"));
+
+        var act = () => _controller.Unarchive(projectId);
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*Project not found*");
+    }
+
+    [Fact]
+    public async Task Unarchive_Should_ThrowValidationException_WhenCurrentUserDoesNotOwnProject()
+    {
+        var projectId = Guid.NewGuid();
+
+        _archiveHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<ArchiveProjectCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Ban khong co quyen thao tac project nay."));
+
+        var act = () => _controller.Unarchive(projectId);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*khong co quyen thao tac project nay*");
     }
 
     [Fact]
@@ -567,5 +633,454 @@ public class ProjectsControllerTests
 
         capturedCommand.Should().NotBeNull();
         capturedCommand.ProjectId.Should().Be(projectId);
+    }
+}
+
+public class ProjectsCommandValidationTests
+{
+    private readonly Mock<ICrudService<Project>> _projectServiceMock;
+    private readonly Mock<IRepository<Project, Guid>> _projectRepositoryMock;
+    private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionLimitMock;
+    private readonly AddUpdateProjectCommandHandler _handler;
+    private readonly Guid _currentUserId = Guid.NewGuid();
+
+    public ProjectsCommandValidationTests()
+    {
+        _projectServiceMock = new Mock<ICrudService<Project>>();
+        _projectRepositoryMock = new Mock<IRepository<Project, Guid>>();
+        _subscriptionLimitMock = new Mock<ISubscriptionLimitGatewayService>();
+
+        SetupProjects(Array.Empty<Project>());
+        _subscriptionLimitMock
+            .Setup(x => x.TryConsumeLimitAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<LimitType>(),
+                It.IsAny<decimal>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LimitCheckResultDTO { IsAllowed = true });
+
+        _handler = new AddUpdateProjectCommandHandler(
+            _projectServiceMock.Object,
+            _projectRepositoryMock.Object,
+            _subscriptionLimitMock.Object);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenModelIsNull()
+    {
+        var command = new AddUpdateProjectCommand
+        {
+            CurrentUserId = _currentUserId,
+            Model = null!,
+        };
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenNameIsNull()
+    {
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = null!,
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenNameIsWhitespaceOnly()
+    {
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = "   ",
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenNameLengthExceeds200()
+    {
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = new string('a', 201),
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenDescriptionLengthExceeds2000()
+    {
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = "Project",
+            Description = new string('d', 2001),
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenBaseUrlIsNotAbsolute()
+    {
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = "Project",
+            Description = "Description",
+            BaseUrl = "not-a-url",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenDuplicateProjectNameExistsForSameOwner()
+    {
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = Guid.NewGuid(),
+                OwnerId = _currentUserId,
+                Name = "Existing Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = " Existing Project ",
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenProjectLimitIsDenied()
+    {
+        _subscriptionLimitMock
+            .Setup(x => x.TryConsumeLimitAsync(
+                _currentUserId,
+                LimitType.MaxProjects,
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LimitCheckResultDTO
+            {
+                IsAllowed = false,
+                DenialReason = "Project limit exceeded",
+            });
+
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = "Project",
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Project limit exceeded*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowNotFoundException_WhenUpdatingMissingProject()
+    {
+        SetupProjects(Array.Empty<Project>());
+
+        var command = CreateUpdateCommand(Guid.NewGuid(), new CreateUpdateProjectModel
+        {
+            Name = "Updated Project",
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingWithNullName()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = _currentUserId,
+                Name = "Existing Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = null!,
+            Description = "Updated description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingWithWhitespaceName()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = _currentUserId,
+                Name = "Existing Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = "   ",
+            Description = "Updated description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingWithNameLengthExceeds200()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = _currentUserId,
+                Name = "Existing Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = new string('a', 201),
+            Description = "Updated description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingWithDescriptionLengthExceeds2000()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = _currentUserId,
+                Name = "Existing Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = "Updated Project",
+            Description = new string('d', 2001),
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingWithDuplicateNameOfAnotherProject()
+    {
+        var projectId = Guid.NewGuid();
+        var otherProjectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = _currentUserId,
+                Name = "Current Project",
+                Status = ProjectStatus.Active,
+            },
+            new Project
+            {
+                Id = otherProjectId,
+                OwnerId = _currentUserId,
+                Name = "Duplicate Name",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = " Duplicate Name ",
+            Description = "Updated description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_TrimFields_WhenUpdatingProject()
+    {
+        var projectId = Guid.NewGuid();
+        var existingProject = new Project
+        {
+            Id = projectId,
+            OwnerId = _currentUserId,
+            Name = "Existing Project",
+            Description = "Old description",
+            BaseUrl = "https://old.example.com",
+            Status = ProjectStatus.Active,
+        };
+        SetupProjects(new[] { existingProject });
+
+        _projectServiceMock
+            .Setup(x => x.UpdateAsync(existingProject, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = "  Updated Project  ",
+            Description = "  Updated description  ",
+            BaseUrl = "  https://updated.example.com  ",
+        });
+
+        await _handler.HandleAsync(command);
+
+        existingProject.Name.Should().Be("Updated Project");
+        existingProject.Description.Should().Be("Updated description");
+        existingProject.BaseUrl.Should().Be("https://updated.example.com");
+        command.SavedProjectId.Should().Be(projectId);
+        _projectServiceMock.Verify(x => x.UpdateAsync(existingProject, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_ThrowValidationException_WhenUpdatingProjectOwnedByAnotherUser()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project
+            {
+                Id = projectId,
+                OwnerId = Guid.NewGuid(),
+                Name = "Another Owner Project",
+                Status = ProjectStatus.Active,
+            },
+        });
+
+        var command = CreateUpdateCommand(projectId, new CreateUpdateProjectModel
+        {
+            Name = "Updated Project",
+            Description = "Description",
+            BaseUrl = "https://example.com",
+        });
+
+        var act = () => _handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_TrimFields_WhenCreatingProject()
+    {
+        Project savedProject = null!;
+        _projectServiceMock
+            .Setup(x => x.AddAsync(It.IsAny<Project>(), It.IsAny<CancellationToken>()))
+            .Callback<Project, CancellationToken>((project, _) => savedProject = project)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateCreateCommand(new CreateUpdateProjectModel
+        {
+            Name = "  New Project  ",
+            Description = "  Description  ",
+            BaseUrl = "https://example.com",
+        });
+
+        await _handler.HandleAsync(command);
+
+        savedProject.Should().NotBeNull();
+        savedProject.Name.Should().Be("New Project");
+        savedProject.Description.Should().Be("Description");
+        savedProject.BaseUrl.Should().Be("https://example.com");
+        savedProject.OwnerId.Should().Be(_currentUserId);
+        savedProject.Status.Should().Be(ProjectStatus.Active);
+    }
+
+    private AddUpdateProjectCommand CreateCreateCommand(CreateUpdateProjectModel model)
+    {
+        return new AddUpdateProjectCommand
+        {
+            CurrentUserId = _currentUserId,
+            Model = model,
+        };
+    }
+
+    private AddUpdateProjectCommand CreateUpdateCommand(Guid projectId, CreateUpdateProjectModel model)
+    {
+        return new AddUpdateProjectCommand
+        {
+            CurrentUserId = _currentUserId,
+            ProjectId = projectId,
+            Model = model,
+        };
+    }
+
+    private void SetupProjects(IEnumerable<Project> projects)
+    {
+        var queryable = new TestAsyncEnumerable<Project>(projects);
+        _projectRepositoryMock.Setup(x => x.GetQueryableSet()).Returns(queryable);
+        _projectRepositoryMock
+            .Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<Project>>()))
+            .ReturnsAsync((IQueryable<Project> query) => query.FirstOrDefault());
     }
 }

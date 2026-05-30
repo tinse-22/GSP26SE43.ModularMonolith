@@ -1,17 +1,27 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.Storage.DTOs;
+using ClassifiedAds.Contracts.Storage.Services;
+using ClassifiedAds.Contracts.Subscription.DTOs;
+using ClassifiedAds.Contracts.Subscription.Enums;
+using ClassifiedAds.Contracts.Subscription.Services;
 using ClassifiedAds.Contracts.Identity.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
+using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.ApiDocumentation.Commands;
 using ClassifiedAds.Modules.ApiDocumentation.Controllers;
 using ClassifiedAds.Modules.ApiDocumentation.Entities;
 using ClassifiedAds.Modules.ApiDocumentation.Models;
 using ClassifiedAds.Modules.ApiDocumentation.Queries;
+using ClassifiedAds.Modules.ApiDocumentation.Services;
+using ClassifiedAds.UnitTests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,8 +32,6 @@ public class SpecificationsControllerTests
     private readonly Mock<ICurrentUser> _currentUserMock;
     private readonly Mock<ILogger<SpecificationsController>> _loggerMock;
     private readonly Mock<ICommandHandler<UploadApiSpecificationCommand>> _uploadHandlerMock;
-    private readonly Mock<ICommandHandler<CreateManualSpecificationCommand>> _createManualHandlerMock;
-    private readonly Mock<ICommandHandler<ImportCurlCommand>> _importCurlHandlerMock;
     private readonly Mock<ICommandHandler<ActivateSpecificationCommand>> _activateHandlerMock;
     private readonly Mock<ICommandHandler<DeleteSpecificationCommand>> _deleteHandlerMock;
     private readonly Mock<ICommandHandler<RestoreSpecificationCommand>> _restoreHandlerMock;
@@ -37,8 +45,6 @@ public class SpecificationsControllerTests
         _currentUserMock = new Mock<ICurrentUser>();
         _loggerMock = new Mock<ILogger<SpecificationsController>>();
         _uploadHandlerMock = new Mock<ICommandHandler<UploadApiSpecificationCommand>>();
-        _createManualHandlerMock = new Mock<ICommandHandler<CreateManualSpecificationCommand>>();
-        _importCurlHandlerMock = new Mock<ICommandHandler<ImportCurlCommand>>();
         _activateHandlerMock = new Mock<ICommandHandler<ActivateSpecificationCommand>>();
         _deleteHandlerMock = new Mock<ICommandHandler<DeleteSpecificationCommand>>();
         _restoreHandlerMock = new Mock<ICommandHandler<RestoreSpecificationCommand>>();
@@ -50,8 +56,6 @@ public class SpecificationsControllerTests
 
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<UploadApiSpecificationCommand>))).Returns(_uploadHandlerMock.Object);
-        serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<CreateManualSpecificationCommand>))).Returns(_createManualHandlerMock.Object);
-        serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<ImportCurlCommand>))).Returns(_importCurlHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<ActivateSpecificationCommand>))).Returns(_activateHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<DeleteSpecificationCommand>))).Returns(_deleteHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<RestoreSpecificationCommand>))).Returns(_restoreHandlerMock.Object);
@@ -226,52 +230,6 @@ public class SpecificationsControllerTests
     }
 
     [Fact]
-    public void GetUploadMethods_Should_ReturnOkWithStorageGatewayContract()
-    {
-        var projectId = Guid.NewGuid();
-
-        var result = _controller.GetUploadMethods(projectId);
-
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = okResult.Value.Should().BeAssignableTo<List<UploadMethodOptionModel>>().Subject;
-        payload.Should().ContainSingle();
-        payload[0].Method.Should().Be(SpecificationUploadMethod.StorageGatewayContract.ToString());
-    }
-
-    [Fact]
-    public void GetUploadMethods_Should_UseProjectSpecificUploadRoute()
-    {
-        var projectId = Guid.NewGuid();
-
-        var result = _controller.GetUploadMethods(projectId);
-
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = okResult.Value.Should().BeAssignableTo<List<UploadMethodOptionModel>>().Subject;
-        payload[0].UploadApi.Should().Be($"/api/projects/{projectId}/specifications/upload");
-    }
-
-    [Fact]
-    public void GetUploadMethods_Should_ReturnSingleUploadMethodOption()
-    {
-        var result = _controller.GetUploadMethods(Guid.NewGuid());
-
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = okResult.Value.Should().BeAssignableTo<List<UploadMethodOptionModel>>().Subject;
-        payload.Should().HaveCount(1);
-    }
-
-    [Fact]
-    public void GetUploadMethods_Should_ReturnNonEmptyMethodNameAndRoute()
-    {
-        var result = _controller.GetUploadMethods(Guid.NewGuid());
-
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = okResult.Value.Should().BeAssignableTo<List<UploadMethodOptionModel>>().Subject;
-        payload[0].Method.Should().NotBeNullOrWhiteSpace();
-        payload[0].UploadApi.Should().NotBeNullOrWhiteSpace();
-    }
-
-    [Fact]
     public async Task Upload_Should_ReturnCreatedWithUploadedSpecification()
     {
         var projectId = Guid.NewGuid();
@@ -379,186 +337,6 @@ public class SpecificationsControllerTests
 
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*Invalid upload*");
-    }
-
-    [Fact]
-    public async Task CreateManual_Should_ReturnCreatedWithSpecification()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        var model = CreateManualModel();
-
-        _createManualHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<CreateManualSpecificationCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<CreateManualSpecificationCommand, CancellationToken>((command, _) => command.SavedSpecId = specId)
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = model.Name });
-
-        var result = await _controller.CreateManual(projectId, model);
-
-        var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
-        createdResult.Location.Should().Be($"/api/projects/{projectId}/specifications/{specId}");
-    }
-
-    [Fact]
-    public async Task CreateManual_Should_MapBodyModelIntoCommand()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        var model = CreateManualModel();
-        CreateManualSpecificationCommand capturedCommand = null!;
-
-        _createManualHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<CreateManualSpecificationCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<CreateManualSpecificationCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.SavedSpecId = specId;
-            })
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = model.Name });
-
-        await _controller.CreateManual(projectId, model);
-
-        capturedCommand.Should().NotBeNull();
-        capturedCommand.ProjectId.Should().Be(projectId);
-        capturedCommand.CurrentUserId.Should().Be(_currentUserId);
-        capturedCommand.Model.Should().BeSameAs(model);
-    }
-
-    [Fact]
-    public async Task CreateManual_Should_RequestSavedSpecificationBySavedSpecId()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        GetSpecificationQuery capturedQuery = null!;
-
-        _createManualHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<CreateManualSpecificationCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<CreateManualSpecificationCommand, CancellationToken>((command, _) => command.SavedSpecId = specId)
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .Callback<GetSpecificationQuery, CancellationToken>((query, _) => capturedQuery = query)
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = "Manual" });
-
-        await _controller.CreateManual(projectId, CreateManualModel());
-
-        capturedQuery.Should().NotBeNull();
-        capturedQuery.SpecId.Should().Be(specId);
-        capturedQuery.ProjectId.Should().Be(projectId);
-    }
-
-    [Fact]
-    public async Task CreateManual_Should_ThrowValidationException_WhenCommandFails()
-    {
-        var projectId = Guid.NewGuid();
-
-        _createManualHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<CreateManualSpecificationCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ValidationException("Manual specification invalid"));
-
-        var act = () => _controller.CreateManual(projectId, CreateManualModel());
-
-        await act.Should().ThrowAsync<ValidationException>()
-            .WithMessage("*Manual specification invalid*");
-    }
-
-    [Fact]
-    public async Task ImportCurl_Should_ReturnCreatedWithImportedSpecification()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        var model = new ImportCurlModel { Name = "cURL Import", Version = "1.0.0", CurlCommand = "curl https://example.com", AutoActivate = true };
-
-        _importCurlHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<ImportCurlCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<ImportCurlCommand, CancellationToken>((command, _) => command.SavedSpecId = specId)
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = model.Name });
-
-        var result = await _controller.ImportCurl(projectId, model);
-
-        var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
-        createdResult.Location.Should().Be($"/api/projects/{projectId}/specifications/{specId}");
-    }
-
-    [Fact]
-    public async Task ImportCurl_Should_MapBodyModelIntoCommand()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        var model = new ImportCurlModel { Name = "Capture", Version = "2.0", CurlCommand = "curl -X POST https://example.com", AutoActivate = false };
-        ImportCurlCommand capturedCommand = null!;
-
-        _importCurlHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<ImportCurlCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<ImportCurlCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.SavedSpecId = specId;
-            })
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = model.Name });
-
-        await _controller.ImportCurl(projectId, model);
-
-        capturedCommand.Should().NotBeNull();
-        capturedCommand.ProjectId.Should().Be(projectId);
-        capturedCommand.CurrentUserId.Should().Be(_currentUserId);
-        capturedCommand.Model.Should().BeSameAs(model);
-    }
-
-    [Fact]
-    public async Task ImportCurl_Should_RequestSavedSpecificationBySavedSpecId()
-    {
-        var projectId = Guid.NewGuid();
-        var specId = Guid.NewGuid();
-        GetSpecificationQuery capturedQuery = null!;
-
-        _importCurlHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<ImportCurlCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<ImportCurlCommand, CancellationToken>((command, _) => command.SavedSpecId = specId)
-            .Returns(Task.CompletedTask);
-
-        _getSpecificationHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetSpecificationQuery>(), It.IsAny<CancellationToken>()))
-            .Callback<GetSpecificationQuery, CancellationToken>((query, _) => capturedQuery = query)
-            .ReturnsAsync(new SpecificationDetailModel { Id = specId, ProjectId = projectId, Name = "Imported" });
-
-        await _controller.ImportCurl(projectId, new ImportCurlModel { Name = "Imported", CurlCommand = "curl https://example.com" });
-
-        capturedQuery.Should().NotBeNull();
-        capturedQuery.SpecId.Should().Be(specId);
-        capturedQuery.ProjectId.Should().Be(projectId);
-    }
-
-    [Fact]
-    public async Task ImportCurl_Should_ThrowValidationException_WhenCommandFails()
-    {
-        var projectId = Guid.NewGuid();
-
-        _importCurlHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<ImportCurlCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ValidationException("Invalid curl command"));
-
-        var act = () => _controller.ImportCurl(projectId, new ImportCurlModel { Name = "Invalid", CurlCommand = "not-a-curl" });
-
-        await act.Should().ThrowAsync<ValidationException>()
-            .WithMessage("*Invalid curl command*");
     }
 
     [Fact]
@@ -878,23 +656,292 @@ public class SpecificationsControllerTests
         var stream = new MemoryStream(bytes);
         return new FormFile(stream, 0, bytes.Length, "File", fileName);
     }
+}
 
-    private static CreateManualSpecificationModel CreateManualModel()
+public class SpecificationsCommandValidationTests
+{
+    private readonly Guid _currentUserId = Guid.NewGuid();
+    private readonly Mock<IRepository<Project, Guid>> _projectRepositoryMock = new();
+    private readonly Mock<IRepository<ApiSpecification, Guid>> _specRepositoryMock = new();
+    private readonly Mock<IRepository<ApiEndpoint, Guid>> _endpointRepositoryMock = new();
+    private readonly Mock<IRepository<EndpointParameter, Guid>> _parameterRepositoryMock = new();
+    private readonly Mock<IRepository<EndpointResponse, Guid>> _responseRepositoryMock = new();
+    private readonly Mock<ICrudService<ApiSpecification>> _specServiceMock = new();
+    private readonly Mock<IStorageFileGatewayService> _storageGatewayMock = new();
+    private readonly Mock<ISubscriptionLimitGatewayService> _subscriptionLimitMock = new();
+    private readonly Mock<ILogger<UploadApiSpecificationCommandHandler>> _uploadLoggerMock = new();
+    private readonly Mock<IUnitOfWork> _unitOfWorkMock = new();
+
+    public SpecificationsCommandValidationTests()
     {
-        return new CreateManualSpecificationModel
+        _projectRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _specRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _endpointRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _parameterRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+        _responseRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
+
+        _unitOfWorkMock
+            .Setup(x => x.ExecuteInTransactionAsync(
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<IsolationLevel>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<Func<CancellationToken, Task>, IsolationLevel, CancellationToken>((operation, _, token) => operation(token));
+
+        _subscriptionLimitMock
+            .Setup(x => x.TryConsumeLimitAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<LimitType>(),
+                It.IsAny<decimal>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LimitCheckResultDTO { IsAllowed = true });
+
+        SetupProjects(Array.Empty<Project>());
+        SetupSpecifications(Array.Empty<ApiSpecification>());
+    }
+
+    [Fact]
+    public async Task UploadValidation_Should_ThrowValidationException_WhenFileIsNull()
+    {
+        var handler = CreateUploadHandler();
+        var command = new UploadApiSpecificationCommand
         {
-            Name = "Manual Spec",
-            Version = "1.0.0",
-            AutoActivate = true,
-            Endpoints = new List<ManualEndpointDefinition>
-            {
-                new()
-                {
-                    HttpMethod = "GET",
-                    Path = "/api/specs",
-                    Summary = "Get specs",
-                },
-            },
+            ProjectId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Name = "Spec",
+            SourceType = SourceType.OpenAPI,
+            File = null!,
         };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task UploadValidation_Should_ThrowValidationException_WhenFileIsEmpty()
+    {
+        var handler = CreateUploadHandler();
+        var command = new UploadApiSpecificationCommand
+        {
+            ProjectId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Name = "Spec",
+            SourceType = SourceType.OpenAPI,
+            File = CreateFormFile("spec.json", ""),
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task UploadValidation_Should_ThrowValidationException_WhenNameIsWhitespaceOnly()
+    {
+        var handler = CreateUploadHandler();
+        var command = new UploadApiSpecificationCommand
+        {
+            ProjectId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Name = "   ",
+            SourceType = SourceType.OpenAPI,
+            File = CreateFormFile("spec.json"),
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task UploadValidation_Should_ThrowValidationException_WhenNameLengthExceeds200()
+    {
+        var handler = CreateUploadHandler();
+        var command = new UploadApiSpecificationCommand
+        {
+            ProjectId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Name = new string('a', 201),
+            SourceType = SourceType.OpenAPI,
+            File = CreateFormFile("spec.json"),
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task UploadValidation_Should_ThrowValidationException_WhenSourceTypeIsInvalid()
+    {
+        var handler = CreateUploadHandler();
+        var command = new UploadApiSpecificationCommand
+        {
+            ProjectId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Name = "Spec",
+            SourceType = SourceType.Manual,
+            File = CreateFormFile("spec.json"),
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task ActivateValidation_Should_ThrowValidationException_WhenCurrentUserDoesNotOwnProject()
+    {
+        SetupProjects(new[]
+        {
+            new Project { Id = Guid.NewGuid(), OwnerId = Guid.NewGuid(), Name = "Project", Status = ProjectStatus.Active },
+        });
+
+        var handler = CreateActivateHandler();
+        var command = new ActivateSpecificationCommand
+        {
+            ProjectId = _projectRepositoryMock.Object.GetQueryableSet().First().Id,
+            SpecId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+            Activate = true,
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task DeactivateValidation_Should_ThrowValidationException_WhenSpecificationIsNotActive()
+    {
+        var projectId = Guid.NewGuid();
+        var specId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project { Id = projectId, OwnerId = _currentUserId, Name = "Project", Status = ProjectStatus.Active, ActiveSpecId = Guid.NewGuid() },
+        });
+        SetupSpecifications(new[]
+        {
+            new ApiSpecification { Id = specId, ProjectId = projectId, Name = "Spec", IsActive = false },
+        });
+
+        var handler = CreateActivateHandler();
+        var command = new ActivateSpecificationCommand
+        {
+            ProjectId = projectId,
+            SpecId = specId,
+            CurrentUserId = _currentUserId,
+            Activate = false,
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task DeleteValidation_Should_ThrowValidationException_WhenCurrentUserDoesNotOwnProject()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project { Id = projectId, OwnerId = Guid.NewGuid(), Name = "Project", Status = ProjectStatus.Active },
+        });
+
+        var handler = CreateDeleteHandler();
+        var command = new DeleteSpecificationCommand
+        {
+            ProjectId = projectId,
+            SpecId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task RestoreValidation_Should_ThrowValidationException_WhenCurrentUserDoesNotOwnProject()
+    {
+        var projectId = Guid.NewGuid();
+        SetupProjects(new[]
+        {
+            new Project { Id = projectId, OwnerId = Guid.NewGuid(), Name = "Project", Status = ProjectStatus.Active },
+        });
+
+        var handler = CreateRestoreHandler();
+        var command = new RestoreSpecificationCommand
+        {
+            ProjectId = projectId,
+            SpecId = Guid.NewGuid(),
+            CurrentUserId = _currentUserId,
+        };
+
+        var act = () => handler.HandleAsync(command);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    private UploadApiSpecificationCommandHandler CreateUploadHandler()
+    {
+        return new UploadApiSpecificationCommandHandler(
+            _projectRepositoryMock.Object,
+            _specRepositoryMock.Object,
+            _endpointRepositoryMock.Object,
+            _parameterRepositoryMock.Object,
+            _responseRepositoryMock.Object,
+            _specServiceMock.Object,
+            _storageGatewayMock.Object,
+            _subscriptionLimitMock.Object,
+            _uploadLoggerMock.Object);
+    }
+
+    private ActivateSpecificationCommandHandler CreateActivateHandler()
+    {
+        return new ActivateSpecificationCommandHandler(
+            new Dispatcher(new Mock<IServiceProvider>().Object),
+            _projectRepositoryMock.Object,
+            _specRepositoryMock.Object);
+    }
+
+    private DeleteSpecificationCommandHandler CreateDeleteHandler()
+    {
+        return new DeleteSpecificationCommandHandler(
+            new Dispatcher(new Mock<IServiceProvider>().Object),
+            _projectRepositoryMock.Object,
+            _specRepositoryMock.Object);
+    }
+
+    private RestoreSpecificationCommandHandler CreateRestoreHandler()
+    {
+        return new RestoreSpecificationCommandHandler(
+            _projectRepositoryMock.Object,
+            _specRepositoryMock.Object);
+    }
+
+    private void SetupProjects(IEnumerable<Project> projects)
+    {
+        var queryable = new TestAsyncEnumerable<Project>(projects);
+        _projectRepositoryMock.Setup(x => x.GetQueryableSet()).Returns(queryable);
+        _projectRepositoryMock
+            .Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<Project>>()))
+            .ReturnsAsync((IQueryable<Project> query) => query.FirstOrDefault());
+    }
+
+    private void SetupSpecifications(IEnumerable<ApiSpecification> specs)
+    {
+        var queryable = new TestAsyncEnumerable<ApiSpecification>(specs);
+        _specRepositoryMock.Setup(x => x.GetQueryableSet()).Returns(queryable);
+        _specRepositoryMock
+            .Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<ApiSpecification>>()))
+            .ReturnsAsync((IQueryable<ApiSpecification> query) => query.FirstOrDefault());
+    }
+
+    private static IFormFile CreateFormFile(string fileName, string content = "{\"openapi\":\"3.0.0\"}")
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        var stream = new MemoryStream(bytes);
+        return new FormFile(stream, 0, bytes.Length, "File", fileName);
     }
 }

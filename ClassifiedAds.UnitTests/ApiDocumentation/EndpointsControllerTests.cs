@@ -557,7 +557,7 @@ public class EndpointsControllerTests
                 {
                     Name = "tenantId",
                     Location = "header",
-                    DataType = "string",
+                    DataType = EndpointParameterDataType.String,
                     IsRequired = true,
                 },
             },
