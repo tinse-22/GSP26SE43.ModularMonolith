@@ -178,6 +178,38 @@ public class TestRunsControllerTests
     }
 
     [Fact]
+    public async Task StartTestRun_Should_PropagateNotFoundException_WhenEnvironmentMissing()
+    {
+        _startHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<StartTestRunCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("Execution environment not found"));
+
+        var act = () => _controller.StartTestRun(Guid.NewGuid(), new StartTestRunRequest
+        {
+            EnvironmentId = Guid.NewGuid(),
+        });
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*Execution environment not found*");
+    }
+
+    [Fact]
+    public async Task StartTestRun_Should_PropagateValidationException_WhenSelectedCasesInvalid()
+    {
+        _startHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<StartTestRunCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Selected test cases do not belong to this suite"));
+
+        var act = () => _controller.StartTestRun(Guid.NewGuid(), new StartTestRunRequest
+        {
+            SelectedTestCaseIds = new List<Guid> { Guid.NewGuid() },
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Selected test cases do not belong to this suite*");
+    }
+
+    [Fact]
     public async Task GetTestRuns_Should_ReturnOkWithPagedRuns()
     {
         var suiteId = Guid.NewGuid();
@@ -318,12 +350,11 @@ public class TestRunsControllerTests
     }
 
     [Fact]
-    public async Task GetTestRunResults_Should_ReturnOkWithDetailedResult()
+    public async Task GetTestRunResults_Should_ReturnOkWithResultPayload()
     {
         var suiteId = Guid.NewGuid();
         var runId = Guid.NewGuid();
         var expected = CreateResultModel(suiteId, runId, caseCount: 3);
-        expected.AttemptChildrenMap[Guid.NewGuid()] = new List<Guid> { Guid.NewGuid() };
 
         _getResultsHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetTestRunResultsQuery>(), It.IsAny<CancellationToken>()))
@@ -334,7 +365,8 @@ public class TestRunsControllerTests
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
         var payload = okResult.Value.Should().BeOfType<TestRunResultModel>().Subject;
         payload.Cases.Should().HaveCount(3);
-        payload.AttemptChildrenMap.Should().HaveCount(1);
+        payload.Run.Should().NotBeNull();
+        payload.ResultsSource.Should().Be("cache");
     }
 
     [Fact]
@@ -368,6 +400,19 @@ public class TestRunsControllerTests
 
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("*Run results are no longer available*");
+    }
+
+    [Fact]
+    public async Task GetTestRunResults_Should_PropagateNotFoundException()
+    {
+        _getResultsHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetTestRunResultsQuery>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("Run results not found"));
+
+        var act = () => _controller.GetTestRunResults(Guid.NewGuid(), Guid.NewGuid());
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*Run results not found*");
     }
 
     private static TestRunModel CreateRunModel(Guid suiteId, Guid runId, int runNumber, string status)

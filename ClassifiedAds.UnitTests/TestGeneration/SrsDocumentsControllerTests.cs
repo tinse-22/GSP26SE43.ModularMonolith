@@ -304,7 +304,7 @@ public class SrsDocumentsControllerTests
             Id = Guid.NewGuid(),
             SrsDocumentId = Guid.NewGuid(),
             Status = SrsAnalysisJobStatus.Completed,
-            JobType = SrsAnalysisJobType.Analysis,
+            JobType = SrsAnalysisJobType.InitialAnalysis,
             RequirementsExtracted = 7,
         };
 
@@ -767,7 +767,8 @@ public class SrsDocumentsControllerTests
 
         var result = await _controller.RefineRequirement(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
 
-        var acceptedResult = result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var acceptedResult = result.Should().BeOfType<ObjectResult>().Subject;
+        acceptedResult.StatusCode.Should().Be(StatusCodes.Status202Accepted);
         acceptedResult.Value.Should().NotBeNull();
         acceptedResult.Value.Should().BeEquivalentTo(new { JobId = jobId, Message = "Refinement job queued. Poll /analysis-jobs/{jobId} for status." });
     }
