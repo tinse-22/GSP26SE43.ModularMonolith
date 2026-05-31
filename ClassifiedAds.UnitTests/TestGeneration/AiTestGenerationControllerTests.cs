@@ -138,7 +138,8 @@ public class AiTestGenerationControllerTests
             ForceRegenerate = true,
         });
 
-        var accepted = result.Result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var accepted = result.Result.Should().BeOfType<ObjectResult>().Subject;
+        accepted.StatusCode.Should().Be(StatusCodes.Status202Accepted);
         var payload = accepted.Value.Should().BeOfType<GenerateTestsAcceptedResponse>().Subject;
         payload.JobId.Should().Be(jobId);
         payload.TestSuiteId.Should().Be(suiteId);
@@ -292,7 +293,8 @@ public class AiTestGenerationControllerTests
             IncludeLlmSuggestions = true,
         });
 
-        var accepted = result.Result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var accepted = result.Result.Should().BeOfType<ObjectResult>().Subject;
+        accepted.StatusCode.Should().Be(StatusCodes.Status202Accepted);
         var payload = accepted.Value.Should().BeOfType<GenerateTestsAcceptedResponse>().Subject;
         payload.JobId.Should().Be(jobId);
         payload.TestSuiteId.Should().Be(suiteId);

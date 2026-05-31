@@ -1,12 +1,17 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.AuditLog.DTOs;
+using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Modules.Subscription.Commands;
 using ClassifiedAds.Modules.Subscription.Controllers;
 using ClassifiedAds.Modules.Subscription.Models;
 using ClassifiedAds.Modules.Subscription.Queries;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,24 +20,21 @@ namespace ClassifiedAds.UnitTests.Subscription;
 public class PlansControllerTests
 {
     private readonly Mock<ILogger<PlansController>> _loggerMock;
-
-    // Mock handlers (Dispatcher resolves these from IServiceProvider)
     private readonly Mock<ICommandHandler<AddUpdatePlanCommand>> _addUpdateHandlerMock;
     private readonly Mock<ICommandHandler<DeletePlanCommand>> _deleteHandlerMock;
     private readonly Mock<IQueryHandler<GetPlansQuery, List<PlanModel>>> _getPlansHandlerMock;
     private readonly Mock<IQueryHandler<GetPlanQuery, PlanModel>> _getPlanHandlerMock;
-
-    private readonly Dispatcher _dispatcher;
+    private readonly Mock<IQueryHandler<GetAuditEntriesQuery, List<AuditLogEntryDTO>>> _getAuditEntriesHandlerMock;
     private readonly PlansController _controller;
 
     public PlansControllerTests()
     {
         _loggerMock = new Mock<ILogger<PlansController>>();
-
         _addUpdateHandlerMock = new Mock<ICommandHandler<AddUpdatePlanCommand>>();
         _deleteHandlerMock = new Mock<ICommandHandler<DeletePlanCommand>>();
         _getPlansHandlerMock = new Mock<IQueryHandler<GetPlansQuery, List<PlanModel>>>();
         _getPlanHandlerMock = new Mock<IQueryHandler<GetPlanQuery, PlanModel>>();
+        _getAuditEntriesHandlerMock = new Mock<IQueryHandler<GetAuditEntriesQuery, List<AuditLogEntryDTO>>>();
 
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock
@@ -47,236 +49,343 @@ public class PlansControllerTests
         serviceProviderMock
             .Setup(x => x.GetService(typeof(IQueryHandler<GetPlanQuery, PlanModel>)))
             .Returns(_getPlanHandlerMock.Object);
+        serviceProviderMock
+            .Setup(x => x.GetService(typeof(IQueryHandler<GetAuditEntriesQuery, List<AuditLogEntryDTO>>)))
+            .Returns(_getAuditEntriesHandlerMock.Object);
 
-        _dispatcher = new Dispatcher(serviceProviderMock.Object);
-        _controller = new PlansController(_dispatcher, _loggerMock.Object);
+        _controller = new PlansController(new Dispatcher(serviceProviderMock.Object), _loggerMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext(),
+            },
+        };
     }
 
-    #region GET /api/plans Tests
-
     [Fact]
-    public async Task Get_Should_ReturnOkWithPlans()
+    public async Task Get_Should_ReturnOkWithPlanList()
     {
-        // Arrange
         var plans = new List<PlanModel>
         {
-            new PlanModel { Id = Guid.NewGuid(), Name = "Free", DisplayName = "Free Plan" },
-            new PlanModel { Id = Guid.NewGuid(), Name = "Pro", DisplayName = "Pro Plan" },
+            CreatePlanModel(Guid.NewGuid(), "free", "Free", true),
+            CreatePlanModel(Guid.NewGuid(), "pro", "Professional", true),
         };
 
         _getPlansHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlansQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(plans);
 
-        // Act
-        var result = await _controller.Get(null, null);
+        var result = await _controller.Get(isActive: true, search: "pro");
 
-        // Assert
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var returnedPlans = okResult.Value.Should().BeAssignableTo<List<PlanModel>>().Subject;
-        returnedPlans.Should().HaveCount(2);
+        okResult.Value.Should().BeAssignableTo<List<PlanModel>>().Subject.Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task Get_Should_PassFilterParameters()
+    public async Task Get_Should_MapIsActiveAndSearchFilters()
     {
-        // Arrange
         GetPlansQuery capturedQuery = null!;
+
         _getPlansHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlansQuery>(), It.IsAny<CancellationToken>()))
-            .Callback<GetPlansQuery, CancellationToken>((q, _) => capturedQuery = q)
+            .Callback<GetPlansQuery, CancellationToken>((query, _) => capturedQuery = query)
             .ReturnsAsync(new List<PlanModel>());
 
-        // Act
-        await _controller.Get(isActive: true, search: "Pro");
+        await _controller.Get(isActive: false, search: "enterprise");
 
-        // Assert
         capturedQuery.Should().NotBeNull();
-        capturedQuery.IsActive.Should().BeTrue();
-        capturedQuery.Search.Should().Be("Pro");
+        capturedQuery.IsActive.Should().BeFalse();
+        capturedQuery.Search.Should().Be("enterprise");
     }
-
-    #endregion
-
-    #region GET /api/plans/{id} Tests
 
     [Fact]
     public async Task GetById_Should_ReturnOkWithPlan()
     {
-        // Arrange
         var planId = Guid.NewGuid();
-        var plan = new PlanModel { Id = planId, Name = "Pro", DisplayName = "Pro Plan" };
+        var expected = CreatePlanModel(planId, "pro", "Professional", true);
 
         _getPlanHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(plan);
+            .ReturnsAsync(expected);
 
-        // Act
         var result = await _controller.Get(planId);
 
-        // Assert
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var returnedPlan = okResult.Value.Should().BeOfType<PlanModel>().Subject;
-        returnedPlan.Id.Should().Be(planId);
+        okResult.Value.Should().BeSameAs(expected);
     }
 
     [Fact]
-    public async Task GetById_Should_SetThrowNotFoundIfNull()
+    public async Task GetById_Should_MapIdAndThrowNotFound()
     {
-        // Arrange
+        var planId = Guid.NewGuid();
         GetPlanQuery capturedQuery = null!;
+
         _getPlanHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
-            .Callback<GetPlanQuery, CancellationToken>((q, _) => capturedQuery = q)
-            .ReturnsAsync(new PlanModel());
+            .Callback<GetPlanQuery, CancellationToken>((query, _) => capturedQuery = query)
+            .ReturnsAsync(CreatePlanModel(planId, "pro", "Professional", true));
 
-        // Act
-        await _controller.Get(Guid.NewGuid());
+        await _controller.Get(planId);
 
-        // Assert
         capturedQuery.Should().NotBeNull();
+        capturedQuery.Id.Should().Be(planId);
         capturedQuery.ThrowNotFoundIfNull.Should().BeTrue();
     }
 
-    #endregion
+    [Fact]
+    public async Task GetById_Should_PropagateNotFoundException()
+    {
+        _getPlanHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("PLAN_NOT_FOUND"));
 
-    #region POST /api/plans Tests
+        var act = () => _controller.Get(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*PLAN_NOT_FOUND*");
+    }
 
     [Fact]
-    public async Task Post_Should_ReturnCreatedWithPlan()
+    public async Task Post_Should_ReturnCreatedWithPlanPayload()
     {
-        // Arrange
         var savedPlanId = Guid.NewGuid();
-        var model = new CreateUpdatePlanModel
-        {
-            Name = "Pro",
-            DisplayName = "Pro Plan",
-        };
+        var expected = CreatePlanModel(savedPlanId, "pro", "Professional", true);
 
         _addUpdateHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddUpdatePlanCommand, CancellationToken>((cmd, _) => cmd.SavedPlanId = savedPlanId)
+            .Callback<AddUpdatePlanCommand, CancellationToken>((command, _) => command.SavedPlanId = savedPlanId)
             .Returns(Task.CompletedTask);
-
-        var expectedPlan = new PlanModel { Id = savedPlanId, Name = "Pro", DisplayName = "Pro Plan" };
         _getPlanHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedPlan);
+            .ReturnsAsync(expected);
 
-        // Act
-        var result = await _controller.Post(model);
+        var result = await _controller.Post(CreateUpdatePlanModel());
 
-        // Assert
         var createdResult = result.Result.Should().BeOfType<CreatedResult>().Subject;
-        createdResult.Location.Should().Contain(savedPlanId.ToString());
-        var returnedPlan = createdResult.Value.Should().BeOfType<PlanModel>().Subject;
-        returnedPlan.Id.Should().Be(savedPlanId);
+        createdResult.Location.Should().Be($"/api/plans/{savedPlanId}");
+        createdResult.Value.Should().BeSameAs(expected);
     }
 
-    #endregion
-
-    #region PUT /api/plans/{id} Tests
-
     [Fact]
-    public async Task Put_Should_ReturnOkWithUpdatedPlan()
+    public async Task Post_Should_MapBodyIntoCommand()
     {
-        // Arrange
-        var planId = Guid.NewGuid();
-        var model = new CreateUpdatePlanModel
-        {
-            Name = "Pro Updated",
-            DisplayName = "Pro Plan Updated",
-        };
+        AddUpdatePlanCommand capturedCommand = null!;
+        var model = CreateUpdatePlanModel();
 
         _addUpdateHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddUpdatePlanCommand, CancellationToken>((cmd, _) => cmd.SavedPlanId = planId)
+            .Callback<AddUpdatePlanCommand, CancellationToken>((command, _) =>
+            {
+                capturedCommand = command;
+                command.SavedPlanId = Guid.NewGuid();
+            })
             .Returns(Task.CompletedTask);
-
-        var updatedPlan = new PlanModel { Id = planId, Name = "Pro Updated" };
         _getPlanHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(updatedPlan);
+            .ReturnsAsync(CreatePlanModel(Guid.NewGuid(), "pro", "Professional", true));
 
-        // Act
-        var result = await _controller.Put(planId, model);
+        await _controller.Post(model);
 
-        // Assert
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var returnedPlan = okResult.Value.Should().BeOfType<PlanModel>().Subject;
-        returnedPlan.Id.Should().Be(planId);
+        capturedCommand.Should().NotBeNull();
+        capturedCommand.PlanId.Should().BeNull();
+        capturedCommand.Model.Should().BeSameAs(model);
     }
 
     [Fact]
-    public async Task Put_Should_PassPlanIdToCommand()
+    public async Task Post_Should_PropagateValidationException()
     {
-        // Arrange
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Thông tin gói cước là bắt buộc."));
+
+        var act = () => _controller.Post(null!);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*gói cước*");
+    }
+
+    [Fact]
+    public async Task Put_Should_ReturnOkWithUpdatedPlanPayload()
+    {
         var planId = Guid.NewGuid();
+        var expected = CreatePlanModel(planId, "pro", "Professional", true);
+
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
+            .Callback<AddUpdatePlanCommand, CancellationToken>((command, _) => command.SavedPlanId = planId)
+            .Returns(Task.CompletedTask);
+        _getPlanHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var result = await _controller.Put(planId, CreateUpdatePlanModel());
+
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        okResult.Value.Should().BeSameAs(expected);
+    }
+
+    [Fact]
+    public async Task Put_Should_MapIdAndBodyIntoCommand()
+    {
+        var planId = Guid.NewGuid();
+        var model = CreateUpdatePlanModel();
         AddUpdatePlanCommand capturedCommand = null!;
 
         _addUpdateHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddUpdatePlanCommand, CancellationToken>((cmd, _) =>
+            .Callback<AddUpdatePlanCommand, CancellationToken>((command, _) =>
             {
-                capturedCommand = cmd;
-                cmd.SavedPlanId = planId;
+                capturedCommand = command;
+                command.SavedPlanId = planId;
             })
             .Returns(Task.CompletedTask);
-
         _getPlanHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetPlanQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PlanModel { Id = planId });
+            .ReturnsAsync(CreatePlanModel(planId, "pro", "Professional", true));
 
-        var model = new CreateUpdatePlanModel { Name = "Pro", DisplayName = "Pro Plan" };
-
-        // Act
         await _controller.Put(planId, model);
 
-        // Assert
         capturedCommand.Should().NotBeNull();
         capturedCommand.PlanId.Should().Be(planId);
+        capturedCommand.Model.Should().BeSameAs(model);
     }
 
-    #endregion
+    [Fact]
+    public async Task Put_Should_PropagateNotFoundException()
+    {
+        _addUpdateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddUpdatePlanCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotFoundException("PLAN_NOT_FOUND"));
 
-    #region DELETE /api/plans/{id} Tests
+        var act = () => _controller.Put(Guid.NewGuid(), CreateUpdatePlanModel());
+
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage("*PLAN_NOT_FOUND*");
+    }
 
     [Fact]
     public async Task Delete_Should_ReturnOk()
     {
-        // Arrange
-        var planId = Guid.NewGuid();
-
         _deleteHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<DeletePlanCommand>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Act
-        var result = await _controller.Delete(planId);
+        var result = await _controller.Delete(Guid.NewGuid());
 
-        // Assert
         result.Should().BeOfType<OkResult>();
     }
 
     [Fact]
-    public async Task Delete_Should_DispatchDeleteCommand()
+    public async Task Delete_Should_MapPlanIdIntoCommand()
     {
-        // Arrange
         var planId = Guid.NewGuid();
         DeletePlanCommand capturedCommand = null!;
 
         _deleteHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<DeletePlanCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<DeletePlanCommand, CancellationToken>((cmd, _) => capturedCommand = cmd)
+            .Callback<DeletePlanCommand, CancellationToken>((command, _) => capturedCommand = command)
             .Returns(Task.CompletedTask);
 
-        // Act
         await _controller.Delete(planId);
 
-        // Assert
         capturedCommand.Should().NotBeNull();
         capturedCommand.PlanId.Should().Be(planId);
     }
 
-    #endregion
+    [Fact]
+    public async Task Delete_Should_PropagateValidationException()
+    {
+        _deleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<DeletePlanCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Không thể ngừng kích hoạt gói vì vẫn còn thuê bao đang hoạt động."));
+
+        var act = () => _controller.Delete(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*thuê bao*");
+    }
+
+    [Fact]
+    public async Task GetAuditLogs_Should_ReturnOkWithEntries()
+    {
+        var planId = Guid.NewGuid();
+        var older = CreateAuditLog(planId, "UPDATE_PLAN", DateTimeOffset.UtcNow.AddMinutes(-10), CreatePlanModel(planId, "pro", "Professional", true));
+        var newer = CreateAuditLog(planId, "DELETE_PLAN", DateTimeOffset.UtcNow.AddMinutes(-5), CreatePlanModel(planId, "pro", "Professional+", false));
+
+        _getAuditEntriesHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetAuditEntriesQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AuditLogEntryDTO> { older, newer });
+
+        var result = await _controller.GetAuditLogs(planId);
+
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var entries = ((System.Collections.IEnumerable)okResult.Value!).Cast<object>().ToList();
+        entries.Should().HaveCount(2);
+
+        var firstAction = entries[0].GetType().GetProperty("Action")!.GetValue(entries[0])!.ToString();
+        firstAction.Should().Be("DELETE");
+    }
+
+    [Fact]
+    public async Task GetAuditLogs_Should_MapObjectId()
+    {
+        var planId = Guid.NewGuid();
+        GetAuditEntriesQuery capturedQuery = null!;
+
+        _getAuditEntriesHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<GetAuditEntriesQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<GetAuditEntriesQuery, CancellationToken>((query, _) => capturedQuery = query)
+            .ReturnsAsync(new List<AuditLogEntryDTO>());
+
+        await _controller.GetAuditLogs(planId);
+
+        capturedQuery.Should().NotBeNull();
+        capturedQuery.ObjectId.Should().Be(planId.ToString());
+    }
+
+    private static PlanModel CreatePlanModel(Guid id, string name, string displayName, bool isActive)
+    {
+        return new PlanModel
+        {
+            Id = id,
+            Name = name,
+            DisplayName = displayName,
+            Description = $"{displayName} plan",
+            PriceMonthly = 100,
+            PriceYearly = 1000,
+            Currency = "VND",
+            IsActive = isActive,
+            SortOrder = 1,
+            CreatedDateTime = DateTimeOffset.UtcNow.AddDays(-7),
+        };
+    }
+
+    private static CreateUpdatePlanModel CreateUpdatePlanModel()
+    {
+        return new CreateUpdatePlanModel
+        {
+            Name = "pro",
+            DisplayName = "Professional",
+            Description = "Professional plan",
+            PriceMonthly = 390000,
+            PriceYearly = 3900000,
+            Currency = "VND",
+            IsActive = true,
+            SortOrder = 1,
+        };
+    }
+
+    private static AuditLogEntryDTO CreateAuditLog(Guid planId, string action, DateTimeOffset createdAt, PlanModel model)
+    {
+        return new AuditLogEntryDTO
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            UserName = "admin",
+            Action = action,
+            ObjectId = planId.ToString(),
+            Log = JsonSerializer.Serialize(model),
+            CreatedDateTime = createdAt,
+        };
+    }
 }

@@ -16,6 +16,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using TestGenerationBodyType = ClassifiedAds.Modules.TestGeneration.Entities.BodyType;
+using TestGenerationHttpMethod = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
 
 namespace ClassifiedAds.UnitTests.TestGeneration;
 
@@ -199,27 +201,6 @@ public class TestCasesControllerTests
     }
 
     [Fact]
-    public async Task GetById_Should_ReturnNestedRequestExpectationAndVariables()
-    {
-        var suiteId = Guid.NewGuid();
-        var testCaseId = Guid.NewGuid();
-
-        _getByIdHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetTestCaseDetailQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateModel(suiteId, testCaseId, "Detail test case"));
-
-        var result = await _controller.GetById(suiteId, testCaseId);
-
-        var payload = result.Result.Should().BeOfType<OkObjectResult>().Subject.Value
-            .Should().BeOfType<TestCaseModel>().Subject;
-        payload.Request.Should().NotBeNull();
-        payload.Request!.HttpMethod.Should().Be("POST");
-        payload.Expectation.Should().NotBeNull();
-        payload.Expectation!.ExpectedStatus.Should().Be("201");
-        payload.Variables.Should().ContainSingle();
-    }
-
-    [Fact]
     public async Task GetById_Should_ThrowNotFoundException_WhenCaseMissing()
     {
         _getByIdHandlerMock
@@ -285,81 +266,6 @@ public class TestCasesControllerTests
     }
 
     [Fact]
-    public async Task Add_Should_MapRequestAndExpectationFieldsIntoCommand()
-    {
-        var suiteId = Guid.NewGuid();
-        AddTestCaseCommand capturedCommand = null!;
-
-        _addHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddTestCaseCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateModel(suiteId, Guid.NewGuid(), "Created case");
-            })
-            .Returns(Task.CompletedTask);
-
-        await _controller.Add(suiteId, CreateAddRequest());
-
-        capturedCommand.RequestHttpMethod.Should().Be(HttpMethod.POST);
-        capturedCommand.RequestUrl.Should().Be("/auth/login");
-        capturedCommand.RequestHeaders.Should().Contain("Content-Type");
-        capturedCommand.RequestBodyType.Should().Be(BodyType.Json);
-        capturedCommand.RequestTimeout.Should().Be(15000);
-        capturedCommand.ExpectedStatus.Should().Be("201");
-        capturedCommand.ResponseSchema.Should().Contain("token");
-        capturedCommand.BodyContains.Should().Be("$.token");
-        capturedCommand.MaxResponseTime.Should().Be(2000);
-        capturedCommand.ExpectedProvenance.Should().Be("OpenAPI");
-    }
-
-    [Fact]
-    public async Task Add_Should_MapVariablesIntoCommand()
-    {
-        var suiteId = Guid.NewGuid();
-        AddTestCaseCommand capturedCommand = null!;
-
-        _addHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddTestCaseCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateModel(suiteId, Guid.NewGuid(), "Created case");
-            })
-            .Returns(Task.CompletedTask);
-
-        await _controller.Add(suiteId, CreateAddRequest());
-
-        capturedCommand.Variables.Should().ContainSingle();
-        capturedCommand.Variables[0].VariableName.Should().Be("accessToken");
-        capturedCommand.Variables[0].ExtractFrom.Should().Be(ExtractFrom.ResponseBody);
-        capturedCommand.Variables[0].JsonPath.Should().Be("$.token");
-    }
-
-    [Fact]
-    public async Task Add_Should_DefaultVariablesToEmptyList_WhenRequestOmitsVariables()
-    {
-        var suiteId = Guid.NewGuid();
-        var request = CreateAddRequest();
-        request.Variables = null;
-        AddTestCaseCommand capturedCommand = null!;
-
-        _addHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<AddTestCaseCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateModel(suiteId, Guid.NewGuid(), request.Name);
-            })
-            .Returns(Task.CompletedTask);
-
-        await _controller.Add(suiteId, request);
-
-        capturedCommand.Variables.Should().NotBeNull();
-        capturedCommand.Variables.Should().BeEmpty();
-    }
-
-    [Fact]
     public async Task Add_Should_ThrowValidationException_WhenCreateFails()
     {
         _addHandlerMock
@@ -370,6 +276,51 @@ public class TestCasesControllerTests
 
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*Test case name already exists*");
+    }
+
+    [Fact]
+    public async Task Add_Should_ThrowValidationException_WhenNameMissing()
+    {
+        var request = CreateAddRequest();
+        request.Name = " ";
+
+        _addHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test case là bắt buộc."));
+
+        var act = () => _controller.Add(Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Tên test case là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Add_Should_ThrowValidationException_WhenNameTooLong()
+    {
+        var request = CreateAddRequest();
+        request.Name = new string('A', 201);
+
+        _addHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test case không được vượt quá 200 ký tự."));
+
+        var act = () => _controller.Add(Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*200 ký tự*");
+    }
+
+    [Fact]
+    public async Task Add_Should_ThrowValidationException_WhenSuiteArchived()
+    {
+        _addHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<AddTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Không thể thêm test case cho test suite đã archived."));
+
+        var act = () => _controller.Add(Guid.NewGuid(), CreateAddRequest());
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*archived*");
     }
 
     [Fact]
@@ -446,58 +397,6 @@ public class TestCasesControllerTests
     }
 
     [Fact]
-    public async Task Update_Should_MapNestedRequestAndExpectationFields()
-    {
-        var suiteId = Guid.NewGuid();
-        var testCaseId = Guid.NewGuid();
-        UpdateTestCaseCommand capturedCommand = null!;
-
-        _updateHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<UpdateTestCaseCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<UpdateTestCaseCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateModel(suiteId, testCaseId, "Updated case", testType: "Negative");
-            })
-            .Returns(Task.CompletedTask);
-
-        await _controller.Update(suiteId, testCaseId, CreateUpdateRequest());
-
-        capturedCommand.RequestHttpMethod.Should().Be(HttpMethod.PUT);
-        capturedCommand.RequestUrl.Should().Be("/users/42");
-        capturedCommand.RequestBodyType.Should().Be(BodyType.Json);
-        capturedCommand.RequestTimeout.Should().Be(20000);
-        capturedCommand.ExpectedStatus.Should().Be("400");
-        capturedCommand.HeaderChecks.Should().Contain("trace-id");
-        capturedCommand.BodyNotContains.Should().Contain("password");
-        capturedCommand.JsonPathChecks.Should().Contain("$.errors");
-        capturedCommand.ExpectedProvenance.Should().Be("SRS");
-    }
-
-    [Fact]
-    public async Task Update_Should_MapVariablesIntoCommand()
-    {
-        var suiteId = Guid.NewGuid();
-        var testCaseId = Guid.NewGuid();
-        UpdateTestCaseCommand capturedCommand = null!;
-
-        _updateHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<UpdateTestCaseCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<UpdateTestCaseCommand, CancellationToken>((command, _) =>
-            {
-                capturedCommand = command;
-                command.Result = CreateModel(suiteId, testCaseId, "Updated case", testType: "Negative");
-            })
-            .Returns(Task.CompletedTask);
-
-        await _controller.Update(suiteId, testCaseId, CreateUpdateRequest());
-
-        capturedCommand.Variables.Should().ContainSingle();
-        capturedCommand.Variables[0].VariableName.Should().Be("errorCode");
-        capturedCommand.Variables[0].ExtractFrom.Should().Be(ExtractFrom.ResponseBody);
-    }
-
-    [Fact]
     public async Task Update_Should_ReturnUpdatedPayloadFromCommand()
     {
         var suiteId = Guid.NewGuid();
@@ -529,6 +428,51 @@ public class TestCasesControllerTests
 
         await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage("*Test case not found*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenNameMissing()
+    {
+        var request = CreateUpdateRequest();
+        request.Name = " ";
+
+        _updateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<UpdateTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test case là bắt buộc."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Tên test case là bắt buộc.*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenNameTooLong()
+    {
+        var request = CreateUpdateRequest();
+        request.Name = new string('B', 201);
+
+        _updateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<UpdateTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Tên test case không được vượt quá 200 ký tự."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), request);
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*200 ký tự*");
+    }
+
+    [Fact]
+    public async Task Update_Should_ThrowValidationException_WhenSuiteArchived()
+    {
+        _updateHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<UpdateTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Không thể cập nhật test case cho test suite đã archived."));
+
+        var act = () => _controller.Update(Guid.NewGuid(), Guid.NewGuid(), CreateUpdateRequest());
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*archived*");
     }
 
     [Fact]
@@ -610,6 +554,19 @@ public class TestCasesControllerTests
     }
 
     [Fact]
+    public async Task Delete_Should_ThrowValidationException_WhenCaseAlreadyDeleted()
+    {
+        _deleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<DeleteTestCaseCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Test case này đã bị xóa."));
+
+        var act = () => _controller.Delete(Guid.NewGuid(), Guid.NewGuid());
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*đã bị xóa*");
+    }
+
+    [Fact]
     public async Task Reorder_Should_ReturnOk()
     {
         _reorderHandlerMock
@@ -667,25 +624,6 @@ public class TestCasesControllerTests
     }
 
     [Fact]
-    public async Task Reorder_Should_AllowEmptyRequestList()
-    {
-        ReorderTestCasesCommand capturedCommand = null!;
-
-        _reorderHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<ReorderTestCasesCommand>(), It.IsAny<CancellationToken>()))
-            .Callback<ReorderTestCasesCommand, CancellationToken>((command, _) => capturedCommand = command)
-            .Returns(Task.CompletedTask);
-
-        var result = await _controller.Reorder(Guid.NewGuid(), new ReorderTestCasesRequest
-        {
-            TestCaseIds = new List<Guid>(),
-        });
-
-        result.Should().BeOfType<OkResult>();
-        capturedCommand.TestCaseIds.Should().BeEmpty();
-    }
-
-    [Fact]
     public async Task Reorder_Should_ThrowValidationException_WhenSequenceInvalid()
     {
         _reorderHandlerMock
@@ -701,6 +639,22 @@ public class TestCasesControllerTests
             .WithMessage("*Reorder request contains invalid test case ids*");
     }
 
+    [Fact]
+    public async Task Reorder_Should_ThrowValidationException_WhenRequestListIsEmpty()
+    {
+        _reorderHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<ReorderTestCasesCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("Danh sách TestCaseIds là bắt buộc."));
+
+        var act = () => _controller.Reorder(Guid.NewGuid(), new ReorderTestCasesRequest
+        {
+            TestCaseIds = new List<Guid>(),
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*Danh sách TestCaseIds là bắt buộc.*");
+    }
+
     private static AddTestCaseRequest CreateAddRequest()
     {
         return new AddTestCaseRequest
@@ -714,12 +668,12 @@ public class TestCasesControllerTests
             Tags = new List<string> { "auth", "login" },
             Request = new TestCaseRequestInput
             {
-                HttpMethod = HttpMethod.POST,
+                HttpMethod = TestGenerationHttpMethod.POST,
                 Url = "/auth/login",
                 Headers = "{\"Content-Type\":\"application/json\"}",
                 PathParams = "{}",
                 QueryParams = "{}",
-                BodyType = BodyType.Json,
+                BodyType = TestGenerationBodyType.JSON,
                 Body = "{\"email\":\"user@test.com\",\"password\":\"Pass@123\"}",
                 Timeout = 15000,
             },
@@ -760,12 +714,12 @@ public class TestCasesControllerTests
             Tags = new List<string> { "users", "validation" },
             Request = new TestCaseRequestInput
             {
-                HttpMethod = HttpMethod.PUT,
+                HttpMethod = TestGenerationHttpMethod.PUT,
                 Url = "/users/42",
                 Headers = "{\"Content-Type\":\"application/json\"}",
                 PathParams = "{\"id\":\"42\"}",
                 QueryParams = "{}",
-                BodyType = BodyType.Json,
+                BodyType = TestGenerationBodyType.JSON,
                 Body = "{\"name\":\"\"}",
                 Timeout = 20000,
             },

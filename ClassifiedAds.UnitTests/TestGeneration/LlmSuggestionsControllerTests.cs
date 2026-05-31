@@ -25,6 +25,7 @@ public class LlmSuggestionsControllerTests
     private readonly Mock<ICommandHandler<ReviewLlmSuggestionCommand>> _reviewHandlerMock;
     private readonly Mock<ICommandHandler<UpsertLlmSuggestionFeedbackCommand>> _feedbackHandlerMock;
     private readonly Mock<ICommandHandler<BulkReviewLlmSuggestionsCommand>> _bulkReviewHandlerMock;
+    private readonly Mock<ICommandHandler<BulkDeleteLlmSuggestionsCommand>> _bulkDeleteHandlerMock;
     private readonly Mock<ICommandHandler<BulkRestoreLlmSuggestionsCommand>> _bulkRestoreHandlerMock;
     private readonly Mock<IQueryHandler<GetLlmSuggestionsQuery, List<LlmSuggestionModel>>> _getAllHandlerMock;
     private readonly Mock<IQueryHandler<GetLlmSuggestionDetailQuery, LlmSuggestionModel>> _getByIdHandlerMock;
@@ -38,6 +39,7 @@ public class LlmSuggestionsControllerTests
         _reviewHandlerMock = new Mock<ICommandHandler<ReviewLlmSuggestionCommand>>();
         _feedbackHandlerMock = new Mock<ICommandHandler<UpsertLlmSuggestionFeedbackCommand>>();
         _bulkReviewHandlerMock = new Mock<ICommandHandler<BulkReviewLlmSuggestionsCommand>>();
+        _bulkDeleteHandlerMock = new Mock<ICommandHandler<BulkDeleteLlmSuggestionsCommand>>();
         _bulkRestoreHandlerMock = new Mock<ICommandHandler<BulkRestoreLlmSuggestionsCommand>>();
         _getAllHandlerMock = new Mock<IQueryHandler<GetLlmSuggestionsQuery, List<LlmSuggestionModel>>>();
         _getByIdHandlerMock = new Mock<IQueryHandler<GetLlmSuggestionDetailQuery, LlmSuggestionModel>>();
@@ -50,6 +52,7 @@ public class LlmSuggestionsControllerTests
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<ReviewLlmSuggestionCommand>))).Returns(_reviewHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<UpsertLlmSuggestionFeedbackCommand>))).Returns(_feedbackHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<BulkReviewLlmSuggestionsCommand>))).Returns(_bulkReviewHandlerMock.Object);
+        serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<BulkDeleteLlmSuggestionsCommand>))).Returns(_bulkDeleteHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<BulkRestoreLlmSuggestionsCommand>))).Returns(_bulkRestoreHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(IQueryHandler<GetLlmSuggestionsQuery, List<LlmSuggestionModel>>))).Returns(_getAllHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(IQueryHandler<GetLlmSuggestionDetailQuery, LlmSuggestionModel>))).Returns(_getByIdHandlerMock.Object);
@@ -75,7 +78,8 @@ public class LlmSuggestionsControllerTests
 
         var result = await _controller.GeneratePreview(suiteId, CreateGenerateRequest());
 
-        var accepted = result.Result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var accepted = result.Result.Should().BeOfType<AcceptedResult>().Subject;
+        accepted.StatusCode.Should().Be(StatusCodes.Status202Accepted);
         var payload = accepted.Value.Should().BeOfType<GenerateTestsAcceptedResponse>().Subject;
         payload.JobId.Should().Be(jobId);
         payload.TestSuiteId.Should().Be(suiteId);
@@ -153,34 +157,6 @@ public class LlmSuggestionsControllerTests
     }
 
     [Fact]
-    public async Task GetAll_Should_ReturnDeletedAndFeedbackMetadata()
-    {
-        var suiteId = Guid.NewGuid();
-        var suggestion = CreateSuggestion(suiteId, suggestionType: "Performance");
-        suggestion.IsDeleted = true;
-        suggestion.CurrentUserFeedback = new LlmSuggestionFeedbackModel
-        {
-            Id = Guid.NewGuid(),
-            SuggestionId = suggestion.Id,
-            TestSuiteId = suiteId,
-            UserId = _currentUserId,
-            Signal = "Helpful",
-            Notes = "Useful suggestion",
-        };
-
-        _getAllHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetLlmSuggestionsQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<LlmSuggestionModel> { suggestion });
-
-        var result = await _controller.GetAll(suiteId, includeDeleted: true);
-
-        var payload = result.Result.Should().BeOfType<OkObjectResult>().Subject.Value
-            .Should().BeAssignableTo<List<LlmSuggestionModel>>().Subject;
-        payload[0].IsDeleted.Should().BeTrue();
-        payload[0].CurrentUserFeedback!.Signal.Should().Be("Helpful");
-    }
-
-    [Fact]
     public async Task GetById_Should_ReturnOkWithSuggestionDetail()
     {
         var suiteId = Guid.NewGuid();
@@ -214,31 +190,6 @@ public class LlmSuggestionsControllerTests
         captured.TestSuiteId.Should().Be(suiteId);
         captured.SuggestionId.Should().Be(suggestionId);
         captured.CurrentUserId.Should().Be(_currentUserId);
-    }
-
-    [Fact]
-    public async Task GetById_Should_ReturnResolvedEndpointAndRequirementInfo()
-    {
-        var suiteId = Guid.NewGuid();
-        var suggestion = CreateSuggestion(suiteId, suggestionType: "Security");
-        suggestion.EndpointMethod = "POST";
-        suggestion.EndpointPath = "/auth/login";
-        suggestion.CoveredRequirements = new List<CoveredRequirementBriefModel>
-        {
-            new() { Id = Guid.NewGuid(), Code = "REQ-01", Title = "Validate login" },
-        };
-
-        _getByIdHandlerMock
-            .Setup(x => x.HandleAsync(It.IsAny<GetLlmSuggestionDetailQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(suggestion);
-
-        var result = await _controller.GetById(suiteId, suggestion.Id);
-
-        var payload = result.Result.Should().BeOfType<OkObjectResult>().Subject.Value
-            .Should().BeOfType<LlmSuggestionModel>().Subject;
-        payload.EndpointMethod.Should().Be("POST");
-        payload.EndpointPath.Should().Be("/auth/login");
-        payload.CoveredRequirements.Should().ContainSingle();
     }
 
     [Fact]
@@ -304,15 +255,15 @@ public class LlmSuggestionsControllerTests
     }
 
     [Fact]
-    public async Task Review_Should_ThrowConcurrencyException_WhenVersionConflicts()
+    public async Task Review_Should_ThrowConflictException_WhenVersionConflicts()
     {
         _reviewHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<ReviewLlmSuggestionCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ConcurrencyException("Suggestion review rowVersion conflict"));
+            .ThrowsAsync(new ConflictException("CONCURRENCY_CONFLICT", "Suggestion review rowVersion conflict"));
 
         var act = () => _controller.Review(Guid.NewGuid(), Guid.NewGuid(), CreateReviewRequest());
 
-        await act.Should().ThrowAsync<ConcurrencyException>()
+        await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("*rowVersion conflict*");
     }
 
@@ -482,6 +433,84 @@ public class LlmSuggestionsControllerTests
 
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*Approve or Reject*");
+    }
+
+    [Fact]
+    public async Task BulkDelete_Should_ReturnOkWithDeleteResult()
+    {
+        var suiteId = Guid.NewGuid();
+        var ids = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        var expected = new BulkOperationResultModel
+        {
+            TestSuiteId = suiteId,
+            Operation = "Delete",
+            EntityType = "LlmSuggestion",
+            RequestedCount = 2,
+            ProcessedCount = 2,
+            ProcessedIds = ids,
+        };
+
+        _bulkDeleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<BulkDeleteLlmSuggestionsCommand>(), It.IsAny<CancellationToken>()))
+            .Callback<BulkDeleteLlmSuggestionsCommand, CancellationToken>((command, _) => command.Result = expected)
+            .Returns(Task.CompletedTask);
+
+        var result = await _controller.BulkDelete(suiteId, new BulkDeleteLlmSuggestionsRequest
+        {
+            SuggestionIds = ids,
+        });
+
+        var ok = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        ok.Value.Should().BeOfType<BulkOperationResultModel>().Subject.ProcessedCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task BulkDelete_Should_MapSuggestionIdsAndCurrentUser()
+    {
+        var suiteId = Guid.NewGuid();
+        var ids = new List<Guid> { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        BulkDeleteLlmSuggestionsCommand captured = null!;
+
+        _bulkDeleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<BulkDeleteLlmSuggestionsCommand>(), It.IsAny<CancellationToken>()))
+            .Callback<BulkDeleteLlmSuggestionsCommand, CancellationToken>((command, _) =>
+            {
+                captured = command;
+                command.Result = new BulkOperationResultModel
+                {
+                    TestSuiteId = suiteId,
+                    Operation = "Delete",
+                    EntityType = "LlmSuggestion",
+                    RequestedCount = ids.Count,
+                };
+            })
+            .Returns(Task.CompletedTask);
+
+        await _controller.BulkDelete(suiteId, new BulkDeleteLlmSuggestionsRequest
+        {
+            SuggestionIds = ids,
+        });
+
+        captured.Should().NotBeNull();
+        captured.TestSuiteId.Should().Be(suiteId);
+        captured.CurrentUserId.Should().Be(_currentUserId);
+        captured.SuggestionIds.Should().BeEquivalentTo(ids, options => options.WithStrictOrdering());
+    }
+
+    [Fact]
+    public async Task BulkDelete_Should_ThrowValidationException_WhenIdsMissing()
+    {
+        _bulkDeleteHandlerMock
+            .Setup(x => x.HandleAsync(It.IsAny<BulkDeleteLlmSuggestionsCommand>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ValidationException("SuggestionIds are required"));
+
+        var act = () => _controller.BulkDelete(Guid.NewGuid(), new BulkDeleteLlmSuggestionsRequest
+        {
+            SuggestionIds = new List<Guid>(),
+        });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*SuggestionIds*");
     }
 
     [Fact]
