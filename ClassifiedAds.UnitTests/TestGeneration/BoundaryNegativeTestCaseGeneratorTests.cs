@@ -3,6 +3,7 @@ using ClassifiedAds.Contracts.ApiDocumentation.Services;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
+using ClassifiedAds.UnitTests;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using HttpMethodEnum = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
@@ -54,7 +55,8 @@ public class BoundaryNegativeTestCaseGeneratorTests
 
         var materializer = new LlmSuggestionMaterializer(
             _requestBuilderMock.Object,
-            _expectationBuilderMock.Object);
+            _expectationBuilderMock.Object,
+            JsonPathResolutionTestFactory.CreateResolver());
         var expectationResolver = new ExpectationResolver(
             new Mock<ILogger<ExpectationResolver>>().Object);
 

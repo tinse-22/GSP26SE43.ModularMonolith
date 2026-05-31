@@ -43,14 +43,19 @@ internal static class RequestBodyAutoHydrator
 
         if (!WriteMethods.Contains(testCase.Request.HttpMethod ?? string.Empty) ||
             !endpointMetadata.HasRequiredRequestBody ||
-            IsNegativeLikeCase(testCase) ||
-            !IsMissingOrEmptyObjectBody(testCase.Request.Body))
+            IsNegativeLikeCase(testCase))
         {
             return false;
         }
 
         var schema = ExtractRequestBodySchema(endpointMetadata);
         if (string.IsNullOrWhiteSpace(schema) || !TryParseSchema(schema, out var schemaRoot))
+        {
+            return false;
+        }
+
+        if (!IsMissingOrEmptyObjectBody(testCase.Request.Body) &&
+            !ShouldReplaceMismatchedRequiredBody(testCase.Request.Body, schemaRoot))
         {
             return false;
         }
@@ -239,6 +244,71 @@ internal static class RequestBodyAutoHydrator
         {
             return false;
         }
+    }
+
+    private static bool ShouldReplaceMismatchedRequiredBody(string body, JsonElement schema)
+    {
+        if (string.IsNullOrWhiteSpace(body) ||
+            GetSchemaType(schema) != "object" ||
+            !schema.TryGetProperty("properties", out var properties) ||
+            properties.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var requiredNames = GetRequiredNames(schema);
+        if (requiredNames.Count == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var bodyNames = document.RootElement
+                .EnumerateObject()
+                .Select(property => NormalizePropertyName(property.Name))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (bodyNames.Count == 0)
+            {
+                return true;
+            }
+
+            var schemaNames = properties
+                .EnumerateObject()
+                .Select(property => NormalizePropertyName(property.Name))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var hasKnownSchemaField = bodyNames.Any(schemaNames.Contains);
+            var missingRequiredField = requiredNames
+                .Select(NormalizePropertyName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Any(name => !bodyNames.Contains(name));
+
+            return missingRequiredField && !hasKnownSchemaField;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizePropertyName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return string.Empty;
+        }
+
+        return new string(name.Trim().ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
     }
 
     private static Dictionary<string, string> DeserializeDictionary(string json)
@@ -509,17 +579,7 @@ internal static class RequestBodyAutoHydrator
 
     private static JsonNode BuildObjectNode(JsonElement schema, int depth)
     {
-        var requiredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (schema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in required.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.String)
-                {
-                    requiredNames.Add(item.GetString());
-                }
-            }
-        }
+        var requiredNames = GetRequiredNames(schema);
 
         if (!schema.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object)
         {
@@ -549,6 +609,25 @@ internal static class RequestBodyAutoHydrator
         }
 
         return result;
+    }
+
+    private static HashSet<string> GetRequiredNames(JsonElement schema)
+    {
+        var requiredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!schema.TryGetProperty("required", out var required) || required.ValueKind != JsonValueKind.Array)
+        {
+            return requiredNames;
+        }
+
+        foreach (var item in required.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                requiredNames.Add(item.GetString());
+            }
+        }
+
+        return requiredNames;
     }
 
     private static JsonNode BuildArrayNode(JsonElement schema, string propertyName, int depth)
@@ -723,7 +802,7 @@ internal static class RequestBodyAutoHydrator
             var candidate when candidate.Contains("price") || candidate.Contains("amount") || candidate.Contains("cost") => "9.99",
             var candidate when candidate.Contains("quantity") || candidate.Contains("stock") || candidate.Contains("count") => "1",
             var candidate when candidate.EndsWith("id") => "1",
-            var candidate when candidate.Contains("name") => "Sample Name",
+            var candidate when candidate.Contains("name") => "Sample Name {{tcUniqueId}}",
             var candidate when candidate.Contains("title") => "Sample Title",
             var candidate when candidate.Contains("description") => "Sample description",
             _ => "sample-value",

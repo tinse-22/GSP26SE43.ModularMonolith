@@ -1,4 +1,5 @@
 using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Modules.TestExecution.Models;
 using Microsoft.Extensions.Logging;
@@ -33,10 +34,14 @@ public class RuleBasedValidator : IRuleBasedValidator
     private static readonly TimeSpan SemanticDateTimeTolerance = TimeSpan.FromSeconds(5);
 
     private readonly ILogger<RuleBasedValidator> _logger;
+    private readonly IJsonPathResolver _jsonPathResolver;
 
-    public RuleBasedValidator(ILogger<RuleBasedValidator> logger)
+    public RuleBasedValidator(
+        ILogger<RuleBasedValidator> logger,
+        IJsonPathResolver jsonPathResolver)
     {
         _logger = logger;
+        _jsonPathResolver = jsonPathResolver ?? throw new ArgumentNullException(nameof(jsonPathResolver));
     }
 
     public TestCaseValidationResult Validate(
@@ -128,7 +133,7 @@ public class RuleBasedValidator : IRuleBasedValidator
         TrackCheck(ValidateBodyNotContains(response, expectation, testCase, result), ref checksPerformed, ref checksSkipped);
 
         // 6. JSONPath equality checks
-        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, result, profile, variableBag), ref checksPerformed, ref checksSkipped);
+        TrackCheck(ValidateJsonPathChecks(response, expectation, testCase, endpointMetadata, result, profile, _jsonPathResolver, variableBag), ref checksPerformed, ref checksSkipped);
 
         // 7. Max response time
         TrackCheck(ValidateResponseTime(response, expectation, result), ref checksPerformed, ref checksSkipped);
@@ -157,6 +162,13 @@ public class RuleBasedValidator : IRuleBasedValidator
         result.HardChecksPassed = hardChecksPassed;
         result.ValidationScore = validationScore;
 
+        if (ShouldDowngradeSoftJsonPathFailures(profile, result, hardChecksPassed, validationScore, scoreThreshold))
+        {
+            DowngradeSoftJsonPathFailures(result);
+            validationScore = ComputeValidationScore(result);
+            result.ValidationScore = validationScore;
+        }
+
         result.IsPassed = result.Failures.Count == 0
             && hardChecksPassed
             && validationScore >= scoreThreshold;
@@ -180,13 +192,23 @@ public class RuleBasedValidator : IRuleBasedValidator
             return false;
         }
 
-        // Hard gates: status code must pass; schema (if checked) must pass.
+        // Hard gates: status, schema, and explicit body contract checks must pass.
         if (!result.StatusCodeMatched)
         {
             return false;
         }
 
         if (result.SchemaMatched == false)
+        {
+            return false;
+        }
+
+        if (result.BodyContainsPassed == false)
+        {
+            return false;
+        }
+
+        if (result.BodyNotContainsPassed == false)
         {
             return false;
         }
@@ -223,6 +245,41 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         return Math.Round(penalized, 4);
+    }
+
+    private static bool ShouldDowngradeSoftJsonPathFailures(
+        ValidationProfile profile,
+        TestCaseValidationResult result,
+        bool hardChecksPassed,
+        decimal validationScore,
+        decimal scoreThreshold)
+    {
+        if (profile == ValidationProfile.SrsStrict
+            || result?.Failures == null
+            || result.Failures.Count == 0
+            || !hardChecksPassed
+            || validationScore < scoreThreshold)
+        {
+            return false;
+        }
+
+        return result.Failures.All(f => string.Equals(f.Code, "JSONPATH_ASSERTION_FAILED", StringComparison.Ordinal));
+    }
+
+    private static void DowngradeSoftJsonPathFailures(TestCaseValidationResult result)
+    {
+        foreach (var failure in result.Failures.ToArray())
+        {
+            result.Warnings.Add(new ValidationWarningModel
+            {
+                Code = "JSONPATH_ASSERTION_WARNING",
+                Message = $"{failure.Message} Đã hạ xuống warning vì hard checks pass và validation score đạt ngưỡng.",
+                Target = failure.Target,
+            });
+        }
+
+        result.Failures.Clear();
+        result.JsonPathChecksPassed = true;
     }
 
     private static void AddWeightedCheck(bool passed, decimal weight, ref decimal weightedTotal, ref decimal weightsApplied)
@@ -1270,8 +1327,10 @@ public class RuleBasedValidator : IRuleBasedValidator
         HttpTestResponse response,
         ExecutionTestCaseExpectationDto expectation,
         ExecutionTestCaseDto testCase,
+        ApiEndpointMetadataDto endpointMetadata,
         TestCaseValidationResult result,
         ValidationProfile profile,
+        IJsonPathResolver jsonPathResolver,
         IReadOnlyDictionary<string, string> variableBag = null)
     {
         if (string.IsNullOrWhiteSpace(expectation.JsonPathChecks))
@@ -1339,31 +1398,61 @@ public class RuleBasedValidator : IRuleBasedValidator
                     continue;
                 }
 
+                var pathResolution = jsonPathResolver.Resolve(new JsonPathResolutionRequest
+                {
+                    OriginalPath = check.Key,
+                    ActualResponseJson = response.Body,
+                    SwaggerResponseSchemas = BuildJsonPathResolutionSchemas(expectation, endpointMetadata),
+                    EndpointPath = testCase?.Request?.Url,
+                    HttpMethod = testCase?.Request?.HttpMethod,
+                });
+                var effectiveJsonPath = pathResolution.IsResolved && !string.IsNullOrWhiteSpace(pathResolution.ResolvedPath)
+                    ? pathResolution.ResolvedPath
+                    : check.Key;
+
                 var resolvedExpected = ResolveExpectedJsonPathCheck(check.Value, variableBag);
                 resolvedExpected = ResolveExpectedFromRequestIfNeeded(
                     resolvedExpected,
                     testCase?.Request);
-                var element = TryNavigateJsonPathWithAliases(doc.RootElement, check.Key, out var matchedJsonPath);
+                var element = pathResolution.IsResolved
+                    ? VariableExtractor.NavigateJsonPath(doc.RootElement, effectiveJsonPath)
+                    : null;
+                var matchedJsonPath = element.HasValue ? effectiveJsonPath : null;
                 var actualValue = element?.ToString();
                 var matchedByIdentifierAlias = false;
                 var wildcardMatched = false;
+                var valuesMatch = ValuesEqual(actualValue, resolvedExpected, element);
 
-                if ((actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
+                if (valuesMatch
+                    && pathResolution.IsResolved
+                    && !string.Equals(pathResolution.OriginalPath, pathResolution.ResolvedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "JSONPATH_PATH_NORMALIZED",
+                        Message = $"JSONPath expected '{pathResolution.OriginalPath}' normalized to actual '{pathResolution.ResolvedPath}'. Source={pathResolution.Source}; strategy={pathResolution.ResolutionStrategy}.",
+                        Target = pathResolution.ResolvedPath,
+                    });
+                }
+
+                if (!valuesMatch
                     && check.Value.ValueKind == JsonValueKind.String
-                    && TryResolveIdentifierAliasExpectedValue(check.Key, check.Value.GetString(), variableBag, actualValue, out var aliasMatchedExpected))
+                    && TryResolveIdentifierAliasExpectedValue(effectiveJsonPath, check.Value.GetString(), variableBag, actualValue, out var aliasMatchedExpected))
                 {
                     resolvedExpected = aliasMatchedExpected;
                     matchedByIdentifierAlias = true;
+                    valuesMatch = ValuesEqual(actualValue, resolvedExpected, element);
                 }
 
-                if ((actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element))
-                    && TryEvaluateWildcardJsonPathCheck(doc.RootElement, check.Key, resolvedExpected, out var wildcardActualPreview))
+                if (!valuesMatch
+                    && TryEvaluateWildcardJsonPathCheck(doc.RootElement, effectiveJsonPath, resolvedExpected, out var wildcardActualPreview))
                 {
                     wildcardMatched = true;
                     actualValue = wildcardActualPreview;
+                    valuesMatch = true;
                 }
 
-                if (!wildcardMatched && (actualValue == null || !ValuesEqual(actualValue, resolvedExpected, element)))
+                if (!wildcardMatched && !valuesMatch)
                 {
                     var hasUnresolvedPlaceholder =
                         !string.IsNullOrWhiteSpace(resolvedExpected)
@@ -1392,14 +1481,14 @@ public class RuleBasedValidator : IRuleBasedValidator
 
                     var shouldDowngradeMessageMismatch =
                         ShouldDowngradeJsonPathMismatchToWarning(
-                            check.Key,
+                            effectiveJsonPath,
                             resolvedExpected,
                             actualValue,
                             result.StatusCodeMatched,
                             ResolveJsonPathLeniencyMode(testCase, profile));
                     var shouldDowngradeIndexedCollectionGap =
                         ShouldDowngradeIndexedCollectionGapToWarning(
-                            check.Key,
+                            effectiveJsonPath,
                             actualValue,
                             result.StatusCodeMatched,
                             ResolveJsonPathLeniencyMode(testCase, profile));
@@ -1451,8 +1540,8 @@ public class RuleBasedValidator : IRuleBasedValidator
                         {
                             Code = "JSONPATH_ASSERTION_FAILED",
                             Message = isExistenceCheck
-                                ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response."
-                                : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'.",
+                                ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response. {FormatJsonPathResolutionDiagnostics(pathResolution)}"
+                                : $"JSONPath '{check.Key}' không khớp. Mong đợi: '{resolvedExpected}', thực tế: '{actualValue ?? "(null)"}'. {FormatJsonPathResolutionDiagnostics(pathResolution)}",
                             Target = matchedJsonPath ?? check.Key,
                             Expected = resolvedExpected,
                             Actual = actualValue,
@@ -1473,6 +1562,41 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         result.JsonPathChecksPassed = allPassed;
         return true;
+    }
+
+    private static IReadOnlyCollection<string> BuildJsonPathResolutionSchemas(
+        ExecutionTestCaseExpectationDto expectation,
+        ApiEndpointMetadataDto endpointMetadata)
+    {
+        var schemas = new List<string>();
+        if (!string.IsNullOrWhiteSpace(expectation?.ResponseSchema))
+        {
+            schemas.Add(expectation.ResponseSchema);
+        }
+
+        if (endpointMetadata?.ResponseSchemaPayloads != null)
+        {
+            schemas.AddRange(endpointMetadata.ResponseSchemaPayloads.Where(x => !string.IsNullOrWhiteSpace(x)));
+        }
+
+        return schemas;
+    }
+
+    private static string FormatJsonPathResolutionDiagnostics(JsonPathResolutionResult resolution)
+    {
+        if (resolution == null)
+        {
+            return string.Empty;
+        }
+
+        var diagnostics = resolution.Diagnostics?.Count > 0
+            ? string.Join(" ", resolution.Diagnostics)
+            : "No resolver diagnostic was produced.";
+        var candidates = resolution.CandidatePaths?.Count > 0
+            ? $" Candidate paths: {string.Join(", ", resolution.CandidatePaths.Take(5).Select(x => $"{x.Path}({x.Source}:{x.Score})"))}."
+            : string.Empty;
+
+        return $"Resolver: original='{resolution.OriginalPath}', resolved='{resolution.ResolvedPath ?? "(none)"}', source='{resolution.Source}', strategy='{resolution.ResolutionStrategy}', confidence={resolution.Confidence:0.##}. {diagnostics}{candidates}";
     }
 
     private static bool TryEvaluateWildcardJsonPathCheck(

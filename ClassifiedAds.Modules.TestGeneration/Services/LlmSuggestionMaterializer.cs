@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Models.Requests;
@@ -22,13 +23,16 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
 
     private readonly ITestCaseRequestBuilder _requestBuilder;
     private readonly ITestCaseExpectationBuilder _expectationBuilder;
+    private readonly IJsonPathResolver _jsonPathResolver;
 
     public LlmSuggestionMaterializer(
         ITestCaseRequestBuilder requestBuilder,
-        ITestCaseExpectationBuilder expectationBuilder)
+        ITestCaseExpectationBuilder expectationBuilder,
+        IJsonPathResolver jsonPathResolver)
     {
         _requestBuilder = requestBuilder ?? throw new ArgumentNullException(nameof(requestBuilder));
         _expectationBuilder = expectationBuilder ?? throw new ArgumentNullException(nameof(expectationBuilder));
+        _jsonPathResolver = jsonPathResolver ?? throw new ArgumentNullException(nameof(jsonPathResolver));
     }
 
     public TestCase MaterializeFromScenario(
@@ -71,7 +75,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         };
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
-        var n8nExpectation = BuildScenarioExpectation(scenario);
+        var n8nExpectation = BuildScenarioExpectation(scenario, orderItem);
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
         if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
         {
@@ -131,6 +135,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         testCase.Request = _requestBuilder.Build(testCaseId, n8nRequest, orderItem);
 
         var n8nExpectation = DeserializeOrDefault<N8nTestCaseExpectation>(suggestion.SuggestedExpectation);
+        NormalizeExpectationForEndpoint(n8nExpectation, orderItem);
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
         if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
         {
@@ -236,6 +241,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             n8nExpectation = originalExpectation;
         }
 
+        NormalizeExpectationForEndpoint(n8nExpectation, orderItem);
         testCase.Expectation = _expectationBuilder.Build(testCaseId, n8nExpectation);
         if (n8nExpectation?.PrimaryRequirementId.HasValue == true)
         {
@@ -389,7 +395,9 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         return JsonSerializer.Serialize(tags, JsonOpts);
     }
 
-    private static N8nTestCaseExpectation BuildScenarioExpectation(LlmSuggestedScenario scenario)
+    private N8nTestCaseExpectation BuildScenarioExpectation(
+        LlmSuggestedScenario scenario,
+        ApiOrderItemModel orderItem)
     {
         if (scenario == null)
         {
@@ -407,6 +415,16 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             bodyContains.Add(scenario.ExpectedBehavior);
         }
 
+        var reconciledJsonPathChecks = ExpectationResolver.ReconcileJsonPathChecksWithStatuses(
+            scenario.SuggestedJsonPathChecks != null
+                ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            expectedStatus);
+        var normalizedJsonPathChecks = ExpectedJsonPathNormalizer.NormalizeForEndpoint(
+            reconciledJsonPathChecks,
+            orderItem?.Path,
+            _jsonPathResolver);
+
         return new N8nTestCaseExpectation
         {
             ExpectedStatus = expectedStatus,
@@ -415,11 +433,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             HeaderChecks = scenario.SuggestedHeaderChecks != null
                 ? new Dictionary<string, string>(scenario.SuggestedHeaderChecks, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            JsonPathChecks = ExpectationResolver.ReconcileJsonPathChecksWithStatuses(
-                scenario.SuggestedJsonPathChecks != null
-                    ? new Dictionary<string, string>(scenario.SuggestedJsonPathChecks, StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                expectedStatus),
+            JsonPathChecks = normalizedJsonPathChecks,
             ExpectationSource = scenario.ExpectationSource,
             RequirementCode = scenario.RequirementCode,
             PrimaryRequirementId = scenario.PrimaryRequirementId,
@@ -440,6 +454,21 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
                 ExpectedProvenance = scenario.ExpectedProvenance,
             }),
         };
+    }
+
+    private void NormalizeExpectationForEndpoint(
+        N8nTestCaseExpectation expectation,
+        ApiOrderItemModel orderItem)
+    {
+        if (expectation == null)
+        {
+            return;
+        }
+
+        expectation.JsonPathChecks = ExpectedJsonPathNormalizer.NormalizeForEndpoint(
+            expectation.JsonPathChecks,
+            orderItem?.Path,
+            _jsonPathResolver);
     }
 
     private static T DeserializeOrDefault<T>(string json)

@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
@@ -29,10 +30,14 @@ public class LlmSuggestionPreviewPersistenceService : ILlmSuggestionPreviewPersi
     };
 
     private readonly IRepository<LlmSuggestion, Guid> _suggestionRepository;
+    private readonly IJsonPathResolver _jsonPathResolver;
 
-    public LlmSuggestionPreviewPersistenceService(IRepository<LlmSuggestion, Guid> suggestionRepository)
+    public LlmSuggestionPreviewPersistenceService(
+        IRepository<LlmSuggestion, Guid> suggestionRepository,
+        IJsonPathResolver jsonPathResolver)
     {
         _suggestionRepository = suggestionRepository;
+        _jsonPathResolver = jsonPathResolver ?? throw new ArgumentNullException(nameof(jsonPathResolver));
     }
 
     public async Task<List<LlmSuggestion>> ReplacePendingSuggestionsAsync(
@@ -66,6 +71,10 @@ public class LlmSuggestionPreviewPersistenceService : ILlmSuggestionPreviewPersi
         foreach (var scenario in llmResult.Scenarios)
         {
             orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem);
+            var normalizedJsonPathChecks = ExpectedJsonPathNormalizer.NormalizeForEndpoint(
+                scenario.SuggestedJsonPathChecks,
+                orderItem?.Path,
+                _jsonPathResolver);
 
             var suggestion = new LlmSuggestion
             {
@@ -99,7 +108,7 @@ public class LlmSuggestionPreviewPersistenceService : ILlmSuggestionPreviewPersi
                     ExpectedStatus = scenario.ExpectedStatusCodes ?? new List<int>(),
                     BodyContains = scenario.SuggestedBodyContains ?? new List<string>(),
                     BodyNotContains = scenario.SuggestedBodyNotContains ?? new List<string>(),
-                    JsonPathChecks = scenario.SuggestedJsonPathChecks ?? new Dictionary<string, string>(),
+                    JsonPathChecks = normalizedJsonPathChecks,
                     HeaderChecks = scenario.SuggestedHeaderChecks ?? new Dictionary<string, string>(),
                     ExpectationSource = scenario.ExpectationSource,
                     RequirementCode = scenario.RequirementCode,

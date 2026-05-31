@@ -32,7 +32,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.4" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Redis" Version="2.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.AzureAppServices" Version="10.0.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0" />
