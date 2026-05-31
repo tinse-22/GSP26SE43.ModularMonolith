@@ -1,8 +1,8 @@
 # Tài Liệu Kiểm Thử API - Test Requirements Document
 
 > **Dự án:** API Đồ Án Tốt Nghiệp  
-> **Base URL:** `http://localhost:5000/api`  
-> **Swagger UI:** `http://localhost:5000/api-docs`  
+> **Base URL:** `https://test-api-testing-product.onrender.com`
+> **Swagger/OpenAPI file:** `swagger (1).json`
 > **Phiên bản tài liệu:** 1.0  
 > **Ngày tạo:** 26/04/2026
 
@@ -25,11 +25,73 @@
 
 ## 1. Tổng Quan Hệ Thống
 
+### Phạm Vi Sinh Test Tự Động
+
+Tài liệu này được dùng cùng OpenAPI file `swagger (1).json`. Khi sinh testcase tự động, chỉ tạo HTTP testcase cho các endpoint có trong Swagger:
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/categories`
+- `POST /api/categories`
+- `PUT /api/categories/{id}`
+- `DELETE /api/categories/{id}`
+- `GET /api/products`
+- `POST /api/products`
+- `PUT /api/products/{id}`
+- `DELETE /api/products/{id}`
+
+Các mục về health check, Swagger UI, MongoDB Compass, kiểm tra DB nội bộ, password hash trong DB, token hết hạn bằng cấu hình thời gian ngắn, brute force/rate limit, hoặc route không có trong Swagger chỉ là kiểm tra thủ công/tham khảo. Không sinh testcase HTTP tự động từ các mục đó nếu endpoint không có trong Swagger.
+
+### Quy Ước Sinh Expected Check
+
+Để tránh false negative khi response bọc dữ liệu trong `data`, generator phải tuân thủ các rule sau:
+
+- Với response thành công có dạng `{ "success": true, "message": "...", "data": ... }`, tất cả JSONPath cho entity phải đi qua `$.data`.
+- Không assert `$.id`, `$.name`, `$.price`, `$.stock`, `$.categoryId` ở root cho Category/Product.
+- Category dùng MongoDB id là `$.data._id`, không dùng `$.id`.
+- Product dùng MongoDB id là `$.data._id`, không dùng `$.id`.
+- Register user là ngoại lệ theo Swagger `User`: user id là `$.data.id`.
+- Login token nằm ở `$.data.token`.
+- GET list dùng `$.data` là array; nếu kiểm tra item đầu tiên thì dùng `$.data[0]._id`, `$.data[0].name`, ...
+- Chỉ assert exact `message` khi message được ghi rõ là bắt buộc. Nếu không, chỉ cần assert `success` và status code.
+- Không tạo JSONPath check cho timestamp exact value. Chỉ kiểm tra field tồn tại nếu cần: `createdAt`, `updatedAt`.
+- Không tạo check cho dữ liệu DB nội bộ hoặc "kiểm tra trong DB" vì runner chỉ xác thực HTTP response.
+
+Canonical JSONPath cho happy path:
+
+| Endpoint | Status | JSONPath checks nên dùng |
+| -------- | ------ | ------------------------ |
+| `POST /api/auth/register` | 201 | `$.success = true`, `$.data.id exists`, `$.data.email eq input email`, `$.data.password not_exists` |
+| `POST /api/auth/login` | 200 | `$.success = true`, `$.data.token exists` |
+| `GET /api/categories` | 200 | `$.success = true`, `$.data exists` |
+| `POST /api/categories` | 201 | `$.success = true`, `$.data._id exists`, `$.data.name eq input name`, `$.data.description eq input description` nếu có |
+| `PUT /api/categories/{id}` | 200 | `$.success = true`, `$.data._id exists`, `$.data.name eq input name` |
+| `DELETE /api/categories/{id}` | 200 | `$.success = true`, `$.data not_exists` |
+| `GET /api/products` | 200 | `$.success = true`, `$.data exists` |
+| `POST /api/products` | 201 | `$.success = true`, `$.data._id exists`, `$.data.name eq input name`, `$.data.price eq input price`, `$.data.stock eq input stock`, `$.data.categoryId exists` |
+| `PUT /api/products/{id}` | 200 | `$.success = true`, `$.data._id exists`, `$.data.name eq input name`, `$.data.price eq input price`, `$.data.stock eq input stock` |
+| `DELETE /api/products/{id}` | 200 | `$.success = true`, `$.data not_exists` |
+
+Các negative testcase nên assert status code và `$.success = false`. Không assert exact error message nếu message phụ thuộc middleware hoặc validation library, trừ khi testcase chuyên kiểm tra message đó.
+
+### Quy Ước Dữ Liệu Động Và Dependency
+
+- Mọi happy path tạo mới phải dùng dữ liệu duy nhất bằng `{{tcUniqueId}}`, ví dụ `user_{{tcUniqueId}}@example.com`, `Electronics_{{tcUniqueId}}`, `Product_{{tcUniqueId}}`.
+- Test đăng nhập phải phụ thuộc vào test đăng ký thành công và dùng đúng email/password đã đăng ký.
+- Test tạo/sửa/xóa Category hoặc Product có auth phải phụ thuộc vào test login thành công để lấy `{{authToken}}`.
+- Test Product cần `categoryId` phải phụ thuộc vào test tạo Category thành công và dùng `{{categoryId}}` lấy từ `$.data._id`.
+- Test update/delete Category phải phụ thuộc vào test tạo Category thành công và dùng URL `/api/categories/{{categoryId}}`.
+- Test update/delete Product phải phụ thuộc vào test tạo Product thành công và dùng URL `/api/products/{{productId}}`.
+- Negative auth sai prefix nên ưu tiên dùng `POST /api/categories` với body hợp lệ để không phụ thuộc path id. Header: `Authorization: Basic {{authToken}}`; expected 401.
+- Negative không có token nên ưu tiên dùng `POST /api/categories` hoặc `POST /api/products` với body hợp lệ; expected 401.
+- Negative not found phải dùng ObjectId hợp lệ nhưng không tồn tại: `000000000000000000000000`.
+- Negative invalid id phải dùng path `not-a-valid-id`.
+
 ### Danh Sách Endpoint
 
 | Nhóm       | Method | Endpoint              | Mô tả                  | Xác thực            |
 | ---------- | ------ | --------------------- | ---------------------- | ------------------- |
-| System     | GET    | `/api/health`         | Kiểm tra server        | Không               |
+| Manual     | GET    | `/api/health`         | Kiểm tra server nếu có | Không               |
 | Auth       | POST   | `/api/auth/register`  | Đăng ký tài khoản      | Không               |
 | Auth       | POST   | `/api/auth/login`     | Đăng nhập              | Không               |
 | Categories | GET    | `/api/categories`     | Lấy danh sách danh mục | Không               |
@@ -68,14 +130,14 @@
    - JWT_EXPIRES_IN=1d
    - PORT=5000
 3. Khởi động server: npm run dev
-4. Xác nhận server chạy: GET http://localhost:5000/api/health
+4. Xác nhận server chạy bằng endpoint trong Swagger hoặc health endpoint nếu hệ thống có cấu hình riêng.
 ```
 
 ### Công Cụ Gợi Ý
 
 - **Postman** hoặc **Insomnia** để gửi HTTP request
-- **Swagger UI** tại `http://localhost:5000/api-docs` để xem API docs
-- **MongoDB Compass** để kiểm tra dữ liệu trong DB
+- **Swagger/OpenAPI file**: `swagger (1).json`
+- **MongoDB Compass** chỉ dùng cho kiểm tra thủ công, không dùng làm expected check tự động
 
 ### Lấy Token Để Test Các API Có Auth
 
@@ -89,6 +151,8 @@
 ---
 
 ## 3. Quy Ước Chung & Format Response
+
+Các JSON response mẫu trong tài liệu là contract định hướng cho generator. Với testcase tự động, ưu tiên status code, `success`, và JSONPath field chính xác theo bảng "Canonical JSONPath"; không suy diễn thêm root-level field ngoài Swagger/SRS.
 
 ### Response Thành Công
 
@@ -149,7 +213,7 @@
 **Request:**
 
 ```
-GET http://localhost:5000/api/health
+GET /api/health
 ```
 
 **Expected Response (200 OK):**
@@ -166,7 +230,7 @@ GET http://localhost:5000/api/health
 
 - [ ] Status code = 200
 - [ ] `status` = `"success"`
-- [ ] `message` = `"Server is healthy"`
+- [ ] `message` = `"Server is healthy"` nếu endpoint health được sinh thủ công
 - [ ] `timestamp` có định dạng ISO 8601
 
 ---
@@ -181,7 +245,7 @@ GET http://localhost:5000/api/health
 **Request:**
 
 ```
-GET http://localhost:5000/api/nonexistent
+GET /api/nonexistent
 ```
 
 **Expected Response (404 Not Found):**
@@ -215,7 +279,7 @@ GET http://localhost:5000/api/nonexistent
 
 ```json
 {
-  "email": "tester01@example.com",
+  "email": "user_{{tcUniqueId}}@example.com",
   "password": "123456"
 }
 ```
@@ -228,7 +292,7 @@ GET http://localhost:5000/api/nonexistent
   "message": "User registered successfully",
   "data": {
     "id": "<mongodb_objectid>",
-    "email": "tester01@example.com",
+    "email": "user_{{tcUniqueId}}@example.com",
     "createdAt": "<timestamp>"
   }
 }
@@ -238,7 +302,7 @@ GET http://localhost:5000/api/nonexistent
 
 - [ ] Status code = 201
 - [ ] `success` = `true`
-- [ ] `data.email` trùng với email đã đăng ký (lowercase)
+- [ ] `data.email` trùng với email đã đăng ký (lowercase): `$.data.email`
 - [ ] `data.id` là MongoDB ObjectId hợp lệ
 - [ ] `data` **KHÔNG** chứa trường `password`
 - [ ] `data.createdAt` có giá trị timestamp
@@ -250,13 +314,13 @@ GET http://localhost:5000/api/nonexistent
 |               |                                                    |
 | ------------- | -------------------------------------------------- |
 | **Loại test** | Negative - Duplicate                               |
-| **Điều kiện** | Email `tester01@example.com` đã được đăng ký trước |
+| **Điều kiện** | Dùng lại email từ testcase đăng ký thành công trước đó |
 
 **Request Body:**
 
 ```json
 {
-  "email": "tester01@example.com",
+  "email": "user_{{tcUniqueId}}@example.com",
   "password": "abcdef"
 }
 ```
@@ -274,7 +338,7 @@ GET http://localhost:5000/api/nonexistent
 
 - [ ] Status code = 409
 - [ ] `success` = `false`
-- [ ] Message đúng: `"Email already exists"`
+- [ ] `$.success` = `false`; message exact là tham khảo, không bắt buộc nếu status 409 đúng
 
 ---
 
@@ -372,7 +436,7 @@ GET http://localhost:5000/api/nonexistent
 {}
 ```
 
-**Expected:** Tất cả trả về 400, `message` = `"Validation failed"`, `errors.fieldErrors` chứa thông báo trường bị thiếu.
+**Expected:** Tất cả trả về 400, `success` = `false`; nếu response có `errors.fieldErrors` thì chứa thông báo trường bị thiếu. Không hard-fail chỉ vì wording của `message` khác.
 
 ---
 
@@ -418,13 +482,13 @@ GET http://localhost:5000/api/nonexistent
 |               |                                                  |
 | ------------- | ------------------------------------------------ |
 | **Loại test** | Happy Path                                       |
-| **Điều kiện** | Tài khoản `tester01@example.com` đã được đăng ký |
+| **Điều kiện** | Tài khoản từ testcase đăng ký thành công đã tồn tại |
 
 **Request Body:**
 
 ```json
 {
-  "email": "tester01@example.com",
+  "email": "user_{{tcUniqueId}}@example.com",
   "password": "123456"
 }
 ```
@@ -456,7 +520,7 @@ GET http://localhost:5000/api/nonexistent
 
 ```json
 {
-  "email": "tester01@example.com",
+  "email": "user_{{tcUniqueId}}@example.com",
   "password": "wrongpassword"
 }
 ```
@@ -500,7 +564,7 @@ GET http://localhost:5000/api/nonexistent
 **Điểm kiểm tra:**
 
 - [ ] Status code = 401
-- [ ] Message giống hệt TC-AUTH-LOG-002 (không phân biệt lỗi email hay password)
+- [ ] Không phân biệt lỗi email hay password. Message exact là tham khảo; testcase tự động ưu tiên status 401 và `success=false`.
 
 ---
 
@@ -526,12 +590,12 @@ GET http://localhost:5000/api/nonexistent
 
 |               |                             |
 | ------------- | --------------------------- |
-| **Điều kiện** | DB đã có ít nhất 1 category |
+| **Điều kiện** | Có thể có hoặc chưa có category; testcase tự động không phụ thuộc trạng thái DB ban đầu |
 
 **Request:**
 
 ```
-GET http://localhost:5000/api/categories
+GET /api/categories
 ```
 
 **Expected Response (200 OK):**
@@ -543,7 +607,7 @@ GET http://localhost:5000/api/categories
   "data": [
     {
       "_id": "<objectid>",
-      "name": "Electronics",
+      "name": "Electronics_{{tcUniqueId}}",
       "description": "Electronic devices",
       "createdAt": "<timestamp>",
       "updatedAt": "<timestamp>"
@@ -556,17 +620,17 @@ GET http://localhost:5000/api/categories
 
 - [ ] Status code = 200
 - [ ] `data` là array
-- [ ] Mỗi item có `_id`, `name`, `createdAt`, `updatedAt`
-- [ ] Danh sách sắp xếp theo `createdAt` giảm dần (mới nhất lên đầu)
+- [ ] Nếu `data` có item, mỗi item có `_id`, `name`, `createdAt`, `updatedAt`
+- [ ] Không assert thứ tự sắp xếp trong testcase tự động
 - [ ] `description` xuất hiện nếu đã nhập, không xuất hiện nếu không nhập
 
 ---
 
-#### TC-CAT-GET-002: Lấy danh sách khi DB rỗng
+#### TC-CAT-GET-002: Lấy danh sách khi không có dữ liệu
 
 |               |                         |
 | ------------- | ----------------------- |
-| **Điều kiện** | DB chưa có category nào |
+| **Điều kiện** | Chỉ chạy khi môi trường test được reset rỗng; nếu không chắc chắn thì không sinh testcase tự động |
 
 **Expected Response (200 OK):**
 
@@ -606,7 +670,7 @@ GET http://localhost:5000/api/categories
 
 ```json
 {
-  "name": "Electronics",
+  "name": "Electronics_{{tcUniqueId}}",
   "description": "Các thiết bị điện tử"
 }
 ```
@@ -619,7 +683,7 @@ GET http://localhost:5000/api/categories
   "message": "Category created successfully",
   "data": {
     "_id": "<objectid>",
-    "name": "Electronics",
+    "name": "Electronics_{{tcUniqueId}}",
     "description": "Các thiết bị điện tử",
     "createdAt": "<timestamp>",
     "updatedAt": "<timestamp>"
@@ -633,7 +697,7 @@ GET http://localhost:5000/api/categories
 - [ ] `data._id` là MongoDB ObjectId hợp lệ
 - [ ] `data.name` đúng với input
 - [ ] `data.description` đúng với input
-- [ ] Kiểm tra trong DB: document được tạo
+- [ ] Kiểm tra DB chỉ dành cho manual review, không sinh HTTP assertion tự động
 
 ---
 
@@ -643,12 +707,12 @@ GET http://localhost:5000/api/categories
 
 ```json
 {
-  "name": "Fashion"
+  "name": "Fashion_{{tcUniqueId}}"
 }
 ```
 
 **Expected Response (201):**  
-`data` không có trường `description` hoặc `description` = `undefined`.
+`data.description` không tồn tại hoặc là giá trị rỗng/null. Không assert exact `undefined` trong JSON.
 
 ---
 
@@ -656,13 +720,13 @@ GET http://localhost:5000/api/categories
 
 |               |                                     |
 | ------------- | ----------------------------------- |
-| **Điều kiện** | Category `"Electronics"` đã tồn tại |
+| **Điều kiện** | Category từ testcase tạo thành công đã tồn tại |
 
 **Request Body:**
 
 ```json
 {
-  "name": "Electronics",
+  "name": "Electronics_{{tcUniqueId}}",
   "description": "Mô tả khác"
 }
 ```
@@ -734,19 +798,19 @@ Authorization: Bearer invalid_token_string
 
 |               |                               |
 | ------------- | ----------------------------- |
-| **Điều kiện** | `categoryId` tồn tại trong DB |
+| **Điều kiện** | `categoryId` lấy từ testcase tạo Category thành công trước đó |
 
 **Request:**
 
 ```
-PUT http://localhost:5000/api/categories/64abc123def456789012abcd
+PUT /api/categories/{{categoryId}}
 ```
 
 **Request Body:**
 
 ```json
 {
-  "name": "Electronics Updated",
+  "name": "ElectronicsUpdated_{{tcUniqueId}}",
   "description": "Mô tả mới"
 }
 ```
@@ -758,8 +822,8 @@ PUT http://localhost:5000/api/categories/64abc123def456789012abcd
   "success": true,
   "message": "Category updated successfully",
   "data": {
-    "_id": "64abc123def456789012abcd",
-    "name": "Electronics Updated",
+    "_id": "{{categoryId}}",
+    "name": "ElectronicsUpdated_{{tcUniqueId}}",
     "description": "Mô tả mới",
     "createdAt": "<original_timestamp>",
     "updatedAt": "<new_timestamp>"
@@ -770,7 +834,7 @@ PUT http://localhost:5000/api/categories/64abc123def456789012abcd
 **Điểm kiểm tra:**
 
 - [ ] `data.name` đã được cập nhật
-- [ ] `data.updatedAt` > `data.createdAt`
+- [ ] `data.updatedAt` tồn tại. So sánh thời gian chỉ dành cho manual review, không sinh assertion tự động.
 - [ ] `data._id` không thay đổi
 
 ---
@@ -796,7 +860,7 @@ PUT http://localhost:5000/api/categories/64abc123def456789012abcd
 **Request:**
 
 ```
-PUT http://localhost:5000/api/categories/not-a-valid-id
+PUT /api/categories/not-a-valid-id
 ```
 
 **Expected Response (400):**
@@ -814,13 +878,13 @@ PUT http://localhost:5000/api/categories/not-a-valid-id
 
 |               |                                                              |
 | ------------- | ------------------------------------------------------------ |
-| **Điều kiện** | Category `"Fashion"` đã tồn tại, đang cập nhật category khác |
+| **Điều kiện** | Tạo trước một category thứ hai có tên `Fashion_{{tcUniqueId}}`, sau đó cập nhật category khác sang tên này |
 
 **Request Body:**
 
 ```json
 {
-  "name": "Fashion"
+  "name": "Fashion_{{tcUniqueId}}"
 }
 ```
 
@@ -864,7 +928,7 @@ Trả về 200, data giống như cũ. Không bị lỗi 409.
 **Request:**
 
 ```
-DELETE http://localhost:5000/api/categories/<valid_existing_id>
+DELETE /api/categories/{{categoryId}}
 ```
 
 **Expected Response (200 OK):**
@@ -880,7 +944,7 @@ DELETE http://localhost:5000/api/categories/<valid_existing_id>
 
 - [ ] Status code = 200
 - [ ] Response **không** có trường `data`
-- [ ] Kiểm tra DB: document đã bị xóa
+- [ ] Kiểm tra DB chỉ dành cho manual review, không sinh HTTP assertion tự động
 
 ---
 
@@ -904,7 +968,7 @@ DELETE http://localhost:5000/api/categories/<valid_existing_id>
 **Request:**
 
 ```
-DELETE http://localhost:5000/api/categories/invalid-id
+DELETE /api/categories/not-a-valid-id
 ```
 
 **Expected Response (400):**
@@ -943,12 +1007,12 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "data": [
     {
       "_id": "<objectid>",
-      "name": "iPhone 15",
+      "name": "iPhone15_{{tcUniqueId}}",
       "price": 25000000,
       "stock": 50,
       "categoryId": {
         "_id": "<cat_objectid>",
-        "name": "Electronics",
+        "name": "Electronics_{{tcUniqueId}}",
         "description": "Thiết bị điện tử"
       },
       "createdAt": "<timestamp>",
@@ -962,9 +1026,9 @@ DELETE http://localhost:5000/api/categories/invalid-id
 
 - [ ] Status code = 200
 - [ ] `data` là array
-- [ ] `categoryId` được **populate** (là object, không phải string ID)
-- [ ] `categoryId` chứa `_id`, `name`, `description`
-- [ ] Danh sách sắp xếp theo `createdAt` giảm dần
+- [ ] `categoryId` tồn tại. Theo Swagger field này có thể là string hoặc object Category.
+- [ ] Nếu `categoryId` là object thì có thể kiểm tra `_id`, `name`; nếu là string thì không fail.
+- [ ] Không assert thứ tự sắp xếp trong testcase tự động
 
 ---
 
@@ -993,16 +1057,16 @@ DELETE http://localhost:5000/api/categories/invalid-id
 
 |               |                               |
 | ------------- | ----------------------------- |
-| **Điều kiện** | `categoryId` tồn tại trong DB |
+| **Điều kiện** | `categoryId` lấy từ testcase tạo Category thành công trước đó |
 
 **Request Body:**
 
 ```json
 {
-  "name": "iPhone 15 Pro Max",
+  "name": "Product_{{tcUniqueId}}",
   "price": 33990000,
   "stock": 100,
-  "categoryId": "64abc123def456789012abcd"
+  "categoryId": "{{categoryId}}"
 }
 ```
 
@@ -1014,10 +1078,10 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "message": "Product created successfully",
   "data": {
     "_id": "<objectid>",
-    "name": "iPhone 15 Pro Max",
+    "name": "Product_{{tcUniqueId}}",
     "price": 33990000,
     "stock": 100,
-    "categoryId": "64abc123def456789012abcd",
+    "categoryId": "{{categoryId}}",
     "createdAt": "<timestamp>",
     "updatedAt": "<timestamp>"
   }
@@ -1027,8 +1091,9 @@ DELETE http://localhost:5000/api/categories/invalid-id
 **Điểm kiểm tra:**
 
 - [ ] Status code = 201
-- [ ] Tất cả fields đúng với input
-- [ ] Kiểm tra DB: document được tạo
+- [ ] `data.name`, `data.price`, `data.stock` đúng với input
+- [ ] `data.categoryId` tồn tại; không hard-fail nếu response trả string hoặc object theo Swagger `oneOf`
+- [ ] Kiểm tra DB chỉ dành cho manual review, không sinh HTTP assertion tự động
 
 ---
 
@@ -1089,11 +1154,11 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "name": "Test",
   "price": -1,
   "stock": 10,
-  "categoryId": "64abc123def456789012abcd"
+  "categoryId": "{{categoryId}}"
 }
 ```
 
-**Expected Response (400):** `message: "Validation failed"`, lỗi tại field `price`
+**Expected Response (400):** `success=false`; nếu có `errors.fieldErrors.price` thì kiểm tra field này. Không hard-fail vì wording `message`.
 
 ---
 
@@ -1106,11 +1171,11 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "name": "Test",
   "price": 100,
   "stock": -5,
-  "categoryId": "64abc123def456789012abcd"
+  "categoryId": "{{categoryId}}"
 }
 ```
 
-**Expected Response (400):** `message: "Validation failed"`, lỗi tại field `stock`
+**Expected Response (400):** `success=false`; nếu có `errors.fieldErrors.stock` thì kiểm tra field này. Không hard-fail vì wording `message`.
 
 ---
 
@@ -1123,7 +1188,7 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "name": "Test",
   "price": 100,
   "stock": 1.5,
-  "categoryId": "64abc123def456789012abcd"
+  "categoryId": "{{categoryId}}"
 }
 ```
 
@@ -1172,10 +1237,10 @@ DELETE http://localhost:5000/api/categories/invalid-id
 
 ```json
 {
-  "name": "iPhone 15 Pro Max 512GB",
+  "name": "ProductUpdated_{{tcUniqueId}}",
   "price": 35990000,
   "stock": 80,
-  "categoryId": "64abc123def456789012abcd"
+  "categoryId": "{{categoryId}}"
 }
 ```
 
@@ -1187,14 +1252,10 @@ DELETE http://localhost:5000/api/categories/invalid-id
   "message": "Product updated successfully",
   "data": {
     "_id": "<product_id>",
-    "name": "iPhone 15 Pro Max 512GB",
+    "name": "ProductUpdated_{{tcUniqueId}}",
     "price": 35990000,
     "stock": 80,
-    "categoryId": {
-      "_id": "64abc123def456789012abcd",
-      "name": "Electronics",
-      "description": "..."
-    },
+    "categoryId": "{{categoryId}}",
     "createdAt": "<original>",
     "updatedAt": "<new>"
   }
@@ -1203,8 +1264,8 @@ DELETE http://localhost:5000/api/categories/invalid-id
 
 **Điểm kiểm tra:**
 
-- [ ] `categoryId` trong response được **populate** (là object)
-- [ ] `updatedAt` > `createdAt`
+- [ ] `data.categoryId` tồn tại; response có thể trả string hoặc object Category theo Swagger `oneOf`
+- [ ] `updatedAt` tồn tại. So sánh thời gian chỉ dành cho manual review, không sinh assertion tự động.
 
 ---
 
@@ -1226,7 +1287,7 @@ DELETE http://localhost:5000/api/categories/invalid-id
 **Request:**
 
 ```
-PUT http://localhost:5000/api/products/invalid-id
+PUT /api/products/not-a-valid-id
 ```
 
 **Expected Response (400):**
@@ -1285,7 +1346,7 @@ PUT http://localhost:5000/api/products/invalid-id
 
 - [ ] Status code = 200
 - [ ] Response không có trường `data`
-- [ ] Kiểm tra DB: document đã bị xóa
+- [ ] Kiểm tra DB chỉ dành cho manual review, không sinh HTTP assertion tự động
 
 ---
 
@@ -1442,7 +1503,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake.signature
 ```json
 [
   {
-    "name": "iPhone 15 Pro",
+    "name": "ProductSample_{{tcUniqueId}}",
     "price": 27990000,
     "stock": 50,
     "categoryId": "<id_danh_muc_dien_tu>"
@@ -1527,7 +1588,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake.signature
 
 ### Products
 
-- [ ] TC-PROD-GET-001: Lấy danh sách với populate
+- [ ] TC-PROD-GET-001: Lấy danh sách sản phẩm, `categoryId` tồn tại
 - [ ] TC-PROD-GET-002: Danh sách rỗng
 - [ ] TC-PROD-GET-003: Không cần token
 - [ ] TC-PROD-CRT-001: Tạo thành công → 201

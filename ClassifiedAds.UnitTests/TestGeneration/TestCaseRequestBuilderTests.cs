@@ -102,6 +102,39 @@ public class TestCaseRequestBuilderTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Build_Should_FallbackToOrderItemPath_WhenSourceUrlIsMissing(string? sourceUrl)
+    {
+        var testCaseId = Guid.NewGuid();
+        var source = new N8nTestCaseRequest
+        {
+            HttpMethod = "GET",
+            Url = sourceUrl,
+        };
+        var orderItem = new ApiOrderItemModel { HttpMethod = "GET", Path = "/api/products/{id}" };
+
+        var result = _builder.Build(testCaseId, source, orderItem);
+
+        result.Url.Should().Be("/api/products/{id}");
+    }
+
+    [Fact]
+    public void Build_Should_TrimSourceUrl_WhenProvided()
+    {
+        var source = new N8nTestCaseRequest
+        {
+            HttpMethod = "GET",
+            Url = "  /api/products?page=1  ",
+        };
+
+        var result = _builder.Build(Guid.NewGuid(), source, null);
+
+        result.Url.Should().Be("/api/products?page=1");
+    }
+
+    [Theory]
     [InlineData("JSON", BodyType.JSON)]
     [InlineData("FormData", BodyType.FormData)]
     [InlineData("FORM_DATA", BodyType.FormData)]

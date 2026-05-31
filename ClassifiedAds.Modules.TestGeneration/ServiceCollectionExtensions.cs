@@ -1,4 +1,5 @@
 ﻿using ClassifiedAds.Contracts.TestGeneration.Services;
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Infrastructure.HostedServices;
@@ -29,6 +30,7 @@ public static class TestGenerationServiceCollectionExtensions
         var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
+        services.AddSingleton<IJsonPathResolver>(_ => new JsonPathResolver(settings.JsonPathResolution ?? new JsonPathResolutionOptions()));
         services.Configure<ScenarioGenerationBudgetOptions>(options =>
         {
             var budget = ScenarioBudgetResolver.Normalize(settings.ScenarioGenerationBudget);

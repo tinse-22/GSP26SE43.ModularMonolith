@@ -2,6 +2,7 @@ using ClassifiedAds.Contracts.ApiDocumentation.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Modules.TestExecution.Models;
 using ClassifiedAds.Modules.TestExecution.Services;
+using ClassifiedAds.UnitTests;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -14,7 +15,9 @@ public class RuleBasedValidatorTests
 
     public RuleBasedValidatorTests()
     {
-        _validator = new RuleBasedValidator(new Mock<ILogger<RuleBasedValidator>>().Object);
+        _validator = new RuleBasedValidator(
+            new Mock<ILogger<RuleBasedValidator>>().Object,
+            JsonPathResolutionTestFactory.CreateResolver());
     }
 
     #region Transport Error
@@ -432,6 +435,7 @@ public class RuleBasedValidatorTests
 
         // Assert
         result.IsPassed.Should().BeFalse();
+        result.HardChecksPassed.Should().BeFalse();
         result.BodyContainsPassed.Should().BeFalse();
         result.Failures.Should().HaveCount(2);
         result.Failures.Should().OnlyContain(f => f.Code == "BODY_CONTAINS_MISSING");
@@ -482,6 +486,7 @@ public class RuleBasedValidatorTests
 
         // Assert
         result.IsPassed.Should().BeFalse();
+        result.HardChecksPassed.Should().BeFalse();
         result.BodyNotContainsPassed.Should().BeFalse();
         result.Failures.Should().ContainSingle(f => f.Code == "BODY_NOT_CONTAINS_PRESENT");
     }
@@ -569,6 +574,131 @@ public class RuleBasedValidatorTests
         result.JsonPathChecksPassed.Should().BeFalse();
         result.Failures.Should().ContainSingle(f => f.Code == "JSONPATH_ASSERTION_FAILED");
         result.Failures[0].Actual.Should().BeNull();
+    }
+
+    [Fact]
+    public void Validate_JsonPathNotExistsOperatorWithMissingPath_Should_Pass()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"success": true, "data": {"email": "user_123@demo.com"}}""");
+        var testCase = CreateTestCase(jsonPathChecks: """{"$.data.password":{"op":"not_exists","value":null}}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+    }
+
+    [Fact]
+    public void Validate_JsonPathNotExistsOperatorWithExplicitNull_Should_Fail()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"success": true, "data": {"email": "user_123@demo.com", "password": null}}""");
+        var testCase = CreateTestCase(jsonPathChecks: """{"$.data.password":{"op":"not_exists","value":null}}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.JsonPathChecksPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.Failures[0].Target.Should().Be("$.data.password");
+    }
+
+    [Fact]
+    public void Validate_JsonPathExistsId_Should_PassForMongoUnderscoreId()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"success": true, "data": {"_id": "cat-123", "name": "Sample Name"}}""");
+        var testCase = CreateTestCase(jsonPathChecks: """{"$.data.id":{"op":"exists"}}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+    }
+
+    [Theory]
+    [InlineData("$.data.id", """{"success":true,"data":{"_id":"cat-123"}}""", "$.data._id")]
+    [InlineData("$.data.data.id", """{"success":true,"data":{"data":{"_id":"cat-123"}}}""", "$.data.data._id")]
+    [InlineData("$.data.data.id", """{"success":true,"data":{"_id":"cat-123"}}""", "$.data._id")]
+    [InlineData("$.id", """{"success":true,"data":{"_id":"cat-123"}}""", "$.data._id")]
+    [InlineData("$.data[0].id", """{"success":true,"data":[{"_id":"cat-123"}]}""", "$.data[0]._id")]
+    [InlineData("$.data.items[0].id", """{"success":true,"data":{"items":[{"_id":"cat-123"}]}}""", "$.data.items[0]._id")]
+    public void Validate_JsonPath_Should_ResolveDynamicPathMismatches(
+        string expectedPath,
+        string responseBody,
+        string normalizedPath)
+    {
+        // Arrange
+        var escapedPath = expectedPath.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var response = CreateResponse(body: responseBody);
+        var testCase = CreateTestCase(jsonPathChecks: $$"""{"{{escapedPath}}":"exists"}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        if (!string.Equals(expectedPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Warnings.Should().Contain(w =>
+                w.Code == "JSONPATH_PATH_NORMALIZED" &&
+                w.Message.Contains(expectedPath, StringComparison.Ordinal) &&
+                w.Message.Contains(normalizedPath, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Validate_JsonPath_Should_FailWithResolverDiagnostic_WhenPathCannotBeMapped()
+    {
+        // Arrange
+        var response = CreateResponse(body: """{"success":true,"data":{"name":"Sample Name"},"meta":{"traceId":"abc"}}""");
+        var testCase = CreateTestCase(jsonPathChecks: """{"$.data.id":"exists"}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeFalse();
+        result.JsonPathChecksPassed.Should().BeFalse();
+        result.Failures.Should().ContainSingle(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.Failures[0].Message.Should().Contain("Resolver:");
+        result.Failures[0].Message.Should().Contain("$.data.id");
+        result.Failures[0].Message.Should().Contain("field_not_found");
+    }
+
+    [Fact]
+    public void Validate_SoftJsonPathFailureWithPassingHardChecksAndScore_Should_DowngradeToWarning()
+    {
+        // Arrange
+        var response = CreateResponse(
+            statusCode: 201,
+            body: """{"success":true,"data":{"email":"user_123@demo.com","createdAt":"2026-05-31T02:43:08.850Z"}}""");
+        var testCase = CreateTestCase(
+            expectedStatus: "[201]",
+            bodyContains: """["success","data"]""",
+            bodyNotContains: """["password"]""",
+            jsonPathChecks: """{"$.data.password":"must-not-be-here"}""");
+
+        // Act
+        var result = _validator.Validate(response, testCase);
+
+        // Assert
+        result.IsPassed.Should().BeTrue();
+        result.HardChecksPassed.Should().BeTrue();
+        result.JsonPathChecksPassed.Should().BeTrue();
+        result.Failures.Should().NotContain(f => f.Code == "JSONPATH_ASSERTION_FAILED");
+        result.Warnings.Should().ContainSingle(w => w.Code == "JSONPATH_ASSERTION_WARNING");
     }
 
     [Fact]

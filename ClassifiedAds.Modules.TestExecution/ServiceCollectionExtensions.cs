@@ -1,3 +1,4 @@
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Contracts.TestExecution.Services;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Modules.TestExecution.ConfigurationOptions;
@@ -25,6 +26,7 @@ public static class TestExecutionServiceCollectionExtensions
         var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
+        services.AddSingleton<IJsonPathResolver>(_ => new JsonPathResolver(settings.JsonPathResolution ?? new JsonPathResolutionOptions()));
 
         services.AddDbContext<TestExecutionDbContext>(options => options.UseNpgsql(connectionString, sql =>
         {

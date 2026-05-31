@@ -41,7 +41,7 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
                 Id = Guid.NewGuid(),
                 TestCaseId = testCaseId,
                 HttpMethod = ResolveHttpMethod(null, orderItem?.HttpMethod),
-                Url = orderItem?.Path ?? string.Empty,
+                Url = ResolveUrl(null, orderItem?.Path),
                 BodyType = BodyType.None,
                 Timeout = 30000,
             };
@@ -52,7 +52,7 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
             HttpMethod = ResolveHttpMethod(source.HttpMethod, orderItem?.HttpMethod),
-            Url = source.Url ?? orderItem?.Path ?? string.Empty,
+            Url = ResolveUrl(source.Url, orderItem?.Path),
             Headers = SerializeDict(source.Headers),
             PathParams = SerializeDict(source.PathParams),
             QueryParams = SerializeDict(source.QueryParams),
@@ -60,6 +60,21 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
             Body = source.Body,
             Timeout = source.Timeout ?? 30000,
         };
+    }
+
+    private static string ResolveUrl(string preferredUrl, string fallbackPath)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredUrl))
+        {
+            return preferredUrl.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackPath))
+        {
+            return fallbackPath.Trim();
+        }
+
+        return string.Empty;
     }
 
     private static Entities.HttpMethod ResolveHttpMethod(string preferredMethod, string fallbackMethod)
