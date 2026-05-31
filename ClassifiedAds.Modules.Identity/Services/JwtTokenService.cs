@@ -186,12 +186,21 @@ public class JwtTokenService : IJwtTokenService
 
         foreach (var (name, value) in tokenData)
         {
-            var existing = user.Tokens.SingleOrDefault(
-                t => t.LoginProvider == TokenLoginProvider && t.TokenName == name);
+            var matched = user.Tokens
+                .Where(t => t.LoginProvider == TokenLoginProvider && t.TokenName == name)
+                .ToList();
+            var existing = matched.FirstOrDefault();
 
             if (existing != null)
             {
                 existing.TokenValue = value;
+                if (matched.Count > 1)
+                {
+                    foreach (var duplicate in matched.Skip(1))
+                    {
+                        user.Tokens.Remove(duplicate);
+                    }
+                }
             }
             else
             {

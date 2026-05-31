@@ -1246,11 +1246,17 @@ public class AuthController : ControllerBase
 
     private CookieOptions BuildRefreshTokenCookieOptions(DateTimeOffset expires)
     {
+        var origin = Request.Headers.Origin.ToString();
+        var isLocalhostOrigin =
+            origin.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase) ||
+            origin.StartsWith("https://localhost", StringComparison.OrdinalIgnoreCase);
+        var sameSiteMode = isLocalhostOrigin ? SameSiteMode.None : SameSiteMode.Lax;
+
         return new CookieOptions
         {
             HttpOnly = true,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
+            Secure = Request.IsHttps || sameSiteMode == SameSiteMode.None,
+            SameSite = sameSiteMode,
             Path = "/api/auth",
             Expires = expires,
         };
