@@ -21,6 +21,7 @@ public class GenerateTestCasesCommandHandlerTests
     private readonly Mock<IRepository<TestGenerationJob, Guid>> _jobRepositoryMock;
     private readonly Mock<ITestGenerationPayloadBuilder> _payloadBuilderMock;
     private readonly Mock<IMessageBus> _messageBusMock;
+    private readonly Mock<IN8nIntegrationService> _n8nServiceMock;
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly GenerateTestCasesCommandHandler _handler;
     private TestGenerationJob _capturedJob;
@@ -33,6 +34,7 @@ public class GenerateTestCasesCommandHandlerTests
         _jobRepositoryMock = new Mock<IRepository<TestGenerationJob, Guid>>();
         _payloadBuilderMock = new Mock<ITestGenerationPayloadBuilder>();
         _messageBusMock = new Mock<IMessageBus>();
+        _n8nServiceMock = new Mock<IN8nIntegrationService>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();
 
         _jobRepositoryMock.SetupGet(x => x.UnitOfWork).Returns(_unitOfWorkMock.Object);
@@ -54,6 +56,7 @@ public class GenerateTestCasesCommandHandlerTests
             _jobRepositoryMock.Object,
             _payloadBuilderMock.Object,
             _messageBusMock.Object,
+            _n8nServiceMock.Object,
             new Mock<ILogger<GenerateTestCasesCommandHandler>>().Object);
     }
 
@@ -119,7 +122,77 @@ public class GenerateTestCasesCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WhenQueuePublishFails_Should_MarkJobFailed_AndThrowValidation()
+    public async Task HandleAsync_WhenQueuePublishFails_Should_TriggerN8nInline_And_WaitForCallback()
+    {
+        var suiteId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var proposalId = Guid.NewGuid();
+        var callbackUrl = $"https://api.example.test/api/test-suites/{suiteId}/test-cases/from-ai";
+
+        SetupSuite(new TestSuite
+        {
+            Id = suiteId,
+            CreatedById = userId,
+            Name = "Suite B",
+        });
+        SetupProposal(new TestOrderProposal
+        {
+            Id = proposalId,
+            TestSuiteId = suiteId,
+            Status = ProposalStatus.Approved,
+            ProposalNumber = 1,
+        });
+
+        _messageBusMock
+            .Setup(x => x.SendAsync(
+                It.IsAny<TriggerTestGenerationMessage>(),
+                It.IsAny<MetaData>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("queue unavailable"));
+        _payloadBuilderMock
+            .Setup(x => x.BuildPayloadAsync(suiteId, proposalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nGenerateTestsPayload
+            {
+                TestSuiteId = suiteId,
+                CallbackUrl = callbackUrl,
+            });
+        _n8nServiceMock
+            .Setup(x => x.GetResolvedWebhookUrl("generate-test-cases-unified"))
+            .Returns("https://n8n.example.test/webhook/generate-test-cases-unified");
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookWithResultAsync(
+                "generate-test-cases-unified",
+                It.IsAny<N8nGenerateTestsPayload>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WebhookTriggerResult
+            {
+                Success = true,
+                WebhookName = "generate-test-cases-unified",
+                ResolvedUrl = "https://n8n.example.test/webhook/generate-test-cases-unified",
+            });
+
+        var command = new GenerateTestCasesCommand
+        {
+            TestSuiteId = suiteId,
+            CurrentUserId = userId,
+        };
+
+        await _handler.HandleAsync(command);
+
+        command.JobId.Should().Be(_capturedJob.Id);
+        _capturedJob.Status.Should().Be(GenerationJobStatus.WaitingForCallback);
+        _capturedJob.CompletedAt.Should().BeNull();
+        _capturedJob.ErrorMessage.Should().BeNull();
+        _capturedJob.WebhookUrl.Should().Be("https://n8n.example.test/webhook/generate-test-cases-unified");
+        _capturedJob.CallbackUrl.Should().Be(callbackUrl);
+        _capturedJob.RowVersion.Should().NotBeNullOrEmpty();
+        _capturedJob.RowVersion.SequenceEqual(_rowVersionAtInsert).Should().BeFalse();
+
+        _unitOfWorkMock.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenQueuePublishAndInlineTriggerFail_Should_MarkJobFailed_AndThrowValidation()
     {
         var suiteId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -145,6 +218,28 @@ public class GenerateTestCasesCommandHandlerTests
                 It.IsAny<MetaData>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("queue unavailable"));
+        _payloadBuilderMock
+            .Setup(x => x.BuildPayloadAsync(suiteId, proposalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new N8nGenerateTestsPayload
+            {
+                TestSuiteId = suiteId,
+                CallbackUrl = $"https://api.example.test/api/test-suites/{suiteId}/test-cases/from-ai",
+            });
+        _n8nServiceMock
+            .Setup(x => x.GetResolvedWebhookUrl("generate-test-cases-unified"))
+            .Returns("https://n8n.example.test/webhook/generate-test-cases-unified");
+        _n8nServiceMock
+            .Setup(x => x.TriggerWebhookWithResultAsync(
+                "generate-test-cases-unified",
+                It.IsAny<N8nGenerateTestsPayload>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WebhookTriggerResult
+            {
+                Success = false,
+                WebhookName = "generate-test-cases-unified",
+                ErrorMessage = "n8n unavailable",
+                ErrorDetails = "HTTP 503",
+            });
 
         var command = new GenerateTestCasesCommand
         {
@@ -156,15 +251,16 @@ public class GenerateTestCasesCommandHandlerTests
 
         var exception = await act.Should().ThrowAsync<ValidationException>();
 
-        exception.Which.Message.Should().Contain("hàng đợi");
+        exception.Which.Message.Should().Contain("trigger n8n");
         command.JobId.Should().Be(_capturedJob.Id);
         _capturedJob.Status.Should().Be(GenerationJobStatus.Failed);
         _capturedJob.CompletedAt.Should().NotBeNull();
         _capturedJob.ErrorMessage.Should().Contain("queue unavailable");
+        _capturedJob.ErrorMessage.Should().Contain("n8n unavailable");
         _capturedJob.RowVersion.Should().NotBeNullOrEmpty();
         _capturedJob.RowVersion.SequenceEqual(_rowVersionAtInsert).Should().BeFalse();
 
-        _unitOfWorkMock.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _unitOfWorkMock.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(4));
     }
 
     private void SetupSuite(TestSuite suite)

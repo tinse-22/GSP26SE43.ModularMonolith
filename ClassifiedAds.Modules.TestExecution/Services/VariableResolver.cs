@@ -606,6 +606,7 @@ public class VariableResolver : IVariableResolver
 
         var availableIdentifierValues = variables
             .Where(kvp => IsIdentifierSemanticVariableName(kvp.Key)
+                && !string.Equals(kvp.Key, "tcUniqueId", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(kvp.Value)
                 && !kvp.Value.Contains("{{", StringComparison.Ordinal)
                 && !ShouldReplaceIdentifierLiteral(kvp.Value))
