@@ -215,8 +215,25 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         @"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex SingleBraceTokenRegex = new(
-        @"\{[A-Za-z_][A-Za-z0-9_]*\}",
+        @"(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*\}(?!\})",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private const string RewritePolicyTagPrefix = "rewrite-policy:";
+    private const string AuthFallbackTagPrefix = "auth-fallback:";
+    private const string AuthModeTagPrefix = "auth-mode:";
+    private const string CredentialPolicyTagPrefix = "cred-policy:";
+    private const string CredentialLockTagPrefix = "cred-lock:";
+    private const string FlowRequiredTagPrefix = "flow-required:";
+    private const string FlowDependsOnTagPrefix = "flow-depends-on:";
+    private const string FlowProducesTagPrefix = "flow-produces:";
+    private const string FlowConsumesTagPrefix = "flow-consumes:";
+
+    private static readonly string[] AuthModeHeaderNames =
+    {
+        "X-Test-Auth-Mode",
+        "X-Auth-Mode",
+        "X-LLM-Auth-Mode",
+    };
 
     private static readonly Regex JavaScriptRepeatExpressionRegex = new(
         @"\.repeat\s*\(",
@@ -338,6 +355,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 command.TestCases,
                 ct);
             command.TestCases = filteredTestCases.ToList();
+            validTestCases = command.TestCases;
 
             if (command.TestCases.Count == 0)
             {
@@ -401,7 +419,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     Priority = ParsePriority(dto.Priority),
                     IsEnabled = true,
                     OrderIndex = dto.OrderIndex > 0 ? dto.OrderIndex : orderIdx,
-                    Tags = EnsureLlmSourcedTagJson(dto.Tags, ParseTestType(dto.TestType)),
+                    Tags = EnsureLlmSourcedTagJson(dto.Tags, ParseTestType(dto.TestType), dto),
                     Version = 1,
                     LastModifiedById = actorUserId,
                     CreatedDateTime = now,
@@ -630,7 +648,9 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
 
         var metadataByEndpointId = new Dictionary<Guid, ApiEndpointMetadataDto>();
-        if (suite?.ApiSpecId is Guid specId && specId != Guid.Empty)
+        var specId = suite?.ApiSpecId ?? Guid.Empty;
+        var requiresMetadata = specId != Guid.Empty;
+        if (requiresMetadata)
         {
             var endpointIds = testCases
                 .Where(x => x?.EndpointId is Guid id && id != Guid.Empty)
@@ -658,13 +678,31 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 continue;
             }
 
+            dto.Request ??= new AiTestCaseRequestDto();
+
+            if (!requiresMetadata)
+            {
+                if (!HasResolvableHttpMethod(dto) || string.IsNullOrWhiteSpace(dto.Request.Url))
+                {
+                    _logger.LogWarning(
+                        "Drop AI test case '{Name}' (index {Index}): unresolved request shape without API metadata. endpointId={EndpointId}, method='{Method}', url='{Url}'.",
+                        dto.Name ?? $"index {i}",
+                        i,
+                        endpointId,
+                        dto.Request.HttpMethod,
+                        dto.Request.Url);
+                    continue;
+                }
+
+                valid.Add(dto);
+                continue;
+            }
+
             if (!metadataByEndpointId.TryGetValue(endpointId, out var endpoint))
             {
                 _logger.LogWarning("Drop AI test case '{Name}' (index {Index}): endpointId {EndpointId} not found in metadata.", dto.Name ?? $"index {i}", i, endpointId);
                 continue;
             }
-
-            dto.Request ??= new AiTestCaseRequestDto();
 
             if (!TryParseHttpMethod(dto.Request.HttpMethod, out _) && !string.IsNullOrWhiteSpace(endpoint.HttpMethod))
             {
@@ -743,6 +781,11 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
         return HttpMethod.GET;
     }
+
+    private static bool HasResolvableHttpMethod(AiGeneratedTestCaseDto dto)
+        => TryParseHttpMethod(dto?.Request?.HttpMethod, out _)
+            || TryParseHttpMethod(dto?.Name, out _)
+            || TryParseHttpMethod(dto?.Description, out _);
 
     private static bool TryParseHttpMethod(string value, out HttpMethod method)
     {
@@ -835,21 +878,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     /// so that <see cref="VariableResolver.IsLlmSourced"/> returns <c>true</c> and the
     /// body-normalisation pipeline is skipped at execution time.
     /// </summary>
-    private static string EnsureLlmSourcedTagJson(string existingTagsJson, TestType testType)
+    private static string EnsureLlmSourcedTagJson(
+        string existingTagsJson,
+        TestType testType,
+        AiGeneratedTestCaseDto dto)
     {
-        var tags = new List<string>();
-
-        // Deserialise whatever n8n sent (may be null/empty/plain string/JSON array).
-        var normalised = NormalizeTagsJson(existingTagsJson);
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<List<string>>(normalised, JsonOpts);
-            if (parsed != null)
-            {
-                tags.AddRange(parsed);
-            }
-        }
-        catch { }
+        var tags = ParseTagList(existingTagsJson);
 
         // Add canonical type tag.
         var typeTag = testType switch
@@ -861,21 +895,267 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             TestType.Performance => "performance",
             _                   => "negative",
         };
-        if (!tags.Contains(typeTag, StringComparer.OrdinalIgnoreCase))
-        {
-            tags.Add(typeTag);
-        }
+        AddTagIfMissing(tags, typeTag);
 
         // Ensure markers required by IsLlmSourced.
         foreach (var required in new[] { "auto-generated", "llm-suggested" })
         {
-            if (!tags.Contains(required, StringComparer.OrdinalIgnoreCase))
-            {
-                tags.Add(required);
-            }
+            AddTagIfMissing(tags, required);
+        }
+
+        if (!HasTagPrefix(tags, RewritePolicyTagPrefix) && ShouldAddMinimalRewritePolicy(dto, tags))
+        {
+            tags.Add("rewrite-policy:minimal");
+        }
+
+        if (!HasTagPrefix(tags, AuthModeTagPrefix) && IsNoAuthIntent(dto, tags))
+        {
+            tags.Add("auth-mode:none");
+        }
+
+        if (!HasTagPrefix(tags, AuthFallbackTagPrefix) && ShouldAllowAuthFallback(dto, tags))
+        {
+            tags.Add("auth-fallback:allow");
         }
 
         return JsonSerializer.Serialize(tags, JsonOpts);
+    }
+
+    private static List<string> ParseTagList(string existingTagsJson)
+    {
+        var normalised = NormalizeTagsJson(existingTagsJson);
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(normalised, JsonOpts)?
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .ToList() ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static void AddTagIfMissing(List<string> tags, string tag)
+    {
+        if (tags == null || string.IsNullOrWhiteSpace(tag))
+        {
+            return;
+        }
+
+        if (!tags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+        {
+            tags.Add(tag);
+        }
+    }
+
+    private static bool HasTagPrefix(IEnumerable<string> tags, string prefix)
+        => tags?.Any(x => !string.IsNullOrWhiteSpace(x)
+            && x.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) == true;
+
+    private static bool HasTagValue(IEnumerable<string> tags, string prefix, string value)
+        => tags?.Any(x =>
+        {
+            if (string.IsNullOrWhiteSpace(x) ||
+                !x.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var actual = x.Trim()[prefix.Length..].Trim();
+            return string.Equals(NormalizeAuthMode(actual), NormalizeAuthMode(value), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(actual, value, StringComparison.OrdinalIgnoreCase);
+        }) == true;
+
+    private static bool ShouldAddMinimalRewritePolicy(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
+        if (HasTagPrefix(tags, FlowRequiredTagPrefix) ||
+            HasTagPrefix(tags, FlowDependsOnTagPrefix) ||
+            HasTagPrefix(tags, FlowProducesTagPrefix) ||
+            HasTagPrefix(tags, FlowConsumesTagPrefix))
+        {
+            return true;
+        }
+
+        if (HasTagPrefix(tags, CredentialLockTagPrefix) ||
+            HasNonPreserveCredentialPolicy(tags))
+        {
+            return true;
+        }
+
+        return ExtractPlaceholders(dto)
+            .Any(x => !string.Equals(x, "tcUniqueId", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasNonPreserveCredentialPolicy(IEnumerable<string> tags)
+        => tags?.Any(x =>
+        {
+            if (string.IsNullOrWhiteSpace(x) ||
+                !x.Trim().StartsWith(CredentialPolicyTagPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var policy = x.Trim()[CredentialPolicyTagPrefix.Length..].Trim();
+            return !string.Equals(policy, "preserve", StringComparison.OrdinalIgnoreCase);
+        }) == true;
+
+    private static bool ShouldAllowAuthFallback(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
+        if (IsNoAuthIntent(dto, tags))
+        {
+            return false;
+        }
+
+        if (HasTagValue(tags, AuthModeTagPrefix, "required") ||
+            string.Equals(ReadAuthModeHeader(dto?.Request?.Headers), "required", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return HasExplicitAuthHeader(dto?.Request?.Headers);
+    }
+
+    private static bool IsNoAuthIntent(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
+        if (HasTagValue(tags, AuthModeTagPrefix, "none") ||
+            string.Equals(ReadAuthModeHeader(dto?.Request?.Headers), "none", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var expectedStatus = dto?.Expectation?.ExpectedStatus ?? string.Empty;
+        if (ParseStatusCodesFromExpectation(expectedStatus).Any(x => x is 401 or 403))
+        {
+            return true;
+        }
+
+        var surface = string.Join(' ', new[]
+        {
+            dto?.Name,
+            dto?.Description,
+            tags == null ? null : string.Join(' ', tags),
+        }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+        return ContainsAny(surface,
+            "no token",
+            "without token",
+            "missing token",
+            "without authorization",
+            "no authorization",
+            "missing authorization",
+            "unauthorized",
+            "unauthenticated",
+            "no auth",
+            "no-auth",
+            "no_auth");
+    }
+
+    private static string ReadAuthModeHeader(string headersJson)
+    {
+        if (!TryReadJsonObject(headersJson, out var headers))
+        {
+            return null;
+        }
+
+        foreach (var headerName in AuthModeHeaderNames)
+        {
+            if (headers.TryGetValue(headerName, out var value))
+            {
+                return NormalizeAuthMode(value);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool HasExplicitAuthHeader(string headersJson)
+    {
+        if (!TryReadJsonObject(headersJson, out var headers))
+        {
+            return false;
+        }
+
+        return headers.Any(x => IsAuthHeaderName(x.Key) && !string.IsNullOrWhiteSpace(x.Value));
+    }
+
+    private static bool TryReadJsonObject(string json, out Dictionary<string, string> values)
+    {
+        values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                values[property.Name] = property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString()
+                    : property.Value.GetRawText();
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeAuthMode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(" ", string.Empty);
+
+        return normalized switch
+        {
+            "none" or "noauth" or "disableauth" => "none",
+            "optional" => "optional",
+            "required" or "default" => "required",
+            _ => null,
+        };
+    }
+
+    private static bool IsAuthHeaderName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("X-Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("X-Auth", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("X-API-Key", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Api-Key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsAny(string value, params string[] needles)
+    {
+        if (string.IsNullOrWhiteSpace(value) || needles == null || needles.Length == 0)
+        {
+            return false;
+        }
+
+        return needles.Any(x => !string.IsNullOrWhiteSpace(x)
+            && value.Contains(x, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string NormalizeJsonOrDefault(string value, string fallbackJson)
@@ -1768,13 +2048,6 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         {
             throw new ValidationException(
                 $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing request.url.");
-        }
-
-        // Disallow unresolved pseudo tokens such as {RequestBody} that runtime cannot resolve.
-        if (SingleBraceTokenRegex.IsMatch(url))
-        {
-            throw new ValidationException(
-                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' contains unresolved token in request.url: '{url}'.");
         }
 
         if (request.BodyType != null &&

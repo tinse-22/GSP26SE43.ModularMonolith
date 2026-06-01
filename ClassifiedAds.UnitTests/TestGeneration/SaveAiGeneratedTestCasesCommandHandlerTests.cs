@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TestGenerationHttpMethod = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
@@ -241,6 +242,67 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_AcceptBuiltInTcUniqueIdPlaceholder_InJsonRequestBody()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var endpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/register",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201 },
+                        new() { StatusCode = 400 },
+                    },
+                    ParameterSchemaPayloads = new List<string>
+                    {
+                        """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "email": { "type": "string" },
+                            "password": { "type": "string" }
+                          }
+                        }
+                        """,
+                    },
+                },
+            });
+
+        TestCaseRequest capturedRequest = null;
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Name = "Register new user";
+        command.TestCases[0].Request.HttpMethod = "POST";
+        command.TestCases[0].Request.Url = "/api/auth/register";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = """{"email":"{{tcUniqueId}}@example.com","password":"password123"}""";
+        command.TestCases[0].Expectation.ExpectedStatus = "[201]";
+
+        await _handler.HandleAsync(command);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest.Body.Should().Be("""{"email":"{{tcUniqueId}}@example.com","password":"password123"}""");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ParseHttpMethod_FromMethodAndPathFormat()
     {
         var suite = CreateSuite();
@@ -458,6 +520,112 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
         _variableRepoMock.Verify(x => x.AddAsync(
             It.IsAny<TestCaseVariable>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_AddMinimalRewritePolicy_WhenGeneratedCaseUsesDynamicPlaceholders()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        TestCase captured = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((tc, _) => captured = tc)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = Guid.NewGuid();
+        command.TestCases[0].Request.Url = "/v2/catalog/{itemKey}/stock-reservations";
+        command.TestCases[0].Request.QueryParams = """{"warehouseId":"{{warehouseId}}"}""";
+        command.TestCases[0].Request.Body = """{"sku":"{{sku}}","quantity":1}""";
+
+        await _handler.HandleAsync(command);
+
+        var tags = DeserializeTags(captured.Tags);
+        tags.Should().Contain("happy-path");
+        tags.Should().Contain("auto-generated");
+        tags.Should().Contain("llm-suggested");
+        tags.Should().Contain("rewrite-policy:minimal");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PreserveExplicitRewritePolicy_WhenN8nProvidesOne()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        TestCase captured = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((tc, _) => captured = tc)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].Tags = """["rewrite-policy:preserve","source:n8n"]""";
+        command.TestCases[0].Request.Body = """{"linkedId":"{{externalReferenceId}}"}""";
+
+        await _handler.HandleAsync(command);
+
+        var tags = DeserializeTags(captured.Tags);
+        tags.Should().Contain("rewrite-policy:preserve");
+        tags.Should().Contain("source:n8n");
+        tags.Should().NotContain("rewrite-policy:minimal");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_AddAuthPolicyTags_FromDynamicAuthIntent()
+    {
+        var suite = CreateSuite();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var captured = new List<TestCase>();
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((tc, _) => captured.Add(tc))
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases = new List<AiGeneratedTestCaseDto>
+        {
+            new()
+            {
+                EndpointId = Guid.NewGuid(),
+                Name = "Templated authorized request",
+                TestType = "HappyPath",
+                Request = new AiTestCaseRequestDto
+                {
+                    HttpMethod = "GET",
+                    Url = "/tenant-space/operations/current",
+                    Headers = """{"Authorization":"Bearer {{accessToken}}","X-Test-Auth-Mode":"required"}""",
+                },
+                Expectation = new AiTestCaseExpectationDto { ExpectedStatus = "[200]" },
+            },
+            new()
+            {
+                EndpointId = Guid.NewGuid(),
+                Name = "Missing authorization is rejected",
+                Description = "No auth token is sent.",
+                TestType = "Negative",
+                Request = new AiTestCaseRequestDto
+                {
+                    HttpMethod = "DELETE",
+                    Url = "/tenant-space/operations/current",
+                    Headers = """{"X-Test-Auth-Mode":"none"}""",
+                },
+                Expectation = new AiTestCaseExpectationDto { ExpectedStatus = "[401]" },
+            },
+        };
+
+        await _handler.HandleAsync(command);
+
+        var authorizedTags = DeserializeTags(captured[0].Tags);
+        authorizedTags.Should().Contain("auth-fallback:allow");
+        authorizedTags.Should().Contain("rewrite-policy:minimal");
+
+        var noAuthTags = DeserializeTags(captured[1].Tags);
+        noAuthTags.Should().Contain("auth-mode:none");
+        noAuthTags.Should().NotContain("auth-fallback:allow");
     }
 
     [Fact]
@@ -1064,6 +1232,9 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
             },
         };
     }
+
+    private static List<string> DeserializeTags(string tags)
+        => JsonSerializer.Deserialize<List<string>>(tags) ?? new List<string>();
 
     private void SetupSuiteFound(TestSuite suite)
     {

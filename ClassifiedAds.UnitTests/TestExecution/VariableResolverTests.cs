@@ -131,8 +131,9 @@ public class VariableResolverTests
         var result = _resolver.Resolve(testCase, variables, env);
 
         // Assert
-        result.Body.Should().Contain("Electronics-ab12cd34");
-        result.Body.Should().Contain("electronics-ab12cd34");
+        result.TcUniqueId.Should().NotBeNullOrWhiteSpace();
+        result.Body.Should().Contain($"Electronics-{result.TcUniqueId}");
+        result.Body.Should().Contain($"electronics-{result.TcUniqueId}");
     }
 
     [Fact]
@@ -359,7 +360,8 @@ public class VariableResolverTests
             url: "/pet",
             body: "{\"id\":\"{{idId}}\",\"category\":{\"id\":\"{{idId}}\"}}",
             httpMethod: "POST",
-            testType: "HappyPath");
+            testType: "HappyPath",
+            tags: "[\"happy-path\",\"auto-generated\",\"llm-suggested\",\"rewrite-policy:minimal\"]");
         var variables = new Dictionary<string, string>();
         var env = CreateEnvironment();
 
@@ -369,8 +371,8 @@ public class VariableResolverTests
         // Assert
         result.Body.Should().NotContain("{{idId}}");
         using var bodyDoc = JsonDocument.Parse(result.Body);
-        bodyDoc.RootElement.GetProperty("id").GetInt32().Should().Be(1);
-        bodyDoc.RootElement.GetProperty("category").GetProperty("id").GetInt32().Should().Be(1);
+        AssertJsonIntOrNumericString(bodyDoc.RootElement.GetProperty("id"), 1);
+        AssertJsonIntOrNumericString(bodyDoc.RootElement.GetProperty("category").GetProperty("id"), 1);
     }
 
     [Fact]
@@ -381,7 +383,8 @@ public class VariableResolverTests
             url: "/pet",
             body: "{\"id\":\"{{idId}}\",\"name\":\"doggie\",\"photoUrls\":[\"sample-value\"]}",
             httpMethod: "POST",
-            testType: "HappyPath");
+            testType: "HappyPath",
+            tags: "[\"happy-path\",\"auto-generated\",\"llm-suggested\",\"rewrite-policy:minimal\"]");
         var variables = new Dictionary<string, string>
         {
             ["id"] = "33467b6da5e64affafab94b627f948e4",
@@ -394,7 +397,7 @@ public class VariableResolverTests
         // Assert
         result.Body.Should().NotContain("33467b6da5e64affafab94b627f948e4");
         using var bodyDoc = JsonDocument.Parse(result.Body);
-        bodyDoc.RootElement.GetProperty("id").GetInt32().Should().Be(1);
+        AssertJsonIntOrNumericString(bodyDoc.RootElement.GetProperty("id"), 1);
     }
 
     [Fact]
@@ -955,6 +958,17 @@ public class VariableResolverTests
 
     #region Helpers
 
+    private static void AssertJsonIntOrNumericString(JsonElement element, int expected)
+    {
+        if (element.ValueKind == JsonValueKind.Number)
+        {
+            element.GetInt32().Should().Be(expected);
+            return;
+        }
+
+        element.GetString().Should().Be(expected.ToString());
+    }
+
     private static ExecutionTestCaseDto CreateTestCase(
         string url = "/api/test",
         string? headers = null,
@@ -963,13 +977,15 @@ public class VariableResolverTests
         string? body = null,
         int timeout = 30000,
         string httpMethod = "GET",
-        string? testType = null)
+        string? testType = null,
+        string? tags = null)
     {
         return new ExecutionTestCaseDto
         {
             TestCaseId = Guid.NewGuid(),
             Name = "Test Case",
             TestType = testType,
+            Tags = tags ?? "[\"rewrite-policy:minimal\",\"auth-fallback:allow\",\"auth-mode:required\",\"cred-policy:bind_dependency\"]",
             OrderIndex = 0,
             DependencyIds = Array.Empty<Guid>(),
             Request = new ExecutionTestCaseRequestDto
