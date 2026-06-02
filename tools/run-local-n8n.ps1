@@ -204,27 +204,6 @@ function Get-AvailableTcpPort {
     return $port
 }
 
-function Set-N8nCallbackBaseUrl {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$BaseUrl
-    )
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return
-    }
-
-    $json = Get-Content -LiteralPath $Path -Raw
-    $updated = [System.Text.RegularExpressions.Regex]::Replace(
-        $json,
-        '"BeBaseUrl"\s*:\s*"[^"]*"',
-        { param($match) '"BeBaseUrl": "' + $BaseUrl + '"' })
-
-    if ($updated -ne $json) {
-        Set-Content -LiteralPath $Path -Value $updated -NoNewline
-    }
-}
-
 function Redact-NgrokSensitiveOutput {
     param([string]$Text)
 
@@ -344,12 +323,6 @@ try {
         -NgrokStdOutPath $ngrokStdOutPath `
         -NgrokStdErrPath $ngrokStdErrPath
     $env:Modules__TestGeneration__N8nIntegration__BeBaseUrl = $publicUrl
-    Set-N8nCallbackBaseUrl `
-        -Path (Join-Path $repoRoot "ClassifiedAds.WebAPI/appsettings.Development.json") `
-        -BaseUrl $publicUrl
-    Set-N8nCallbackBaseUrl `
-        -Path (Join-Path $repoRoot "ClassifiedAds.Background/appsettings.json") `
-        -BaseUrl $publicUrl
     Write-Host "ngrok public URL: $publicUrl"
 
     Write-Host "Starting ClassifiedAds.WebAPI on $webApiUrl ..."

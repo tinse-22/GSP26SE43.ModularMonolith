@@ -286,11 +286,17 @@ public class TestGenerationPayloadBuilderTests
         payload.PromptConfig.Rules.Should().Contain("Do not generate a Negative test unless the request data is actually invalid");
         payload.PromptConfig.Rules.Should().Contain("Do not use 401 as a generic negative status");
         payload.PromptConfig.Rules.Should().Contain("non-existent ID tests must use a syntactically valid ID that was not produced by setup");
+        payload.PromptConfig.Rules.Should().Contain("request.url is mandatory");
+        payload.PromptConfig.Rules.Should().Contain("rewrite-policy:minimal");
+        payload.PromptConfig.Rules.Should().Contain("auth-fallback:allow only when auth is required/templated");
+        payload.PromptConfig.Rules.Should().Contain("auth-mode:none");
         payload.PromptConfig.TaskInstruction.Should().Contain("use direct endpoint SRS/business rules as the oracle");
         payload.GlobalBusinessRules.Should().HaveLength(40);
         payload.EndpointBusinessContexts[endpointId].Should().HaveLength(40);
 
         var endpoint = payload.Endpoints.Should().ContainSingle().Subject;
+        endpoint.Path.Should().Be("/api/products");
+        endpoint.Url.Should().Be("/api/products");
         endpoint.ParameterSchemaPayloads.Should().ContainSingle();
         endpoint.ParameterSchemaPayloads[0].Length.Should().BeLessThanOrEqualTo(60);
         endpoint.ParameterSchemaPayloads[0].Should().NotContain("ignored");
