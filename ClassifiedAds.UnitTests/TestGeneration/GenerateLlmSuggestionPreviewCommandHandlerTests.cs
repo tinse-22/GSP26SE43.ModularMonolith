@@ -12,6 +12,7 @@ using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.MessageBusMessages;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Services;
+using ClassifiedAds.UnitTests;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -55,7 +56,9 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
         _endpointMetadataServiceMock = new Mock<IApiEndpointMetadataService>();
         _endpointParameterDetailServiceMock = new Mock<IApiEndpointParameterDetailService>();
         _llmSuggesterMock = new Mock<ILlmScenarioSuggester>();
-        _persistenceService = new LlmSuggestionPreviewPersistenceService(_suggestionRepoMock.Object);
+        _persistenceService = new LlmSuggestionPreviewPersistenceService(
+            _suggestionRepoMock.Object,
+            JsonPathResolutionTestFactory.CreateResolver());
         _subscriptionMock = new Mock<ISubscriptionLimitGatewayService>();
         _messageBusMock = new Mock<IMessageBus>();
         _unitOfWorkMock = new Mock<IUnitOfWork>();

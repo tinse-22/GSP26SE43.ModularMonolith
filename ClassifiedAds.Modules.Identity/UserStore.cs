@@ -260,7 +260,7 @@ public class UserStore : IUserStore<User>,
 
     public Task<string> GetTokenAsync(User user, string loginProvider, string name, CancellationToken cancellationToken)
     {
-        var tokenEntity = user.Tokens.SingleOrDefault(
+        var tokenEntity = user.Tokens.FirstOrDefault(
                 l => l.TokenName == name && l.LoginProvider == loginProvider);
         return Task.FromResult(tokenEntity?.TokenValue);
     }
@@ -270,11 +270,21 @@ public class UserStore : IUserStore<User>,
         cancellationToken.ThrowIfCancellationRequested();
         EnsureCollectionsInitialized(user);
 
-        var tokenEntity = user.Tokens.SingleOrDefault(
-                l => l.TokenName == name && l.LoginProvider == loginProvider);
+        var matched = user.Tokens
+            .Where(l => l.TokenName == name && l.LoginProvider == loginProvider)
+            .ToList();
+        var tokenEntity = matched.FirstOrDefault();
         if (tokenEntity != null)
         {
             tokenEntity.TokenValue = value;
+            // Keep only one token record for the same (provider, name) pair.
+            if (matched.Count > 1)
+            {
+                foreach (var duplicate in matched.Skip(1))
+                {
+                    user.Tokens.Remove(duplicate);
+                }
+            }
         }
         else
         {
@@ -297,11 +307,15 @@ public class UserStore : IUserStore<User>,
             return;
         }
 
-        var tokenEntity = user.Tokens.SingleOrDefault(
-                l => l.TokenName == name && l.LoginProvider == loginProvider);
-        if (tokenEntity != null)
+        var matched = user.Tokens
+            .Where(l => l.TokenName == name && l.LoginProvider == loginProvider)
+            .ToList();
+        if (matched.Count > 0)
         {
-            user.Tokens.Remove(tokenEntity);
+            foreach (var tokenEntity in matched)
+            {
+                user.Tokens.Remove(tokenEntity);
+            }
         }
     }
 

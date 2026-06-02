@@ -24,7 +24,7 @@ public static class CachingServiceCollectionExtensions
         }
         else if (distributedProvider == "Redis")
         {
-            services.AddDistributedRedisCache(opt =>
+            services.AddStackExchangeRedisCache(opt =>
             {
                 opt.Configuration = BuildRedisConfiguration(options.Distributed.Redis);
                 opt.InstanceName = options.Distributed.Redis.InstanceName;

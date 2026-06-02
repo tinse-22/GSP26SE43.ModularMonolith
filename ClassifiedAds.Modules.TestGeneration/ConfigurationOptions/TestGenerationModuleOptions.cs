@@ -1,4 +1,6 @@
-﻿namespace ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
+
+namespace ClassifiedAds.Modules.TestGeneration.ConfigurationOptions;
 
 public class TestGenerationModuleOptions
 {
@@ -7,4 +9,6 @@ public class TestGenerationModuleOptions
     public N8nIntegrationOptions N8nIntegration { get; set; }
 
     public ScenarioGenerationBudgetOptions ScenarioGenerationBudget { get; set; } = new();
+
+    public JsonPathResolutionOptions JsonPathResolution { get; set; } = new();
 }

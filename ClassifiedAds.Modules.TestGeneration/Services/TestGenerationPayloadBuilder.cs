@@ -53,6 +53,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "2. SRS is the business source for endpoint-relevant scenario intent, meaningful test data, semantic behavior, security/auth expectations, expected statuses, and requirement coverage. Do not invent fields outside OpenAPI request shape.\n" +
         "3. Use the provided per-endpoint scenarioBudget. Treat softLimit/target as the preferred budget. Do not pad weak duplicates. Include only distinct executable scenarios supported by OpenAPI and endpoint-relevant SRS/business rules. Do not exceed hardLimit.\n" +
         "4. endpointId must match the exact UUID from input; testType must be HappyPath, Boundary, or Negative.\n" +
+        "4b. request.url is mandatory for every testCase and must be copied from the matching endpoint.path (endpoint.url is the same alias when present). Never omit request.url.\n" +
         "5. Keep orderIndex unique, 0-based, and aligned with endpoint order and dependencies.\n" +
         "6. For unique fields (email, username, code, slug, phone, name, sku), use {{tcUniqueId}}. Do not invent random suffixes. Duplicate/conflict tests must reuse prior variables such as {{email}} or {{name}}, not create another unique value.\n" +
         "7. Auth flow: registration uses unique email/password and extracts registeredEmail/registeredPassword plus email/password from RequestBody; login reuses those variables; duplicate-email tests reuse {{registeredEmail}} or {{email}}.\n" +
@@ -71,7 +72,9 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
         "19. Every testCase must include all required fields in the response format. Keep field names and casing exactly as specified.\n" +
         "20. For Boundary success cases, never use fixed collision-prone literals (e.g., \"A\", \"test\", \"code1\") on potentially unique fields. Generate per-case variants while preserving boundary intent (exact/min/max length).\n" +
         "21. For NotFound/NonExistent negative cases (expected 404 or description mentions not found/non-existent), use a syntactically valid but intentionally unbound identifier literal; do NOT use placeholders that can resolve from setup flow (e.g., {{categoryId}}, {{productId}}), and do NOT reuse IDs produced by dependencies.\n" +
-        "22. In NotFound negative cases, variables.produces must not declare the missing identifier field as produced output; only declare produces for values actually created by a successful response path.";
+        "22. In NotFound negative cases, variables.produces must not declare the missing identifier field as produced output; only declare produces for values actually created by a successful response path.\n" +
+        "23. Generated assisted-execution metadata must be explicit in tags and derived from the testcase shape, never from hard-coded endpoint paths: add rewrite-policy:minimal when dependency variables, flow-consumes/flow-produces tags, or unresolved placeholders need backend assisted binding; add auth-fallback:allow only when auth is required/templated and fallback token injection is valid.\n" +
+        "24. For missing-auth negatives, tag auth-mode:none and send X-Test-Auth-Mode:none when useful; do not add auth-fallback:allow to no-auth cases.";
 
     private const string UnifiedResponseFormatBlock =
         "=== RESPONSE FORMAT ===\n" +
@@ -245,6 +248,7 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                     EndpointId = x.EndpointId,
                     HttpMethod = x.HttpMethod,
                     Path = x.Path,
+                    Url = x.Path,
                     OperationId = metadata?.OperationId,
                     OrderIndex = x.OrderIndex,
                     DependsOnEndpointIds = x.DependsOnEndpointIds?.ToList() ?? new List<Guid>(),
@@ -280,12 +284,20 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 : _n8nOptions.GenerationMaxSrsFieldLength;
 
             var matchesByRequirementId = BuildRequirementMatchesByRequirementId(metadataByEndpointId, requirements);
-            payload.SrsRequirements = requirements
-                .Where(r => matchesByRequirementId.ContainsKey(r.Id))
+            var prioritizedRequirements = requirements
+                .OrderByDescending(r => matchesByRequirementId.ContainsKey(r.Id))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.RefinedConstraints))
+                .ThenByDescending(r => !string.IsNullOrWhiteSpace(r.TestableConstraints))
+                .ThenByDescending(r => r.RefinedConfidenceScore ?? r.ConfidenceScore ?? 0)
+                .ThenBy(r => r.DisplayOrder)
                 .Take(maxRequirementCount)
+                .ToList();
+
+            payload.SrsRequirements = prioritizedRequirements
                 .Select(r =>
                 {
-                    var matches = matchesByRequirementId[r.Id];
+                    matchesByRequirementId.TryGetValue(r.Id, out var matches);
+                    matches ??= new List<EndpointRequirementMatchSummary>();
                     return new N8nSrsRequirement
                 {
                     Id = r.Id,
@@ -316,8 +328,13 @@ public class TestGenerationPayloadBuilder : ITestGenerationPayloadBuilder
                 .ToList();
 
             _logger.LogInformation(
-                "Included {Count}/{TotalCount} SRS requirements in generation payload. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
-                payload.SrsRequirements.Count, requirements.Count, suite.Id, suite.SrsDocumentId);
+                "Included {Count}/{TotalCount} SRS requirements in generation payload. Mapped={MappedCount}, GlobalOrUnmapped={UnmappedCount}. TestSuiteId={TestSuiteId}, SrsDocumentId={SrsDocumentId}",
+                payload.SrsRequirements.Count,
+                requirements.Count,
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count > 0 || x.DependencyEndpointIds.Count > 0),
+                payload.SrsRequirements.Count(x => x.EndpointIds.Count == 0 && x.DependencyEndpointIds.Count == 0),
+                suite.Id,
+                suite.SrsDocumentId);
         }
 
         _logger.LogInformation(

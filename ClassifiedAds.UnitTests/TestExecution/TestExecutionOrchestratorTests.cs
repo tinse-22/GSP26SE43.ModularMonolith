@@ -1640,6 +1640,110 @@ public class TestExecutionOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_AutoHydrateRequiredBody_WhenHappyPathBodyBelongsToDifferentSchema()
+    {
+        // Arrange
+        var caseId = Guid.NewGuid();
+        var endpointId = Guid.NewGuid();
+        var testCase = CreateTestCase(caseId, endpointId, 0);
+        testCase.Name = "Create category successfully";
+        testCase.TestType = "HappyPath";
+        testCase.Request.HttpMethod = "POST";
+        testCase.Request.Url = "/api/categories";
+        testCase.Request.BodyType = "JSON";
+        testCase.Request.Body = "{\"email\":\"testuser@example.com\",\"password\":\"Test123!\"}";
+        testCase.Expectation.ExpectedStatus = "[201]";
+
+        SetupDefaultMocks(new[] { testCase }, new[] { endpointId });
+
+        _endpointMetadataMock
+            .Setup(x => x.GetEndpointMetadataAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HasRequiredRequestBody = true,
+                    Parameters = new List<ApiEndpointParameterDescriptorDto>
+                    {
+                        new()
+                        {
+                            Name = "body",
+                            Location = "Body",
+                            IsRequired = true,
+                            Schema = """
+                            {
+                              "type": "object",
+                              "required": ["name"],
+                              "properties": {
+                                "name": { "type": "string", "minLength": 1 },
+                                "description": { "type": "string" }
+                              }
+                            }
+                            """,
+                        },
+                    },
+                },
+            });
+
+        string resolvedBody = null;
+        _variableResolverMock
+            .Setup(x => x.Resolve(It.IsAny<ExecutionTestCaseDto>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<ResolvedExecutionEnvironment>()))
+            .Returns<ExecutionTestCaseDto, IReadOnlyDictionary<string, string>, ResolvedExecutionEnvironment>((tc, _, _) =>
+            {
+                resolvedBody = tc.Request.Body;
+                return new ResolvedTestCaseRequest
+                {
+                    TestCaseId = tc.TestCaseId,
+                    Name = tc.Name,
+                    HttpMethod = tc.Request.HttpMethod,
+                    ResolvedUrl = "https://api.example.com/api/categories",
+                    BodyType = tc.Request.BodyType,
+                    Body = tc.Request.Body,
+                    TimeoutMs = tc.Request.Timeout,
+                };
+            });
+
+        _httpExecutorMock
+            .Setup(x => x.ExecuteAsync(It.IsAny<ResolvedTestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpTestResponse
+            {
+                StatusCode = 201,
+                Body = "{\"success\":true,\"data\":{\"_id\":\"cat-1\",\"name\":\"Sample Name\"}}",
+                Headers = new Dictionary<string, string>(),
+                LatencyMs = 20,
+            });
+
+        _variableExtractorMock
+            .Setup(x => x.Extract(It.IsAny<HttpTestResponse>(), It.IsAny<IReadOnlyList<ExecutionVariableRuleDto>>(), It.IsAny<string>()))
+            .Returns(new Dictionary<string, string>());
+
+        _validatorMock
+            .Setup(x => x.Validate(
+                It.IsAny<HttpTestResponse>(),
+                It.IsAny<ExecutionTestCaseDto>(),
+                It.IsAny<ApiEndpointMetadataDto>(),
+                It.IsAny<ValidationProfile>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(new TestCaseValidationResult
+            {
+                IsPassed = true,
+                StatusCodeMatched = true,
+                Failures = new List<ValidationFailureModel>(),
+            });
+
+        SetupResultCollector();
+
+        // Act
+        await _orchestrator.ExecuteAsync(_runId, _userId, Array.Empty<Guid>());
+
+        // Assert
+        resolvedBody.Should().Contain("\"name\"");
+        resolvedBody.Should().NotContain("\"email\"");
+        resolvedBody.Should().NotContain("\"password\"");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_PromoteLegacyBodyQueryParam_ToRequestBody()
     {
         // Arrange

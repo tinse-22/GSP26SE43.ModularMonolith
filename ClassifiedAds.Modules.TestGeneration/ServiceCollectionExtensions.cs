@@ -1,4 +1,5 @@
 ﻿using ClassifiedAds.Contracts.TestGeneration.Services;
+using ClassifiedAds.Contracts.TestExecution.JsonPathResolution;
 using ClassifiedAds.Domain.Infrastructure.Messaging;
 using ClassifiedAds.Domain.Repositories;
 using ClassifiedAds.Infrastructure.HostedServices;
@@ -29,6 +30,7 @@ public static class TestGenerationServiceCollectionExtensions
         var connectionString = PostgresConnectionStringNormalizer.NormalizeForSupabasePooler(settings.ConnectionStrings.Default);
 
         services.Configure(configureOptions);
+        services.AddSingleton<IJsonPathResolver>(_ => new JsonPathResolver(settings.JsonPathResolution ?? new JsonPathResolutionOptions()));
         services.Configure<ScenarioGenerationBudgetOptions>(options =>
         {
             var budget = ScenarioBudgetResolver.Normalize(settings.ScenarioGenerationBudget);
@@ -143,7 +145,7 @@ public static class TestGenerationServiceCollectionExtensions
             options.GenerationMaxSchemaPayloadLength = n8n.GenerationMaxSchemaPayloadLength <= 0 ? 800 : n8n.GenerationMaxSchemaPayloadLength;
             options.GenerationMaxPromptLength = n8n.GenerationMaxPromptLength <= 0 ? 1200 : n8n.GenerationMaxPromptLength;
             options.GenerationMaxBusinessContextLength = n8n.GenerationMaxBusinessContextLength <= 0 ? 700 : n8n.GenerationMaxBusinessContextLength;
-            options.GenerationMaxSrsRequirementCount = n8n.GenerationMaxSrsRequirementCount <= 0 ? 15 : n8n.GenerationMaxSrsRequirementCount;
+            options.GenerationMaxSrsRequirementCount = n8n.GenerationMaxSrsRequirementCount <= 0 ? 60 : n8n.GenerationMaxSrsRequirementCount;
             options.GenerationMaxSrsFieldLength = n8n.GenerationMaxSrsFieldLength <= 0 ? 500 : n8n.GenerationMaxSrsFieldLength;
         });
 

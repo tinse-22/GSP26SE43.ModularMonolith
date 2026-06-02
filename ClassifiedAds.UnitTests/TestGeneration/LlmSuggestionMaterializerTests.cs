@@ -2,6 +2,7 @@ using ClassifiedAds.Modules.TestGeneration.Entities;
 using ClassifiedAds.Modules.TestGeneration.Models;
 using ClassifiedAds.Modules.TestGeneration.Models.Requests;
 using ClassifiedAds.Modules.TestGeneration.Services;
+using ClassifiedAds.UnitTests;
 using System.Text.Json;
 using HttpMethodEnum = ClassifiedAds.Modules.TestGeneration.Entities.HttpMethod;
 
@@ -39,7 +40,8 @@ public class LlmSuggestionMaterializerTests
 
         _sut = new LlmSuggestionMaterializer(
             _requestBuilderMock.Object,
-            _expectationBuilderMock.Object);
+            _expectationBuilderMock.Object,
+            JsonPathResolutionTestFactory.CreateResolver());
     }
 
     #region MaterializeFromScenario
@@ -173,6 +175,75 @@ public class LlmSuggestionMaterializerTests
         capturedExpectation.Should().NotBeNull();
         capturedExpectation.JsonPathChecks.Should().ContainKey("$.success");
         capturedExpectation.JsonPathChecks["$.success"].Should().Be("true");
+    }
+
+    [Fact]
+    public void MaterializeFromScenario_Should_PreserveJsonPath_WhenNoActualResponseOrSchemaIsAvailable()
+    {
+        N8nTestCaseExpectation capturedExpectation = null;
+        _expectationBuilderMock
+            .Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
+            .Callback<Guid, N8nTestCaseExpectation>((_, expectation) => capturedExpectation = expectation)
+            .Returns<Guid, N8nTestCaseExpectation>((id, _) =>
+                new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+
+        var endpointId = Guid.NewGuid();
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = endpointId,
+            ScenarioName = "Create category",
+            SuggestedTestType = TestType.HappyPath,
+            ExpectedStatusCodes = new List<int> { 201 },
+            SuggestedJsonPathChecks = new Dictionary<string, string>
+            {
+                ["$.success"] = "true",
+                ["$.data.id"] = "exists",
+            },
+        };
+
+        _sut.MaterializeFromScenario(
+            scenario,
+            Guid.NewGuid(),
+            new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/categories" },
+            0);
+
+        capturedExpectation.Should().NotBeNull();
+        capturedExpectation.JsonPathChecks.Should().ContainKey("$.data.id");
+        capturedExpectation.JsonPathChecks.Should().NotContainKey("$.data._id");
+    }
+
+    [Fact]
+    public void MaterializeFromScenario_Should_KeepRegisterUserIdJsonPath()
+    {
+        N8nTestCaseExpectation capturedExpectation = null;
+        _expectationBuilderMock
+            .Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
+            .Callback<Guid, N8nTestCaseExpectation>((_, expectation) => capturedExpectation = expectation)
+            .Returns<Guid, N8nTestCaseExpectation>((id, _) =>
+                new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+
+        var endpointId = Guid.NewGuid();
+        var scenario = new LlmSuggestedScenario
+        {
+            EndpointId = endpointId,
+            ScenarioName = "Register user",
+            SuggestedTestType = TestType.HappyPath,
+            ExpectedStatusCodes = new List<int> { 201 },
+            SuggestedJsonPathChecks = new Dictionary<string, string>
+            {
+                ["$.data.id"] = "exists",
+            },
+        };
+
+        _sut.MaterializeFromScenario(
+            scenario,
+            Guid.NewGuid(),
+            new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/auth/register" },
+            0);
+
+        capturedExpectation.Should().NotBeNull();
+        capturedExpectation.JsonPathChecks.Should().ContainKey("$.data.id");
+        capturedExpectation.JsonPathChecks.Should().NotContainKey("$.data._id");
     }
 
     [Fact]
@@ -369,6 +440,49 @@ public class LlmSuggestionMaterializerTests
 
         // Assert
         result.Variables.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MaterializeFromSuggestion_Should_PreservePersistedJsonPath_WhenNoActualResponseOrSchemaIsAvailable()
+    {
+        N8nTestCaseExpectation capturedExpectation = null;
+        _expectationBuilderMock
+            .Setup(x => x.Build(It.IsAny<Guid>(), It.IsAny<N8nTestCaseExpectation>()))
+            .Callback<Guid, N8nTestCaseExpectation>((_, expectation) => capturedExpectation = expectation)
+            .Returns<Guid, N8nTestCaseExpectation>((id, _) =>
+                new TestCaseExpectation { Id = Guid.NewGuid(), TestCaseId = id });
+
+        var endpointId = Guid.NewGuid();
+        var suggestion = new LlmSuggestion
+        {
+            Id = Guid.NewGuid(),
+            TestSuiteId = Guid.NewGuid(),
+            EndpointId = endpointId,
+            SuggestedName = "Create product",
+            TestType = TestType.HappyPath,
+            Priority = TestPriority.High,
+            SuggestedTags = "[\"happy-path\",\"auto-generated\",\"llm-suggested\"]",
+            SuggestedRequest = JsonSerializer.Serialize(new N8nTestCaseRequest { HttpMethod = "POST", Url = "/api/products" }, JsonOpts),
+            SuggestedExpectation = JsonSerializer.Serialize(new N8nTestCaseExpectation
+            {
+                ExpectedStatus = new List<int> { 201 },
+                JsonPathChecks = new Dictionary<string, string>
+                {
+                    ["$.data.id"] = "exists",
+                },
+            }, JsonOpts),
+            ReviewStatus = ReviewStatus.Pending,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+        };
+
+        _sut.MaterializeFromSuggestion(
+            suggestion,
+            new ApiOrderItemModel { EndpointId = endpointId, HttpMethod = "POST", Path = "/api/products" },
+            0);
+
+        capturedExpectation.Should().NotBeNull();
+        capturedExpectation.JsonPathChecks.Should().ContainKey("$.data.id");
+        capturedExpectation.JsonPathChecks.Should().NotContainKey("$.data._id");
     }
 
     #endregion

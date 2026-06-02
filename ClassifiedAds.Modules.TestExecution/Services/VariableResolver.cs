@@ -606,6 +606,7 @@ public class VariableResolver : IVariableResolver
 
         var availableIdentifierValues = variables
             .Where(kvp => IsIdentifierSemanticVariableName(kvp.Key)
+                && !string.Equals(kvp.Key, "tcUniqueId", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(kvp.Value)
                 && !kvp.Value.Contains("{{", StringComparison.Ordinal)
                 && !ShouldReplaceIdentifierLiteral(kvp.Value))
@@ -1656,10 +1657,14 @@ public class VariableResolver : IVariableResolver
     {
         var policy = ResolveCredentialRewritePolicy(testCase);
         var enforceByFlow = ShouldEnforceDependencyCredentialBindingByFlow(testCase);
+        var fallbackLoginCredentialBinding =
+            ShouldFallbackBindLoginCredentialsFromGlobalRegister(testCase);
         if (string.IsNullOrWhiteSpace(resolvedBody)
             || variables == null
-            || !HasDependencies(testCase)
-            || (policy != CredentialRewritePolicy.BindDependencyCredentials && !enforceByFlow)
+            || (!HasDependencies(testCase) && !fallbackLoginCredentialBinding)
+            || (policy != CredentialRewritePolicy.BindDependencyCredentials
+                && !enforceByFlow
+                && !fallbackLoginCredentialBinding)
             || !LooksLikeJsonBody(testCase?.Request?.BodyType, resolvedBody))
         {
             return resolvedBody;
@@ -1686,11 +1691,13 @@ public class VariableResolver : IVariableResolver
                 testCase,
                 new[] { "registeredEmail", "email", "requestEmail", "testEmail" },
                 variables,
-                allowGlobalFallback: true,
+                allowGlobalFallback: !HasDependencies(testCase),
                 out var dependencyEmail)
             && obj.TryGetPropertyValue("email", out var emailNode)
             && emailNode is JsonValue
-            && ShouldReplaceLoginCredentialValue(emailNode, forceRewriteLiteral: enforceByFlow)
+            && ShouldReplaceLoginCredentialValue(
+                emailNode,
+                forceRewriteLiteral: enforceByFlow || fallbackLoginCredentialBinding)
             && !string.IsNullOrWhiteSpace(dependencyEmail))
         {
             obj["email"] = dependencyEmail;
@@ -1701,11 +1708,13 @@ public class VariableResolver : IVariableResolver
                 testCase,
                 new[] { "registeredPassword", "password", "requestPassword", "testPassword" },
                 variables,
-                allowGlobalFallback: true,
+                allowGlobalFallback: !HasDependencies(testCase),
                 out var dependencyPassword)
             && obj.TryGetPropertyValue("password", out var passwordNode)
             && passwordNode is JsonValue
-            && ShouldReplaceLoginCredentialValue(passwordNode, forceRewriteLiteral: enforceByFlow)
+            && ShouldReplaceLoginCredentialValue(
+                passwordNode,
+                forceRewriteLiteral: enforceByFlow || fallbackLoginCredentialBinding)
             && !string.IsNullOrWhiteSpace(dependencyPassword))
         {
             obj["password"] = dependencyPassword;
@@ -2015,6 +2024,37 @@ public class VariableResolver : IVariableResolver
             || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)
             || string.Equals(v, "request.body.password", StringComparison.OrdinalIgnoreCase));
         if (consumesCredential)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldFallbackBindLoginCredentialsFromGlobalRegister(ExecutionTestCaseDto testCase)
+    {
+        if (testCase == null
+            || HasDependencies(testCase)
+            || !string.Equals(testCase.TestType, "HappyPath", StringComparison.OrdinalIgnoreCase)
+            || IsNoAuthExpectationScenario(testCase))
+        {
+            return false;
+        }
+
+        return IsLikelyLoginRequest(testCase);
+    }
+
+    private static bool IsLikelyLoginRequest(ExecutionTestCaseDto testCase)
+    {
+        var url = testCase?.Request?.Url ?? string.Empty;
+        var name = testCase?.Name ?? string.Empty;
+        var description = testCase?.Description ?? string.Empty;
+        var combined = $"{url} {name} {description}";
+
+        if (combined.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0
+            || combined.IndexOf("sign-in", StringComparison.OrdinalIgnoreCase) >= 0
+            || combined.IndexOf("signin", StringComparison.OrdinalIgnoreCase) >= 0
+            || combined.IndexOf("/auth", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             return true;
         }
