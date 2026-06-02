@@ -47,6 +47,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
     private readonly ILlmSuggestionPreviewPersistenceService _persistenceService;
     private readonly ISubscriptionLimitGatewayService _subscriptionLimitService;
     private readonly IMessageBus _messageBus;
+    private readonly IN8nIntegrationService _n8nService;
     private readonly N8nIntegrationOptions _n8nOptions;
     private readonly ILogger<GenerateLlmSuggestionPreviewCommandHandler> _logger;
 
@@ -63,6 +64,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         ILlmSuggestionPreviewPersistenceService persistenceService,
         ISubscriptionLimitGatewayService subscriptionLimitService,
         IMessageBus messageBus,
+        IN8nIntegrationService n8nService,
         IOptions<N8nIntegrationOptions> n8nOptions,
         ILogger<GenerateLlmSuggestionPreviewCommandHandler> logger)
     {
@@ -78,6 +80,7 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         _persistenceService = persistenceService;
         _subscriptionLimitService = subscriptionLimitService;
         _messageBus = messageBus;
+        _n8nService = n8nService;
         _n8nOptions = n8nOptions?.Value ?? new N8nIntegrationOptions();
         _logger = logger;
     }
@@ -289,26 +292,45 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
             var enqueueStopwatch = Stopwatch.StartNew();
-            await _messageBus.SendAsync(
-                new TriggerLlmSuggestionRefinementMessage
-                {
-                    JobId = job.Id,
-                    TestSuiteId = job.TestSuiteId,
-                    TriggeredById = job.TriggeredById,
-                    WebhookName = N8nWebhookNames.GenerateLlmSuggestions,
-                    CallbackUrl = callbackUrl,
-                    Payload = payload,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                },
-                new MetaData
-                {
-                    CreationDateTime = DateTimeOffset.UtcNow,
-                    EnqueuedDateTime = DateTimeOffset.UtcNow,
-                    MessageId = job.Id.ToString(),
-                },
-                cancellationToken);
-            enqueueStopwatch.Stop();
-            metrics.EnqueueMessageMs = enqueueStopwatch.ElapsedMilliseconds;
+            var message = new TriggerLlmSuggestionRefinementMessage
+            {
+                JobId = job.Id,
+                TestSuiteId = job.TestSuiteId,
+                TriggeredById = job.TriggeredById,
+                WebhookName = N8nWebhookNames.GenerateLlmSuggestions,
+                CallbackUrl = callbackUrl,
+                Payload = payload,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+
+            try
+            {
+                await _messageBus.SendAsync(
+                    message,
+                    new MetaData
+                    {
+                        CreationDateTime = DateTimeOffset.UtcNow,
+                        EnqueuedDateTime = DateTimeOffset.UtcNow,
+                        MessageId = job.Id.ToString(),
+                    },
+                    cancellationToken);
+            }
+            catch (Exception enqueueException)
+            {
+                _logger.LogWarning(
+                    enqueueException,
+                    "Message bus enqueue failed for async LLM suggestion refinement. Falling back to direct n8n webhook call. JobId={JobId}, TestSuiteId={TestSuiteId}, WebhookName={WebhookName}",
+                    job.Id,
+                    job.TestSuiteId,
+                    N8nWebhookNames.GenerateLlmSuggestions);
+
+                await TriggerRefinementDirectlyAsync(job, message, cancellationToken);
+            }
+            finally
+            {
+                enqueueStopwatch.Stop();
+                metrics.EnqueueMessageMs = enqueueStopwatch.ElapsedMilliseconds;
+            }
         }
         catch (Exception ex)
         {
@@ -327,6 +349,45 @@ public class GenerateLlmSuggestionPreviewCommandHandler : ICommandHandler<Genera
         }
 
         return metrics;
+    }
+
+    private async Task TriggerRefinementDirectlyAsync(
+        TestGenerationJob job,
+        TriggerLlmSuggestionRefinementMessage message,
+        CancellationToken cancellationToken)
+    {
+        var webhookUrl = _n8nService.GetResolvedWebhookUrl(message.WebhookName);
+
+        job.WebhookName = message.WebhookName;
+        job.WebhookUrl = webhookUrl;
+        job.CallbackUrl = message.CallbackUrl;
+        job.Status = GenerationJobStatus.Triggering;
+        job.TriggeredAt = DateTimeOffset.UtcNow;
+        job.RowVersion = Guid.NewGuid().ToByteArray();
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+        var result = await _n8nService.TriggerWebhookWithResultAsync(
+            message.WebhookName,
+            message.Payload,
+            cancellationToken);
+
+        if (result.Success)
+        {
+            job.Status = GenerationJobStatus.WaitingForCallback;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        job.Status = GenerationJobStatus.Failed;
+        job.CompletedAt = DateTimeOffset.UtcNow;
+        job.ErrorMessage = result.ErrorMessage;
+        job.ErrorDetails = result.ErrorDetails;
+        job.RetryCount++;
+        job.RowVersion = Guid.NewGuid().ToByteArray();
+        await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+        throw new ValidationException(result.ErrorMessage);
     }
 
     private string BuildCallbackUrl(Guid jobId)
