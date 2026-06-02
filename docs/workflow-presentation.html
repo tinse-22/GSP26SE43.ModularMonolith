@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seven Core Workflow - Capstone Project</title>
+  <style>
+    :root {
+      --bg: #06131d;
+      --panel: #0b3850;
+      --panel-2: #0f4f70;
+      --cyan: #55c8ff;
+      --cyan-2: #2f9bea;
+      --mint: #8be7ee;
+      --text: #f4fbff;
+      --muted: #b9d5e4;
+      --line: rgba(139, 231, 238, 0.75);
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 35% 40%, rgba(52, 173, 230, 0.26), transparent 30%),
+        radial-gradient(circle at 78% 20%, rgba(59, 177, 238, 0.14), transparent 26%),
+        linear-gradient(105deg, #0c4760 0%, #06131d 76%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.32;
+      background-image:
+        radial-gradient(circle, rgba(94, 210, 255, 0.65) 1px, transparent 1.5px);
+      background-size: 22px 22px;
+      mask-image: radial-gradient(ellipse at 36% 46%, #000 0%, transparent 58%);
+    }
+
+    .deck {
+      position: relative;
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 28px 32px 44px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 22px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 800;
+    }
+
+    .page-badge {
+      min-width: 156px;
+      border: 1px solid var(--cyan);
+      border-radius: 5px;
+      padding: 12px 20px;
+      text-align: center;
+      box-shadow: 0 0 0 1px rgba(85, 200, 255, 0.14) inset;
+      background: rgba(4, 22, 34, 0.72);
+    }
+
+    .hero {
+      position: relative;
+      min-height: 560px;
+      display: grid;
+      grid-template-columns: 1fr 340px 1fr;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .side {
+      display: grid;
+      gap: 28px;
+    }
+
+    .side.right {
+      justify-items: end;
+    }
+
+    .workflow-pill {
+      position: relative;
+      width: min(360px, 100%);
+      min-height: 98px;
+      display: grid;
+      grid-template-columns: 1fr 78px;
+      align-items: center;
+      padding: 18px 18px 18px 28px;
+      border: 1.5px solid rgba(85, 200, 255, 0.72);
+      border-radius: 46px;
+      background: linear-gradient(90deg, rgba(16, 82, 113, 0.95), rgba(8, 43, 62, 0.96));
+      box-shadow: 0 16px 28px var(--shadow);
+    }
+
+    .side.right .workflow-pill {
+      grid-template-columns: 78px 1fr;
+      padding: 18px 28px 18px 18px;
+      background: linear-gradient(90deg, rgba(8, 43, 62, 0.96), rgba(16, 82, 113, 0.95));
+    }
+
+    .workflow-pill h2 {
+      margin: 0 0 5px;
+      font-size: 17px;
+      line-height: 1.05;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+    }
+
+    .workflow-pill p {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.22;
+      color: var(--text);
+      letter-spacing: 0.5px;
+    }
+
+    .icon {
+      width: 64px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #72d7ff, #188de4);
+      border: 7px solid rgba(4, 18, 31, 0.9);
+      font-size: 30px;
+      font-weight: 800;
+    }
+
+    .side.right .icon {
+      order: -1;
+    }
+
+    .connector {
+      position: absolute;
+      width: 54px;
+      height: 34px;
+      border-top: 2px dashed var(--line);
+      border-right: 2px dashed var(--line);
+      opacity: 0.95;
+    }
+
+    .left .workflow-pill:nth-child(1) .connector,
+    .left .workflow-pill:nth-child(2) .connector,
+    .left .workflow-pill:nth-child(3) .connector {
+      right: -42px;
+      top: 42px;
+    }
+
+    .right .workflow-pill:nth-child(1) .connector,
+    .right .workflow-pill:nth-child(2) .connector,
+    .right .workflow-pill:nth-child(3) .connector {
+      left: -42px;
+      top: 42px;
+      transform: scaleX(-1);
+    }
+
+    .core {
+      position: relative;
+      width: 340px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background:
+        conic-gradient(
+          from 0deg,
+          #85d8e6 0 38deg,
+          #1c5e83 38deg 78deg,
+          #3aa0ed 78deg 134deg,
+          #216187 134deg 182deg,
+          #78cddb 182deg 218deg,
+          #1a587d 218deg 288deg,
+          #3da3f1 288deg 337deg,
+          #89dce8 337deg 360deg
+        );
+      box-shadow: 0 18px 40px var(--shadow);
+    }
+
+    .core::before {
+      content: "";
+      position: absolute;
+      inset: 44px;
+      border-radius: 50%;
+      background: #08334f;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .core-title {
+      position: relative;
+      z-index: 1;
+      max-width: 240px;
+      text-align: center;
+      font-size: 30px;
+      line-height: 1.24;
+      text-transform: uppercase;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+    }
+
+    .workflow-seven {
+      position: absolute;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      width: min(330px, 72vw);
+      min-height: 92px;
+      display: grid;
+      grid-template-columns: 1fr 76px;
+      align-items: center;
+      padding: 16px 18px 16px 28px;
+      border: 1.5px solid rgba(85, 200, 255, 0.72);
+      border-radius: 42px;
+      background: linear-gradient(90deg, rgba(16, 82, 113, 0.95), rgba(8, 43, 62, 0.96));
+      box-shadow: 0 16px 28px var(--shadow);
+    }
+
+    .workflow-seven::before {
+      content: "";
+      position: absolute;
+      top: -58px;
+      left: 50%;
+      height: 58px;
+      border-left: 2px dashed var(--line);
+    }
+
+    .workflow-seven h2 {
+      margin: 0 0 5px;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .workflow-seven p {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.25;
+    }
+
+    .section {
+      margin-top: 34px;
+      padding: 26px;
+      border: 1px solid rgba(85, 200, 255, 0.28);
+      border-radius: 8px;
+      background: rgba(4, 22, 34, 0.68);
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.22);
+    }
+
+    .section h1 {
+      margin: 0 0 18px;
+      font-size: 28px;
+      letter-spacing: 0.3px;
+    }
+
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .detail {
+      border-left: 4px solid var(--cyan);
+      padding: 14px 16px;
+      border-radius: 6px;
+      background: rgba(15, 79, 112, 0.46);
+    }
+
+    .detail h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: #ffffff;
+    }
+
+    .detail p {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .detail strong {
+      color: var(--text);
+    }
+
+    .run-flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .step {
+      min-height: 96px;
+      padding: 12px 10px;
+      border-radius: 7px;
+      background: linear-gradient(180deg, rgba(85, 200, 255, 0.22), rgba(15, 79, 112, 0.55));
+      border: 1px solid rgba(139, 231, 238, 0.35);
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.34;
+    }
+
+    .step b {
+      display: block;
+      margin-bottom: 7px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 960px) {
+      .deck {
+        padding: 22px 18px 36px;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+
+      .side,
+      .side.right {
+        justify-items: stretch;
+      }
+
+      .core {
+        width: min(340px, 82vw);
+        margin: 8px auto 132px;
+      }
+
+      .connector {
+        display: none;
+      }
+
+      .workflow-seven {
+        bottom: 10px;
+      }
+
+      .workflow-grid,
+      .run-flow {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <header class="topbar">
+      <div>Capstone Project</div>
+      <div class="page-badge">Page 18</div>
+    </header>
+
+    <section class="hero" aria-label="Seven Core Workflow Overview">
+      <div class="side left">
+        <article class="workflow-pill">
+          <div>
+            <h2>Workflow 1</h2>
+            <p>Setup Environment Parameters</p>
+          </div>
+          <div class="icon">⚙</div>
+          <span class="connector"></span>
+        </article>
+
+        <article class="workflow-pill">
+          <div>
+            <h2>Workflow 2</h2>
+            <p>Import and Analyze Swagger / OpenAPI</p>
+          </div>
+          <div class="icon">⌕</div>
+          <span class="connector"></span>
+        </article>
+
+        <article class="workflow-pill">
+          <div>
+            <h2>Workflow 3</h2>
+            <p>Import and Analyze SRS</p>
+          </div>
+          <div class="icon">↓</div>
+          <span class="connector"></span>
+        </article>
+      </div>
+
+      <div class="core">
+        <div class="core-title">Seven<br>Core<br>Workflow</div>
+      </div>
+
+      <div class="side right">
+        <article class="workflow-pill">
+          <div class="icon">▣</div>
+          <div>
+            <h2>Workflow 4</h2>
+            <p>Merge Swagger with SRS</p>
+          </div>
+          <span class="connector"></span>
+        </article>
+
+        <article class="workflow-pill">
+          <div class="icon">⇄</div>
+          <div>
+            <h2>Workflow 5</h2>
+            <p>Explain How to Pass Parameters</p>
+          </div>
+          <span class="connector"></span>
+        </article>
+
+        <article class="workflow-pill">
+          <div class="icon">▤</div>
+          <div>
+            <h2>Workflow 6</h2>
+            <p>Generate Test Cases</p>
+          </div>
+          <span class="connector"></span>
+        </article>
+      </div>
+
+      <article class="workflow-seven">
+        <div>
+          <h2>Workflow 7</h2>
+          <p>Execute Test Cases, AI Explain Result / Failure</p>
+        </div>
+        <div class="icon">⚡</div>
+      </article>
+    </section>
+
+    <section class="section">
+      <h1>Luồng Chạy Tổng Quan</h1>
+      <div class="run-flow">
+        <div class="step"><b>1. Environment</b>Người dùng cấu hình base URL, headers, token và variables.</div>
+        <div class="step"><b>2. Swagger</b>Upload spec, parse endpoints, request schema, response schema.</div>
+        <div class="step"><b>3. SRS</b>Upload tài liệu yêu cầu, phân tích requirement và constraints.</div>
+        <div class="step"><b>4. Merge</b>Ghép API contract với business rules và traceability từ SRS.</div>
+        <div class="step"><b>5. Parameters</b>Tính cách truyền path, query, body, auth và biến phụ thuộc.</div>
+        <div class="step"><b>6. Generate</b>Gọi LLM/n8n hoặc generator nội bộ để tạo test cases.</div>
+        <div class="step"><b>7. Execute</b>Chạy test, validate kết quả, ghi report và giải thích lỗi.</div>
+      </div>
+      <p class="footer-note">
+        Trục chính của hệ thống là: Project → API Spec → SRS → Environment → Test Suite → Test Cases → Test Run → Validation/Reporting.
+        Mỗi workflow tạo dữ liệu đầu vào cho workflow kế tiếp, nên thiếu dữ liệu ở bước trước sẽ làm giảm chất lượng sinh test hoặc làm test run thất bại.
+      </p>
+    </section>
+
+    <section class="section">
+      <h1>Mô Tả Từng Workflow</h1>
+      <div class="workflow-grid">
+        <article class="detail">
+          <h3>Workflow 1 - Setup Environment Parameters</h3>
+          <p><strong>Được gọi khi:</strong> người dùng tạo hoặc chọn execution environment cho project.</p>
+          <p><strong>Cách chạy:</strong> backend lưu base URL, headers, auth token và variables. Khi execute test, orchestrator resolve environment rồi merge với biến runtime đã extract từ các test trước.</p>
+          <p><strong>Output:</strong> bộ tham số runtime dùng để gọi API thật.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 2 - Import and Analyze Swagger / OpenAPI</h3>
+          <p><strong>Được gọi khi:</strong> user upload file Swagger/OpenAPI hoặc chọn parse specification.</p>
+          <p><strong>Cách chạy:</strong> parser đọc paths, methods, parameters, request body, response schema và security scheme; sau đó tạo endpoint metadata trong database.</p>
+          <p><strong>Output:</strong> danh sách endpoint và API contract làm nguồn chính cho test generation.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 3 - Import and Analyze SRS</h3>
+          <p><strong>Được gọi khi:</strong> user upload SRS hoặc yêu cầu phân tích requirement.</p>
+          <p><strong>Cách chạy:</strong> hệ thống trích xuất requirement, rule nghiệp vụ, constraint kiểm thử, ambiguity và confidence score. Nếu dùng LLM/n8n, payload có thể gửi SRS sang workflow phân tích.</p>
+          <p><strong>Output:</strong> requirement có mã, mô tả, constraints và dữ liệu traceability.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 4 - Merge Swagger with SRS</h3>
+          <p><strong>Được gọi khi:</strong> cần tạo context cho LLM hoặc chuẩn bị test suite dựa trên cả API contract và business rules.</p>
+          <p><strong>Cách chạy:</strong> endpoint từ Swagger được ghép với requirement/constraint từ SRS. Bước này xác định endpoint nào cover requirement nào và rule nào phải trở thành expectation.</p>
+          <p><strong>Output:</strong> prompt/context hợp nhất cho generation và traceability link.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 5 - Explain How to Pass Parameters</h3>
+          <p><strong>Được gọi khi:</strong> hệ thống cần biết test case sau lấy dữ liệu từ test case trước như thế nào.</p>
+          <p><strong>Cách chạy:</strong> dependency analyzer so khớp response fields với path/query/body parameters, resolve biến từ environment và variable bag, rồi mô tả cách truyền dữ liệu qua chuỗi test.</p>
+          <p><strong>Output:</strong> mapping parameter, extracted variables và thứ tự chạy an toàn hơn.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 6 - Generate Test Cases</h3>
+          <p><strong>Được gọi khi:</strong> user yêu cầu sinh happy path, boundary, negative hoặc LLM suggestions.</p>
+          <p><strong>Cách chạy:</strong> backend build payload từ suite scope, endpoints, approved order, SRS và environment context; sau đó gọi LLM/n8n hoặc fallback generator nội bộ, normalize request/expectation và lưu test cases.</p>
+          <p><strong>Output:</strong> test cases có request, expected status, assertions, dependency và covered requirement IDs.</p>
+        </article>
+
+        <article class="detail">
+          <h3>Workflow 7 - Execute Test Cases, AI Explain Result / Failure</h3>
+          <p><strong>Được gọi khi:</strong> user chạy test suite hoặc mở kết quả test run.</p>
+          <p><strong>Cách chạy:</strong> orchestrator load test cases theo approved order, resolve variables, gọi API thật, validate status/schema/assertions, lưu pass/fail/skip. Với case fail, hệ thống có thể gọi LLM để giải thích nguyên nhân.</p>
+          <p><strong>Output:</strong> test run report, execution logs, failure reason và đề xuất sửa lỗi.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

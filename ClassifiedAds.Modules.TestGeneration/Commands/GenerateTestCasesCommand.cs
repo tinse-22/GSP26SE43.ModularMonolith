@@ -41,6 +41,7 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
     private readonly IRepository<TestGenerationJob, Guid> _jobRepository;
     private readonly ITestGenerationPayloadBuilder _payloadBuilder;
     private readonly IMessageBus _messageBus;
+    private readonly IN8nIntegrationService _n8nService;
     private readonly ILogger<GenerateTestCasesCommandHandler> _logger;
 
     public GenerateTestCasesCommandHandler(
@@ -49,6 +50,7 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
         IRepository<TestGenerationJob, Guid> jobRepository,
         ITestGenerationPayloadBuilder payloadBuilder,
         IMessageBus messageBus,
+        IN8nIntegrationService n8nService,
         ILogger<GenerateTestCasesCommandHandler> logger)
     {
         _suiteRepository = suiteRepository;
@@ -56,6 +58,7 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
         _jobRepository = jobRepository;
         _payloadBuilder = payloadBuilder;
         _messageBus = messageBus;
+        _n8nService = n8nService;
         _logger = logger;
     }
 
@@ -145,21 +148,99 @@ public class GenerateTestCasesCommandHandler : ICommandHandler<GenerateTestCases
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(
+                ex,
+                "Failed to queue test generation trigger message. Falling back to inline n8n trigger. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                job.Id, command.TestSuiteId);
+
+            await TriggerN8nInlineAsync(job, command.TestSuiteId, approvedProposal.Id, ex, cancellationToken);
+        }
+    }
+
+    private async Task TriggerN8nInlineAsync(
+        TestGenerationJob job,
+        Guid testSuiteId,
+        Guid proposalId,
+        Exception queueException,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            job.Status = GenerationJobStatus.Triggering;
+            job.TriggeredAt = DateTimeOffset.UtcNow;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            var payload = await _payloadBuilder.BuildPayloadAsync(
+                testSuiteId,
+                proposalId,
+                cancellationToken);
+            var webhookUrl = _n8nService.GetResolvedWebhookUrl(_payloadBuilder.WebhookName);
+
+            job.WebhookName = _payloadBuilder.WebhookName;
+            job.WebhookUrl = webhookUrl;
+            job.CallbackUrl = payload.CallbackUrl;
+            job.Status = GenerationJobStatus.WaitingForCallback;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            var result = await _n8nService.TriggerWebhookWithResultAsync(
+                _payloadBuilder.WebhookName,
+                payload,
+                cancellationToken);
+
+            if (result.Success)
+            {
+                _logger.LogInformation(
+                    "Triggered n8n webhook inline after queue failure. JobId={JobId}, TestSuiteId={TestSuiteId}, WebhookName={WebhookName}, WebhookUrl={WebhookUrl}, CallbackUrl={CallbackUrl}",
+                    job.Id, testSuiteId, _payloadBuilder.WebhookName, webhookUrl, payload.CallbackUrl);
+                return;
+            }
+
             job.Status = GenerationJobStatus.Failed;
             job.CompletedAt = DateTimeOffset.UtcNow;
-            job.ErrorMessage = $"Không thể đưa yêu cầu trigger n8n vào hàng đợi: {ex.Message}";
-            job.ErrorDetails = ex.ToString();
+            job.ErrorMessage = $"Không thể đưa yêu cầu trigger n8n vào hàng đợi: {queueException.Message}. Fallback trigger n8n trực tiếp cũng thất bại: {result.ErrorMessage}";
+            job.ErrorDetails = string.Join(
+                Environment.NewLine,
+                queueException.ToString(),
+                result.ErrorDetails ?? string.Empty);
+            job.RetryCount++;
             job.RowVersion = Guid.NewGuid().ToByteArray();
             await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
 
             _logger.LogError(
-                ex,
-                "Failed to queue test generation trigger message. JobId={JobId}, TestSuiteId={TestSuiteId}",
-                job.Id, command.TestSuiteId);
+                "Inline n8n trigger failed after queue failure. JobId={JobId}, TestSuiteId={TestSuiteId}, QueueError={QueueError}, N8nError={N8nError}",
+                job.Id, testSuiteId, queueException.Message, result.ErrorMessage);
 
             throw new ValidationException(
-                $"Không thể đưa yêu cầu trigger n8n vào hàng đợi. JobId={job.Id}. Lỗi: {ex.Message}",
-                ex);
+                $"Không thể trigger n8n sau khi hàng đợi lỗi. JobId={job.Id}. Lỗi: {result.ErrorMessage}",
+                queueException);
+        }
+        catch (ValidationException)
+        {
+            throw;
+        }
+        catch (Exception fallbackException)
+        {
+            job.Status = GenerationJobStatus.Failed;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            job.ErrorMessage = $"Không thể đưa yêu cầu trigger n8n vào hàng đợi: {queueException.Message}. Fallback trigger n8n trực tiếp lỗi: {fallbackException.Message}";
+            job.ErrorDetails = string.Join(
+                Environment.NewLine,
+                queueException.ToString(),
+                fallbackException.ToString());
+            job.RetryCount++;
+            job.RowVersion = Guid.NewGuid().ToByteArray();
+            await _jobRepository.UnitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogError(
+                fallbackException,
+                "Inline n8n trigger threw after queue failure. JobId={JobId}, TestSuiteId={TestSuiteId}",
+                job.Id, testSuiteId);
+
+            throw new ValidationException(
+                $"Không thể đưa yêu cầu trigger n8n vào hàng đợi hoặc trigger trực tiếp. JobId={job.Id}. Lỗi: {fallbackException.Message}",
+                fallbackException);
         }
     }
 }
@@ -236,6 +317,7 @@ public class N8nOrderedEndpoint
     public Guid EndpointId { get; set; }
     public string HttpMethod { get; set; }
     public string Path { get; set; }
+    public string Url { get; set; }
     public string OperationId { get; set; }
     public int OrderIndex { get; set; }
     public List<Guid> DependsOnEndpointIds { get; set; } = new();

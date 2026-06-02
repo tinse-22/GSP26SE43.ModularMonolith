@@ -51,7 +51,7 @@ public class CustomClaimsTransformation : IClaimsTransformation
         {
             var issuedAt = principal.Claims.FirstOrDefault(x => x.Type == "iat")?.Value ?? "default";
 
-            var cacheKey = $"permissions/{userId}/{issuedAt}";
+            var cacheKey = $"hybrid/permissions/v2/{userId}/{issuedAt}";
 
             var permissions = await _cache.GetOrCreateAsync(cacheKey,
                 async (cancellationToken) => await GetPermissionsAsync(userId, cancellationToken),
