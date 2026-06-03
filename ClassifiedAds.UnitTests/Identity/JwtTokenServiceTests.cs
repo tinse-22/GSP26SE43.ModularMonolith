@@ -21,7 +21,7 @@ public class JwtTokenServiceTests
         var options = new JwtOptions();
 
         // Assert
-        options.AccessTokenExpirationMinutes.Should().Be(60);
+        options.AccessTokenExpirationMinutes.Should().Be(4320);
         options.RefreshTokenExpirationDays.Should().Be(7);
     }
 

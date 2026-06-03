@@ -23,9 +23,9 @@ public class JwtOptions
     public string Audience { get; set; } = "ClassifiedAds.WebAPI";
 
     /// <summary>
-    /// Access token expiration in minutes. Default: 60 minutes.
+    /// Access token expiration in minutes. Default: 3 days (4320 minutes).
     /// </summary>
-    public int AccessTokenExpirationMinutes { get; set; } = 60;
+    public int AccessTokenExpirationMinutes { get; set; } = 4320;
 
     /// <summary>
     /// Refresh token expiration in days. Default: 7 days.

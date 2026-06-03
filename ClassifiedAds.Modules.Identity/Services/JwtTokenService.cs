@@ -30,7 +30,7 @@ public class JwtTokenService : IJwtTokenService
     private readonly IdentityDbContext _dbContext;
 
     // Default values if not configured
-    private int AccessTokenExpirationMinutes => _options.Jwt?.AccessTokenExpirationMinutes ?? 60;
+    private int AccessTokenExpirationMinutes => _options.Jwt?.AccessTokenExpirationMinutes ?? 4320;
     private int RefreshTokenExpirationDays => _options.Jwt?.RefreshTokenExpirationDays ?? 7;
 
     public JwtTokenService(
