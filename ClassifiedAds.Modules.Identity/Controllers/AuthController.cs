@@ -28,6 +28,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Mime;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using System.Web;
@@ -1112,6 +1113,52 @@ public class AuthController : ControllerBase
         });
     }
 
+    [Authorize]
+    [HttpGet("me/avatar")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMyAvatar()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        {
+            return Unauthorized(new { Error = "NgÆ°á»i dÃ¹ng chÆ°a Ä‘Æ°á»£c xÃ¡c thá»±c." });
+        }
+
+        var profile = await _dbContext.UserProfiles
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.UserId == userGuid);
+
+        if (profile == null || string.IsNullOrWhiteSpace(profile.AvatarUrl))
+        {
+            return NotFound();
+        }
+
+        var avatarFileEntry = new AvatarFileEntry
+        {
+            Id = Guid.Empty,
+            FileName = Path.GetFileName(profile.AvatarUrl),
+            FileLocation = profile.AvatarUrl.TrimStart('/'),
+        };
+
+        try
+        {
+            var content = await _fileStorageManager.ReadAsync(avatarFileEntry);
+            return File(content, GetAvatarContentType(avatarFileEntry.FileName));
+        }
+        catch (FileNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     private async Task<UserProfile> GetOrCreateUserProfileAsync(User user, bool saveChanges = true)
     {
         var profile = await _dbContext.UserProfiles
@@ -1335,11 +1382,24 @@ public class AuthController : ControllerBase
         }
         else
         {
-            // Fallback: blacklist for the max token lifetime (default 60 min)
-            expiresAt = DateTimeOffset.UtcNow.AddMinutes(60);
+            // Fallback: blacklist for the max token lifetime (default 3 days)
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(_moduleOptions.Jwt?.AccessTokenExpirationMinutes ?? 4320);
         }
 
         _tokenBlacklistService.BlacklistToken(jti, expiresAt);
+    }
+
+    private static string GetAvatarContentType(string fileName)
+    {
+        var extension = Path.GetExtension(fileName)?.ToLowerInvariant();
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            _ => MediaTypeNames.Application.Octet,
+        };
     }
 
     /// <summary>
