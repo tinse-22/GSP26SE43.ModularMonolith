@@ -117,6 +117,11 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
                 if (result != null)
                 {
                     result.ResultsSource = "cache";
+                    var cachedDefinitions = await LoadDefinitionsAsync(
+                        run.TestSuiteId,
+                        result.Cases.Select(x => x.TestCaseId).ToArray(),
+                        ct);
+                    TestRunResultsStorage.ApplyDefinitionFallbacks(result, cachedDefinitions);
                     return result;
                 }
             }
@@ -133,8 +138,35 @@ public class TestRunReportReadGatewayService : ITestRunReportReadGatewayService
                 .Where(x => x.TestRunId == run.Id)
                 .OrderBy(x => x.OrderIndex));
 
-        return TestRunResultsStorage.ReconstructFromDatabase(run, pgResults)
+        var persistedDefinitions = await LoadDefinitionsAsync(
+            run.TestSuiteId,
+            pgResults.Select(x => x.TestCaseId).ToArray(),
+            ct);
+
+        return TestRunResultsStorage.ReconstructFromDatabase(run, pgResults, persistedDefinitions)
             ?? throw CreateRunResultsExpiredException();
+    }
+
+    private async Task<IReadOnlyList<ExecutionTestCaseDto>> LoadDefinitionsAsync(
+        Guid testSuiteId,
+        IReadOnlyCollection<Guid> testCaseIds,
+        CancellationToken ct)
+    {
+        if (testCaseIds == null || testCaseIds.Count == 0)
+        {
+            return Array.Empty<ExecutionTestCaseDto>();
+        }
+
+        try
+        {
+            var context = await _executionReadGatewayService.GetExecutionContextAsync(testSuiteId, testCaseIds, ct);
+            return context?.OrderedTestCases ?? Array.Empty<ExecutionTestCaseDto>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load test case definitions for report result fallback. TestSuiteId={TestSuiteId}", testSuiteId);
+            return Array.Empty<ExecutionTestCaseDto>();
+        }
     }
 
     private static TestRunReportRunDto MapRun(TestRun run, TestRunResultModel runResults)

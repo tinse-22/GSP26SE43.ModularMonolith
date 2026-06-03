@@ -905,7 +905,7 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         var normalizedPatterns = patterns?
             .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
-            .Select(pattern => ResolveExpectationPlaceholders(pattern, variableBag))
+            .Select(pattern => ResolveExpectationPlaceholders(pattern, variableBag, testCase))
             .Select(NormalizeBodyContainsPattern)
             .ToList();
 
@@ -943,16 +943,35 @@ public class RuleBasedValidator : IRuleBasedValidator
 
         foreach (var pattern in normalizedPatterns)
         {
+            var isAuthoritative = IsAuthoritativeExpectationCheck(
+                expectation,
+                "bodyContains",
+                "bodyContains",
+                pattern);
+
             if (ContainsUnresolvedPlaceholder(pattern))
             {
-                allPassed = false;
-                result.Failures.Add(new ValidationFailureModel
+                if (isAuthoritative)
                 {
-                    Code = "BODY_CONTAINS_UNRESOLVED_PLACEHOLDER",
-                    Message = $"BodyContains chứa placeholder chưa resolve: '{Truncate(pattern, 100)}'.",
-                    Target = "BodyContains",
-                    Expected = Truncate(pattern, 200),
-                });
+                    allPassed = false;
+                    result.Failures.Add(new ValidationFailureModel
+                    {
+                        Code = "BODY_CONTAINS_UNRESOLVED_PLACEHOLDER",
+                        Message = $"BodyContains contains an unresolved placeholder: '{Truncate(pattern, 100)}'.",
+                        Target = "BodyContains",
+                        Expected = Truncate(pattern, 200),
+                    });
+                }
+                else
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "BODY_CONTAINS_UNRESOLVED_PLACEHOLDER_WARNING",
+                        Message = $"BodyContains '{Truncate(pattern, 100)}' was unresolved but is not authoritative, so it was treated as a warning.",
+                        Target = "BodyContains",
+                    });
+                }
+
                 continue;
             }
 
@@ -970,6 +989,15 @@ public class RuleBasedValidator : IRuleBasedValidator
                     {
                         Code = "BODY_CONTAINS_PARTIAL_MISMATCH",
                         Message = $"Response body không chứa '{Truncate(pattern, 100)}', nhưng được bỏ qua vì test Negative/Boundary đã khớp status code đúng.",
+                        Target = "BodyContains",
+                    });
+                }
+                else if (!isAuthoritative)
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "BODY_CONTAINS_INFERRED_MISSING_WARNING",
+                        Message = $"Response body did not contain '{Truncate(pattern, 100)}', but this expectation is AI-inferred/unverified and was not used as a hard gate.",
                         Target = "BodyContains",
                     });
                 }
@@ -992,7 +1020,8 @@ public class RuleBasedValidator : IRuleBasedValidator
 
     private static string ResolveExpectationPlaceholders(
         string value,
-        IReadOnlyDictionary<string, string> variableBag)
+        IReadOnlyDictionary<string, string> variableBag,
+        ExecutionTestCaseDto testCase = null)
     {
         if (string.IsNullOrWhiteSpace(value) ||
             variableBag == null ||
@@ -1008,10 +1037,180 @@ public class RuleBasedValidator : IRuleBasedValidator
             match =>
             {
                 var variableName = match.Groups[1].Value;
+                if (TryResolveDependencyScopedExpectationVariable(variableName, variableBag, testCase, out var scopedValue))
+                {
+                    return scopedValue ?? string.Empty;
+                }
+
                 return variableBag.TryGetValue(variableName, out var resolved)
                     ? resolved ?? string.Empty
                     : match.Value;
             });
+    }
+
+    private static bool TryResolveDependencyScopedExpectationVariable(
+        string variableName,
+        IReadOnlyDictionary<string, string> variableBag,
+        ExecutionTestCaseDto testCase,
+        out string value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(variableName)
+            || variableBag == null
+            || testCase?.DependencyIds == null
+            || testCase.DependencyIds.Count == 0)
+        {
+            return false;
+        }
+
+        for (var i = testCase.DependencyIds.Count - 1; i >= 0; i--)
+        {
+            var scopedKey = $"case.{testCase.DependencyIds[i]:N}.{variableName}";
+            if (variableBag.TryGetValue(scopedKey, out var scopedValue)
+                && !string.IsNullOrWhiteSpace(scopedValue)
+                && !scopedValue.Contains("{{", StringComparison.Ordinal))
+            {
+                value = scopedValue;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAuthoritativeExpectationCheck(
+        ExecutionTestCaseExpectationDto expectation,
+        string type,
+        string field,
+        string expected)
+    {
+        if (expectation == null)
+        {
+            return false;
+        }
+
+        var items = ParseExpectedProvenance(expectation.ExpectedProvenance);
+        if (items.Count > 0)
+        {
+            return items.Any(item =>
+                IsSameProvenanceType(item.Type, type)
+                && IsSameProvenanceField(item.Field, field)
+                && IsAuthoritativeSource(item.Source, item.Confidence));
+        }
+
+        // Without item-level provenance, only explicit non-LLM sources are hard gates.
+        return IsAuthoritativeSource(expectation.ExpectationSource, "medium");
+    }
+
+    private static List<ExpectedProvenanceRuntimeItem> ParseExpectedProvenance(string expectedProvenance)
+    {
+        if (string.IsNullOrWhiteSpace(expectedProvenance))
+        {
+            return new List<ExpectedProvenanceRuntimeItem>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<ExpectedProvenanceRuntimeItem>>(
+                    expectedProvenance,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?.Where(x => !string.IsNullOrWhiteSpace(x?.Type))
+                .ToList()
+                ?? new List<ExpectedProvenanceRuntimeItem>();
+        }
+        catch
+        {
+            return new List<ExpectedProvenanceRuntimeItem>();
+        }
+    }
+
+    private static bool IsSameProvenanceType(string actual, string expected)
+        => string.Equals(NormalizeProvenanceToken(actual), NormalizeProvenanceToken(expected), StringComparison.Ordinal);
+
+    private static bool IsSameProvenanceField(string actual, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(actual))
+        {
+            return false;
+        }
+
+        return string.Equals(actual.Trim(), expected.Trim(), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(NormalizeProvenanceToken(actual), NormalizeProvenanceToken(expected), StringComparison.Ordinal);
+    }
+
+    private static bool IsAuthoritativeSource(string source, string confidence)
+    {
+        var normalizedSource = NormalizeProvenanceToken(source);
+        var normalizedConfidence = NormalizeProvenanceToken(confidence);
+
+        if (normalizedSource is "srs" or "openapi" or "swagger" or "businessrule")
+        {
+            return normalizedConfidence is not "low";
+        }
+
+        return false;
+    }
+
+    private static string NormalizeProvenanceToken(string value)
+        => string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : Regex.Replace(value.Trim().ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
+
+    private static bool TryRedirectRootArrayCheckToDataArray(
+        JsonElement root,
+        string jsonPath,
+        string expected,
+        out string redirectedJsonPath)
+    {
+        redirectedJsonPath = null;
+
+        if (!string.Equals(jsonPath?.Trim(), "$", StringComparison.Ordinal)
+            || !LooksLikeArrayTypeExpectation(expected)
+            || root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        redirectedJsonPath = "$.data";
+        return true;
+    }
+
+    private static bool LooksLikeArrayTypeExpectation(string expected)
+    {
+        if (LooksLikeArrayExpectation(expected))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(expected);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            return doc.RootElement.TryGetProperty("op", out var op)
+                && string.Equals(op.GetString(), "type", StringComparison.OrdinalIgnoreCase)
+                && doc.RootElement.TryGetProperty("value", out var value)
+                && string.Equals(value.GetString(), "array", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool ShouldAllowAdaptiveStatusMatching(
@@ -1414,9 +1613,32 @@ public class RuleBasedValidator : IRuleBasedValidator
                 resolvedExpected = ResolveExpectedFromRequestIfNeeded(
                     resolvedExpected,
                     testCase?.Request);
+                var isAuthoritative = IsAuthoritativeExpectationCheck(
+                    expectation,
+                    "jsonPathCheck",
+                    check.Key,
+                    resolvedExpected);
+                if (TryRedirectRootArrayCheckToDataArray(doc.RootElement, effectiveJsonPath, resolvedExpected, out var redirectedJsonPath))
+                {
+                    result.Warnings.Add(new ValidationWarningModel
+                    {
+                        Code = "JSONPATH_ROOT_ARRAY_WRAPPER_NORMALIZED",
+                        Message = $"JSONPath '{effectiveJsonPath}' expected an array but response root is an object with data array. Normalized to '{redirectedJsonPath}'.",
+                        Target = redirectedJsonPath,
+                    });
+                    effectiveJsonPath = redirectedJsonPath;
+                }
                 var element = pathResolution.IsResolved
                     ? VariableExtractor.NavigateJsonPath(doc.RootElement, effectiveJsonPath)
                     : null;
+                if (!element.HasValue)
+                {
+                    element = TryNavigateJsonPathWithAliases(doc.RootElement, effectiveJsonPath, out var aliasMatchedPath);
+                    if (element.HasValue)
+                    {
+                        effectiveJsonPath = aliasMatchedPath;
+                    }
+                }
                 var matchedJsonPath = element.HasValue ? effectiveJsonPath : null;
                 var actualValue = element?.ToString();
                 var matchedByIdentifierAlias = false;
@@ -1533,11 +1755,34 @@ public class RuleBasedValidator : IRuleBasedValidator
                             Target = check.Key,
                         });
                     }
-                    else
+                    else if (!isAuthoritative)
+
                     {
-                        allPassed = false;
-                        result.Failures.Add(new ValidationFailureModel
+
+                        result.Warnings.Add(new ValidationWarningModel
+
                         {
+
+                            Code = "JSONPATH_INFERRED_ASSERTION_WARNING",
+
+                            Message = $"JSONPath '{check.Key}' did not match, but this expectation is AI-inferred/unverified and was not used as a hard gate. Expected: '{resolvedExpected}', actual: '{actualValue ?? "(null)"}'.",
+
+                            Target = matchedJsonPath ?? check.Key,
+
+                        });
+
+                    }
+
+                    else
+
+                    {
+
+                        allPassed = false;
+
+                        result.Failures.Add(new ValidationFailureModel
+
+                        {
+
                             Code = "JSONPATH_ASSERTION_FAILED",
                             Message = isExistenceCheck
                                 ? $"JSONPath '{check.Key}' phải tồn tại nhưng không tìm thấy trong response. {FormatJsonPathResolutionDiagnostics(pathResolution)}"
@@ -3983,5 +4228,22 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         return false;
+    }
+
+    private sealed class ExpectedProvenanceRuntimeItem
+    {
+        public string Field { get; set; }
+
+        public string Expected { get; set; }
+
+        public string Type { get; set; }
+
+        public string Source { get; set; }
+
+        public string RequirementCode { get; set; }
+
+        public string Evidence { get; set; }
+
+        public string Confidence { get; set; }
     }
 }

@@ -55,7 +55,7 @@ public class HttpTestExecutor : IHttpTestExecutor
             }
 
             // Set body
-            if (!string.IsNullOrEmpty(request.Body) && HasBody(request.HttpMethod))
+            if (HasRequestContent(request))
             {
                 httpRequest.Content = CreateHttpContent(request);
 
@@ -418,6 +418,36 @@ public class HttpTestExecutor : IHttpTestExecutor
             "POST" or "PUT" or "PATCH" or "DELETE" => true,
             _ => false,
         };
+    }
+
+    private static bool HasRequestContent(ResolvedTestCaseRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.Body) || !HasBody(request.HttpMethod))
+        {
+            return false;
+        }
+
+        var bodyType = NormalizeBodyType(request.BodyType);
+        if (bodyType is "" or "NONE")
+        {
+            return false;
+        }
+
+        if (string.Equals(request.HttpMethod?.Trim(), "DELETE", StringComparison.OrdinalIgnoreCase)
+            && bodyType is "JSON" or "RAW")
+        {
+            return LooksLikeStructuredBody(request.Body);
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeStructuredBody(string body)
+    {
+        var trimmed = body?.Trim();
+        return !string.IsNullOrWhiteSpace(trimmed)
+            && ((trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+                || (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal)));
     }
 
     private static bool IsContentHeader(string headerName)

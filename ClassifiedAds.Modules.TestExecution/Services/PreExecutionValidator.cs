@@ -630,9 +630,46 @@ public class PreExecutionValidator : IPreExecutionValidator
 
                 return true;
             }
+
+            if (IsAuthTokenAlias(variableName)
+                && HasDependencyScopedTokenAliasValue(dependencyId, variableName, variableBag))
+            {
+                return true;
+            }
+
+            if (HasDependencyScopedSemanticAliasValue(dependencyId, variableName, variableBag))
+            {
+                return true;
+            }
         }
 
         return false;
+    }
+
+    private static bool HasDependencyScopedSemanticAliasValue(
+        Guid dependencyId,
+        string variableName,
+        IReadOnlyDictionary<string, string> variableBag)
+    {
+        var scopePrefix = $"case.{dependencyId:N}.";
+        return variableBag
+            .Where(kvp => kvp.Key.StartsWith(scopePrefix, StringComparison.OrdinalIgnoreCase))
+            .Any(kvp => IsScopedSemanticAlias(variableName, kvp.Key[scopePrefix.Length..])
+                && !string.IsNullOrWhiteSpace(kvp.Value)
+                && !kvp.Value.Contains("{{", StringComparison.Ordinal));
+    }
+
+    private static bool HasDependencyScopedTokenAliasValue(
+        Guid dependencyId,
+        string variableName,
+        IReadOnlyDictionary<string, string> variableBag)
+    {
+        var scopePrefix = $"case.{dependencyId:N}.";
+        return variableBag
+            .Where(kvp => kvp.Key.StartsWith(scopePrefix, StringComparison.OrdinalIgnoreCase))
+            .Any(kvp => ScoreTokenAlias(variableName, kvp.Key[scopePrefix.Length..]) > 0
+                && !string.IsNullOrWhiteSpace(kvp.Value)
+                && !kvp.Value.Contains("{{", StringComparison.Ordinal));
     }
 
     private static Dictionary<string, string> BuildMergedVariables(
@@ -696,8 +733,12 @@ public class PreExecutionValidator : IPreExecutionValidator
         }
 
         return string.Equals(variableName, "tcUniqueId", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "timestamp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "randomInt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "uuid", StringComparison.OrdinalIgnoreCase)
             || string.Equals(variableName, "runId", StringComparison.OrdinalIgnoreCase)
             || string.Equals(variableName, "runSuffix", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runIdSuffix", StringComparison.OrdinalIgnoreCase)
             || string.Equals(variableName, "runTimestamp", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -881,7 +922,53 @@ public class PreExecutionValidator : IPreExecutionValidator
             }
         }
 
+        if (mergedVars.Any(kvp => IsScopedSemanticAlias(varName, kvp.Key)
+            && !string.IsNullOrWhiteSpace(kvp.Value)
+            && !kvp.Value.Contains("{{", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
         return false;
+    }
+
+    private static bool IsScopedSemanticAlias(string requestedName, string actualName)
+    {
+        var requested = NormalizeSemanticAliasKey(requestedName);
+        var actual = NormalizeSemanticAliasKey(actualName);
+        if (string.IsNullOrWhiteSpace(requested) || string.IsNullOrWhiteSpace(actual))
+        {
+            return false;
+        }
+
+        if (string.Equals(requested, actual, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (requested.Length < actual.Length)
+        {
+            return actual.EndsWith(requested, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return actual.Length >= 3 && requested.EndsWith(actual, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeSemanticAliasKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var raw = value.Trim();
+        var lastDot = raw.LastIndexOf('.');
+        if (lastDot >= 0 && lastDot < raw.Length - 1)
+        {
+            raw = raw[(lastDot + 1)..];
+        }
+
+        return new string(raw.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
     }
 
     private static bool IsAuthTokenAlias(string variableName)
@@ -891,18 +978,105 @@ public class PreExecutionValidator : IPreExecutionValidator
             return false;
         }
 
-        return string.Equals(variableName, "authToken", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(variableName, "accessToken", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(variableName, "token", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(variableName, "jwt", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(variableName, "sessionToken", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(variableName, "bearerToken", StringComparison.OrdinalIgnoreCase);
+        return IsTokenLikeVariableName(variableName);
     }
 
     private static bool ShouldAllowAuthHeaderFallback(string surface, string varName)
     {
         return IsSecurityHeader(surface)
             && IsAuthTokenAlias(varName);
+    }
+
+    private static bool IsTokenLikeVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeTokenKey(value);
+        return normalized.Contains("token", StringComparison.Ordinal)
+            || normalized.Contains("jwt", StringComparison.Ordinal)
+            || normalized.Contains("bearer", StringComparison.Ordinal)
+            || normalized.Contains("apikey", StringComparison.Ordinal)
+            || normalized.Contains("authorization", StringComparison.Ordinal)
+            || normalized.Contains("auth", StringComparison.Ordinal);
+    }
+
+    private static int ScoreTokenAlias(string requestedName, string actualName)
+    {
+        if (!IsTokenLikeVariableName(requestedName) || !IsTokenLikeVariableName(actualName))
+        {
+            return 0;
+        }
+
+        var requested = NormalizeTokenKey(requestedName);
+        var actual = NormalizeTokenKey(actualName);
+        if (string.Equals(requested, actual, StringComparison.OrdinalIgnoreCase))
+        {
+            return 100;
+        }
+
+        var requestedRole = StripTokenSuffix(requested);
+        var actualRole = StripTokenSuffix(actual);
+        if (!string.IsNullOrWhiteSpace(requestedRole)
+            && !string.IsNullOrWhiteSpace(actualRole)
+            && (requestedRole.Contains(actualRole, StringComparison.OrdinalIgnoreCase)
+                || actualRole.Contains(requestedRole, StringComparison.OrdinalIgnoreCase)))
+        {
+            return 85;
+        }
+
+        return IsGenericTokenKey(actual) ? 60 : 40;
+    }
+
+    private static string NormalizeTokenKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var raw = value.Trim();
+        var lastDot = raw.LastIndexOf('.');
+        if (lastDot >= 0 && lastDot < raw.Length - 1)
+        {
+            raw = raw[(lastDot + 1)..];
+        }
+
+        return new string(raw.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    }
+
+    private static string StripTokenSuffix(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return string.Empty;
+        }
+
+        foreach (var suffix in new[] { "accesstoken", "authtoken", "idtoken", "sessiontoken", "bearertoken", "token", "jwt", "bearer", "authorization", "apikey" })
+        {
+            if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && normalized.Length > suffix.Length)
+            {
+                return normalized[..^suffix.Length];
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsGenericTokenKey(string normalized)
+    {
+        return normalized is "authtoken"
+            or "accesstoken"
+            or "token"
+            or "jwt"
+            or "idtoken"
+            or "sessiontoken"
+            or "bearertoken"
+            or "bearer"
+            or "authorization"
+            or "apikey";
     }
 
     private static bool IsAuthorizationLikeHeader(string surface)

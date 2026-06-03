@@ -690,20 +690,12 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 
         foreach (var existing in existingTestCases ?? Array.Empty<TestCase>())
         {
-            var existingScenarioKey = GetSingleTagValue(existing.Tags, FlowScenarioKeyTagPrefix);
-            if (!string.IsNullOrWhiteSpace(existingScenarioKey))
-            {
-                scenarioKeyToTestCaseId[existingScenarioKey] = existing.Id;
-            }
+            RegisterScenarioLookupKeys(scenarioKeyToTestCaseId, existing);
         }
 
         foreach (var current in materializedTestCases)
         {
-            var currentScenarioKey = GetSingleTagValue(current.Tags, FlowScenarioKeyTagPrefix);
-            if (!string.IsNullOrWhiteSpace(currentScenarioKey))
-            {
-                scenarioKeyToTestCaseId[currentScenarioKey] = current.Id;
-            }
+            RegisterScenarioLookupKeys(scenarioKeyToTestCaseId, current);
         }
 
         foreach (var testCase in materializedTestCases)
@@ -716,7 +708,7 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
 
             foreach (var depKey in depKeys)
             {
-                if (!scenarioKeyToTestCaseId.TryGetValue(depKey, out var depTestCaseId))
+                if (!TryResolveScenarioDependencyKey(scenarioKeyToTestCaseId, depKey, out var depTestCaseId))
                 {
                     _logger.LogWarning(
                         "Flow dependency key not resolved. TestCaseId={TestCaseId}, DependencyScenarioKey={DependencyScenarioKey}",
@@ -743,6 +735,88 @@ public class LlmSuggestionReviewService : ILlmSuggestionReviewService
                 });
             }
         }
+    }
+
+    private static void RegisterScenarioLookupKeys(
+        IDictionary<string, Guid> lookup,
+        TestCase testCase)
+    {
+        if (lookup == null || testCase == null)
+        {
+            return;
+        }
+
+        var candidates = new[]
+        {
+            GetSingleTagValue(testCase.Tags, FlowScenarioKeyTagPrefix),
+            testCase.Name,
+            NormalizeScenarioLookupKey(GetSingleTagValue(testCase.Tags, FlowScenarioKeyTagPrefix)),
+            NormalizeScenarioLookupKey(testCase.Name),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            lookup[candidate.Trim()] = testCase.Id;
+        }
+    }
+
+    private static bool TryResolveScenarioDependencyKey(
+        IReadOnlyDictionary<string, Guid> lookup,
+        string dependencyKey,
+        out Guid testCaseId)
+    {
+        testCaseId = Guid.Empty;
+        if (lookup == null || string.IsNullOrWhiteSpace(dependencyKey))
+        {
+            return false;
+        }
+
+        var candidates = new[]
+        {
+            dependencyKey.Trim(),
+            NormalizeScenarioLookupKey(dependencyKey),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (lookup.TryGetValue(candidate, out testCaseId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeScenarioLookupKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var chars = value
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+        var normalized = new string(chars);
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim('-');
     }
 
     private static string GetSingleTagValue(string tagsJson, string prefix)

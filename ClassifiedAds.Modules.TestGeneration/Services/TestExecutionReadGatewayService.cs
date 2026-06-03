@@ -202,9 +202,7 @@ public class TestExecutionReadGatewayService : ITestExecutionReadGatewayService
                 .ToList();
         }
 
-        var finalOrderedCases = hasCustomOrder
-            ? baselineOrderedCases
-            : OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
+        var finalOrderedCases = OrderCasesByDependencyTopology(baselineOrderedCases, dependencies);
 
         // 9. Map to DTOs with deterministic ordering
         var orderedTestCases = finalOrderedCases
