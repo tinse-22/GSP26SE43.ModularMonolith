@@ -141,6 +141,8 @@ public class AiGeneratedTestCaseDto
 {
     private string _name;
 
+    public string ScenarioKey { get; set; }
+
     public Guid? EndpointId { get; set; }
     public string Name
     {
@@ -164,6 +166,16 @@ public class AiGeneratedTestCaseDto
     public AiTestCaseRequestDto Request { get; set; }
     public AiTestCaseExpectationDto Expectation { get; set; }
     public List<AiTestCaseVariableDto> Variables { get; set; } = new();
+
+    public N8nExecutionHints ExecutionHints { get; set; }
+    public string AuthMode { get; set; }
+    public string CredentialPolicy { get; set; }
+    public List<string> LockedFields { get; set; } = new();
+    public bool? FlowRequired { get; set; }
+    public string FlowId { get; set; }
+    public List<string> DependsOn { get; set; } = new();
+    public List<string> Produces { get; set; } = new();
+    public List<string> Consumes { get; set; } = new();
 
     /// <summary>
     /// SRS requirement IDs that this test case covers.
@@ -223,10 +235,23 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
     private const string AuthModeTagPrefix = "auth-mode:";
     private const string CredentialPolicyTagPrefix = "cred-policy:";
     private const string CredentialLockTagPrefix = "cred-lock:";
+    private const string FlowScenarioKeyTagPrefix = "flow-scenario-key:";
     private const string FlowRequiredTagPrefix = "flow-required:";
     private const string FlowDependsOnTagPrefix = "flow-depends-on:";
     private const string FlowProducesTagPrefix = "flow-produces:";
     private const string FlowConsumesTagPrefix = "flow-consumes:";
+
+    private static readonly HashSet<string> BuiltInRuntimeVariableNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tcUniqueId",
+        "timestamp",
+        "randomInt",
+        "uuid",
+        "runId",
+        "runSuffix",
+        "runIdSuffix",
+        "runTimestamp",
+    };
 
     private static readonly string[] AuthModeHeaderNames =
     {
@@ -356,6 +381,10 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 ct);
             command.TestCases = filteredTestCases.ToList();
             validTestCases = command.TestCases;
+            var metadataByEndpointIdForPersistence = await LoadEndpointMetadataForQualityFilterAsync(
+                suite,
+                validTestCases,
+                ct);
 
             if (command.TestCases.Count == 0)
             {
@@ -430,13 +459,16 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
                 if (dto.Request is not null)
                 {
+                    metadataByEndpointIdForPersistence.TryGetValue(dto.EndpointId ?? Guid.Empty, out var endpointMetadata);
+                    NormalizeRequestBodyForEndpoint(dto, endpointMetadata);
+
                     var req = new TestCaseRequest
                     {
                         Id = Guid.NewGuid(),
                         TestCaseId = testCase.Id,
                         HttpMethod = ResolveHttpMethod(dto),
                         Url = dto.Request.Url,
-                        Headers = NormalizeJsonOrDefault(dto.Request.Headers, "{}"),
+                        Headers = NormalizeSanitizedHeaders(dto),
                         PathParams = NormalizeJsonOrDefault(dto.Request.PathParams, "{}"),
                         QueryParams = NormalizeJsonOrDefault(dto.Request.QueryParams, "{}"),
                         BodyType = ParseBodyType(dto.Request.BodyType),
@@ -488,7 +520,15 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 {
                     foreach (var v in dto.Variables)
                     {
-                        if (string.IsNullOrWhiteSpace(v.VariableName) || string.IsNullOrWhiteSpace(v.ExtractFrom))
+                        if (string.IsNullOrWhiteSpace(v.VariableName))
+                        {
+                            continue;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(v.JsonPath) &&
+                            string.IsNullOrWhiteSpace(v.HeaderName) &&
+                            string.IsNullOrWhiteSpace(v.Regex) &&
+                            string.IsNullOrWhiteSpace(v.DefaultValue))
                         {
                             continue;
                         }
@@ -509,20 +549,28 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                     }
                 }
 
+                await EnsureRequestBodyProducerAliasVariablesAsync(dto, testCase, now, ct);
+
                 orderIdx++;
             }
 
             var approvedOrder = await LoadApprovedOrderAsync(command.TestSuiteId, ct);
+            GeneratedTestCaseEnrichmentResult enrichment = null;
             if (approvedOrder.Count > 0)
             {
-                var enrichment = GeneratedTestCaseDependencyEnricher.Enrich(persistedTestCases, approvedOrder);
+                enrichment = GeneratedTestCaseDependencyEnricher.Enrich(persistedTestCases, approvedOrder);
+            }
 
-                foreach (var dependency in persistedTestCases.SelectMany(x => x.Dependencies))
-                {
-                    dependency.CreatedDateTime = now;
-                    await _testCaseDependencyRepository.AddAsync(dependency, ct);
-                }
+            ApplyExplicitFlowDependenciesFromTags(persistedTestCases, Array.Empty<TestCase>());
 
+            foreach (var dependency in persistedTestCases.SelectMany(x => x.Dependencies))
+            {
+                dependency.CreatedDateTime = now;
+                await _testCaseDependencyRepository.AddAsync(dependency, ct);
+            }
+
+            if (enrichment != null)
+            {
                 foreach (var producerVariable in enrichment.ExistingProducerVariablesToPersist)
                 {
                     producerVariable.CreatedDateTime = now;
@@ -726,6 +774,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 continue;
             }
 
+            NormalizeRequestBodyForEndpoint(dto, endpoint);
             valid.Add(dto);
         }
 
@@ -846,6 +895,130 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             _ => BodyType.None,
         };
 
+    private static void NormalizeRequestBodyForEndpoint(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint)
+    {
+        if (dto?.Request == null)
+        {
+            return;
+        }
+
+        var methodParsed = TryParseHttpMethod(dto.Request.HttpMethod, out var method);
+        var hasBody = !string.IsNullOrWhiteSpace(dto.Request.Body);
+        var bodyType = ParseBodyType(dto.Request.BodyType);
+
+        if (!EndpointDeclaresRequestBody(endpoint))
+        {
+            if (hasBody || bodyType != BodyType.None)
+            {
+                dto.Request.Body = null;
+                dto.Request.BodyType = "None";
+            }
+
+            return;
+        }
+
+        if (methodParsed
+            && hasBody
+            && bodyType == BodyType.None
+            && MethodNormallyCarriesBody(method)
+            && LooksLikeJsonBody(dto.Request.Body))
+        {
+            dto.Request.BodyType = "JSON";
+        }
+    }
+
+    private static bool EndpointDeclaresRequestBody(ApiEndpointMetadataDto endpoint)
+    {
+        if (endpoint == null)
+        {
+            return false;
+        }
+
+        if (endpoint.HasRequiredRequestBody)
+        {
+            return true;
+        }
+
+        if (endpoint.Parameters?.Any(IsRequestBodyParameter) == true)
+        {
+            return true;
+        }
+
+        return endpoint.ParameterSchemaPayloads?.Any(LooksLikeWholeRequestBodySchema) == true;
+    }
+
+    private static bool IsRequestBodyParameter(ApiEndpointParameterDescriptorDto parameter)
+    {
+        if (parameter == null)
+        {
+            return false;
+        }
+
+        var location = parameter.Location?.Trim().ToLowerInvariant();
+        if (location is "body" or "requestbody" or "request_body" or "formdata" or "form-data")
+        {
+            return true;
+        }
+
+        if (location is "path" or "query" or "header" or "cookie")
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(parameter.ContentType)
+            || LooksLikeWholeRequestBodySchema(parameter.Schema);
+    }
+
+    private static bool LooksLikeWholeRequestBodySchema(string schema)
+    {
+        if (string.IsNullOrWhiteSpace(schema))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(schema);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("content", out _)
+                || root.TryGetProperty("properties", out _)
+                || root.TryGetProperty("required", out _))
+            {
+                return true;
+            }
+
+            if (root.TryGetProperty("type", out var type))
+            {
+                var normalizedType = type.GetString()?.Trim().ToLowerInvariant();
+                return normalizedType is "object" or "array";
+            }
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static bool MethodNormallyCarriesBody(HttpMethod method)
+        => method is HttpMethod.POST or HttpMethod.PUT or HttpMethod.PATCH;
+
+    private static bool LooksLikeJsonBody(string body)
+    {
+        var trimmed = body?.Trim();
+        return !string.IsNullOrWhiteSpace(trimmed)
+            && ((trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+                || (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal)));
+    }
+
     private static string NormalizeTagsJson(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -903,6 +1076,8 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             AddTagIfMissing(tags, required);
         }
 
+        MergeExecutionHintTags(tags, dto);
+
         if (!HasTagPrefix(tags, RewritePolicyTagPrefix) && ShouldAddMinimalRewritePolicy(dto, tags))
         {
             tags.Add("rewrite-policy:minimal");
@@ -950,6 +1125,90 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
     }
 
+    private static void AddPrefixedTagIfMissing(List<string> tags, string prefix, string value)
+    {
+        if (tags == null || string.IsNullOrWhiteSpace(prefix) || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        AddTagIfMissing(tags, $"{prefix}{value.Trim()}");
+    }
+
+    private static void MergeExecutionHintTags(List<string> tags, AiGeneratedTestCaseDto dto)
+    {
+        if (tags == null || dto == null)
+        {
+            return;
+        }
+
+        var scenarioKey = !string.IsNullOrWhiteSpace(dto.ScenarioKey)
+            ? dto.ScenarioKey
+            : NormalizeScenarioLookupKey(dto.Name);
+        AddPrefixedTagIfMissing(tags, FlowScenarioKeyTagPrefix, scenarioKey);
+
+        var authMode = ResolveEffectiveAuthMode(dto, tags);
+        if (!string.IsNullOrWhiteSpace(authMode))
+        {
+            AddPrefixedTagIfMissing(tags, AuthModeTagPrefix, authMode);
+        }
+
+        var credentialPolicy = dto.ExecutionHints?.CredentialPolicy ?? dto.CredentialPolicy;
+        if (!string.IsNullOrWhiteSpace(credentialPolicy))
+        {
+            AddPrefixedTagIfMissing(tags, CredentialPolicyTagPrefix, credentialPolicy);
+        }
+
+        var lockedFields = dto.ExecutionHints?.LockedFields?.Count > 0
+            ? dto.ExecutionHints.LockedFields
+            : dto.LockedFields;
+        foreach (var lockedField in NormalizeStringList(lockedFields))
+        {
+            AddPrefixedTagIfMissing(tags, CredentialLockTagPrefix, lockedField);
+        }
+
+        var flowRequired = dto.ExecutionHints?.FlowRequired ?? dto.FlowRequired;
+        if (flowRequired == true)
+        {
+            AddPrefixedTagIfMissing(tags, FlowRequiredTagPrefix, "true");
+        }
+
+        foreach (var dependsOn in NormalizeStringList(dto.ExecutionHints?.DependsOn).Concat(NormalizeStringList(dto.DependsOn)))
+        {
+            AddPrefixedTagIfMissing(tags, FlowDependsOnTagPrefix, dependsOn);
+        }
+
+        foreach (var produces in NormalizeStringList(dto.ExecutionHints?.Produces).Concat(NormalizeStringList(dto.Produces)))
+        {
+            AddPrefixedTagIfMissing(tags, FlowProducesTagPrefix, produces);
+        }
+
+        foreach (var consumes in NormalizeStringList(dto.ExecutionHints?.Consumes).Concat(NormalizeStringList(dto.Consumes)))
+        {
+            AddPrefixedTagIfMissing(tags, FlowConsumesTagPrefix, consumes);
+        }
+
+        foreach (var variable in dto.Variables ?? new List<AiTestCaseVariableDto>())
+        {
+            AddPrefixedTagIfMissing(tags, FlowProducesTagPrefix, variable?.VariableName);
+        }
+
+        foreach (var placeholder in ExtractPlaceholders(dto))
+        {
+            if (!IsBuiltInRuntimeVariable(placeholder))
+            {
+                AddPrefixedTagIfMissing(tags, FlowConsumesTagPrefix, placeholder);
+            }
+        }
+    }
+
+    private static List<string> NormalizeStringList(IEnumerable<string> values)
+        => values?
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
+
     private static bool HasTagPrefix(IEnumerable<string> tags, string prefix)
         => tags?.Any(x => !string.IsNullOrWhiteSpace(x)
             && x.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) == true;
@@ -985,7 +1244,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
 
         return ExtractPlaceholders(dto)
-            .Any(x => !string.Equals(x, "tcUniqueId", StringComparison.OrdinalIgnoreCase));
+            .Any(x => !IsBuiltInRuntimeVariable(x));
     }
 
     private static bool HasNonPreserveCredentialPolicy(IEnumerable<string> tags)
@@ -1019,18 +1278,20 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
     private static bool IsNoAuthIntent(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
     {
+        var authRequired = HasAuthRequiredSignal(dto, tags);
+        var missingAuthText = HasMissingAuthTextIntent(dto, tags);
+
         if (HasTagValue(tags, AuthModeTagPrefix, "none") ||
             string.Equals(ReadAuthModeHeader(dto?.Request?.Headers), "none", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            return !authRequired || missingAuthText;
         }
 
-        var expectedStatus = dto?.Expectation?.ExpectedStatus ?? string.Empty;
-        if (ParseStatusCodesFromExpectation(expectedStatus).Any(x => x is 401 or 403))
-        {
-            return true;
-        }
+        return missingAuthText;
+    }
 
+    private static bool HasMissingAuthTextIntent(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
         var surface = string.Join(' ', new[]
         {
             dto?.Name,
@@ -1045,11 +1306,56 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             "without authorization",
             "no authorization",
             "missing authorization",
-            "unauthorized",
-            "unauthenticated",
+            "missing auth",
+            "without auth",
             "no auth",
             "no-auth",
             "no_auth");
+    }
+
+    private static string ResolveEffectiveAuthMode(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
+        var declared = NormalizeAuthMode(dto?.ExecutionHints?.AuthMode ?? dto?.AuthMode)
+            ?? ReadAuthModeHeader(dto?.Request?.Headers);
+
+        if (string.Equals(declared, "none", StringComparison.OrdinalIgnoreCase)
+            && HasAuthRequiredSignal(dto, tags)
+            && !HasMissingAuthTextIntent(dto, tags))
+        {
+            return "required";
+        }
+
+        if (string.IsNullOrWhiteSpace(declared) && HasAuthRequiredSignal(dto, tags))
+        {
+            return "required";
+        }
+
+        return declared;
+    }
+
+    private static bool HasAuthRequiredSignal(AiGeneratedTestCaseDto dto, IReadOnlyCollection<string> tags)
+    {
+        if (HasTagValue(tags, AuthModeTagPrefix, "required"))
+        {
+            return true;
+        }
+
+        if (NormalizeStringList(dto?.ExecutionHints?.Consumes)
+            .Concat(NormalizeStringList(dto?.Consumes))
+            .Any(IsTokenLikeVariableName))
+        {
+            return true;
+        }
+
+        foreach (var placeholder in ExtractPlaceholders(dto))
+        {
+            if (IsTokenLikeVariableName(placeholder))
+            {
+                return true;
+            }
+        }
+
+        return HasExplicitAuthHeader(dto?.Request?.Headers);
     }
 
     private static string ReadAuthModeHeader(string headersJson)
@@ -1111,6 +1417,48 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         }
     }
 
+    private static string NormalizeSanitizedHeaders(AiGeneratedTestCaseDto dto)
+    {
+        if (dto?.Request == null || !TryReadJsonObject(dto.Request.Headers, out var headers))
+        {
+            return "{}";
+        }
+
+        var tags = ParseTagList(dto.Tags);
+        MergeExecutionHintTags(tags, dto);
+
+        var noAuthIntent = IsNoAuthIntent(dto, tags);
+        var requiresAuth = HasAuthRequiredSignal(dto, tags) && !noAuthIntent;
+
+        if (noAuthIntent)
+        {
+            foreach (var headerName in headers.Keys.ToList())
+            {
+                if (IsAuthHeaderName(headerName))
+                {
+                    headers.Remove(headerName);
+                }
+            }
+
+            headers["X-Test-Auth-Mode"] = "none";
+        }
+        else if (requiresAuth)
+        {
+            foreach (var headerName in AuthModeHeaderNames)
+            {
+                if (headers.TryGetValue(headerName, out var mode)
+                    && string.Equals(NormalizeAuthMode(mode), "none", StringComparison.OrdinalIgnoreCase))
+                {
+                    headers.Remove(headerName);
+                }
+            }
+
+            headers["X-Test-Auth-Mode"] = "required";
+        }
+
+        return headers.Count == 0 ? "{}" : JsonSerializer.Serialize(headers, JsonOpts);
+    }
+
     private static string NormalizeAuthMode(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1145,6 +1493,27 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             || name.Equals("X-Auth", StringComparison.OrdinalIgnoreCase)
             || name.Equals("X-API-Key", StringComparison.OrdinalIgnoreCase)
             || name.Equals("Api-Key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTokenLikeVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(".", string.Empty)
+            .ToLowerInvariant();
+
+        return normalized.Contains("token", StringComparison.Ordinal)
+            || normalized.Contains("jwt", StringComparison.Ordinal)
+            || normalized.Contains("bearer", StringComparison.Ordinal)
+            || normalized.Contains("apikey", StringComparison.Ordinal)
+            || normalized.Contains("authorization", StringComparison.Ordinal)
+            || normalized.Contains("auth", StringComparison.Ordinal);
     }
 
     private static bool ContainsAny(string value, params string[] needles)
@@ -1530,6 +1899,8 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             reason = "JSON request.body contains JavaScript expression";
             return false;
         }
+
+        NormalizeRequestBodyForEndpoint(testCase, endpoint);
 
         if (endpoint != null && !ExpectedStatusesAreAllowed(testCase, endpoint))
         {
@@ -1963,6 +2334,197 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         };
     }
 
+    private async Task EnsureRequestBodyProducerAliasVariablesAsync(
+        AiGeneratedTestCaseDto dto,
+        TestCase testCase,
+        DateTimeOffset createdDateTime,
+        CancellationToken cancellationToken)
+    {
+        if (dto == null || testCase == null)
+        {
+            return;
+        }
+
+        var body = testCase.Request?.Body ?? dto.Request?.Body;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return;
+        }
+
+        using JsonDocument document = TryParseJsonDocument(body);
+        if (document == null || document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var existingVariableNames = testCase.Variables
+            .Where(x => !string.IsNullOrWhiteSpace(x.VariableName))
+            .Select(x => x.VariableName.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var variableName in GetDeclaredProducedVariables(dto))
+        {
+            if (existingVariableNames.Contains(variableName) ||
+                IsBuiltInRuntimeVariable(variableName) ||
+                IsTokenVariableName(variableName))
+            {
+                continue;
+            }
+
+            if (!TryFindRequestBodyProducerPath(document.RootElement, variableName, "$", out var jsonPath))
+            {
+                continue;
+            }
+
+            var variable = new TestCaseVariable
+            {
+                Id = Guid.NewGuid(),
+                TestCaseId = testCase.Id,
+                VariableName = variableName,
+                ExtractFrom = ExtractFrom.RequestBody,
+                JsonPath = jsonPath,
+                CreatedDateTime = createdDateTime,
+            };
+
+            await _testCaseVariableRepository.AddAsync(variable, cancellationToken);
+            testCase.Variables.Add(variable);
+            existingVariableNames.Add(variableName);
+        }
+    }
+
+    private static JsonDocument TryParseJsonDocument(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonDocument.Parse(value.Trim());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<string> GetDeclaredProducedVariables(AiGeneratedTestCaseDto dto)
+    {
+        var result = new List<string>();
+        foreach (var value in NormalizeStringList(dto?.ExecutionHints?.Produces)
+            .Concat(NormalizeStringList(dto?.Produces))
+            .Concat(dto?.Variables?
+                .Select(x => x?.VariableName)
+                .Where(x => !string.IsNullOrWhiteSpace(x)) ?? Enumerable.Empty<string>()))
+        {
+            if (!result.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(value);
+            }
+        }
+
+        return result;
+    }
+
+    private static bool TryFindRequestBodyProducerPath(
+        JsonElement element,
+        string variableName,
+        string currentPath,
+        out string jsonPath)
+    {
+        jsonPath = null;
+        if (element.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        string bestPath = null;
+        var bestScore = 0;
+        foreach (var property in element.EnumerateObject())
+        {
+            var propertyPath = $"{currentPath}.{EscapeJsonPathProperty(property.Name)}";
+            var score = ScoreSemanticBodyFieldMatch(variableName, property.Name);
+            if (score > bestScore && IsExtractableRequestBodyValue(property.Value))
+            {
+                bestScore = score;
+                bestPath = propertyPath;
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.Object &&
+                TryFindRequestBodyProducerPath(property.Value, variableName, propertyPath, out var nestedPath))
+            {
+                var nestedScore = ScoreSemanticBodyFieldMatch(variableName, nestedPath.Split('.').LastOrDefault());
+                if (nestedScore > bestScore)
+                {
+                    bestScore = nestedScore;
+                    bestPath = nestedPath;
+                }
+            }
+        }
+
+        if (bestScore <= 0 || string.IsNullOrWhiteSpace(bestPath))
+        {
+            return false;
+        }
+
+        jsonPath = bestPath;
+        return true;
+    }
+
+    private static bool IsExtractableRequestBodyValue(JsonElement element)
+        => element.ValueKind is JsonValueKind.String
+            or JsonValueKind.Number
+            or JsonValueKind.True
+            or JsonValueKind.False
+            or JsonValueKind.Null
+            or JsonValueKind.Object
+            or JsonValueKind.Array;
+
+    private static int ScoreSemanticBodyFieldMatch(string variableName, string fieldName)
+    {
+        var variable = NormalizeSemanticVariableName(variableName);
+        var field = NormalizeSemanticVariableName(fieldName);
+        if (string.IsNullOrWhiteSpace(variable) || string.IsNullOrWhiteSpace(field))
+        {
+            return 0;
+        }
+
+        if (string.Equals(variable, field, StringComparison.Ordinal))
+        {
+            return 100;
+        }
+
+        if (variable.EndsWith(field, StringComparison.Ordinal))
+        {
+            return Math.Max(40, field.Length * 4);
+        }
+
+        if (field.EndsWith(variable, StringComparison.Ordinal))
+        {
+            return Math.Max(35, variable.Length * 4);
+        }
+
+        return 0;
+    }
+
+    private static string NormalizeSemanticVariableName(string value)
+        => string.IsNullOrWhiteSpace(value)
+            ? null
+            : new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+
+    private static string EscapeJsonPathProperty(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return propertyName;
+        }
+
+        return Regex.IsMatch(propertyName, "^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
+            ? propertyName
+            : $"['{propertyName.Replace("'", "\\'", StringComparison.Ordinal)}']";
+    }
+
     private async Task ValidateGeneratedTestCasesAgainstOpenApiContractAsync(
         TestSuite suite,
         IReadOnlyList<AiGeneratedTestCaseDto> testCases,
@@ -1998,8 +2560,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
         var producedVariables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "tcUniqueId",
         };
+
+        foreach (var builtIn in BuiltInRuntimeVariableNames)
+        {
+            producedVariables.Add(builtIn);
+        }
 
         foreach (var item in ordered)
         {
@@ -2306,16 +2872,175 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             : null;
     }
 
-    private static void RegisterProducedVariables(
-        AiGeneratedTestCaseDto dto,
-        HashSet<string> producedVariables)
+    private static bool IsBuiltInRuntimeVariable(string variableName)
+        => !string.IsNullOrWhiteSpace(variableName)
+           && BuiltInRuntimeVariableNames.Contains(variableName.Trim());
+
+    private static void ApplyExplicitFlowDependenciesFromTags(
+        IReadOnlyCollection<TestCase> materializedTestCases,
+        IReadOnlyCollection<TestCase> existingTestCases)
     {
-        if (dto?.Variables == null || dto.Variables.Count == 0)
+        if (materializedTestCases == null || materializedTestCases.Count == 0)
         {
             return;
         }
 
-        foreach (var variable in dto.Variables)
+        var scenarioKeyToTestCaseId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var existing in existingTestCases ?? Array.Empty<TestCase>())
+        {
+            RegisterScenarioLookupKeys(scenarioKeyToTestCaseId, existing);
+        }
+
+        foreach (var current in materializedTestCases)
+        {
+            RegisterScenarioLookupKeys(scenarioKeyToTestCaseId, current);
+        }
+
+        foreach (var testCase in materializedTestCases)
+        {
+            var depKeys = GetMultiTagValues(testCase.Tags, FlowDependsOnTagPrefix);
+            foreach (var depKey in depKeys)
+            {
+                if (!TryResolveScenarioDependencyKey(scenarioKeyToTestCaseId, depKey, out var depTestCaseId)
+                    || depTestCaseId == testCase.Id
+                    || testCase.Dependencies.Any(x => x.DependsOnTestCaseId == depTestCaseId))
+                {
+                    continue;
+                }
+
+                testCase.Dependencies.Add(new TestCaseDependency
+                {
+                    Id = Guid.NewGuid(),
+                    TestCaseId = testCase.Id,
+                    DependsOnTestCaseId = depTestCaseId,
+                });
+            }
+        }
+    }
+
+    private static void RegisterScenarioLookupKeys(
+        IDictionary<string, Guid> lookup,
+        TestCase testCase)
+    {
+        if (lookup == null || testCase == null)
+        {
+            return;
+        }
+
+        var candidates = new[]
+        {
+            GetSingleTagValue(testCase.Tags, FlowScenarioKeyTagPrefix),
+            testCase.Name,
+            NormalizeScenarioLookupKey(GetSingleTagValue(testCase.Tags, FlowScenarioKeyTagPrefix)),
+            NormalizeScenarioLookupKey(testCase.Name),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                lookup[candidate.Trim()] = testCase.Id;
+            }
+        }
+    }
+
+    private static bool TryResolveScenarioDependencyKey(
+        IReadOnlyDictionary<string, Guid> lookup,
+        string dependencyKey,
+        out Guid testCaseId)
+    {
+        testCaseId = Guid.Empty;
+        if (lookup == null || string.IsNullOrWhiteSpace(dependencyKey))
+        {
+            return false;
+        }
+
+        var candidates = new[]
+        {
+            dependencyKey.Trim(),
+            NormalizeScenarioLookupKey(dependencyKey),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && lookup.TryGetValue(candidate, out testCaseId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string GetSingleTagValue(string tagsJson, string prefix)
+        => GetMultiTagValues(tagsJson, prefix).FirstOrDefault();
+
+    private static List<string> GetMultiTagValues(string tagsJson, string prefix)
+    {
+        var tags = ParseTagList(tagsJson);
+        var values = new List<string>();
+        foreach (var tag in tags)
+        {
+            if (!tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = tag[prefix.Length..].Trim();
+            if (!string.IsNullOrWhiteSpace(value)
+                && !values.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
+    private static string NormalizeScenarioLookupKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var chars = value
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+        var normalized = new string(chars);
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim('-');
+    }
+
+    private static void RegisterProducedVariables(
+        AiGeneratedTestCaseDto dto,
+        HashSet<string> producedVariables)
+    {
+        if (dto == null || producedVariables == null)
+        {
+            return;
+        }
+
+        foreach (var produces in NormalizeStringList(dto.ExecutionHints?.Produces).Concat(NormalizeStringList(dto.Produces)))
+        {
+            producedVariables.Add(produces);
+            if (IsTokenVariableName(produces))
+            {
+                foreach (var alias in AuthTokenAliases)
+                {
+                    producedVariables.Add(alias);
+                }
+            }
+        }
+
+        foreach (var variable in dto.Variables ?? new List<AiTestCaseVariableDto>())
         {
             if (string.IsNullOrWhiteSpace(variable?.VariableName))
             {
@@ -2323,6 +3048,40 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             }
 
             producedVariables.Add(variable.VariableName.Trim());
+            if (IsTokenVariableName(variable.VariableName))
+            {
+                foreach (var alias in AuthTokenAliases)
+                {
+                    producedVariables.Add(alias);
+                }
+            }
         }
+    }
+
+    private static readonly string[] AuthTokenAliases =
+    {
+        "authToken",
+        "accessToken",
+        "access_token",
+        "token",
+        "jwt",
+        "bearerToken",
+        "bearer_token",
+        "idToken",
+        "id_token",
+        "sessionToken",
+        "session_token",
+    };
+
+    private static bool IsTokenVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        return normalized.EndsWith("token", StringComparison.Ordinal)
+            || normalized is "jwt" or "bearer" or "authorization";
     }
 }

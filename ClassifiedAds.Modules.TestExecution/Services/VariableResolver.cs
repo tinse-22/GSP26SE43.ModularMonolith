@@ -50,6 +50,18 @@ public class VariableResolver : IVariableResolver
     // Matches values already uniquified by {{tcUniqueId}} resolution — local part ends with _xxxxxxxx (8 hex chars).
     private static readonly Regex AlreadyUniquifiedRegex = new(@"_[a-f0-9]{8}$", RegexOptions.Compiled);
 
+    private static readonly HashSet<string> BuiltInRuntimeVariableNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tcUniqueId",
+        "timestamp",
+        "randomInt",
+        "uuid",
+        "runId",
+        "runSuffix",
+        "runIdSuffix",
+        "runTimestamp",
+    };
+
     public ResolvedTestCaseRequest Resolve(
         ExecutionTestCaseDto testCase,
         IReadOnlyDictionary<string, string> variables,
@@ -209,6 +221,7 @@ public class VariableResolver : IVariableResolver
         }
 
         var requestHasAuthHeader = HasExplicitAuthHeader(requestHeaders);
+        var requestRequiresAuth = RequestRequiresAuthByTemplateOrFlow(testCase, requestHeaders);
         var authMode = ResolveAuthModeFromHeaders(resolvedHeaders)
             ?? ResolveAuthModeFromTags(testCase);
         if (TryConsumeNoAuthSentinel(resolvedHeaders))
@@ -216,12 +229,19 @@ public class VariableResolver : IVariableResolver
             authMode = "none";
         }
 
+        if (string.Equals(authMode, "none", StringComparison.OrdinalIgnoreCase)
+            && requestRequiresAuth
+            && !HasMissingAuthTextIntent(testCase))
+        {
+            authMode = "required";
+        }
+
         var disableAuth = string.Equals(authMode, "none", StringComparison.OrdinalIgnoreCase);
         var optionalAuth = string.Equals(authMode, "optional", StringComparison.OrdinalIgnoreCase);
         var requiredAuth = string.Equals(authMode, "required", StringComparison.OrdinalIgnoreCase);
         // No-auth intent must win even when the generator accidentally sends
         // an Authorization header in the request template.
-        var inferredMissingAuthScenario = IsNoAuthExpectationScenario(testCase);
+        var inferredMissingAuthScenario = IsNoAuthExpectationScenario(testCase) && !requestRequiresAuth;
         if (disableAuth || inferredMissingAuthScenario || (optionalAuth && !requestHasAuthHeader))
         {
             RemoveAuthHeaders(resolvedHeaders);
@@ -285,13 +305,28 @@ public class VariableResolver : IVariableResolver
             resolvedBody = NormalizeTextPlaceholderDefaultsInJsonBody(testCase, resolvedBody);
         }
 
+        // Final runtime guard: built-in variables must never require producer flow metadata.
+        // This protects executions where LLM/n8n incorrectly emits flow-consumes:tcUniqueId.
+        resolvedUrl = ResolveBuiltInRuntimePlaceholders(resolvedUrl, mergedVars);
+        foreach (var key in resolvedHeaders.Keys.ToList())
+        {
+            resolvedHeaders[key] = ResolveBuiltInRuntimePlaceholders(resolvedHeaders[key], mergedVars);
+        }
+
+        foreach (var key in resolvedQuery.Keys.ToList())
+        {
+            resolvedQuery[key] = ResolveBuiltInRuntimePlaceholders(resolvedQuery[key], mergedVars);
+        }
+
+        resolvedBody = ResolveBuiltInRuntimePlaceholders(resolvedBody, mergedVars);
+
         // Build final URL
         resolvedUrl = NormalizeSwaggerDocsApiUrl(resolvedUrl);
         var finalUrl = BuildFinalUrl(resolvedUrl, environment.BaseUrl);
 
         // Hard-block auth for no-auth scenarios: strip any auth-like headers/query params
         // right before request materialization so no later merge/fallback can leak tokens.
-        if (IsNoAuthExpectationScenario(testCase))
+        if (disableAuth || inferredMissingAuthScenario)
         {
             RemoveAuthHeaders(resolvedHeaders);
             RemoveAggressiveAuthLikeHeaders(resolvedHeaders);
@@ -563,10 +598,49 @@ public class VariableResolver : IVariableResolver
                 return value;
             }
 
+            if (TryResolveTokenAliasValue(key, variables, out var tokenAliasValue))
+            {
+                return tokenAliasValue;
+            }
+
             return TryResolveDuplicateIdentifierAliasValue(key, variables, out var aliasValue)
                 ? aliasValue
                 : match.Value;
         });
+    }
+
+    private static string ResolveBuiltInRuntimePlaceholders(string input, IReadOnlyDictionary<string, string> variables)
+    {
+        if (string.IsNullOrEmpty(input) || variables == null)
+        {
+            return input;
+        }
+
+        return PlaceholderRegex.Replace(input, match =>
+        {
+            var key = match.Groups[1].Value;
+            return IsBuiltInRuntimeVariableName(key)
+                && variables.TryGetValue(key, out var value)
+                && !string.IsNullOrWhiteSpace(value)
+                    ? value
+                    : match.Value;
+        });
+    }
+
+    private static bool IsBuiltInRuntimeVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var normalized = variableName.Trim();
+        if (normalized.StartsWith("request.body.", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["request.body.".Length..];
+        }
+
+        return BuiltInRuntimeVariableNames.Contains(normalized);
     }
 
     private static bool TryResolveDuplicateIdentifierAliasValue(
@@ -1013,6 +1087,7 @@ public class VariableResolver : IVariableResolver
 
         var consumes = GetTagValues(testCase.Tags, FlowConsumesTagPrefix)
             .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Where(v => !IsBuiltInRuntimeVariableName(v))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (consumes.Count == 0)
@@ -1082,6 +1157,208 @@ public class VariableResolver : IVariableResolver
             string.Equals(v, variableName, StringComparison.OrdinalIgnoreCase)
             || v.EndsWith("." + variableName, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool RequestRequiresAuthByTemplateOrFlow(
+        ExecutionTestCaseDto testCase,
+        IDictionary<string, string> requestHeaders)
+    {
+        if (HasTagAuthMode(testCase, "required"))
+        {
+            return true;
+        }
+
+        if (GetTagValues(testCase?.Tags, FlowConsumesTagPrefix)
+            .Any(IsTokenLikeVariableName))
+        {
+            return true;
+        }
+
+        if (requestHeaders == null || requestHeaders.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var header in requestHeaders)
+        {
+            if (!IsAuthHeaderName(header.Key) || string.IsNullOrWhiteSpace(header.Value))
+            {
+                continue;
+            }
+
+            if (IsNoAuthSentinel(header.Value))
+            {
+                continue;
+            }
+
+            if (TryExtractAuthPlaceholderName(header.Value, out var placeholder))
+            {
+                return IsTokenLikeVariableName(placeholder) || IsFlowConsumedVariable(testCase, placeholder);
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasTagAuthMode(ExecutionTestCaseDto testCase, string expectedMode)
+        => string.Equals(ResolveAuthModeFromTags(testCase), NormalizeAuthMode(expectedMode), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTokenLikeVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(".", string.Empty)
+            .ToLowerInvariant();
+
+        return normalized.Contains("token", StringComparison.Ordinal)
+            || normalized.Contains("jwt", StringComparison.Ordinal)
+            || normalized.Contains("bearer", StringComparison.Ordinal)
+            || normalized.Contains("apikey", StringComparison.Ordinal)
+            || normalized.Contains("authorization", StringComparison.Ordinal)
+            || normalized.Contains("auth", StringComparison.Ordinal);
+    }
+
+    private static bool TryResolveTokenAliasValue(
+        string requestedName,
+        IReadOnlyDictionary<string, string> variables,
+        out string resolved)
+    {
+        resolved = null;
+        if (!IsTokenLikeVariableName(requestedName) || variables == null || variables.Count == 0)
+        {
+            return false;
+        }
+
+        var best = variables
+            .Select(kvp => new
+            {
+                kvp.Key,
+                kvp.Value,
+                Score = ScoreTokenAlias(requestedName, kvp.Key),
+            })
+            .Where(x => x.Score > 0
+                && !string.IsNullOrWhiteSpace(x.Value)
+                && !ContainsUnresolvedPlaceholder(x.Value))
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Key.Length)
+            .FirstOrDefault();
+
+        if (best == null)
+        {
+            return false;
+        }
+
+        resolved = best.Value;
+        return true;
+    }
+
+    private static int ScoreTokenAlias(string requestedName, string actualName)
+    {
+        if (!IsTokenLikeVariableName(requestedName) || !IsTokenLikeVariableName(actualName))
+        {
+            return 0;
+        }
+
+        var requested = NormalizeTokenKey(requestedName);
+        var actual = NormalizeTokenKey(actualName);
+        if (string.IsNullOrWhiteSpace(requested) || string.IsNullOrWhiteSpace(actual))
+        {
+            return 0;
+        }
+
+        if (string.Equals(requested, actual, StringComparison.OrdinalIgnoreCase))
+        {
+            return 100;
+        }
+
+        var requestedRole = StripTokenSuffix(requested);
+        var actualRole = StripTokenSuffix(actual);
+        var requestedIsRoleSpecific = !string.IsNullOrWhiteSpace(requestedRole);
+        var actualIsRoleSpecific = !string.IsNullOrWhiteSpace(actualRole);
+
+        if (requestedIsRoleSpecific && actualIsRoleSpecific)
+        {
+            return requestedRole.Contains(actualRole, StringComparison.OrdinalIgnoreCase)
+                || actualRole.Contains(requestedRole, StringComparison.OrdinalIgnoreCase)
+                    ? 85
+                    : 0;
+        }
+
+        if (requestedIsRoleSpecific)
+        {
+            return IsGenericTokenKey(actual) ? 60 : 0;
+        }
+
+        if (actualIsRoleSpecific)
+        {
+            return IsGenericTokenKey(requested) ? 40 : 0;
+        }
+
+        return IsGenericTokenKey(actual) ? 60 : 40;
+    }
+
+    private static string NormalizeTokenKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var raw = value.Trim();
+        var lastDot = raw.LastIndexOf('.');
+        if (lastDot >= 0 && lastDot < raw.Length - 1)
+        {
+            raw = raw[(lastDot + 1)..];
+        }
+
+        return new string(raw.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    }
+
+    private static string StripTokenSuffix(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return string.Empty;
+        }
+
+        foreach (var suffix in new[] { "accesstoken", "authtoken", "idtoken", "sessiontoken", "bearertoken", "token", "jwt", "bearer", "authorization", "apikey" })
+        {
+            if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && normalized.Length > suffix.Length)
+            {
+                return normalized[..^suffix.Length];
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsGenericTokenKey(string normalized)
+    {
+        return normalized is "authtoken"
+            or "accesstoken"
+            or "token"
+            or "jwt"
+            or "idtoken"
+            or "sessiontoken"
+            or "bearertoken"
+            or "bearer"
+            or "authorization"
+            or "apikey";
+    }
+
+    private static bool IsScopedVariableKey(string key)
+        => !string.IsNullOrWhiteSpace(key)
+           && key.StartsWith("case.", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRoleSpecificTokenKey(string key)
+        => !string.IsNullOrWhiteSpace(StripTokenSuffix(NormalizeTokenKey(key)));
 
     private static bool TryGetFirstTokenValue(
         IReadOnlyDictionary<string, string> variables,
@@ -1280,6 +1557,26 @@ public class VariableResolver : IVariableResolver
                     {
                         mergedVars[alias] = value;
                     }
+                }
+            }
+        }
+
+        foreach (var kvp in mergedVars.ToList())
+        {
+            if (!IsTokenLikeVariableName(kvp.Key)
+                || IsScopedVariableKey(kvp.Key)
+                || IsRoleSpecificTokenKey(kvp.Key)
+                || string.IsNullOrWhiteSpace(kvp.Value)
+                || kvp.Value.Contains("{{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var alias in GetTokenAliasNames(kvp.Key))
+            {
+                if (!mergedVars.ContainsKey(alias) || string.IsNullOrWhiteSpace(mergedVars[alias]))
+                {
+                    mergedVars[alias] = kvp.Value;
                 }
             }
         }
@@ -1805,6 +2102,7 @@ public class VariableResolver : IVariableResolver
 
         var consumes = GetTagValues(testCase?.Tags, FlowConsumesTagPrefix)
             .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Where(v => !IsBuiltInRuntimeVariableName(v))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (consumes.Count == 0)
@@ -2019,10 +2317,11 @@ public class VariableResolver : IVariableResolver
         // this scenario consumes credential values from previous steps.
         var consumes = GetTagValues(testCase?.Tags, FlowConsumesTagPrefix);
         var consumesCredential = consumes.Any(v =>
-            string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(v, "password", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(v, "request.body.password", StringComparison.OrdinalIgnoreCase));
+            !IsBuiltInRuntimeVariableName(v) &&
+            (string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "password", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "request.body.password", StringComparison.OrdinalIgnoreCase)));
         if (consumesCredential)
         {
             return true;
@@ -2242,6 +2541,14 @@ public class VariableResolver : IVariableResolver
                         return true;
                     }
                 }
+
+                foreach (var candidate in candidateList)
+                {
+                    if (TryResolveSemanticScopedTokenAlias(dependencyId, candidate, variables, out resolved))
+                    {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -2252,6 +2559,43 @@ public class VariableResolver : IVariableResolver
         }
 
         return TryResolveVariableValue(candidates, variables, out resolved);
+    }
+
+    private static bool TryResolveSemanticScopedTokenAlias(
+        Guid dependencyId,
+        string candidate,
+        IReadOnlyDictionary<string, string> variables,
+        out string resolved)
+    {
+        resolved = null;
+        if (!IsTokenLikeVariableName(candidate) || variables == null || variables.Count == 0)
+        {
+            return false;
+        }
+
+        var scopePrefix = $"case.{dependencyId:N}.";
+        var best = variables
+            .Where(kvp => kvp.Key.StartsWith(scopePrefix, StringComparison.OrdinalIgnoreCase))
+            .Select(kvp => new
+            {
+                Leaf = kvp.Key[scopePrefix.Length..],
+                kvp.Value,
+                Score = ScoreTokenAlias(candidate, kvp.Key[scopePrefix.Length..]),
+            })
+            .Where(x => x.Score > 0
+                && !string.IsNullOrWhiteSpace(x.Value)
+                && !x.Value.Contains("{{", StringComparison.Ordinal))
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Leaf.Length)
+            .FirstOrDefault();
+
+        if (best == null)
+        {
+            return false;
+        }
+
+        resolved = best.Value;
+        return true;
     }
 
     private static bool ShouldEnforceDependencyScopedResolution(ExecutionTestCaseDto testCase)
@@ -2352,6 +2696,11 @@ public class VariableResolver : IVariableResolver
             return true;
         }
 
+        if (IsScopedSemanticAlias(a, b))
+        {
+            return true;
+        }
+
         // treat generic suffixes as equivalent for resource IDs.
         a = StripIdentifierSuffixToken(a);
         b = StripIdentifierSuffixToken(b);
@@ -2361,6 +2710,58 @@ public class VariableResolver : IVariableResolver
         }
 
         return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsScopedSemanticAlias(string candidate, string actualKey)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(actualKey))
+        {
+            return false;
+        }
+
+        if (IsGenericIdentifierKey(candidate) || IsGenericIdentifierKey(actualKey))
+        {
+            return false;
+        }
+
+        var candidateRoot = StripIdentifierSuffixToken(candidate);
+        var actualRoot = StripIdentifierSuffixToken(actualKey);
+        if (string.IsNullOrWhiteSpace(candidateRoot)
+            || string.IsNullOrWhiteSpace(actualRoot)
+            || IsGenericIdentifierKey(candidateRoot)
+            || IsGenericIdentifierKey(actualRoot))
+        {
+            return false;
+        }
+
+        if (candidate.Length < actualKey.Length)
+        {
+            return actualKey.EndsWith(candidate, StringComparison.OrdinalIgnoreCase)
+                && actualRoot.Contains(candidateRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return candidate.EndsWith(actualKey, StringComparison.OrdinalIgnoreCase)
+            && candidateRoot.Contains(actualRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericIdentifierKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeIdentifierKey(value);
+        return normalized is "id"
+            or "ids"
+            or "resourceid"
+            or "entityid"
+            or "objectid"
+            or "guid"
+            or "uuid"
+            or "key"
+            or "code"
+            or "identifier";
     }
 
     private static string NormalizeIdentifierKey(string value)
@@ -2933,10 +3334,11 @@ public class VariableResolver : IVariableResolver
         var dependsOn = GetTagValues(testCase?.Tags, FlowDependsOnTagPrefix);
         return dependsOn.Count > 0
             && consumes.Any(v =>
-                string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(v, "password", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(v, "request.body.password", StringComparison.OrdinalIgnoreCase));
+                !IsBuiltInRuntimeVariableName(v) &&
+                (string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(v, "password", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(v, "request.body.password", StringComparison.OrdinalIgnoreCase)));
     }
 
     private static bool IsRegisterLikeRequest(ExecutionTestCaseDto testCase)
@@ -2970,8 +3372,9 @@ public class VariableResolver : IVariableResolver
 
         var consumes = GetTagValues(testCase?.Tags, FlowConsumesTagPrefix);
         var consumesEmail = consumes.Any(v =>
-            string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase));
+            !IsBuiltInRuntimeVariableName(v) &&
+            (string.Equals(v, "email", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "request.body.email", StringComparison.OrdinalIgnoreCase)));
         if (!consumesEmail)
         {
             return false;
@@ -2992,20 +3395,16 @@ public class VariableResolver : IVariableResolver
 
     private static bool IsNoAuthExpectationScenario(ExecutionTestCaseDto testCase)
     {
+        return HasMissingAuthTextIntent(testCase);
+    }
+
+    private static bool HasMissingAuthTextIntent(ExecutionTestCaseDto testCase)
+    {
         if (testCase == null)
         {
             return false;
         }
 
-        var expectedStatus = testCase.Expectation?.ExpectedStatus ?? string.Empty;
-        if (expectedStatus.Contains("401", StringComparison.Ordinal)
-            || expectedStatus.Contains("403", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        // Fallback inference: some generated negative cases describe no-auth intent
-        // in name/description/tags but may not carry a clean 401/403 expectation.
         var name = testCase.Name ?? string.Empty;
         var description = testCase.Description ?? string.Empty;
         var tags = string.Join(' ', ParseTags(testCase.Tags) ?? Array.Empty<string>());
@@ -3018,8 +3417,8 @@ public class VariableResolver : IVariableResolver
             "without authorization",
             "no authorization",
             "missing authorization",
-            "unauthorized",
-            "unauthenticated",
+            "missing auth",
+            "without auth",
             "no auth",
             "no-auth",
             "no_auth");

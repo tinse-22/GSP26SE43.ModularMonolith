@@ -226,24 +226,10 @@ public class HappyPathTestCaseGenerator : IHappyPathTestCaseGenerator
             testCase.Expectation = _expectationBuilder.Build(testCaseId, generated.Expectation);
             NormalizeHappyPathExpectedStatuses(testCase);
 
-            // Build variables
-            if (generated.Variables != null)
-            {
-                foreach (var v in generated.Variables)
-                {
-                    testCase.Variables.Add(new TestCaseVariable
-                    {
-                        Id = Guid.NewGuid(),
-                        TestCaseId = testCaseId,
-                        VariableName = v.VariableName,
-                        ExtractFrom = ParseExtractFrom(v.ExtractFrom),
-                        JsonPath = v.JsonPath,
-                        HeaderName = v.HeaderName,
-                        Regex = v.Regex,
-                        DefaultValue = v.DefaultValue,
-                    });
-                }
-            }
+            TestCaseVariableMaterializationHelper.AddExplicitVariables(testCase, generated.Variables);
+            TestCaseVariableMaterializationHelper.AddRequestBodyProducerAliasVariables(
+                testCase,
+                generated.ExecutionHints?.Produces);
 
             testCases.Add(testCase);
         }

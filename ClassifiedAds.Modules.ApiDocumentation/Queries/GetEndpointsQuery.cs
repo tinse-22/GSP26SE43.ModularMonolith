@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace ClassifiedAds.Modules.ApiDocumentation.Queries;
 
-public class GetEndpointsQuery : IQuery<List<EndpointModel>>
+public class GetEndpointsQuery : IQuery<List<EndpointDetailModel>>
 {
     public Guid ProjectId { get; set; }
 
@@ -21,23 +21,32 @@ public class GetEndpointsQuery : IQuery<List<EndpointModel>>
     public Guid OwnerId { get; set; }
 }
 
-public class GetEndpointsQueryHandler : IQueryHandler<GetEndpointsQuery, List<EndpointModel>>
+public class GetEndpointsQueryHandler : IQueryHandler<GetEndpointsQuery, List<EndpointDetailModel>>
 {
     private readonly IRepository<Project, Guid> _projectRepository;
     private readonly IRepository<ApiSpecification, Guid> _specRepository;
     private readonly IRepository<ApiEndpoint, Guid> _endpointRepository;
+    private readonly IRepository<EndpointParameter, Guid> _parameterRepository;
+    private readonly IRepository<EndpointResponse, Guid> _responseRepository;
+    private readonly IRepository<EndpointSecurityReq, Guid> _securityReqRepository;
 
     public GetEndpointsQueryHandler(
         IRepository<Project, Guid> projectRepository,
         IRepository<ApiSpecification, Guid> specRepository,
-        IRepository<ApiEndpoint, Guid> endpointRepository)
+        IRepository<ApiEndpoint, Guid> endpointRepository,
+        IRepository<EndpointParameter, Guid> parameterRepository,
+        IRepository<EndpointResponse, Guid> responseRepository,
+        IRepository<EndpointSecurityReq, Guid> securityReqRepository)
     {
         _projectRepository = projectRepository;
         _specRepository = specRepository;
         _endpointRepository = endpointRepository;
+        _parameterRepository = parameterRepository;
+        _responseRepository = responseRepository;
+        _securityReqRepository = securityReqRepository;
     }
 
-    public async Task<List<EndpointModel>> HandleAsync(GetEndpointsQuery query, CancellationToken cancellationToken = default)
+    public async Task<List<EndpointDetailModel>> HandleAsync(GetEndpointsQuery query, CancellationToken cancellationToken = default)
     {
         // Verify project exists and ownership
         var project = await _projectRepository.FirstOrDefaultAsync(
@@ -68,19 +77,73 @@ public class GetEndpointsQueryHandler : IQueryHandler<GetEndpointsQuery, List<En
             .OrderByDescending(e => e.CreatedDateTime)
             .ToListAsync(cancellationToken);
 
-        return endpoints.Select(e => new EndpointModel
+        var endpointIds = endpoints.Select(e => e.Id).ToList();
+
+        var parametersByEndpointId = await _parameterRepository.GetQueryableSet()
+            .Where(p => endpointIds.Contains(p.EndpointId))
+            .OrderBy(p => p.Name)
+            .GroupBy(p => p.EndpointId)
+            .ToDictionaryAsync(g => g.Key, g => g.ToList(), cancellationToken);
+
+        var responsesByEndpointId = await _responseRepository.GetQueryableSet()
+            .Where(r => endpointIds.Contains(r.EndpointId))
+            .OrderBy(r => r.StatusCode)
+            .GroupBy(r => r.EndpointId)
+            .ToDictionaryAsync(g => g.Key, g => g.ToList(), cancellationToken);
+
+        var securityReqsByEndpointId = await _securityReqRepository.GetQueryableSet()
+            .Where(sr => endpointIds.Contains(sr.EndpointId))
+            .GroupBy(sr => sr.EndpointId)
+            .ToDictionaryAsync(g => g.Key, g => g.ToList(), cancellationToken);
+
+        return endpoints.Select(e =>
         {
-            Id = e.Id,
-            ApiSpecId = e.ApiSpecId,
-            HttpMethod = e.HttpMethod.ToString(),
-            Path = e.Path,
-            OperationId = e.OperationId,
-            Summary = e.Summary,
-            Description = e.Description,
-            Tags = e.Tags,
-            IsDeprecated = e.IsDeprecated,
-            CreatedDateTime = e.CreatedDateTime,
-            UpdatedDateTime = e.UpdatedDateTime,
+            parametersByEndpointId.TryGetValue(e.Id, out var parameters);
+            responsesByEndpointId.TryGetValue(e.Id, out var responses);
+            securityReqsByEndpointId.TryGetValue(e.Id, out var securityReqs);
+
+            return new EndpointDetailModel
+            {
+                Id = e.Id,
+                ApiSpecId = e.ApiSpecId,
+                HttpMethod = e.HttpMethod.ToString(),
+                Path = e.Path,
+                OperationId = e.OperationId,
+                Summary = e.Summary,
+                Description = e.Description,
+                Tags = e.Tags,
+                IsDeprecated = e.IsDeprecated,
+                CreatedDateTime = e.CreatedDateTime,
+                UpdatedDateTime = e.UpdatedDateTime,
+                Parameters = (parameters ?? new List<EndpointParameter>()).Select(p => new ParameterModel
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Location = p.Location.ToString(),
+                    DataType = p.DataType,
+                    Format = p.Format,
+                    IsRequired = p.IsRequired,
+                    DefaultValue = p.DefaultValue,
+                    Schema = p.Schema,
+                    Examples = p.Examples,
+                }).ToList(),
+                Responses = (responses ?? new List<EndpointResponse>()).Select(r => new ResponseModel
+                {
+                    Id = r.Id,
+                    StatusCode = r.StatusCode,
+                    Description = r.Description,
+                    Schema = r.Schema,
+                    Examples = r.Examples,
+                    Headers = r.Headers,
+                }).ToList(),
+                SecurityRequirements = (securityReqs ?? new List<EndpointSecurityReq>()).Select(sr => new SecurityReqModel
+                {
+                    Id = sr.Id,
+                    SecurityType = sr.SecurityType.ToString(),
+                    SchemeName = sr.SchemeName,
+                    Scopes = sr.Scopes,
+                }).ToList(),
+            };
         }).ToList();
     }
 }

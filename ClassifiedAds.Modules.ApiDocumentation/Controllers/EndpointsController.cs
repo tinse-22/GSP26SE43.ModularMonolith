@@ -42,7 +42,7 @@ public class EndpointsController : ControllerBase
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<List<EndpointModel>>> Get(Guid projectId, Guid specId)
+    public async Task<ActionResult<List<EndpointDetailModel>>> Get(Guid projectId, Guid specId)
     {
         _logger.LogInformation("Fetching endpoints for spec {SpecId} in project {ProjectId}.", specId, projectId);
 

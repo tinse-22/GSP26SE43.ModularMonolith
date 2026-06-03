@@ -23,6 +23,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new(@"^\{\{(?<name>[A-Za-z0-9_]+)\}\}$", RegexOptions.Compiled);
+    private static readonly Regex AnyPlaceholderRegex = new(@"\{\{\s*(?<name>[A-Za-z0-9_.-]+)\s*\}\}", RegexOptions.Compiled);
 
     private static readonly string[] IdentifierJsonPaths =
     {
@@ -125,6 +126,12 @@ public static class GeneratedTestCaseDependencyEnricher
 
             var allowHeuristicRewrite = IsRewritePolicyEnabled(testCase);
             AddDeclaredDependencies(testCase, orderItem, producersByEndpoint);
+            EnsureDeclaredConsumeDependencies(
+                testCase,
+                orderItem,
+                producerCandidates,
+                producersByEndpoint,
+                pendingExistingVariables);
             if (allowHeuristicRewrite)
             {
                 EnsureSameEndpointPostHappyPathDependency(testCase, orderItem, producersByEndpoint);
@@ -667,6 +674,116 @@ public static class GeneratedTestCaseDependencyEnricher
         }
     }
 
+    private static void EnsureDeclaredConsumeDependencies(
+        TestCase testCase,
+        ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> producerCandidates,
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        if (testCase == null || orderItem == null)
+        {
+            return;
+        }
+
+        var consumes = ExtractConsumedVariables(testCase);
+        if (consumes.Count == 0)
+        {
+            return;
+        }
+
+        var dependencyCandidates = (orderItem.DependsOnEndpointIds ?? new List<Guid>())
+            .Select(x => producersByEndpoint.TryGetValue(x, out var producer) ? producer : null)
+            .Where(x => x != null && x.TestCaseId != testCase.Id)
+            .ToList();
+        var consumerPath = orderItem.Path ?? testCase.Request?.Url;
+
+        foreach (var consume in consumes)
+        {
+            if (IsAuthConsumeVariable(consume))
+            {
+                var authProducer = SelectDeclaredProducerForVariable(
+                        consume,
+                        dependencyCandidates,
+                        producerCandidates,
+                        testCase.Id,
+                        testCase.OrderIndex)
+                    ?? SelectAuthProducer(dependencyCandidates, producerCandidates, testCase.Id, preferRegister: false);
+                if (authProducer == null)
+                {
+                    continue;
+                }
+
+                EnsureAuthTokenVariable(authProducer, pendingExistingVariables, consume);
+                EnsureDependency(testCase, authProducer.TestCaseId);
+                continue;
+            }
+
+            var producer = SelectDeclaredProducerForVariable(
+                consume,
+                dependencyCandidates,
+                producerCandidates,
+                testCase.Id,
+                testCase.OrderIndex)
+                ?? SelectProducerForToken(
+                consume,
+                consumerPath,
+                dependencyCandidates,
+                producerCandidates,
+                testCase.Id);
+            if (producer == null)
+            {
+                continue;
+            }
+
+            var producerScore = ScoreProducer(producer, consume, consumerPath);
+            if (producerScore < 30 && !ProducerAlreadyHasVariable(producer, consume, consumerPath))
+            {
+                continue;
+            }
+
+            var variableName = EnsureProducerVariable(
+                consume,
+                consumerPath,
+                producer,
+                pendingExistingVariables,
+                preferredVariableName: consume);
+            if (!string.IsNullOrWhiteSpace(variableName))
+            {
+                EnsureDependency(testCase, producer.TestCaseId);
+            }
+        }
+    }
+
+    private static ProducerCandidate SelectDeclaredProducerForVariable(
+        string variableName,
+        IReadOnlyList<ProducerCandidate> dependencyCandidates,
+        IReadOnlyList<ProducerCandidate> allCandidates,
+        Guid consumerTestCaseId,
+        int consumerOrderIndex)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return null;
+        }
+
+        var candidates = dependencyCandidates
+            .Concat(allCandidates ?? Array.Empty<ProducerCandidate>())
+            .Where(x => x != null
+                && x.TestCaseId != consumerTestCaseId
+                && (x.IsExisting || x.OrderIndex <= consumerOrderIndex)
+                && ProducerDeclaresVariable(x, variableName))
+            .GroupBy(x => x.TestCaseId)
+            .Select(x => x.First())
+            .OrderByDescending(x => ProducerHasExtractorVariable(x, variableName))
+            .ThenByDescending(x => x.TestType == TestType.HappyPath)
+            .ThenByDescending(x => GetMethodPriority(x.OrderItem?.HttpMethod))
+            .ThenByDescending(x => x.OrderIndex)
+            .ToList();
+
+        return candidates.FirstOrDefault();
+    }
+
     private static bool BindBodyNode(
         JsonNode node,
         string consumerPath,
@@ -1059,15 +1176,22 @@ public static class GeneratedTestCaseDependencyEnricher
 
     private static string EnsureAuthTokenVariable(
         ProducerCandidate producer,
-        ICollection<TestCaseVariable> pendingExistingVariables)
+        ICollection<TestCaseVariable> pendingExistingVariables,
+        string preferredVariableName = null)
     {
         var existing = producer.Variables
             .Select(v => v.VariableName)
             .FirstOrDefault(name =>
+                (!string.IsNullOrWhiteSpace(preferredVariableName)
+                    && string.Equals(name, preferredVariableName, StringComparison.OrdinalIgnoreCase)) ||
                 string.Equals(name, "authToken", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, "accessToken", StringComparison.OrdinalIgnoreCase));
 
-        var variableName = string.IsNullOrWhiteSpace(existing) ? "authToken" : existing;
+        var variableName = !string.IsNullOrWhiteSpace(existing)
+            ? existing
+            : !string.IsNullOrWhiteSpace(preferredVariableName) && IsAuthConsumeVariable(preferredVariableName)
+                ? preferredVariableName
+                : "authToken";
         foreach (var jsonPath in AuthTokenJsonPaths)
         {
             EnsureVariableRule(
@@ -1513,6 +1637,180 @@ public static class GeneratedTestCaseDependencyEnricher
         return false;
     }
 
+    private static List<string> ExtractConsumedVariables(TestCase testCase)
+    {
+        if (testCase == null)
+        {
+            return new List<string>();
+        }
+
+        var consumes = ParseSerializedTags(testCase.Tags)
+            .Where(tag => tag.StartsWith("flow-consumes:", StringComparison.OrdinalIgnoreCase))
+            .Select(tag => tag["flow-consumes:".Length..].Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value =>
+            {
+                var dot = value.LastIndexOf('.');
+                return dot >= 0 && dot < value.Length - 1
+                    ? value[(dot + 1)..]
+                    : value;
+            })
+            .ToList();
+
+        consumes.AddRange(ExtractPlaceholderConsumes(testCase));
+
+        return consumes
+            .Where(value => !IsRuntimeProvidedVariable(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractPlaceholderConsumes(TestCase testCase)
+    {
+        var values = new List<string>();
+        if (testCase == null)
+        {
+            return values;
+        }
+
+        AddPlaceholderNames(values, testCase.Request?.Url);
+        AddPlaceholderNames(values, testCase.Request?.Headers);
+        AddPlaceholderNames(values, testCase.Request?.PathParams);
+        AddPlaceholderNames(values, testCase.Request?.QueryParams);
+        AddPlaceholderNames(values, testCase.Request?.Body);
+        AddPlaceholderNames(values, testCase.Expectation?.BodyContains);
+        AddPlaceholderNames(values, testCase.Expectation?.BodyNotContains);
+        AddPlaceholderNames(values, testCase.Expectation?.JsonPathChecks);
+        AddPlaceholderNames(values, testCase.Expectation?.HeaderChecks);
+
+        return values;
+    }
+
+    private static void AddPlaceholderNames(ICollection<string> output, string value)
+    {
+        if (output == null || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        foreach (Match match in AnyPlaceholderRegex.Matches(value))
+        {
+            var name = match.Groups["name"].Value?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var dot = name.LastIndexOf('.');
+            output.Add(dot >= 0 && dot < name.Length - 1 ? name[(dot + 1)..] : name);
+        }
+    }
+
+    private static bool IsRuntimeProvidedVariable(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "tcUniqueId", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "timestamp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "randomInt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "uuid", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runId", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runSuffix", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runIdSuffix", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "runTimestamp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAuthConsumeVariable(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return string.Equals(variableName, "authToken", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "accessToken", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "token", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(variableName, "jwt", StringComparison.OrdinalIgnoreCase)
+            || variableName.EndsWith("Token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ProducerAlreadyHasVariable(
+        ProducerCandidate producer,
+        string variableName,
+        string consumerPath)
+    {
+        if (producer == null || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        return producer.Variables.Any(v =>
+            string.Equals(v.VariableName, variableName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(FindReusableVariableName(producer, variableName, consumerPath), v.VariableName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ProducerDeclaresVariable(ProducerCandidate producer, string variableName)
+    {
+        if (producer == null || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeVariableName(variableName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        if (ProducerHasExtractorVariable(producer, normalized))
+        {
+            return true;
+        }
+
+        if (IsAuthConsumeVariable(normalized)
+            && producer.Variables.Any(v => IsAuthConsumeVariable(v.VariableName)))
+        {
+            return true;
+        }
+
+        var producedTags = ParseSerializedTags(producer.SourceTestCase?.Tags)
+            .Where(tag => tag.StartsWith("flow-produces:", StringComparison.OrdinalIgnoreCase))
+            .Select(tag => tag["flow-produces:".Length..].Trim())
+            .ToList();
+
+        return producedTags.Any(value => string.Equals(NormalizeVariableName(value), normalized, StringComparison.OrdinalIgnoreCase))
+            || (IsAuthConsumeVariable(normalized) && producedTags.Any(IsAuthConsumeVariable));
+    }
+
+    private static bool ProducerHasExtractorVariable(ProducerCandidate producer, string variableName)
+    {
+        if (producer == null || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeVariableName(variableName);
+        return producer.Variables.Any(v =>
+            string.Equals(NormalizeVariableName(v.VariableName), normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeVariableName(string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return null;
+        }
+
+        var trimmed = variableName.Trim();
+        var dot = trimmed.LastIndexOf('.');
+        return dot >= 0 && dot < trimmed.Length - 1
+            ? trimmed[(dot + 1)..]
+            : trimmed;
+    }
+
     private static bool IsSameIdentifierFamily(string fieldName, string variableName)
     {
         if (string.IsNullOrWhiteSpace(fieldName) || string.IsNullOrWhiteSpace(variableName))
@@ -1702,7 +2000,7 @@ public static class GeneratedTestCaseDependencyEnricher
         }
 
         var strippedToken = StripIdSuffix(token);
-        if (!string.IsNullOrWhiteSpace(strippedToken))
+        if (IsIdentifierToken(token) && !string.IsNullOrWhiteSpace(strippedToken))
         {
             return Singularize(strippedToken);
         }
