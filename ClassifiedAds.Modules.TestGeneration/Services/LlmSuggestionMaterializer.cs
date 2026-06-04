@@ -161,6 +161,7 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             {
                 HttpMethod = modified.Request.HttpMethod,
                 Url = modified.Request.Url,
+                BodyType = modified.Request.BodyType,
                 Body = modified.Request.Body,
                 Headers = modified.Request.Headers,
                 PathParams = modified.Request.PathParams,

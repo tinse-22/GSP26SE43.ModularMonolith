@@ -1737,7 +1737,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             Warnings = warnings ?? new List<ValidationWarningModel>(),
             DependencyIds = testCase.DependencyIds,
             ValidationScore = 0m,
-            ValidationScoreThreshold = 0.80m,
+            ValidationScoreThreshold = ValidationScoreThresholds.Default,
             HardChecksPassed = false,
         };
     }

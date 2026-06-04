@@ -208,6 +208,189 @@ public class GeneratedTestCaseDependencyEnricherTests
     }
 
     [Fact]
+    public void Enrich_Should_BindEmptyHappyPathLoginBody_ToRegisteredCredentials()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+
+        var register = CreateTestCase(
+            endpointId: registerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/auth/register",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"user_{{tcUniqueId}}@example.com\",\"password\":\"Test123!\"}");
+
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/api/auth/login",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{}");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = registerEndpointId, HttpMethod = "POST", Path = "/api/auth/register", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { registerEndpointId }, IsAuthRelated = true },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { register, login }, approvedOrder);
+
+        login.Request.Body.Should().Contain("\"email\":\"{{registeredEmail}}\"");
+        login.Request.Body.Should().Contain("\"password\":\"{{registeredPassword}}\"");
+        login.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == register.Id);
+        register.Variables.Should().Contain(x =>
+            x.VariableName == "registeredEmail" &&
+            x.ExtractFrom == ExtractFrom.RequestBody &&
+            x.JsonPath == "$.email");
+        register.Variables.Should().Contain(x =>
+            x.VariableName == "registeredPassword" &&
+            x.ExtractFrom == ExtractFrom.RequestBody &&
+            x.JsonPath == "$.password");
+    }
+
+    [Fact]
+    public void Enrich_Should_AddBearerHeaderAndAuthDependency_ForProtectedCaseWithAuthIntent()
+    {
+        var loginEndpointId = Guid.NewGuid();
+        var protectedEndpointId = Guid.NewGuid();
+
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/session/token",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"user@example.com\",\"password\":\"Password123!\"}");
+        var protectedCase = CreateTestCase(
+            endpointId: protectedEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/workspaces",
+            testType: TestType.Boundary,
+            orderIndex: 1,
+            body: "{\"name\":\"\"}");
+        protectedCase.Tags = """["auth-mode:required","flow-consumes:authToken","rewrite-policy:minimal"]""";
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session/token", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = protectedEndpointId, HttpMethod = "POST", Path = "/v1/workspaces", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { loginEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { login, protectedCase }, approvedOrder);
+
+        protectedCase.Request.Headers.Should().Contain("Authorization");
+        protectedCase.Request.Headers.Should().Contain("Bearer {{authToken}}");
+        protectedCase.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == login.Id);
+        login.Variables.Should().Contain(x =>
+            x.VariableName == "authToken" &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.accessToken");
+    }
+
+    [Fact]
+    public void Enrich_Should_NotAddBearerHeader_ToPublicCaseWithoutAuthIntentOrDependency()
+    {
+        var loginEndpointId = Guid.NewGuid();
+        var publicEndpointId = Guid.NewGuid();
+
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/session/token",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"user@example.com\",\"password\":\"Password123!\"}");
+        var publicCase = CreateTestCase(
+            endpointId: publicEndpointId,
+            httpMethod: TestGenHttpMethod.GET,
+            path: "/v1/catalog",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: null);
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session/token", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = publicEndpointId, HttpMethod = "GET", Path = "/v1/catalog", OrderIndex = 1 },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { login, publicCase }, approvedOrder);
+
+        publicCase.Request.Headers.Should().BeNull();
+        publicCase.Dependencies.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Enrich_Should_PreserveLoginCredentials_WhenCredentialPolicyPreserveIsDeclared()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+
+        var register = CreateTestCase(
+            endpointId: registerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/accounts/register",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"new@example.com\",\"password\":\"Password123!\"}");
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/session/login",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"email\":\"fixed@example.com\",\"password\":\"fixed-secret\"}");
+        login.Tags = """["cred-policy:preserve"]""";
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = registerEndpointId, HttpMethod = "POST", Path = "/v1/accounts/register", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session/login", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { registerEndpointId }, IsAuthRelated = true },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { register, login }, approvedOrder);
+
+        login.Request.Body.Should().Be("{\"email\":\"fixed@example.com\",\"password\":\"fixed-secret\"}");
+    }
+
+    [Fact]
+    public void Enrich_Should_NotRewriteLockedCredentialField()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+
+        var register = CreateTestCase(
+            endpointId: registerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/accounts/register",
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"email\":\"new@example.com\",\"password\":\"Password123!\"}");
+        var login = CreateTestCase(
+            endpointId: loginEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: "/v1/session/login",
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"email\":\"fixed@example.com\",\"password\":\"Password123!\"}");
+        login.Tags = """["cred-lock:request.body.email"]""";
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = registerEndpointId, HttpMethod = "POST", Path = "/v1/accounts/register", OrderIndex = 0, IsAuthRelated = true },
+            new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session/login", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { registerEndpointId }, IsAuthRelated = true },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { register, login }, approvedOrder);
+
+        login.Request.Body.Should().Contain("\"email\":\"fixed@example.com\"");
+        login.Request.Body.Should().Contain("\"password\":\"{{registeredPassword}}\"");
+        login.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == register.Id);
+    }
+
+    [Fact]
     public void Enrich_Should_ReplaceHappyPathRouteParamLiteral_WithDependencyPlaceholder()
     {
         var categoryEndpointId = Guid.NewGuid();

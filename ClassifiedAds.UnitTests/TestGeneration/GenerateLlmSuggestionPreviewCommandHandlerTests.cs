@@ -109,6 +109,7 @@ public class GenerateLlmSuggestionPreviewCommandHandlerTests
             _persistenceService,
             _subscriptionMock.Object,
             _messageBusMock.Object,
+            new Mock<IN8nIntegrationService>().Object,
             Options.Create(new N8nIntegrationOptions
             {
                 BeBaseUrl = "http://localhost:5099",

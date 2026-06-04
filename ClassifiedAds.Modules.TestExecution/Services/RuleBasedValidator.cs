@@ -155,20 +155,21 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         var scoreThreshold = ResolveValidationScoreThreshold(profile);
-        var hardChecksPassed = EvaluateHardChecksPassed(result);
         var validationScore = ComputeValidationScore(result);
+        var hardChecksPassed = EvaluateHardChecksPassed(result);
 
         result.ValidationScoreThreshold = scoreThreshold;
-        result.HardChecksPassed = hardChecksPassed;
         result.ValidationScore = validationScore;
 
-        if (ShouldDowngradeSoftJsonPathFailures(profile, result, hardChecksPassed, validationScore, scoreThreshold))
+        if (ShouldDowngradeSoftJsonPathFailures(profile, result, hardChecksPassed, validationScore))
         {
             DowngradeSoftJsonPathFailures(result);
             validationScore = ComputeValidationScore(result);
+            hardChecksPassed = EvaluateHardChecksPassed(result);
             result.ValidationScore = validationScore;
         }
 
+        result.HardChecksPassed = hardChecksPassed;
         result.IsPassed = result.Failures.Count == 0
             && hardChecksPassed
             && validationScore >= scoreThreshold;
@@ -179,9 +180,9 @@ public class RuleBasedValidator : IRuleBasedValidator
     {
         return profile switch
         {
-            ValidationProfile.SrsStrict => 0.95m,
-            ValidationProfile.DemoAdaptive => 0.70m,
-            _ => 0.80m,
+            ValidationProfile.SrsStrict => ValidationScoreThresholds.SrsStrict,
+            ValidationProfile.DemoAdaptive => ValidationScoreThresholds.DemoAdaptive,
+            _ => ValidationScoreThresholds.Default,
         };
     }
 
@@ -193,27 +194,49 @@ public class RuleBasedValidator : IRuleBasedValidator
         }
 
         // Hard gates: status, schema, and explicit body contract checks must pass.
+        // Warning-only OpenAPI fallback checks lower score but are not hard failures.
         if (!result.StatusCodeMatched)
         {
             return false;
         }
 
-        if (result.SchemaMatched == false)
+        if (result.SchemaMatched == false && HasFailureWithCode(
+                result,
+                "RESPONSE_SCHEMA_MISMATCH",
+                "RESPONSE_NOT_JSON",
+                InvalidExpectationFormatCode))
         {
             return false;
         }
 
-        if (result.BodyContainsPassed == false)
+        if (result.BodyContainsPassed == false && HasFailureWithCode(
+                result,
+                "BODY_CONTAINS_MISSING",
+                "BODY_CONTAINS_UNRESOLVED_PLACEHOLDER",
+                InvalidExpectationFormatCode))
         {
             return false;
         }
 
-        if (result.BodyNotContainsPassed == false)
+        if (result.BodyNotContainsPassed == false && HasFailureWithCode(
+                result,
+                "BODY_NOT_CONTAINS_PRESENT",
+                InvalidExpectationFormatCode))
         {
             return false;
         }
 
         return true;
+    }
+
+    private static bool HasFailureWithCode(TestCaseValidationResult result, params string[] codes)
+    {
+        if (result?.Failures == null || codes == null || codes.Length == 0)
+        {
+            return false;
+        }
+
+        return result.Failures.Any(f => codes.Contains(f.Code, StringComparer.Ordinal));
     }
 
     private static decimal ComputeValidationScore(TestCaseValidationResult result)
@@ -251,14 +274,13 @@ public class RuleBasedValidator : IRuleBasedValidator
         ValidationProfile profile,
         TestCaseValidationResult result,
         bool hardChecksPassed,
-        decimal validationScore,
-        decimal scoreThreshold)
+        decimal validationScore)
     {
         if (profile == ValidationProfile.SrsStrict
             || result?.Failures == null
             || result.Failures.Count == 0
             || !hardChecksPassed
-            || validationScore < scoreThreshold)
+            || validationScore < ValidationScoreThresholds.SoftJsonPathDowngrade)
         {
             return false;
         }
