@@ -62,6 +62,9 @@ public class TestRunsController : ControllerBase
                 .Where(id => id != Guid.Empty)
                 .Distinct()
                 .ToList(),
+            TestCaseOverrides = request?.TestCaseOverrides?
+                .Where(x => x != null && x.TestCaseId != Guid.Empty)
+                .ToList(),
             RecordRun = request?.RecordRun ?? true,
         };
 
