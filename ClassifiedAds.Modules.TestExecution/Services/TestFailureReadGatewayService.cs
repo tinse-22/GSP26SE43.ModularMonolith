@@ -107,6 +107,11 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
                 if (result != null)
                 {
                     result.ResultsSource = "cache";
+                    var definitions = await LoadDefinitionsAsync(
+                        run.TestSuiteId,
+                        result.Cases.Select(x => x.TestCaseId).ToArray(),
+                        ct);
+                    TestRunResultsStorage.ApplyDefinitionFallbacks(result, definitions);
                     return result;
                 }
             }
@@ -125,7 +130,11 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
                     .Where(x => x.TestRunId == run.Id)
                     .OrderBy(x => x.OrderIndex));
 
-            var reconstructed = TestRunResultsStorage.ReconstructFromDatabase(run, pgResults);
+            var definitions = await LoadDefinitionsAsync(
+                run.TestSuiteId,
+                pgResults.Select(x => x.TestCaseId).ToArray(),
+                ct);
+            var reconstructed = TestRunResultsStorage.ReconstructFromDatabase(run, pgResults, definitions);
             if (reconstructed != null)
             {
                 _logger.LogInformation("Successfully reconstructed {CaseCount} test cases from PostgreSQL for RunId={RunId}", reconstructed.Cases.Count, run.Id);
@@ -139,6 +148,28 @@ public class TestFailureReadGatewayService : ITestFailureReadGatewayService
 
         // All fallbacks exhausted
         throw CreateRunResultsExpiredException();
+    }
+
+    private async Task<IReadOnlyList<ExecutionTestCaseDto>> LoadDefinitionsAsync(
+        Guid testSuiteId,
+        IReadOnlyCollection<Guid> testCaseIds,
+        CancellationToken ct)
+    {
+        if (testCaseIds == null || testCaseIds.Count == 0)
+        {
+            return Array.Empty<ExecutionTestCaseDto>();
+        }
+
+        try
+        {
+            var context = await _executionReadGatewayService.GetExecutionContextAsync(testSuiteId, testCaseIds, ct);
+            return context?.OrderedTestCases ?? Array.Empty<ExecutionTestCaseDto>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load test case definitions for failure result fallback. TestSuiteId={TestSuiteId}", testSuiteId);
+            return Array.Empty<ExecutionTestCaseDto>();
+        }
     }
 
     private static FailureExplanationDefinitionDto MapDefinition(ExecutionTestCaseDto definition)

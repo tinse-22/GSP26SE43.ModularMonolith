@@ -16,7 +16,9 @@ namespace ClassifiedAds.Modules.TestExecution.Services;
 ///         expectation-mismatch codes (<c>STATUS_CODE_MISMATCH</c> or
 ///         <c>RESPONSE_SCHEMA_MISMATCH</c>).
 ///         This handles real-world APIs that return valid data with a slightly different
-///         status or schema than the test expectation specifies.</item>
+///         status or schema than the test expectation specifies, but only when the case
+///         did not extract flow variables. Producer cases must pass before downstream
+///         consumers can use their output.</item>
 /// </list>
 ///
 /// Any other failure — transport errors, unresolved variables, pre-validation, 4xx/5xx
@@ -47,7 +49,21 @@ internal static class DependencySatisfactionPolicy
         }
 
         return dependencyResult.HttpStatusCode is >= 200 and < 300
+            && !HasMeaningfulExtractedVariables(dependencyResult.ExtractedVariables)
             && IsOnlyExpectationMismatch(dependencyResult.FailureReasons);
+    }
+
+    private static bool HasMeaningfulExtractedVariables(IReadOnlyDictionary<string, string> extractedVariables)
+    {
+        if (extractedVariables == null || extractedVariables.Count == 0)
+        {
+            return false;
+        }
+
+        return extractedVariables.Any(x =>
+            !string.IsNullOrWhiteSpace(x.Key)
+            && !x.Key.StartsWith("__resolved.", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(x.Value));
     }
 
     private static bool IsOnlyExpectationMismatch(IReadOnlyCollection<ValidationFailureModel> failures)

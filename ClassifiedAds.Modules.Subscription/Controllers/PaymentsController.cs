@@ -67,7 +67,7 @@ public class PaymentsController : ControllerBase
         return Ok(command.Result);
     }
 
-    [Authorize(Permissions.GetPlans)]
+    [AllowAnonymous]
     [HttpGet("plans")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<PlanModel>>> GetPlans(

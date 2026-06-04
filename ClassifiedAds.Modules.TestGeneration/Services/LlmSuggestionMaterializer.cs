@@ -82,29 +82,8 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             testCase.PrimaryRequirementId = n8nExpectation.PrimaryRequirementId;
         }
 
-        // Build variables from LLM suggestion
-        if (scenario.Variables != null)
-        {
-            foreach (var v in scenario.Variables)
-            {
-                if (string.IsNullOrWhiteSpace(v.VariableName))
-                {
-                    continue;
-                }
-
-                testCase.Variables.Add(new TestCaseVariable
-                {
-                    Id = Guid.NewGuid(),
-                    TestCaseId = testCaseId,
-                    VariableName = v.VariableName,
-                    ExtractFrom = ParseExtractFrom(v.ExtractFrom),
-                    JsonPath = v.JsonPath,
-                    HeaderName = v.HeaderName,
-                    Regex = v.Regex,
-                    DefaultValue = v.DefaultValue,
-                });
-            }
-        }
+        TestCaseVariableMaterializationHelper.AddExplicitVariables(testCase, scenario.Variables);
+        TestCaseVariableMaterializationHelper.AddRequestBodyProducerAliasVariables(testCase, scenario.Produces);
 
         return testCase;
     }
@@ -143,28 +122,8 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
         }
 
         var variables = DeserializeOrDefault<List<N8nTestCaseVariable>>(suggestion.SuggestedVariables);
-        if (variables != null)
-        {
-            foreach (var v in variables)
-            {
-                if (string.IsNullOrWhiteSpace(v.VariableName))
-                {
-                    continue;
-                }
-
-                testCase.Variables.Add(new TestCaseVariable
-                {
-                    Id = Guid.NewGuid(),
-                    TestCaseId = testCaseId,
-                    VariableName = v.VariableName,
-                    ExtractFrom = ParseExtractFrom(v.ExtractFrom),
-                    JsonPath = v.JsonPath,
-                    HeaderName = v.HeaderName,
-                    Regex = v.Regex,
-                    DefaultValue = v.DefaultValue,
-                });
-            }
-        }
+        TestCaseVariableMaterializationHelper.AddExplicitVariables(testCase, variables);
+        TestCaseVariableMaterializationHelper.AddRequestBodyProducerAliasVariablesFromTags(testCase);
 
         return testCase;
     }
@@ -271,23 +230,8 @@ public class LlmSuggestionMaterializer : ILlmSuggestionMaterializer
             variables = DeserializeOrDefault<List<N8nTestCaseVariable>>(suggestion.SuggestedVariables);
         }
 
-        if (variables != null)
-        {
-            foreach (var v in variables)
-            {
-                testCase.Variables.Add(new TestCaseVariable
-                {
-                    Id = Guid.NewGuid(),
-                    TestCaseId = testCaseId,
-                    VariableName = v.VariableName,
-                    ExtractFrom = ParseExtractFrom(v.ExtractFrom),
-                    JsonPath = v.JsonPath,
-                    HeaderName = v.HeaderName,
-                    Regex = v.Regex,
-                    DefaultValue = v.DefaultValue,
-                });
-            }
-        }
+        TestCaseVariableMaterializationHelper.AddExplicitVariables(testCase, variables);
+        TestCaseVariableMaterializationHelper.AddRequestBodyProducerAliasVariablesFromTags(testCase);
 
         return testCase;
     }

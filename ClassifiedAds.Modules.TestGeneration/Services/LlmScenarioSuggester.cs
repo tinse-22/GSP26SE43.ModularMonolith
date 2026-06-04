@@ -76,6 +76,10 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "      - Negative 'duplicate value' tests: use {{<fieldName>}} matching the conflicting field (e.g. {{email}} for duplicate email, {{name}} for duplicate product name) — NOT a new unique value.\n" +
         "      - Negative 'not found' tests: use \"nonexistent_{{tcUniqueId}}\" to guarantee the value does not exist.\n" +
         "      - Tests needing a prior resource ID: use {{<resource>Id}} (e.g. {{productId}}, {{orderId}}, {{userId}}).\n" +
+        "   e) PRODUCER-CONSUMER CONTRACT: Never emit a consume variable unless it is produced by an earlier scenario in the same suite, produced by explicit variables on a successful scenario, or is a runtime variable such as {{tcUniqueId}}. " +
+        "For auth-required happy paths, include or depend on a login/token success scenario that extracts authToken from the response using the contract-backed token field, for example $.token or $.accessToken. " +
+        "For successful POST/PUT/PATCH resource creation, add variables for response IDs using the semantic resource name, for example categoryId/productId/orderId from $.id or $.data.id when inferable. " +
+        "Set executionHints.produces, executionHints.consumes, and executionHints.dependsOn consistently so every non-runtime consume has a producer.\n" +
         "6. endpointId must be the EXACT UUID from input.\n" +
         "7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
         "8. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
@@ -138,10 +142,15 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "      \"executionHints\": {\n" +
         "        \"authMode\": \"none|optional|required\",\n" +
         "        \"credentialPolicy\": \"preserve|rewrite_email|rewrite_password|rewrite_both\",\n" +
-        "        \"lockedFields\": [\"request.body.email\", \"request.body.password\"]\n" +
+        "        \"lockedFields\": [\"request.body.email\", \"request.body.password\"],\n" +
+        "        \"produces\": [\"authToken\", \"categoryId\"],\n" +
+        "        \"consumes\": [\"authToken\", \"categoryId\"],\n" +
+        "        \"dependsOn\": [\"producer-scenario-key\"],\n" +
+        "        \"flowRequired\": true,\n" +
+        "        \"abortIfDependencyFailed\": true\n" +
         "      },\n" +
         "      \"coveredRequirementCodes\": [\"REQ-001\"],\n" +
-        "      \"variables\": []\n" +
+        "      \"variables\": [{\"variableName\":\"authToken\",\"jsonPath\":\"$.token\",\"extractFrom\":\"ResponseBody\"}]\n" +
         "    }\n" +
         "  ],\n" +
         "  \"model\": \"<model name>\",\n" +

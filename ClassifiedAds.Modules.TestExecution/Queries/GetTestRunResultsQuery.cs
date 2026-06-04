@@ -1,4 +1,5 @@
 using ClassifiedAds.Application;
+using ClassifiedAds.Contracts.TestGeneration.DTOs;
 using ClassifiedAds.Contracts.TestGeneration.Services;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Repositories;
@@ -8,6 +9,7 @@ using ClassifiedAds.Modules.TestExecution.Services;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -75,6 +77,11 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
             return CreateUnavailableResult(run);
         }
 
+        var definitions = await LoadDefinitionsAsync(
+            run.TestSuiteId,
+            result.Cases.Select(x => x.TestCaseId).ToArray(),
+            cancellationToken);
+        TestRunResultsStorage.ApplyDefinitionFallbacks(result, definitions);
         result.Run = TestRunModel.FromEntity(run);
         return result;
     }
@@ -113,12 +120,41 @@ public class GetTestRunResultsQueryHandler : IQueryHandler<GetTestRunResultsQuer
                     .Where(x => x.TestRunId == run.Id)
                     .OrderBy(x => x.OrderIndex));
 
-            return TestRunResultsStorage.ReconstructFromDatabase(run, persistedResults);
+            var definitions = await LoadDefinitionsAsync(
+                run.TestSuiteId,
+                persistedResults.Select(x => x.TestCaseId).ToArray(),
+                cancellationToken);
+            return TestRunResultsStorage.ReconstructFromDatabase(run, persistedResults, definitions);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read test run results from database fallback. RunId={RunId}", run.Id);
             return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<ExecutionTestCaseDto>> LoadDefinitionsAsync(
+        Guid testSuiteId,
+        IReadOnlyCollection<Guid> testCaseIds,
+        CancellationToken cancellationToken)
+    {
+        if (testCaseIds == null || testCaseIds.Count == 0)
+        {
+            return Array.Empty<ExecutionTestCaseDto>();
+        }
+
+        try
+        {
+            var context = await _gatewayService.GetExecutionContextAsync(
+                testSuiteId,
+                testCaseIds,
+                cancellationToken);
+            return context?.OrderedTestCases ?? Array.Empty<ExecutionTestCaseDto>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load test case definitions for result fallback. TestSuiteId={TestSuiteId}", testSuiteId);
+            return Array.Empty<ExecutionTestCaseDto>();
         }
     }
 

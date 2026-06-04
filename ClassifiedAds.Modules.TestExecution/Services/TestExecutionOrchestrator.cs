@@ -457,27 +457,12 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 "Failed",
                 preValidationSw.ElapsedMilliseconds);
 
-            return new TestCaseExecutionResult
-            {
-                TestCaseId = testCase.TestCaseId,
-                EndpointId = testCase.EndpointId,
-                Name = testCase.Name,
-                Description = testCase.Description,
-                TestType = testCase.TestType,
-                OrderIndex = testCase.OrderIndex,
-                Status = "Failed",
-                ExecutionAttempt = attempt,
-                DependencyIds = testCase.DependencyIds,
-                FailureReasons = preValidation.ToFailureReasons(),
-                Warnings = preValidation.Warnings,
-                ValidationScore = 0m,
-                ValidationScoreThreshold = 0.80m,
-                HardChecksPassed = false,
-                ExpectationSource = testCase.Expectation?.ExpectationSource,
-                RequirementCode = testCase.Expectation?.RequirementCode,
-                PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
-                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
-            };
+            return CreatePreExecutionFailureResult(
+                testCase,
+                context.ResolvedEnv,
+                attempt,
+                preValidation.ToFailureReasons(),
+                preValidation.Warnings);
         }
 
         ResolvedTestCaseRequest resolvedRequest;
@@ -498,28 +483,15 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 "Failed",
                 resolveSw.ElapsedMilliseconds);
 
-            return new TestCaseExecutionResult
-            {
-                TestCaseId = testCase.TestCaseId,
-                EndpointId = testCase.EndpointId,
-                Name = testCase.Name,
-                Description = testCase.Description,
-                OrderIndex = testCase.OrderIndex,
-                Status = "Failed",
-                ExecutionAttempt = attempt,
-                DependencyIds = testCase.DependencyIds,
-                FailureReasons = new List<ValidationFailureModel>
+            return CreatePreExecutionFailureResult(
+                testCase,
+                context.ResolvedEnv,
+                attempt,
+                new List<ValidationFailureModel>
                 {
                     new ValidationFailureModel { Code = "UNRESOLVED_VARIABLE", Message = ex.Message },
                 },
-                ValidationScore = 0m,
-                ValidationScoreThreshold = 0.80m,
-                HardChecksPassed = false,
-                ExpectationSource = testCase.Expectation?.ExpectationSource,
-                RequirementCode = testCase.Expectation?.RequirementCode,
-                PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
-                ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
-            };
+                warnings: null);
         }
 
         // Write tcUniqueId back to VariableBag so ResolveExpectedValue can resolve
@@ -573,12 +545,14 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             context.VariableBag[kvp.Key] = kvp.Value;
             context.VariableBag[$"case.{testCase.TestCaseId:N}.{kvp.Key}"] = kvp.Value;
         }
+        PromoteAuthTokenAliases(context.VariableBag);
 
         PromoteAuthTokenAliases(extracted);
         foreach (var kvp in extracted)
         {
             context.VariableBag[kvp.Key] = kvp.Value;
         }
+        PromoteAuthTokenAliases(context.VariableBag);
 
         if (resolvedRequest.VariableResolutionTrace != null
             && resolvedRequest.VariableResolutionTrace.Count > 0)
@@ -1635,8 +1609,215 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         return first + string.Concat(rest);
     }
 
-    private static void PromoteAuthTokenAliases(Dictionary<string, string> extracted)
+    private static void PromoteAuthTokenAliases(IDictionary<string, string> extracted)
     {
+        if (extracted == null || extracted.Count == 0)
+        {
+            return;
+        }
+
+        var tokenValue = ResolveExistingTokenValue(extracted);
+        if (string.IsNullOrWhiteSpace(tokenValue))
+        {
+            return;
+        }
+
+        foreach (var alias in AuthTokenAliasNames)
+        {
+            if (!extracted.TryGetValue(alias, out var existing) || string.IsNullOrWhiteSpace(existing))
+            {
+                extracted[alias] = tokenValue;
+            }
+        }
+    }
+
+    private static readonly string[] AuthTokenAliasNames =
+    {
+        "authToken",
+        "accessToken",
+        "access_token",
+        "token",
+        "jwt",
+        "bearerToken",
+        "bearer_token",
+        "idToken",
+        "id_token",
+        "sessionToken",
+        "session_token",
+    };
+
+    private static string ResolveExistingTokenValue(IDictionary<string, string> values)
+    {
+        foreach (var alias in AuthTokenAliasNames)
+        {
+            if (values.TryGetValue(alias, out var direct))
+            {
+                var normalized = NormalizeTokenValue(direct);
+                if (IsLikelyToken(normalized))
+                {
+                    return normalized;
+                }
+            }
+        }
+
+        foreach (var kvp in values)
+        {
+            if (!IsTokenVariableName(kvp.Key))
+            {
+                continue;
+            }
+
+            var normalized = NormalizeTokenValue(kvp.Value);
+            if (IsLikelyToken(normalized))
+            {
+                return normalized;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsTokenVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var lastSegment = value.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? value;
+        var normalized = new string(lastSegment.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        return normalized.EndsWith("token", StringComparison.Ordinal)
+            || normalized is "jwt" or "bearer" or "authorization";
+    }
+
+    private static TestCaseExecutionResult CreatePreExecutionFailureResult(
+        ExecutionTestCaseDto testCase,
+        ResolvedExecutionEnvironment environment,
+        int attempt,
+        List<ValidationFailureModel> failures,
+        List<ValidationWarningModel> warnings)
+    {
+        var request = testCase?.Request;
+        var method = string.IsNullOrWhiteSpace(request?.HttpMethod)
+            ? "GET"
+            : request.HttpMethod.Trim().ToUpperInvariant();
+        var url = BuildDisplayUrl(request?.Url, environment?.BaseUrl);
+        var timeout = request?.Timeout > 0
+            ? Math.Clamp(request.Timeout, 1000, 60000)
+            : 30000;
+
+        return new TestCaseExecutionResult
+        {
+            TestCaseId = testCase.TestCaseId,
+            EndpointId = testCase.EndpointId,
+            Name = testCase.Name,
+            Description = testCase.Description,
+            TestType = testCase.TestType,
+            OrderIndex = testCase.OrderIndex,
+            Status = "Failed",
+            ExecutionAttempt = attempt,
+            ResolvedUrl = url,
+            HttpMethod = method,
+            BodyType = request?.BodyType,
+            RequestBody = request?.Body,
+            QueryParams = DeserializeRequestDictionary(request?.QueryParams),
+            TimeoutMs = timeout,
+            ExpectedStatus = testCase.Expectation?.ExpectedStatus,
+            ExpectedBodyContains = testCase.Expectation?.BodyContains,
+            ExpectedBodyNotContains = testCase.Expectation?.BodyNotContains,
+            ExpectedHeaderChecks = testCase.Expectation?.HeaderChecks,
+            ExpectedJsonPathChecks = testCase.Expectation?.JsonPathChecks,
+            ExpectedMaxResponseTime = testCase.Expectation?.MaxResponseTime,
+            ExpectationSource = testCase.Expectation?.ExpectationSource,
+            RequirementCode = testCase.Expectation?.RequirementCode,
+            PrimaryRequirementId = testCase.Expectation?.PrimaryRequirementId,
+            ExpectedProvenance = testCase.Expectation?.ExpectedProvenance,
+            RequestHeaders = MergeRequestHeaders(environment, request?.Headers),
+            FailureReasons = failures ?? new List<ValidationFailureModel>(),
+            Warnings = warnings ?? new List<ValidationWarningModel>(),
+            DependencyIds = testCase.DependencyIds,
+            ValidationScore = 0m,
+            ValidationScoreThreshold = 0.80m,
+            HardChecksPassed = false,
+        };
+    }
+
+    private static string BuildDisplayUrl(string requestUrl, string baseUrl)
+    {
+        var url = (requestUrl ?? string.Empty).Trim();
+        var baseValue = (baseUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return baseValue;
+        }
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out _))
+        {
+            return url;
+        }
+
+        if (string.IsNullOrWhiteSpace(baseValue))
+        {
+            return url;
+        }
+
+        if (!Uri.TryCreate(baseValue, UriKind.Absolute, out var baseUri))
+        {
+            return $"{baseValue.TrimEnd('/')}/{url.TrimStart('/')}";
+        }
+
+        return new Uri(baseUri, url.TrimStart('/')).ToString();
+    }
+
+    private static Dictionary<string, string> MergeRequestHeaders(
+        ResolvedExecutionEnvironment environment,
+        string requestHeadersJson)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (environment?.DefaultHeaders != null)
+        {
+            foreach (var kvp in environment.DefaultHeaders)
+            {
+                headers[kvp.Key] = kvp.Value;
+            }
+        }
+
+        foreach (var kvp in DeserializeRequestDictionary(requestHeadersJson))
+        {
+            headers[kvp.Key] = kvp.Value;
+        }
+
+        return headers;
+    }
+
+    private static Dictionary<string, string> DeserializeRequestDictionary(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+            if (parsed == null)
+            {
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return parsed
+                .Where(kvp => !string.IsNullOrWhiteSpace(kvp.Key))
+                .ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => kvp.Value.ValueKind == JsonValueKind.String
+                        ? kvp.Value.GetString()
+                        : kvp.Value.GetRawText(),
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private async Task<(ResolvedTestCaseRequest Request, HttpTestResponse Response)> ExecuteWithDuplicateConflictMitigationAsync(
@@ -2039,6 +2220,11 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             return alias;
         }
 
+        if (TryFindVariableKeyByNormalizedAlias(alias, variableBag, producerCaseId, out var normalizedAliasKey))
+        {
+            return normalizedAliasKey;
+        }
+
         var baseName = alias;
         var knownPrefixes = new[] { "registered", "created", "new", "latest", "saved" };
         foreach (var prefix in knownPrefixes)
@@ -2062,6 +2248,11 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         if (variableBag.ContainsKey(baseName))
         {
             return baseName;
+        }
+
+        if (TryFindVariableKeyByNormalizedAlias(baseName, variableBag, producerCaseId, out var normalizedBaseKey))
+        {
+            return normalizedBaseKey;
         }
 
         var suffixCandidates = new[]
@@ -2109,6 +2300,17 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
                 _ => null,
             };
 
+            // Role/scope-specific token aliases must not fall back to generic auth tokens.
+            // Examples: adminAuthToken, moderatorToken, customerSessionToken.
+            // If the declared producer did not actually create that exact scoped token,
+            // the downstream case should fail as unresolved instead of silently using a
+            // user/global token and producing misleading 401/403 results.
+            if (string.Equals(suffix, "Token", StringComparison.OrdinalIgnoreCase)
+                && IsRoleSpecificTokenAlias(alias))
+            {
+                return null;
+            }
+
             if (!string.IsNullOrWhiteSpace(canonical)
                 && producerCaseId != Guid.Empty
                 && variableBag.ContainsKey($"case.{producerCaseId:N}.{canonical}"))
@@ -2134,6 +2336,100 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         }
 
         return null;
+    }
+
+    private static bool IsRoleSpecificTokenAlias(string value)
+    {
+        var normalized = NormalizeVariableLookupKey(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        var genericTokenAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "token",
+            "authtoken",
+            "accesstoken",
+            "bearertoken",
+            "jwttoken",
+            "jwt",
+            "idtoken",
+            "sessiontoken",
+            "refreshtoken",
+        };
+
+        return normalized.EndsWith("token", StringComparison.Ordinal)
+            && !genericTokenAliases.Contains(normalized);
+    }
+
+    private static bool TryFindVariableKeyByNormalizedAlias(
+        string alias,
+        IDictionary<string, string> variableBag,
+        Guid producerCaseId,
+        out string key)
+    {
+        key = null;
+        if (variableBag == null || variableBag.Count == 0)
+        {
+            return false;
+        }
+
+        var normalizedAlias = NormalizeVariableLookupKey(alias);
+        if (string.IsNullOrWhiteSpace(normalizedAlias))
+        {
+            return false;
+        }
+
+        if (producerCaseId != Guid.Empty)
+        {
+            var scopedPrefix = $"case.{producerCaseId:N}.";
+            foreach (var candidate in variableBag.Keys)
+            {
+                if (!candidate.StartsWith(scopedPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var scopedName = candidate[scopedPrefix.Length..];
+                if (NormalizeVariableLookupKey(scopedName) == normalizedAlias)
+                {
+                    key = candidate;
+                    return true;
+                }
+            }
+        }
+
+        foreach (var candidate in variableBag.Keys)
+        {
+            if (candidate.StartsWith("case.", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (NormalizeVariableLookupKey(candidate) == normalizedAlias)
+            {
+                key = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeVariableLookupKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var chars = value
+            .Trim()
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray();
+        return chars.Length == 0 ? null : new string(chars);
     }
 
     /// <summary>

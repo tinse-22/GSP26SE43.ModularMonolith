@@ -47,17 +47,25 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
             };
         }
 
+        var httpMethod = ResolveHttpMethod(source.HttpMethod, orderItem?.HttpMethod);
+        var bodyType = ParseBodyType(source.BodyType);
+        var body = NormalizeBody(httpMethod, bodyType, source.Body);
+        if (bodyType == BodyType.None && body != null && ShouldInferJsonBody(httpMethod, body))
+        {
+            bodyType = BodyType.JSON;
+        }
+
         return new TestCaseRequest
         {
             Id = Guid.NewGuid(),
             TestCaseId = testCaseId,
-            HttpMethod = ResolveHttpMethod(source.HttpMethod, orderItem?.HttpMethod),
+            HttpMethod = httpMethod,
             Url = ResolveUrl(source.Url, orderItem?.Path),
             Headers = SerializeDict(source.Headers),
             PathParams = SerializeDict(source.PathParams),
             QueryParams = SerializeDict(source.QueryParams),
-            BodyType = ParseBodyType(source.BodyType),
-            Body = source.Body,
+            BodyType = bodyType,
+            Body = body,
             Timeout = source.Timeout ?? 30000,
         };
     }
@@ -157,6 +165,35 @@ public class TestCaseRequestBuilder : ITestCaseRequestBuilder
             "BINARY" => BodyType.Binary,
             _ => BodyType.None,
         };
+    }
+
+    private static string NormalizeBody(Entities.HttpMethod method, BodyType bodyType, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        if (bodyType != BodyType.None)
+        {
+            return body;
+        }
+
+        return ShouldInferJsonBody(method, body)
+            ? body
+            : null;
+    }
+
+    private static bool ShouldInferJsonBody(Entities.HttpMethod method, string body)
+        => method is Entities.HttpMethod.POST or Entities.HttpMethod.PUT or Entities.HttpMethod.PATCH
+            && LooksLikeJsonBody(body);
+
+    private static bool LooksLikeJsonBody(string body)
+    {
+        var trimmed = body?.Trim();
+        return !string.IsNullOrWhiteSpace(trimmed)
+            && ((trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+                || (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal)));
     }
 
     private static string SerializeDict(Dictionary<string, string> dict)
