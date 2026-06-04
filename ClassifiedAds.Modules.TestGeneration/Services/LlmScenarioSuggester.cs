@@ -941,27 +941,15 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             .ToDictionary(g => g.Key, g => g.First())
             ?? new Dictionary<Guid, ApiOrderItemModel>();
 
-        var indexedScenarios = scenarios.Select((scenario, index) => new { scenario, index }).ToList();
+        var indexedScenarios = scenarios.Select((scenario, index) => (scenario, index)).ToList();
         var registerProducer = indexedScenarios
             .Where(x => IsSuccessfulHappyPath(x.scenario) && IsRegisterLikeScenario(x.scenario, orderItemMap, metadataMap))
             .OrderBy(x => x.index)
             .Select(x => x.scenario)
             .FirstOrDefault();
-        var authProducer = indexedScenarios
-            .Where(x => IsSuccessfulHappyPath(x.scenario) && IsLoginLikeScenario(x.scenario, orderItemMap, metadataMap))
-            .OrderBy(x => x.index)
-            .Select(x => x.scenario)
-            .FirstOrDefault();
-
         if (registerProducer != null)
         {
             EnsureScenarioProduces(registerProducer, "email", "password");
-        }
-
-        if (authProducer != null)
-        {
-            EnsureScenarioProduces(authProducer, "authToken");
-            EnsureAuthTokenVariable(authProducer);
         }
 
         foreach (var scenario in scenarios)
@@ -969,9 +957,20 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             NormalizeLoginCredentials(scenario, registerProducer, orderItemMap, metadataMap);
         }
 
+        var authProducer = SelectCanonicalAuthProducer(indexedScenarios, registerProducer, orderItemMap, metadataMap);
+        if (authProducer != null)
+        {
+            EnsureScenarioProduces(authProducer, "authToken");
+            EnsureAuthTokenVariable(authProducer);
+        }
+
+        var authProducerKeys = BuildDependencyKeySet(indexedScenarios
+            .Where(x => IsSuccessfulHappyPath(x.scenario) && IsLoginLikeScenario(x.scenario, orderItemMap, metadataMap))
+            .Select(x => x.scenario));
+
         foreach (var scenario in scenarios)
         {
-            NormalizeRequiredAuth(scenario, authProducer);
+            NormalizeRequiredAuth(scenario, authProducer, authProducerKeys);
         }
 
         foreach (var scenario in scenarios)
@@ -1039,27 +1038,38 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             }
 
             var changed = false;
-            if (ShouldRewriteCredential(body, "email"))
+            var rewriteEmail = ShouldRewriteCredential(scenario, body, "email");
+            var rewritePassword = ShouldRewriteCredential(scenario, body, "password");
+            if (rewriteEmail && ShouldRewriteCredentialPair(scenario, body, "password"))
+            {
+                rewritePassword = true;
+            }
+
+            if (rewriteEmail)
             {
                 body["email"] = "{{email}}";
                 changed = true;
             }
 
-            if (ShouldRewriteCredential(body, "password"))
+            if (rewritePassword)
             {
                 body["password"] = "{{password}}";
                 changed = true;
             }
 
-            if (!changed)
+            if (changed)
+            {
+                scenario.SuggestedBody = body.ToJsonString(JsonOpts);
+                scenario.SuggestedBodyType = string.IsNullOrWhiteSpace(scenario.SuggestedBodyType)
+                    ? "JSON"
+                    : scenario.SuggestedBodyType;
+            }
+
+            if (!changed && !UsesReusableCredential(body, "email") && !UsesReusableCredential(body, "password"))
             {
                 return;
             }
 
-            scenario.SuggestedBody = body.ToJsonString(JsonOpts);
-            scenario.SuggestedBodyType = string.IsNullOrWhiteSpace(scenario.SuggestedBodyType)
-                ? "JSON"
-                : scenario.SuggestedBodyType;
             AddScenarioDependency(scenario, registerProducer);
             AddUnique(scenario.Consumes, "email", "password");
             EnsureScenarioProduces(registerProducer, "email", "password");
@@ -1070,22 +1080,49 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
     }
 
-    private static bool ShouldRewriteCredential(JsonObject body, string propertyName)
+    private static bool ShouldRewriteCredential(
+        LlmSuggestedScenario scenario,
+        JsonObject body,
+        string propertyName)
     {
-        if (!body.TryGetPropertyValue(propertyName, out var value) ||
-            value is not JsonValue jsonValue ||
-            !jsonValue.TryGetValue<string>(out var raw))
+        if (IsCredentialFieldLocked(scenario, propertyName) ||
+            !TryGetStringProperty(body, propertyName, out var raw) ||
+            string.IsNullOrWhiteSpace(raw) ||
+            IsReusableCredentialPlaceholder(raw, propertyName))
         {
             return false;
         }
 
-        return !string.IsNullOrWhiteSpace(raw) &&
-               !PlaceholderValueRegex.IsMatch(raw);
+        var policy = NormalizeCredentialPolicy(scenario?.CredentialPolicy);
+        if (ShouldPolicyRewrite(policy, propertyName))
+        {
+            return true;
+        }
+
+        if (string.Equals(policy, "preserve", StringComparison.OrdinalIgnoreCase) &&
+            !LooksSyntheticCredential(raw, propertyName))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ShouldRewriteCredentialPair(
+        LlmSuggestedScenario scenario,
+        JsonObject body,
+        string propertyName)
+    {
+        return !IsCredentialFieldLocked(scenario, propertyName) &&
+               TryGetStringProperty(body, propertyName, out var raw) &&
+               !string.IsNullOrWhiteSpace(raw) &&
+               !IsReusableCredentialPlaceholder(raw, propertyName);
     }
 
     private static void NormalizeRequiredAuth(
         LlmSuggestedScenario scenario,
-        LlmSuggestedScenario authProducer)
+        LlmSuggestedScenario authProducer,
+        IReadOnlySet<string> authProducerKeys)
     {
         if (scenario == null ||
             !string.Equals(GetAuthMode(scenario), "required", StringComparison.OrdinalIgnoreCase) ||
@@ -1093,6 +1130,8 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             return;
         }
+
+        RemoveNonCanonicalDependencies(scenario, authProducerKeys, GetScenarioDependencyKey(authProducer));
 
         scenario.SuggestedHeaders ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var authVariableName = "authToken";
@@ -1112,6 +1151,271 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         {
             AddScenarioDependency(scenario, authProducer);
         }
+    }
+
+    private static LlmSuggestedScenario SelectCanonicalAuthProducer(
+        IReadOnlyList<(LlmSuggestedScenario scenario, int index)> indexedScenarios,
+        LlmSuggestedScenario registerProducer,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        return indexedScenarios
+            .Where(x => IsSuccessfulHappyPath(x.scenario) && IsLoginLikeScenario(x.scenario, orderItemMap, metadataMap))
+            .OrderByDescending(x => ScoreAuthProducerCandidate(x.scenario, registerProducer))
+            .ThenBy(x => x.index)
+            .Select(x => x.scenario)
+            .FirstOrDefault();
+    }
+
+    private static int ScoreAuthProducerCandidate(
+        LlmSuggestedScenario scenario,
+        LlmSuggestedScenario registerProducer)
+    {
+        if (scenario == null)
+        {
+            return int.MinValue;
+        }
+
+        var score = 0;
+        if (UsesReusableLoginCredentials(scenario))
+        {
+            score += 80;
+        }
+
+        if (DependsOnScenario(scenario, registerProducer))
+        {
+            score += 20;
+        }
+
+        if (scenario.Consumes?.Any(IsEmailLikeVariableName) == true)
+        {
+            score += 8;
+        }
+
+        if (scenario.Consumes?.Any(IsPasswordLikeVariableName) == true)
+        {
+            score += 8;
+        }
+
+        if (scenario.Produces?.Any(IsTokenLikeVariableName) == true)
+        {
+            score += 10;
+        }
+
+        if (scenario.Variables?.Any(v => IsTokenLikeVariableName(v?.VariableName)) == true)
+        {
+            score += 10;
+        }
+
+        return score;
+    }
+
+    private static bool TryGetStringProperty(JsonObject body, string propertyName, out string value)
+    {
+        if (body != null &&
+            !string.IsNullOrWhiteSpace(propertyName) &&
+            body.TryGetPropertyValue(propertyName, out var node) &&
+            node is JsonValue jsonValue &&
+            jsonValue.TryGetValue<string>(out var raw))
+        {
+            value = raw;
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static bool UsesReusableLoginCredentials(LlmSuggestedScenario scenario)
+    {
+        if (string.IsNullOrWhiteSpace(scenario?.SuggestedBody))
+        {
+            return false;
+        }
+
+        try
+        {
+            var body = JsonNode.Parse(scenario.SuggestedBody) as JsonObject;
+            return UsesReusableCredential(body, "email") &&
+                   UsesReusableCredential(body, "password");
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool UsesReusableCredential(JsonObject body, string propertyName)
+    {
+        return TryGetStringProperty(body, propertyName, out var raw) &&
+               IsReusableCredentialPlaceholder(raw, propertyName);
+    }
+
+    private static bool IsReusableCredentialPlaceholder(string value, string propertyName)
+    {
+        return TryGetExactPlaceholderName(value, out var name) &&
+               (string.Equals(propertyName, "email", StringComparison.OrdinalIgnoreCase)
+                   ? IsEmailLikeVariableName(name)
+                   : IsPasswordLikeVariableName(name));
+    }
+
+    private static bool TryGetExactPlaceholderName(string value, out string name)
+    {
+        var trimmed = value?.Trim();
+        var match = PlaceholderValueRegex.Match(trimmed ?? string.Empty);
+        if (match.Success && string.Equals(match.Value, trimmed, StringComparison.Ordinal))
+        {
+            name = match.Groups["name"].Value;
+            return !string.IsNullOrWhiteSpace(name);
+        }
+
+        name = null;
+        return false;
+    }
+
+    private static bool ShouldPolicyRewrite(string policy, string propertyName)
+    {
+        return string.Equals(policy, "rewrite_both", StringComparison.OrdinalIgnoreCase) ||
+               (string.Equals(policy, "rewrite_email", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(propertyName, "email", StringComparison.OrdinalIgnoreCase)) ||
+               (string.Equals(policy, "rewrite_password", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(propertyName, "password", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool LooksSyntheticCredential(string value, string propertyName)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               PlaceholderValueRegex.IsMatch(value) &&
+               !IsReusableCredentialPlaceholder(value, propertyName);
+    }
+
+    private static bool IsCredentialFieldLocked(LlmSuggestedScenario scenario, string propertyName)
+    {
+        if (scenario?.LockedFields == null || string.IsNullOrWhiteSpace(propertyName))
+        {
+            return false;
+        }
+
+        return scenario.LockedFields.Any(field =>
+            string.Equals(field?.Trim(), propertyName, StringComparison.OrdinalIgnoreCase) ||
+            field?.Trim().EndsWith("." + propertyName, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    private static bool DependsOnScenario(LlmSuggestedScenario scenario, LlmSuggestedScenario dependency)
+    {
+        var dependencyKey = NormalizeDependencyKey(GetScenarioDependencyKey(dependency));
+        if (string.IsNullOrWhiteSpace(dependencyKey) || scenario?.DependsOn == null)
+        {
+            return false;
+        }
+
+        return scenario.DependsOn
+            .Select(NormalizeDependencyKey)
+            .Any(x => string.Equals(x, dependencyKey, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlySet<string> BuildDependencyKeySet(IEnumerable<LlmSuggestedScenario> scenarios)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (scenarios == null)
+        {
+            return keys;
+        }
+
+        foreach (var scenario in scenarios)
+        {
+            var key = NormalizeDependencyKey(GetScenarioDependencyKey(scenario));
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                keys.Add(key);
+            }
+        }
+
+        return keys;
+    }
+
+    private static void RemoveNonCanonicalDependencies(
+        LlmSuggestedScenario scenario,
+        IReadOnlySet<string> dependencyKeys,
+        string canonicalKey)
+    {
+        if (scenario == null || dependencyKeys == null || dependencyKeys.Count == 0)
+        {
+            return;
+        }
+
+        var normalizedCanonicalKey = NormalizeDependencyKey(canonicalKey);
+        if (string.IsNullOrWhiteSpace(normalizedCanonicalKey))
+        {
+            return;
+        }
+
+        if (scenario.DependsOn != null)
+        {
+            scenario.DependsOn = scenario.DependsOn
+                .Where(dep =>
+                {
+                    var normalized = NormalizeDependencyKey(dep);
+                    return string.IsNullOrWhiteSpace(normalized) ||
+                           !dependencyKeys.Contains(normalized) ||
+                           string.Equals(normalized, normalizedCanonicalKey, StringComparison.OrdinalIgnoreCase);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        if (scenario.Tags != null)
+        {
+            scenario.Tags = scenario.Tags
+                .Where(tag =>
+                {
+                    const string prefix = "flow-depends-on:";
+                    if (string.IsNullOrWhiteSpace(tag) ||
+                        !tag.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+
+                    var normalized = NormalizeDependencyKey(tag.Trim()[prefix.Length..]);
+                    return string.IsNullOrWhiteSpace(normalized) ||
+                           !dependencyKeys.Contains(normalized) ||
+                           string.Equals(normalized, normalizedCanonicalKey, StringComparison.OrdinalIgnoreCase);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
+
+    private static string NormalizeDependencyKey(string key)
+        => NormalizeScenarioKeyFromName(key);
+
+    private static bool IsEmailLikeVariableName(string value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           value.Contains("email", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPasswordLikeVariableName(string value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           value.Contains("password", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTokenLikeVariableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(".", string.Empty)
+            .ToLowerInvariant();
+
+        return normalized.Contains("token", StringComparison.Ordinal)
+            || normalized.Contains("jwt", StringComparison.Ordinal)
+            || normalized.Contains("bearer", StringComparison.Ordinal)
+            || normalized.Contains("apikey", StringComparison.Ordinal)
+            || normalized.Contains("authorization", StringComparison.Ordinal)
+            || normalized.Contains("auth", StringComparison.Ordinal);
     }
 
     private static bool IsExplicitNegativeAuthCase(LlmSuggestedScenario scenario)
