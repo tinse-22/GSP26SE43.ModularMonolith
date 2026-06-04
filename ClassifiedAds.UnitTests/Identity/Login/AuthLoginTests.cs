@@ -181,7 +181,7 @@ public class AuthLoginTests : IDisposable
             .ReturnsAsync(2);
         _signInManagerMock
             .Setup(x => x.CheckPasswordSignInAsync(user, model.Password, true))
-            .ReturnsAsync(SignInResult.Failed);
+            .ReturnsAsync(Microsoft.AspNetCore.Identity.SignInResult.Failed);
 
         var result = await _controller.Login(model);
 
@@ -211,7 +211,7 @@ public class AuthLoginTests : IDisposable
             .ReturnsAsync(roles);
         _signInManagerMock
             .Setup(x => x.CheckPasswordSignInAsync(user, model.Password, true))
-            .ReturnsAsync(SignInResult.Success);
+            .ReturnsAsync(Microsoft.AspNetCore.Identity.SignInResult.Success);
         _jwtTokenServiceMock
             .Setup(x => x.GenerateTokensAsync(user, It.Is<IList<string>>(r => r.Count == 1 && r[0] == "User")))
             .ReturnsAsync(("access-token", "refresh-token", 3600));

@@ -1518,7 +1518,7 @@ public class LlmScenarioSuggesterTests
                     Request = new N8nTestCaseRequest
                     {
                         HttpMethod = "POST",
-                        Url = "/api/auth/register",
+                        Url = "/api/auth/login",
                     },
                     Expectation = new N8nTestCaseExpectation
                     {
@@ -1534,6 +1534,203 @@ public class LlmScenarioSuggesterTests
         var scenario = result.Scenarios.Should().ContainSingle().Subject;
         scenario.PrimaryRequirementId.Should().Be(requirementId);
         scenario.CoveredRequirementIds.Should().Contain(requirementId);
+    }
+
+    [Fact]
+    public void ParseRefinementResponse_Should_RemapEndpoint_WhenRouteMatchesAnotherApprovedEndpoint()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+        var context = CreateAuthFlowContext(registerEndpointId, loginEndpointId, Guid.NewGuid());
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = loginEndpointId,
+                    ScenarioName = "Register happy path",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/auth/register",
+                        BodyType = "JSON",
+                        Body = """{"email":"{{tcUniqueId}}@example.com","password":"P@ssw0rd123"}""",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 201 },
+                    },
+                },
+            },
+        };
+
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        var scenario = result.Scenarios.Should().ContainSingle().Subject;
+        scenario.EndpointId.Should().Be(registerEndpointId);
+        scenario.SuggestedBody.Should().Contain("{{tcUniqueId}}@example.com");
+        scenario.SuggestedBody.Should().Contain("P@ssw0rd123");
+    }
+
+    [Fact]
+    public void ParseRefinementResponse_Should_DropScenario_WhenRouteCannotBeReconciled()
+    {
+        var context = CreateDefaultContext();
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = EndpointId1,
+                    ScenarioName = "Unknown route",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/unknown",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 200 },
+                    },
+                },
+            },
+        };
+
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        result.Scenarios.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseRefinementResponse_Should_NormalizeAuthAndLoginCredentials_ForSuccessfulFlow()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+        var productEndpointId = Guid.NewGuid();
+        var context = CreateAuthFlowContext(registerEndpointId, loginEndpointId, productEndpointId);
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = registerEndpointId,
+                    ScenarioName = "Register user",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/auth/register",
+                        BodyType = "JSON",
+                        Body = """{"email":"{{tcUniqueId}}@example.com","password":"P@ssw0rd123"}""",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 201 },
+                    },
+                },
+                new()
+                {
+                    EndpointId = loginEndpointId,
+                    ScenarioName = "Login user",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/auth/login",
+                        BodyType = "JSON",
+                        Body = """{"email":"user@example.com","password":"password123"}""",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 200 },
+                    },
+                },
+                new()
+                {
+                    EndpointId = productEndpointId,
+                    ScenarioName = "Create product",
+                    TestType = "HappyPath",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/products",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 201 },
+                    },
+                    ExecutionHints = new N8nExecutionHints
+                    {
+                        AuthMode = "required",
+                    },
+                },
+            },
+        };
+
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        var register = result.Scenarios.Single(x => x.EndpointId == registerEndpointId);
+        var login = result.Scenarios.Single(x => x.EndpointId == loginEndpointId);
+        var product = result.Scenarios.Single(x => x.EndpointId == productEndpointId);
+
+        register.Produces.Should().Contain(new[] { "email", "password" });
+        login.SuggestedBody.Should().Contain("{{email}}");
+        login.SuggestedBody.Should().Contain("{{password}}");
+        login.DependsOn.Should().Contain("register-user");
+        login.Consumes.Should().Contain(new[] { "email", "password" });
+        login.Produces.Should().Contain("authToken");
+        login.Variables.Should().Contain(x => x.VariableName == "authToken");
+
+        product.SuggestedHeaders.Should().ContainKey("Authorization")
+            .WhoseValue.Should().Be("Bearer {{authToken}}");
+        product.Consumes.Should().Contain("authToken");
+        product.DependsOn.Should().Contain("login-user");
+    }
+
+    [Fact]
+    public void ParseRefinementResponse_Should_NotInjectToken_ForNegativeMissingAuthScenario()
+    {
+        var registerEndpointId = Guid.NewGuid();
+        var loginEndpointId = Guid.NewGuid();
+        var productEndpointId = Guid.NewGuid();
+        var context = CreateAuthFlowContext(registerEndpointId, loginEndpointId, productEndpointId);
+        var response = new N8nBoundaryNegativeResponse
+        {
+            Scenarios = new List<N8nSuggestedScenario>
+            {
+                new()
+                {
+                    EndpointId = productEndpointId,
+                    ScenarioName = "Missing auth token should fail",
+                    TestType = "Negative",
+                    Request = new N8nTestCaseRequest
+                    {
+                        HttpMethod = "POST",
+                        Url = "/api/products",
+                    },
+                    Expectation = new N8nTestCaseExpectation
+                    {
+                        ExpectedStatus = new List<int> { 401 },
+                    },
+                    ExecutionHints = new N8nExecutionHints
+                    {
+                        AuthMode = "required",
+                    },
+                },
+            },
+        };
+
+        var result = _sut.ParseRefinementResponse(context, response);
+
+        var scenario = result.Scenarios.Should().ContainSingle().Subject;
+        scenario.SuggestedHeaders.Should().NotContainKey("Authorization");
+        scenario.Consumes.Should().BeEmpty();
+        scenario.ExpectedStatusCodes.Should().Contain(401);
     }
 
     [Fact]
@@ -1728,6 +1925,68 @@ public class LlmScenarioSuggesterTests
             {
                 new() { EndpointId = EndpointId1, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 0 },
                 new() { EndpointId = EndpointId2, HttpMethod = "GET", Path = "/api/users", OrderIndex = 1 },
+            },
+        };
+    }
+
+    private static LlmScenarioSuggestionContext CreateAuthFlowContext(
+        Guid registerEndpointId,
+        Guid loginEndpointId,
+        Guid productEndpointId)
+    {
+        return new LlmScenarioSuggestionContext
+        {
+            TestSuiteId = TestSuiteId,
+            UserId = UserId,
+            SpecificationId = SpecificationId,
+            Suite = new TestSuite
+            {
+                Id = TestSuiteId,
+                Name = "Auth Flow Suite",
+                EndpointBusinessContexts = new Dictionary<Guid, string>(),
+            },
+            EndpointMetadata = new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = registerEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/register",
+                    OperationId = "register",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201, Schema = "{\"type\":\"object\"}" },
+                    },
+                },
+                new()
+                {
+                    EndpointId = loginEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/auth/login",
+                    OperationId = "login",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200, Schema = "{\"type\":\"object\",\"properties\":{\"token\":{\"type\":\"string\"}}}" },
+                    },
+                },
+                new()
+                {
+                    EndpointId = productEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/api/products",
+                    OperationId = "createProduct",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201, Schema = "{\"type\":\"object\"}" },
+                        new() { StatusCode = 401, Description = "Unauthorized" },
+                    },
+                },
+            },
+            OrderedEndpoints = new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = registerEndpointId, HttpMethod = "POST", Path = "/api/auth/register", OrderIndex = 0 },
+                new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/api/auth/login", OrderIndex = 1 },
+                new() { EndpointId = productEndpointId, HttpMethod = "POST", Path = "/api/products", OrderIndex = 2 },
             },
         };
     }

@@ -785,7 +785,7 @@ internal static class RequestBodyAutoHydrator
 
         string value = normalizedFormat switch
         {
-            "email" => "testuser@example.com",
+            "email" => "testuser_{{tcUniqueId}}@example.com",
             "uuid" => "00000000-0000-0000-0000-000000000001",
             "date" => "2024-01-01",
             "date-time" => "2024-01-01T00:00:00Z",
@@ -796,7 +796,7 @@ internal static class RequestBodyAutoHydrator
         value ??= name.ToLowerInvariant() switch
         {
             var candidate when candidate.Contains("password") => "Test123!",
-            var candidate when candidate.Contains("email") => "testuser@example.com",
+            var candidate when candidate.Contains("email") => "testuser_{{tcUniqueId}}@example.com",
             var candidate when candidate.Contains("username") => "testuser",
             var candidate when candidate.Contains("phone") => "+12025550123",
             var candidate when candidate.Contains("price") || candidate.Contains("amount") || candidate.Contains("cost") => "9.99",

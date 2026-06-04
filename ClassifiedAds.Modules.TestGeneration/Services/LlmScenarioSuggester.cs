@@ -17,6 +17,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -72,7 +73,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "   c) RESPONSE IDs: Engine also auto-extracts IDs from successful response bodies (e.g. {{productId}}, {{orderId}} from $.data.id). Add explicit 'variables' rules only when you need a non-standard path.\n" +
         "   d) FLOW CHAINS (apply to ALL API types, not just auth):\n" +
         "      - HappyPath create/register: use {{tcUniqueId}} for all unique fields. No explicit variable rules needed for primitive request body fields.\n" +
-        "      - HappyPath login/get/update: use {{fieldName}} from the prior successful test (e.g. {{email}}, {{name}}, {{productId}}). Do NOT hardcode values.\n" +
+        "      - HappyPath login/get/update: use {{fieldName}} from the prior successful test (e.g. {{email}}, {{password}}, {{name}}, {{productId}}). Do NOT hardcode credentials or resource IDs.\n" +
         "      - Negative 'duplicate value' tests: use {{<fieldName>}} matching the conflicting field (e.g. {{email}} for duplicate email, {{name}} for duplicate product name) — NOT a new unique value.\n" +
         "      - Negative 'not found' tests: use \"nonexistent_{{tcUniqueId}}\" to guarantee the value does not exist.\n" +
         "      - Tests needing a prior resource ID: use {{<resource>Id}} (e.g. {{productId}}, {{orderId}}, {{userId}}).\n" +
@@ -80,7 +81,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "For auth-required happy paths, include or depend on a login/token success scenario that extracts authToken from the response using the contract-backed token field, for example $.token or $.accessToken. " +
         "For successful POST/PUT/PATCH resource creation, add variables for response IDs using the semantic resource name, for example categoryId/productId/orderId from $.id or $.data.id when inferable. " +
         "Set executionHints.produces, executionHints.consumes, and executionHints.dependsOn consistently so every non-runtime consume has a producer.\n" +
-        "6. endpointId must be the EXACT UUID from input.\n" +
+        "6. endpointId must be the EXACT UUID from the same input endpoint as request.httpMethod + request.url. Never reuse an endpointId from a different route, even when scenarios are in the same auth/resource flow.\n" +
         "7. testType must be exactly \"HappyPath\", \"Boundary\", or \"Negative\".\n" +
         "8. priority: \"High\" for auth/security issues, \"Medium\" for validation, \"Low\" for edge cases.\n" +
         "9. Respect endpoint contract strictly: preserve real parameter names and locations (path/query/header/body).\n" +
@@ -95,7 +96,7 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         "15. AUTH MODE (MACHINE-READABLE): Use executionHints.authMode with one of: none|optional|required.\n" +
         "   - Unauthorized/Missing Token tests: executionHints.authMode='none', request.headers must NOT contain Authorization.\n" +
         "   - Invalid token tests: executionHints.authMode='required' and set Authorization to an invalid literal.\n" +
-        "   - Auth-required happy-path tests: executionHints.authMode='required'.\n" +
+        "   - Auth-required happy-path tests: executionHints.authMode='required', request.headers.Authorization='Bearer {{authToken}}', executionHints.consumes includes authToken, and executionHints.dependsOn references the login/token producer scenario key.\n" +
         "   - Legacy compatibility: you MAY also set X-Test-Auth-Mode header, but executionHints.authMode is the source of truth.\n" +
         "15b. CREDENTIAL REWRITE CONTROL: For scenarios that must preserve exact email/password from prompt intent, set executionHints.credentialPolicy and executionHints.lockedFields.\n" +
         "   - credentialPolicy values: preserve|rewrite_email|rewrite_password|rewrite_both.\n" +
@@ -164,6 +165,14 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
     private static readonly Regex JavaScriptRepeatExpressionRegex = new(
         @"\.repeat\s*\(",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex RouteParameterSegmentRegex = new(
+        @"^\{\{?[A-Za-z0-9_.-]+\}?\}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex PlaceholderValueRegex = new(
+        @"\{\{\s*(?<name>[A-Za-z0-9_.-]+)\s*\}\}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -592,7 +601,6 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             ?? new Dictionary<Guid, ApiEndpointMetadataDto>();
         var endpointContracts = BuildEndpointContracts(context, orderedSequence, metadataMap);
         var orderItemMap = orderedSequence.ToDictionary(e => e.EndpointId);
-        var firstOrderItem = orderedSequence.FirstOrDefault();
 
         var parsedScenarios = ParseScenarios(response, context.SrsRequirements);
         if (parsedScenarios.Count == 0)
@@ -608,27 +616,42 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         }
 
         var repaired = new List<LlmSuggestedScenario>();
+        var remappedEndpointCount = 0;
+        var droppedRouteMismatchCount = 0;
         foreach (var parsedScenario in parsedScenarios)
         {
             var scenario = parsedScenario;
-
-            if (!orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem))
+            var originalEndpointId = scenario.EndpointId;
+            var orderItem = ResolveOrderItemForScenario(
+                scenario,
+                orderedSequence,
+                orderItemMap,
+                metadataMap,
+                out var routeResolution);
+            if (orderItem == null)
             {
-                // Keep scenario count consistent with n8n callback:
-                // try to infer endpoint by method+url, fallback to first ordered endpoint.
-                orderItem = orderedSequence.FirstOrDefault(x =>
-                    string.Equals(x.HttpMethod, scenario.SuggestedHttpMethod, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.Path, scenario.SuggestedUrl, StringComparison.OrdinalIgnoreCase));
+                droppedRouteMismatchCount++;
+                _logger.LogWarning(
+                    "Dropping LLM refinement scenario with unresolved route. ScenarioName={ScenarioName}, EndpointId={EndpointId}, HttpMethod={HttpMethod}, Url={Url}, Reason={Reason}",
+                    scenario.ScenarioName,
+                    originalEndpointId,
+                    scenario.SuggestedHttpMethod,
+                    scenario.SuggestedUrl,
+                    routeResolution);
+                continue;
+            }
 
-                if (orderItem == null)
-                {
-                    orderItem = firstOrderItem;
-                }
-
-                if (orderItem != null)
-                {
-                    scenario.EndpointId = orderItem.EndpointId;
-                }
+            if (scenario.EndpointId != orderItem.EndpointId)
+            {
+                remappedEndpointCount++;
+                _logger.LogWarning(
+                    "Remapped LLM refinement scenario endpoint by route. ScenarioName={ScenarioName}, OriginalEndpointId={OriginalEndpointId}, RemappedEndpointId={RemappedEndpointId}, HttpMethod={HttpMethod}, Url={Url}",
+                    scenario.ScenarioName,
+                    originalEndpointId,
+                    orderItem.EndpointId,
+                    scenario.SuggestedHttpMethod,
+                    scenario.SuggestedUrl);
+                scenario.EndpointId = orderItem.EndpointId;
             }
 
             metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
@@ -731,15 +754,19 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             repaired.Add(scenario);
         }
 
+        NormalizeRefinementFlow(repaired, orderedSequence, metadataMap);
+
         // For callback refinement flow, preserve callback cardinality:
         // do not deduplicate/drop after repair.
         var orderedScenarios = repaired;
 
         _logger.LogInformation(
-            "Parsed refinement scenarios. InputCount={InputCount}, RepairedCount={RepairedCount}, FinalCount={FinalCount}, BudgetCapApplied={BudgetCapApplied}",
+            "Parsed refinement scenarios. InputCount={InputCount}, RepairedCount={RepairedCount}, FinalCount={FinalCount}, RemappedEndpointCount={RemappedEndpointCount}, DroppedRouteMismatchCount={DroppedRouteMismatchCount}, BudgetCapApplied={BudgetCapApplied}",
             parsedScenarios.Count,
             repaired.Count,
             orderedScenarios.Count,
+            remappedEndpointCount,
+            droppedRouteMismatchCount,
             false);
 
         return new LlmScenarioSuggestionResult
@@ -750,6 +777,451 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
             FromCache = false,
             UsedLocalFallback = false,
         };
+    }
+
+    private static ApiOrderItemModel ResolveOrderItemForScenario(
+        LlmSuggestedScenario scenario,
+        IReadOnlyList<ApiOrderItemModel> orderedSequence,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap,
+        out string reason)
+    {
+        reason = null;
+        if (scenario == null)
+        {
+            reason = "Scenario is null.";
+            return null;
+        }
+
+        orderItemMap.TryGetValue(scenario.EndpointId, out var currentOrderItem);
+        metadataMap.TryGetValue(scenario.EndpointId, out var currentMetadata);
+
+        var hasRoute = !string.IsNullOrWhiteSpace(scenario.SuggestedHttpMethod)
+            && !string.IsNullOrWhiteSpace(scenario.SuggestedUrl);
+        if (currentOrderItem != null && !hasRoute)
+        {
+            return currentOrderItem;
+        }
+
+        if (currentOrderItem != null &&
+            RouteMatches(
+                currentOrderItem.HttpMethod ?? currentMetadata?.HttpMethod,
+                currentOrderItem.Path ?? currentMetadata?.Path,
+                scenario.SuggestedHttpMethod,
+                scenario.SuggestedUrl))
+        {
+            return currentOrderItem;
+        }
+
+        var matchingByRoute = orderedSequence
+            .Where(item =>
+            {
+                metadataMap.TryGetValue(item.EndpointId, out var metadata);
+                return RouteMatches(
+                    item.HttpMethod ?? metadata?.HttpMethod,
+                    item.Path ?? metadata?.Path,
+                    scenario.SuggestedHttpMethod,
+                    scenario.SuggestedUrl);
+            })
+            .ToList();
+
+        if (matchingByRoute.Count == 1)
+        {
+            return matchingByRoute[0];
+        }
+
+        reason = matchingByRoute.Count == 0
+            ? "No approved endpoint route matches the scenario request."
+            : $"Scenario request route is ambiguous across {matchingByRoute.Count} approved endpoints.";
+        return null;
+    }
+
+    private static bool RouteMatches(
+        string approvedMethod,
+        string approvedPath,
+        string suggestedMethod,
+        string suggestedUrl)
+    {
+        if (string.IsNullOrWhiteSpace(approvedMethod) ||
+            string.IsNullOrWhiteSpace(approvedPath) ||
+            string.IsNullOrWhiteSpace(suggestedMethod) ||
+            string.IsNullOrWhiteSpace(suggestedUrl))
+        {
+            return false;
+        }
+
+        if (!string.Equals(approvedMethod.Trim(), suggestedMethod.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var approvedSegments = NormalizeRouteSegments(approvedPath);
+        var suggestedSegments = NormalizeRouteSegments(suggestedUrl);
+        if (approvedSegments.Count != suggestedSegments.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < approvedSegments.Count; i++)
+        {
+            var approvedSegment = approvedSegments[i];
+            var suggestedSegment = suggestedSegments[i];
+            if (IsRouteParameterSegment(approvedSegment))
+            {
+                if (string.IsNullOrWhiteSpace(suggestedSegment))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (IsRouteParameterSegment(suggestedSegment))
+            {
+                continue;
+            }
+
+            if (!string.Equals(approvedSegment, suggestedSegment, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static List<string> NormalizeRouteSegments(string urlOrPath)
+    {
+        var path = NormalizeRoutePath(urlOrPath);
+        return path
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(segment => Uri.UnescapeDataString(segment.Trim()))
+            .Where(segment => !string.IsNullOrWhiteSpace(segment))
+            .ToList();
+    }
+
+    private static string NormalizeRoutePath(string urlOrPath)
+    {
+        if (string.IsNullOrWhiteSpace(urlOrPath))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = urlOrPath.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            trimmed = uri.AbsolutePath;
+        }
+
+        var queryIndex = trimmed.IndexOfAny(new[] { '?', '#' });
+        if (queryIndex >= 0)
+        {
+            trimmed = trimmed[..queryIndex];
+        }
+
+        return trimmed.Trim();
+    }
+
+    private static bool IsRouteParameterSegment(string segment)
+        => !string.IsNullOrWhiteSpace(segment) &&
+           RouteParameterSegmentRegex.IsMatch(segment.Trim());
+
+    private static void NormalizeRefinementFlow(
+        IReadOnlyList<LlmSuggestedScenario> scenarios,
+        IReadOnlyList<ApiOrderItemModel> orderedSequence,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (scenarios == null || scenarios.Count == 0)
+        {
+            return;
+        }
+
+        var orderItemMap = orderedSequence?
+            .GroupBy(x => x.EndpointId)
+            .ToDictionary(g => g.Key, g => g.First())
+            ?? new Dictionary<Guid, ApiOrderItemModel>();
+
+        var indexedScenarios = scenarios.Select((scenario, index) => new { scenario, index }).ToList();
+        var registerProducer = indexedScenarios
+            .Where(x => IsSuccessfulHappyPath(x.scenario) && IsRegisterLikeScenario(x.scenario, orderItemMap, metadataMap))
+            .OrderBy(x => x.index)
+            .Select(x => x.scenario)
+            .FirstOrDefault();
+        var authProducer = indexedScenarios
+            .Where(x => IsSuccessfulHappyPath(x.scenario) && IsLoginLikeScenario(x.scenario, orderItemMap, metadataMap))
+            .OrderBy(x => x.index)
+            .Select(x => x.scenario)
+            .FirstOrDefault();
+
+        if (registerProducer != null)
+        {
+            EnsureScenarioProduces(registerProducer, "email", "password");
+        }
+
+        if (authProducer != null)
+        {
+            EnsureScenarioProduces(authProducer, "authToken");
+            EnsureAuthTokenVariable(authProducer);
+        }
+
+        foreach (var scenario in scenarios)
+        {
+            NormalizeLoginCredentials(scenario, registerProducer, orderItemMap, metadataMap);
+        }
+
+        foreach (var scenario in scenarios)
+        {
+            NormalizeRequiredAuth(scenario, authProducer);
+        }
+
+        foreach (var scenario in scenarios)
+        {
+            scenario.Tags = MergeFlowDependencyTags(scenario.Tags, scenario);
+        }
+    }
+
+    private static bool IsSuccessfulHappyPath(LlmSuggestedScenario scenario)
+        => scenario?.SuggestedTestType == TestType.HappyPath &&
+           scenario.GetEffectiveExpectedStatusCodes().Any(status => status is >= 200 and <= 299);
+
+    private static bool IsRegisterLikeScenario(
+        LlmSuggestedScenario scenario,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (scenario == null)
+        {
+            return false;
+        }
+
+        orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem);
+        metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
+        return IsRegisterLikeEndpoint(orderItem, metadata) ||
+               IsRegisterLikeRequest(scenario.SuggestedHttpMethod, scenario.SuggestedUrl, scenario.ScenarioName);
+    }
+
+    private static bool IsLoginLikeScenario(
+        LlmSuggestedScenario scenario,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (scenario == null)
+        {
+            return false;
+        }
+
+        orderItemMap.TryGetValue(scenario.EndpointId, out var orderItem);
+        metadataMap.TryGetValue(scenario.EndpointId, out var metadata);
+        return IsLoginLikeEndpoint(orderItem, metadata) ||
+               IsLoginLikeRequest(scenario.SuggestedHttpMethod, scenario.SuggestedUrl, scenario.ScenarioName);
+    }
+
+    private static void NormalizeLoginCredentials(
+        LlmSuggestedScenario scenario,
+        LlmSuggestedScenario registerProducer,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemMap,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataMap)
+    {
+        if (scenario == null || registerProducer == null ||
+            !IsSuccessfulHappyPath(scenario) ||
+            !IsLoginLikeScenario(scenario, orderItemMap, metadataMap) ||
+            string.IsNullOrWhiteSpace(scenario.SuggestedBody))
+        {
+            return;
+        }
+
+        try
+        {
+            var body = JsonNode.Parse(scenario.SuggestedBody) as JsonObject;
+            if (body == null)
+            {
+                return;
+            }
+
+            var changed = false;
+            if (ShouldRewriteCredential(body, "email"))
+            {
+                body["email"] = "{{email}}";
+                changed = true;
+            }
+
+            if (ShouldRewriteCredential(body, "password"))
+            {
+                body["password"] = "{{password}}";
+                changed = true;
+            }
+
+            if (!changed)
+            {
+                return;
+            }
+
+            scenario.SuggestedBody = body.ToJsonString(JsonOpts);
+            scenario.SuggestedBodyType = string.IsNullOrWhiteSpace(scenario.SuggestedBodyType)
+                ? "JSON"
+                : scenario.SuggestedBodyType;
+            AddScenarioDependency(scenario, registerProducer);
+            AddUnique(scenario.Consumes, "email", "password");
+            EnsureScenarioProduces(registerProducer, "email", "password");
+        }
+        catch
+        {
+            return;
+        }
+    }
+
+    private static bool ShouldRewriteCredential(JsonObject body, string propertyName)
+    {
+        if (!body.TryGetPropertyValue(propertyName, out var value) ||
+            value is not JsonValue jsonValue ||
+            !jsonValue.TryGetValue<string>(out var raw))
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(raw) &&
+               !PlaceholderValueRegex.IsMatch(raw);
+    }
+
+    private static void NormalizeRequiredAuth(
+        LlmSuggestedScenario scenario,
+        LlmSuggestedScenario authProducer)
+    {
+        if (scenario == null ||
+            !string.Equals(GetAuthMode(scenario), "required", StringComparison.OrdinalIgnoreCase) ||
+            IsExplicitNegativeAuthCase(scenario))
+        {
+            return;
+        }
+
+        scenario.SuggestedHeaders ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var authVariableName = "authToken";
+        if (scenario.SuggestedHeaders.TryGetValue("Authorization", out var existingAuthorization) &&
+            TryGetPlaceholderName(existingAuthorization, out var placeholderName))
+        {
+            authVariableName = placeholderName;
+        }
+        else if (!scenario.SuggestedHeaders.ContainsKey("Authorization") ||
+                 string.IsNullOrWhiteSpace(existingAuthorization))
+        {
+            scenario.SuggestedHeaders["Authorization"] = "Bearer {{authToken}}";
+        }
+
+        AddUnique(scenario.Consumes, authVariableName);
+        if (authProducer != null && authProducer != scenario)
+        {
+            AddScenarioDependency(scenario, authProducer);
+        }
+    }
+
+    private static bool IsExplicitNegativeAuthCase(LlmSuggestedScenario scenario)
+    {
+        var expectedAuthFailure = scenario.GetEffectiveExpectedStatusCodes()
+            .Any(status => status is 401 or 403);
+        if (!expectedAuthFailure)
+        {
+            return false;
+        }
+
+        var surface = $"{scenario.ScenarioName} {scenario.Description} {string.Join(" ", scenario.Tags ?? new List<string>())}";
+        if (surface.Contains("missing auth", StringComparison.OrdinalIgnoreCase) ||
+            surface.Contains("without auth", StringComparison.OrdinalIgnoreCase) ||
+            surface.Contains("no auth", StringComparison.OrdinalIgnoreCase) ||
+            surface.Contains("invalid token", StringComparison.OrdinalIgnoreCase) ||
+            surface.Contains("malformed token", StringComparison.OrdinalIgnoreCase) ||
+            surface.Contains("unauthorized", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return scenario.SuggestedHeaders?.TryGetValue("Authorization", out var authValue) == true &&
+               !string.IsNullOrWhiteSpace(authValue) &&
+               !PlaceholderValueRegex.IsMatch(authValue);
+    }
+
+    private static string GetAuthMode(LlmSuggestedScenario scenario)
+    {
+        foreach (var tag in scenario?.Tags ?? new List<string>())
+        {
+            if (!tag.StartsWith("auth-mode:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return tag["auth-mode:".Length..].Trim();
+        }
+
+        return string.Empty;
+    }
+
+    private static bool TryGetPlaceholderName(string value, out string name)
+    {
+        var match = PlaceholderValueRegex.Match(value ?? string.Empty);
+        name = match.Success ? match.Groups["name"].Value : null;
+        return match.Success && !string.IsNullOrWhiteSpace(name);
+    }
+
+    private static void AddScenarioDependency(
+        LlmSuggestedScenario scenario,
+        LlmSuggestedScenario dependency)
+    {
+        var key = GetScenarioDependencyKey(dependency);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        scenario.DependsOn ??= new List<string>();
+        AddUnique(scenario.DependsOn, key);
+    }
+
+    private static string GetScenarioDependencyKey(LlmSuggestedScenario scenario)
+        => !string.IsNullOrWhiteSpace(scenario?.ScenarioKey)
+            ? scenario.ScenarioKey.Trim()
+            : NormalizeScenarioKeyFromName(scenario?.ScenarioName);
+
+    private static void EnsureScenarioProduces(LlmSuggestedScenario scenario, params string[] variables)
+    {
+        if (scenario == null)
+        {
+            return;
+        }
+
+        scenario.Produces ??= new List<string>();
+        AddUnique(scenario.Produces, variables);
+    }
+
+    private static void EnsureAuthTokenVariable(LlmSuggestedScenario scenario)
+    {
+        scenario.Variables ??= new List<N8nTestCaseVariable>();
+        if (scenario.Variables.Any(v => string.Equals(v.VariableName, "authToken", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        scenario.Variables.Add(new N8nTestCaseVariable
+        {
+            VariableName = "authToken",
+            ExtractFrom = "ResponseBody",
+            JsonPath = "$.data.token",
+        });
+    }
+
+    private static void AddUnique(List<string> target, params string[] values)
+    {
+        if (target == null || values == null)
+        {
+            return;
+        }
+
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value) &&
+                !target.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                target.Add(value);
+            }
+        }
     }
 
     private LlmSuggestedScenario FilterScenarioRequirementCoverage(
@@ -1549,6 +2021,16 @@ public class LlmScenarioSuggester : ILlmScenarioSuggester
         return signature.Contains("/register", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("/signup", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("/sign-up", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLoginLikeRequest(string httpMethod, string url, string name)
+    {
+        var signature = $"{httpMethod} {url} {name}";
+        return signature.Contains("/login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("authenticate", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsEmailLiteral(string value)

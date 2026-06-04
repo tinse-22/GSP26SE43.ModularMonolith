@@ -144,6 +144,13 @@ public static class GeneratedTestCaseDependencyEnricher
                 pendingExistingVariables,
                 allowHeuristicRewrite);
 
+            FillMissingAuthCredentialBindings(
+                testCase,
+                orderItem,
+                producerCandidates,
+                producersByEndpoint,
+                pendingExistingVariables);
+
             // Skip body enrichment for HTTP methods that don't accept request bodies.
             // This prevents false dependency links from being created for DELETE/GET/HEAD/OPTIONS endpoints.
             var httpMethod = (orderItem.HttpMethod ?? string.Empty).Trim().ToUpperInvariant();
@@ -634,22 +641,38 @@ public static class GeneratedTestCaseDependencyEnricher
             .Where(x => x != null && x.TestCaseId != testCase.Id)
             .ToList();
 
-        var authProducer = SelectAuthProducer(dependencyCandidates, producerCandidates, testCase.Id, preferRegister: false);
+        var headers = DeserializeDictionary(testCase.Request.Headers);
+
+        if (headers.TryGetValue("Authorization", out var existingAuthValue) &&
+            !string.IsNullOrWhiteSpace(existingAuthValue) &&
+            !ContainsPlaceholder(existingAuthValue))
+        {
+            return;
+        }
+
+        if (HasNoAuthIntent(testCase, headers))
+        {
+            return;
+        }
+
+        var hasAuthDependency = dependencyCandidates.Any(IsAuthLikeProducer);
+        var hasAuthIntent = HasAuthInjectionIntent(testCase, headers);
+        if (!hasAuthDependency && !hasAuthIntent)
+        {
+            return;
+        }
+
+        var authProducer = SelectAuthProducer(
+            hasAuthDependency ? dependencyCandidates : Array.Empty<ProducerCandidate>(),
+            producerCandidates,
+            testCase.Id,
+            preferRegister: false);
         if (authProducer == null)
         {
             return;
         }
 
-        var headers = DeserializeDictionary(testCase.Request.Headers);
         var changed = false;
-
-        if (headers.TryGetValue("Authorization", out var existingAuthValue) &&
-            !string.IsNullOrWhiteSpace(existingAuthValue) &&
-            !TryExtractPlaceholderVariable(existingAuthValue, out _))
-        {
-            return;
-        }
-
         var variableName = EnsureAuthTokenVariable(authProducer, pendingExistingVariables);
         if (string.IsNullOrWhiteSpace(variableName))
         {
@@ -753,6 +776,122 @@ public static class GeneratedTestCaseDependencyEnricher
                 EnsureDependency(testCase, producer.TestCaseId);
             }
         }
+    }
+
+    private static void FillMissingAuthCredentialBindings(
+        TestCase testCase,
+        ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> producerCandidates,
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
+        ICollection<TestCaseVariable> pendingExistingVariables)
+    {
+        if (testCase?.Request == null
+            || !IsHappyPathTestCase(testCase)
+            || !IsLoginLikeEndpoint(orderItem)
+            || IsLikelyClientErrorExpectation(testCase)
+            || HasCredentialPreservePolicy(testCase))
+        {
+            return;
+        }
+
+        JsonObject bodyObject;
+        if (string.IsNullOrWhiteSpace(testCase.Request.Body))
+        {
+            bodyObject = new JsonObject();
+        }
+        else
+        {
+            try
+            {
+                bodyObject = JsonNode.Parse(testCase.Request.Body) as JsonObject;
+            }
+            catch
+            {
+                return;
+            }
+
+            if (bodyObject == null)
+            {
+                return;
+            }
+        }
+
+        var dependencyCandidates = (orderItem.DependsOnEndpointIds ?? new List<Guid>())
+            .Select(x => producersByEndpoint.TryGetValue(x, out var producer) ? producer : null)
+            .Where(x => x != null && x.TestCaseId != testCase.Id)
+            .ToList();
+
+        var registerProducer = SelectAuthProducer(
+            dependencyCandidates,
+            producerCandidates,
+            testCase.Id,
+            preferRegister: true);
+        if (registerProducer == null || !IsRegisterLikeEndpoint(registerProducer.OrderItem))
+        {
+            return;
+        }
+
+        EnsureRequestBodyVariable(registerProducer, "registeredEmail", "$.email", pendingExistingVariables);
+        EnsureRequestBodyVariable(registerProducer, "registeredPassword", "$.password", pendingExistingVariables);
+
+        var canAddMissingFields = bodyObject.Count == 0;
+        var changed = !IsCredentialFieldLocked(testCase, "email") &&
+            SetCredentialPlaceholder(
+                bodyObject,
+                "email",
+                "registeredEmail",
+                canAddMissingFields);
+        changed |= !IsCredentialFieldLocked(testCase, "password") &&
+            SetCredentialPlaceholder(
+                bodyObject,
+                "password",
+                "registeredPassword",
+                canAddMissingFields);
+
+        EnsureDependency(testCase, registerProducer.TestCaseId);
+
+        if (!changed)
+        {
+            return;
+        }
+
+        testCase.Request.Body = bodyObject.ToJsonString(JsonOpts);
+        if (testCase.Request.BodyType == BodyType.None)
+        {
+            testCase.Request.BodyType = BodyType.JSON;
+        }
+    }
+
+    private static bool SetCredentialPlaceholder(
+        JsonObject bodyObject,
+        string fieldName,
+        string variableName,
+        bool addIfMissing)
+    {
+        if (bodyObject == null || string.IsNullOrWhiteSpace(fieldName) || string.IsNullOrWhiteSpace(variableName))
+        {
+            return false;
+        }
+
+        var placeholder = $"{{{{{variableName}}}}}";
+        if (!bodyObject.TryGetPropertyValue(fieldName, out var currentValue))
+        {
+            if (!addIfMissing)
+            {
+                return false;
+            }
+
+            bodyObject[fieldName] = placeholder;
+            return true;
+        }
+
+        if (!ShouldSetPlaceholderValue(currentValue, variableName))
+        {
+            return false;
+        }
+
+        bodyObject[fieldName] = placeholder;
+        return true;
     }
 
     private static ProducerCandidate SelectDeclaredProducerForVariable(
@@ -1391,6 +1530,13 @@ public static class GeneratedTestCaseDependencyEnricher
         return false;
     }
 
+    private static bool ContainsPlaceholder(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.Contains("{{", StringComparison.Ordinal) &&
+               value.Contains("}}", StringComparison.Ordinal);
+    }
+
     private static ProducerCandidate SelectAuthProducer(
         IReadOnlyList<ProducerCandidate> dependencyCandidates,
         IReadOnlyList<ProducerCandidate> allCandidates,
@@ -1415,6 +1561,11 @@ public static class GeneratedTestCaseDependencyEnricher
 
     private static bool IsAuthLikeEndpoint(ApiOrderItemModel endpoint)
     {
+        if (endpoint?.IsAuthRelated == true)
+        {
+            return true;
+        }
+
         var signature = $"{endpoint?.HttpMethod} {endpoint?.Path}";
         return signature.Contains("/auth", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("login", StringComparison.OrdinalIgnoreCase)
@@ -1429,6 +1580,15 @@ public static class GeneratedTestCaseDependencyEnricher
         var signature = $"{endpoint?.HttpMethod} {endpoint?.Path}";
         return signature.Contains("register", StringComparison.OrdinalIgnoreCase)
             || signature.Contains("signup", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLoginLikeEndpoint(ApiOrderItemModel endpoint)
+    {
+        var signature = $"{endpoint?.HttpMethod} {endpoint?.Path}";
+        return signature.Contains("login", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("sign-in", StringComparison.OrdinalIgnoreCase)
+            || signature.Contains("/token", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int ScoreAuthProducer(ProducerCandidate producer, bool preferRegister)
@@ -1469,6 +1629,114 @@ public static class GeneratedTestCaseDependencyEnricher
             || string.Equals(propertyName, "password", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool HasAuthInjectionIntent(TestCase testCase, IReadOnlyDictionary<string, string> headers)
+    {
+        var tags = ParseSerializedTags(testCase?.Tags);
+        if (tags.Any(tag =>
+                TagEquals(tag, "auth-mode:", "required") ||
+                tag.StartsWith("auth-fallback:", StringComparison.OrdinalIgnoreCase) ||
+                (tag.StartsWith("flow-consumes:", StringComparison.OrdinalIgnoreCase) &&
+                 IsAuthConsumeVariable(tag["flow-consumes:".Length..].Trim()))))
+        {
+            return true;
+        }
+
+        return headers?.Any(x =>
+            IsAuthHeaderName(x.Key) &&
+            ContainsPlaceholder(x.Value)) == true;
+    }
+
+    private static bool HasNoAuthIntent(TestCase testCase, IReadOnlyDictionary<string, string> headers)
+    {
+        var tags = ParseSerializedTags(testCase?.Tags);
+        if (tags.Any(tag => TagEquals(tag, "auth-mode:", "none")) ||
+            headers?.Any(x => IsAuthModeHeaderName(x.Key) && IsAuthMode(x.Value, "none")) == true)
+        {
+            return true;
+        }
+
+        var surface = $"{testCase?.Name ?? string.Empty} {testCase?.Description ?? string.Empty} {string.Join(' ', tags)}";
+        return ContainsAny(surface,
+            "no token",
+            "without token",
+            "missing token",
+            "without authorization",
+            "no authorization",
+            "missing authorization",
+            "missing auth",
+            "without auth",
+            "no auth",
+            "no-auth",
+            "no_auth");
+    }
+
+    private static bool HasCredentialPreservePolicy(TestCase testCase)
+        => ParseSerializedTags(testCase?.Tags)
+            .Any(tag => TagEquals(tag, "cred-policy:", "preserve"));
+
+    private static bool IsCredentialFieldLocked(TestCase testCase, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName))
+        {
+            return false;
+        }
+
+        return ParseSerializedTags(testCase?.Tags)
+            .Where(tag => tag.StartsWith("cred-lock:", StringComparison.OrdinalIgnoreCase))
+            .Select(tag => tag["cred-lock:".Length..].Trim())
+            .Any(value =>
+                string.Equals(value, fieldName, StringComparison.OrdinalIgnoreCase) ||
+                value.EndsWith("." + fieldName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TagEquals(string tag, string prefix, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(tag) ||
+            string.IsNullOrWhiteSpace(prefix) ||
+            !tag.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return IsAuthMode(tag.Trim()[prefix.Length..].Trim(), expected) ||
+               string.Equals(tag.Trim()[prefix.Length..].Trim(), expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAuthModeHeaderName(string headerName)
+        => string.Equals(headerName, "X-Test-Auth-Mode", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(headerName, "X-Auth-Mode", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(headerName, "X-LLM-Auth-Mode", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAuthHeaderName(string headerName)
+    {
+        if (string.IsNullOrWhiteSpace(headerName) || IsAuthModeHeaderName(headerName))
+        {
+            return false;
+        }
+
+        var normalized = new string(headerName.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        return normalized is "authorization" or "proxyauthorization" or "xauthorization" or "xauth" or "apikey" or "xapikey";
+    }
+
+    private static bool IsAuthMode(string value, string expected)
+    {
+        string Normalize(string input) => input?
+            .Trim()
+            .ToLowerInvariant()
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .Replace(" ", string.Empty);
+
+        var normalized = Normalize(value);
+        var normalizedExpected = Normalize(expected);
+        return normalizedExpected switch
+        {
+            "none" => normalized is "none" or "noauth" or "disableauth",
+            "required" => normalized is "required" or "default",
+            _ => string.Equals(normalized, normalizedExpected, StringComparison.OrdinalIgnoreCase),
+        };
+    }
+
     private static bool ShouldSetPlaceholderValue(JsonNode currentValue, string variableName)
     {
         if (string.IsNullOrWhiteSpace(variableName))
@@ -1490,7 +1758,25 @@ public static class GeneratedTestCaseDependencyEnricher
             return !string.Equals(placeholder, variableName, StringComparison.OrdinalIgnoreCase);
         }
 
-        return string.IsNullOrWhiteSpace(raw) || raw.Contains("example.com", StringComparison.OrdinalIgnoreCase) || raw == "Test123!";
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        if (variableName.Contains("email", StringComparison.OrdinalIgnoreCase))
+        {
+            return raw.Contains("@example.com", StringComparison.OrdinalIgnoreCase)
+                || raw.Contains("@test.com", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (variableName.Contains("password", StringComparison.OrdinalIgnoreCase))
+        {
+            return raw.StartsWith("password", StringComparison.OrdinalIgnoreCase)
+                || raw.StartsWith("secure", StringComparison.OrdinalIgnoreCase)
+                || raw.StartsWith("test", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static bool ShouldReplaceIdentifierValue(string currentValue)
@@ -1864,11 +2150,16 @@ public static class GeneratedTestCaseDependencyEnricher
             }
 
             var value = tag["rewrite-policy:".Length..].Trim().ToLowerInvariant();
+            if (value is "preserve" or "off" or "disabled" or "none")
+            {
+                return false;
+            }
+
             return value is "safe" or "minimal";
         }
 
-        // Default: preserve n8n payload, do not apply heuristic rewrite.
-        return false;
+        // Default: apply safe dependency enrichment unless n8n explicitly asks to preserve.
+        return true;
     }
 
     private static bool IsIdentifierErrorIntentCase(TestCase testCase)

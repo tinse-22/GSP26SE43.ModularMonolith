@@ -50,6 +50,7 @@ public class EditableSuggestionRequestInput
     public Dictionary<string, string> Headers { get; set; }
     public Dictionary<string, string> PathParams { get; set; }
     public Dictionary<string, string> QueryParams { get; set; }
+    public string BodyType { get; set; }
     public string Body { get; set; }
 }
 

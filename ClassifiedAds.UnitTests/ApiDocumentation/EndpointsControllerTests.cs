@@ -21,7 +21,7 @@ public class EndpointsControllerTests
     private readonly Mock<ILogger<EndpointsController>> _loggerMock;
     private readonly Mock<ICommandHandler<AddUpdateEndpointCommand>> _addUpdateHandlerMock;
     private readonly Mock<ICommandHandler<DeleteEndpointCommand>> _deleteHandlerMock;
-    private readonly Mock<IQueryHandler<GetEndpointsQuery, List<EndpointModel>>> _getEndpointsHandlerMock;
+    private readonly Mock<IQueryHandler<GetEndpointsQuery, List<EndpointDetailModel>>> _getEndpointsHandlerMock;
     private readonly Mock<IQueryHandler<GetEndpointQuery, EndpointDetailModel>> _getEndpointHandlerMock;
     private readonly EndpointsController _controller;
     private readonly Guid _currentUserId = Guid.NewGuid();
@@ -32,7 +32,7 @@ public class EndpointsControllerTests
         _loggerMock = new Mock<ILogger<EndpointsController>>();
         _addUpdateHandlerMock = new Mock<ICommandHandler<AddUpdateEndpointCommand>>();
         _deleteHandlerMock = new Mock<ICommandHandler<DeleteEndpointCommand>>();
-        _getEndpointsHandlerMock = new Mock<IQueryHandler<GetEndpointsQuery, List<EndpointModel>>>();
+        _getEndpointsHandlerMock = new Mock<IQueryHandler<GetEndpointsQuery, List<EndpointDetailModel>>>();
         _getEndpointHandlerMock = new Mock<IQueryHandler<GetEndpointQuery, EndpointDetailModel>>();
 
         _currentUserMock.SetupGet(x => x.UserId).Returns(_currentUserId);
@@ -41,7 +41,7 @@ public class EndpointsControllerTests
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<AddUpdateEndpointCommand>))).Returns(_addUpdateHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(ICommandHandler<DeleteEndpointCommand>))).Returns(_deleteHandlerMock.Object);
-        serviceProviderMock.Setup(x => x.GetService(typeof(IQueryHandler<GetEndpointsQuery, List<EndpointModel>>))).Returns(_getEndpointsHandlerMock.Object);
+        serviceProviderMock.Setup(x => x.GetService(typeof(IQueryHandler<GetEndpointsQuery, List<EndpointDetailModel>>))).Returns(_getEndpointsHandlerMock.Object);
         serviceProviderMock.Setup(x => x.GetService(typeof(IQueryHandler<GetEndpointQuery, EndpointDetailModel>))).Returns(_getEndpointHandlerMock.Object);
 
         var dispatcher = new Dispatcher(serviceProviderMock.Object);
@@ -57,7 +57,7 @@ public class EndpointsControllerTests
     {
         var projectId = Guid.NewGuid();
         var specId = Guid.NewGuid();
-        var endpoints = new List<EndpointModel>
+        var endpoints = new List<EndpointDetailModel>
         {
             new() { Id = Guid.NewGuid(), ApiSpecId = specId, HttpMethod = "GET", Path = "/users", Summary = "Get users" },
             new() { Id = Guid.NewGuid(), ApiSpecId = specId, HttpMethod = "POST", Path = "/users", Summary = "Create user" },
@@ -70,7 +70,7 @@ public class EndpointsControllerTests
         var result = await _controller.Get(projectId, specId);
 
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = okResult.Value.Should().BeAssignableTo<List<EndpointModel>>().Subject;
+        var payload = okResult.Value.Should().BeAssignableTo<List<EndpointDetailModel>>().Subject;
         payload.Should().HaveCount(2);
         payload[0].Path.Should().Be("/users");
     }
@@ -85,7 +85,7 @@ public class EndpointsControllerTests
         _getEndpointsHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetEndpointsQuery>(), It.IsAny<CancellationToken>()))
             .Callback<GetEndpointsQuery, CancellationToken>((query, _) => capturedQuery = query)
-            .ReturnsAsync(new List<EndpointModel>());
+            .ReturnsAsync(new List<EndpointDetailModel>());
 
         await _controller.Get(projectId, specId);
 
@@ -103,12 +103,12 @@ public class EndpointsControllerTests
 
         _getEndpointsHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetEndpointsQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<EndpointModel>());
+            .ReturnsAsync(new List<EndpointDetailModel>());
 
         var result = await _controller.Get(projectId, specId);
 
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        okResult.Value.Should().BeAssignableTo<List<EndpointModel>>().Subject.Should().BeEmpty();
+        okResult.Value.Should().BeAssignableTo<List<EndpointDetailModel>>().Subject.Should().BeEmpty();
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class EndpointsControllerTests
 
         _getEndpointsHandlerMock
             .Setup(x => x.HandleAsync(It.IsAny<GetEndpointsQuery>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<EndpointModel>
+            .ReturnsAsync(new List<EndpointDetailModel>
             {
                 new()
                 {
@@ -136,7 +136,7 @@ public class EndpointsControllerTests
         var result = await _controller.Get(projectId, specId);
 
         var payload = result.Result.Should().BeOfType<OkObjectResult>().Subject.Value
-            .Should().BeAssignableTo<List<EndpointModel>>().Subject;
+            .Should().BeAssignableTo<List<EndpointDetailModel>>().Subject;
         payload[0].HttpMethod.Should().Be("PATCH");
         payload[0].Description.Should().Be("Update user");
     }
