@@ -16,4 +16,14 @@ public interface ITestExecutionOrchestrator
         bool strictValidation = false,
         TestRunRetryPolicyModel retryPolicy = null,
         ValidationProfile validationProfile = ValidationProfile.Default);
+
+    Task<TestRunResultModel> ExecuteAsync(
+        Guid testRunId,
+        Guid currentUserId,
+        IReadOnlyCollection<Guid> selectedTestCaseIds,
+        CancellationToken ct,
+        bool strictValidation,
+        TestRunRetryPolicyModel retryPolicy,
+        ValidationProfile validationProfile,
+        IReadOnlyList<TestCaseExecutionOverrideModel> testCaseOverrides);
 }

@@ -56,6 +56,8 @@ public class StartTestRunCommand : ICommand
 
     public IReadOnlyList<Guid> SelectedTestCaseIds { get; set; }
 
+    public IReadOnlyList<TestCaseExecutionOverrideModel> TestCaseOverrides { get; set; }
+
     public TestRunResultModel Result { get; set; }
 }
 
@@ -99,6 +101,19 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             .Where(id => id != Guid.Empty)
             .Distinct()
             .ToList() ?? new List<Guid>();
+        var overrideIds = command.TestCaseOverrides?
+            .Where(x => x != null && x.TestCaseId != Guid.Empty)
+            .Select(x => x.TestCaseId)
+            .Distinct()
+            .ToList() ?? new List<Guid>();
+
+        foreach (var overrideId in overrideIds)
+        {
+            if (!selectedIds.Contains(overrideId))
+            {
+                selectedIds.Add(overrideId);
+            }
+        }
 
         // 2. Suite access context
         var validateSw = Stopwatch.StartNew();
@@ -277,7 +292,8 @@ public class StartTestRunCommandHandler : ICommandHandler<StartTestRunCommand>
             cancellationToken,
             command.StrictValidation,
             effectivePolicy,
-            effectiveProfile);
+            effectiveProfile,
+            command.TestCaseOverrides);
 
         totalSw.Stop();
         _logger.LogInformation(

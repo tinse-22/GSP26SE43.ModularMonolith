@@ -1,3 +1,4 @@
+using ClassifiedAds.Modules.TestExecution.Models;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -9,6 +10,8 @@ public class StartTestRunRequest
     public Guid? EnvironmentId { get; set; }
 
     public List<Guid> SelectedTestCaseIds { get; set; }
+
+    public List<TestCaseExecutionOverrideModel> TestCaseOverrides { get; set; }
 
     public bool StrictValidation { get; set; }
 

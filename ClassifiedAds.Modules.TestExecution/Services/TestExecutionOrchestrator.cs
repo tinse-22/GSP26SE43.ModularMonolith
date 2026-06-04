@@ -77,6 +77,27 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         TestRunRetryPolicyModel retryPolicy = null,
         ValidationProfile validationProfile = ValidationProfile.Default)
     {
+        return await ExecuteAsync(
+            testRunId,
+            currentUserId,
+            selectedTestCaseIds,
+            ct,
+            strictValidation,
+            retryPolicy,
+            validationProfile,
+            null);
+    }
+
+    public async Task<TestRunResultModel> ExecuteAsync(
+        Guid testRunId,
+        Guid currentUserId,
+        IReadOnlyCollection<Guid> selectedTestCaseIds,
+        CancellationToken ct,
+        bool strictValidation,
+        TestRunRetryPolicyModel retryPolicy,
+        ValidationProfile validationProfile,
+        IReadOnlyList<TestCaseExecutionOverrideModel> testCaseOverrides)
+    {
         var totalSw = Stopwatch.StartNew();
 
         var run = await _runRepository.FirstOrDefaultAsync(
@@ -85,6 +106,7 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
         var contextLoadSw = Stopwatch.StartNew();
         var executionContext = await _gatewayService.GetExecutionContextAsync(
             run.TestSuiteId, selectedTestCaseIds, ct);
+        executionContext = ApplyTestCaseOverrides(executionContext, testCaseOverrides);
         contextLoadSw.Stop();
         _logger.LogInformation(
             "test_run.context.load completed. RunId={RunId}, TestSuiteId={TestSuiteId}, SelectedCaseCount={SelectedCaseCount}, CaseCount={CaseCount}, DurationMs={DurationMs}",
@@ -190,6 +212,156 @@ public class TestExecutionOrchestrator : ITestExecutionOrchestrator
             totalSw.ElapsedMilliseconds);
 
         return result;
+    }
+
+    private static TestSuiteExecutionContextDto ApplyTestCaseOverrides(
+        TestSuiteExecutionContextDto executionContext,
+        IReadOnlyList<TestCaseExecutionOverrideModel> overrides)
+    {
+        if (executionContext?.OrderedTestCases == null || overrides == null || overrides.Count == 0)
+        {
+            return executionContext;
+        }
+
+        var overrideMap = overrides
+            .Where(x => x != null && x.TestCaseId != Guid.Empty)
+            .GroupBy(x => x.TestCaseId)
+            .ToDictionary(g => g.Key, g => g.Last());
+
+        if (overrideMap.Count == 0)
+        {
+            return executionContext;
+        }
+
+        var orderedCases = executionContext.OrderedTestCases
+            .Select(testCase => overrideMap.TryGetValue(testCase.TestCaseId, out var @override)
+                ? ApplyTestCaseOverride(testCase, @override)
+                : testCase)
+            .ToList();
+
+        return new TestSuiteExecutionContextDto
+        {
+            Suite = executionContext.Suite,
+            OrderedEndpointIds = executionContext.OrderedEndpointIds,
+            OrderedTestCases = orderedCases,
+        };
+    }
+
+    private static ExecutionTestCaseDto ApplyTestCaseOverride(
+        ExecutionTestCaseDto source,
+        TestCaseExecutionOverrideModel @override)
+    {
+        var result = CloneTestCase(source);
+        if (!string.IsNullOrWhiteSpace(@override.Name))
+        {
+            result.Name = @override.Name.Trim();
+        }
+
+        if (@override.Description != null)
+        {
+            result.Description = @override.Description;
+        }
+
+        if (!string.IsNullOrWhiteSpace(@override.TestType))
+        {
+            result.TestType = @override.TestType.Trim();
+        }
+
+        result.Request = ApplyRequestOverride(result.Request, @override.Request);
+        result.Expectation = ApplyExpectationOverride(result.Expectation, @override.Expectation);
+        return result;
+    }
+
+    private static ExecutionTestCaseDto CloneTestCase(ExecutionTestCaseDto source)
+    {
+        return new ExecutionTestCaseDto
+        {
+            TestCaseId = source.TestCaseId,
+            EndpointId = source.EndpointId,
+            Name = source.Name,
+            Description = source.Description,
+            TestType = source.TestType,
+            OrderIndex = source.OrderIndex,
+            DependencyIds = source.DependencyIds,
+            Tags = source.Tags,
+            Request = source.Request == null
+                ? null
+                : new ExecutionTestCaseRequestDto
+                {
+                    HttpMethod = source.Request.HttpMethod,
+                    Url = source.Request.Url,
+                    Headers = source.Request.Headers,
+                    PathParams = source.Request.PathParams,
+                    QueryParams = source.Request.QueryParams,
+                    BodyType = source.Request.BodyType,
+                    Body = source.Request.Body,
+                    Timeout = source.Request.Timeout,
+                },
+            Expectation = source.Expectation == null
+                ? null
+                : new ExecutionTestCaseExpectationDto
+                {
+                    ExpectedStatus = source.Expectation.ExpectedStatus,
+                    ResponseSchema = source.Expectation.ResponseSchema,
+                    HeaderChecks = source.Expectation.HeaderChecks,
+                    BodyContains = source.Expectation.BodyContains,
+                    BodyNotContains = source.Expectation.BodyNotContains,
+                    JsonPathChecks = source.Expectation.JsonPathChecks,
+                    MaxResponseTime = source.Expectation.MaxResponseTime,
+                    ExpectationSource = source.Expectation.ExpectationSource,
+                    RequirementCode = source.Expectation.RequirementCode,
+                    PrimaryRequirementId = source.Expectation.PrimaryRequirementId,
+                    ExpectedProvenance = source.Expectation.ExpectedProvenance,
+                },
+            Variables = source.Variables,
+        };
+    }
+
+    private static ExecutionTestCaseRequestDto ApplyRequestOverride(
+        ExecutionTestCaseRequestDto source,
+        TestCaseExecutionRequestOverrideModel @override)
+    {
+        if (@override == null)
+        {
+            return source;
+        }
+
+        source ??= new ExecutionTestCaseRequestDto();
+        source.HttpMethod = FirstNonEmpty(@override.HttpMethod, source.HttpMethod);
+        source.Url = FirstNonEmpty(@override.Url, source.Url);
+        source.Headers = @override.Headers ?? source.Headers;
+        source.PathParams = @override.PathParams ?? source.PathParams;
+        source.QueryParams = @override.QueryParams ?? source.QueryParams;
+        source.BodyType = FirstNonEmpty(@override.BodyType, source.BodyType);
+        source.Body = @override.Body ?? source.Body;
+        source.Timeout = @override.Timeout.GetValueOrDefault(source.Timeout > 0 ? source.Timeout : 30000);
+        return source;
+    }
+
+    private static ExecutionTestCaseExpectationDto ApplyExpectationOverride(
+        ExecutionTestCaseExpectationDto source,
+        TestCaseExecutionExpectationOverrideModel @override)
+    {
+        if (@override == null)
+        {
+            return source;
+        }
+
+        source ??= new ExecutionTestCaseExpectationDto();
+        source.ExpectedStatus = FirstNonEmpty(@override.ExpectedStatus, source.ExpectedStatus);
+        source.ResponseSchema = @override.ResponseSchema ?? source.ResponseSchema;
+        source.HeaderChecks = @override.HeaderChecks ?? source.HeaderChecks;
+        source.BodyContains = @override.BodyContains ?? source.BodyContains;
+        source.BodyNotContains = @override.BodyNotContains ?? source.BodyNotContains;
+        source.JsonPathChecks = @override.JsonPathChecks ?? source.JsonPathChecks;
+        source.MaxResponseTime = @override.MaxResponseTime ?? source.MaxResponseTime;
+        source.ExpectedProvenance = @override.ExpectedProvenance ?? source.ExpectedProvenance;
+        return source;
+    }
+
+    private static string FirstNonEmpty(string preferred, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
     }
 
     private async Task ExecuteAndTrackAsync(
