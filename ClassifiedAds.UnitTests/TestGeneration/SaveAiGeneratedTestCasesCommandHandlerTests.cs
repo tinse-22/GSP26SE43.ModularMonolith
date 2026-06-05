@@ -303,6 +303,322 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Should_RemapEndpointId_WhenRequestMethodAndPathMatchAnotherEndpoint()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var wrongEndpointId = Guid.NewGuid();
+        var registerEndpointId = Guid.NewGuid();
+        var endpoints = new List<ApiEndpointMetadataDto>
+        {
+            new()
+            {
+                EndpointId = wrongEndpointId,
+                HttpMethod = "POST",
+                Path = "/api/auth/login",
+                Responses = new List<ApiEndpointResponseDescriptorDto>
+                {
+                    new() { StatusCode = 200 },
+                    new() { StatusCode = 400 },
+                },
+            },
+            new()
+            {
+                EndpointId = registerEndpointId,
+                HttpMethod = "POST",
+                Path = "/api/auth/register",
+                Responses = new List<ApiEndpointResponseDescriptorDto>
+                {
+                    new() { StatusCode = 201 },
+                    new() { StatusCode = 400 },
+                },
+            },
+        };
+
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.IsAny<IReadOnlyCollection<Guid>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid specificationId, IReadOnlyCollection<Guid> selectedEndpointIds, CancellationToken cancellationToken) =>
+                selectedEndpointIds == null
+                    ? endpoints
+                    : endpoints.Where(endpoint => selectedEndpointIds.Contains(endpoint.EndpointId)).ToList());
+
+        TestCase capturedTestCase = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((testCase, _) => capturedTestCase = testCase)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = wrongEndpointId;
+        command.TestCases[0].Name = "Register happy path";
+        command.TestCases[0].Request.HttpMethod = "POST";
+        command.TestCases[0].Request.Url = "/api/auth/register";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = "{}";
+        command.TestCases[0].Expectation.ExpectedStatus = "[201]";
+
+        await _handler.HandleAsync(command);
+
+        capturedTestCase.Should().NotBeNull();
+        capturedTestCase.EndpointId.Should().Be(registerEndpointId);
+        command.TestCases[0].EndpointId.Should().Be(registerEndpointId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_PreservePostJsonBody_WhenEndpointMetadataDoesNotDeclareRequestBody()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var endpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "POST",
+                    Path = "/v1/workspaces",
+                    HasRequiredRequestBody = false,
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201 },
+                        new() { StatusCode = 400 },
+                    },
+                },
+            });
+
+        TestCaseRequest capturedRequest = null;
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Name = "Create workspace";
+        command.TestCases[0].Request.HttpMethod = "POST";
+        command.TestCases[0].Request.Url = "/v1/workspaces";
+        command.TestCases[0].Request.BodyType = "None";
+        command.TestCases[0].Request.Body = """{"name":"workspace_{{tcUniqueId}}"}""";
+        command.TestCases[0].Expectation.ExpectedStatus = "[201]";
+
+        await _handler.HandleAsync(command);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest.Body.Should().Be("""{"name":"workspace_{{tcUniqueId}}"}""");
+        capturedRequest.BodyType.Should().Be(BodyType.JSON);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_StripGetBody_WhenGeneratedPayloadContainsSyntheticJson()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var endpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(endpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = endpointId,
+                    HttpMethod = "GET",
+                    Path = "/v1/workspaces",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 200 },
+                    },
+                },
+            });
+
+        TestCaseRequest capturedRequest = null;
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Name = "List workspaces";
+        command.TestCases[0].Request.HttpMethod = "GET";
+        command.TestCases[0].Request.Url = "/v1/workspaces";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = """{"synthetic":"payload"}""";
+        command.TestCases[0].Expectation.ExpectedStatus = "[200]";
+
+        await _handler.HandleAsync(command);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest.Body.Should().BeNull();
+        capturedRequest.BodyType.Should().Be(BodyType.None);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_InferRequiredAuthHints_FromApprovedOrderAuthDependency()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var loginEndpointId = Guid.NewGuid();
+        var protectedEndpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(protectedEndpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = protectedEndpointId,
+                    HttpMethod = "POST",
+                    Path = "/v1/workspaces",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 201 },
+                        new() { StatusCode = 400 },
+                    },
+                },
+            });
+
+        _proposalRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestOrderProposal>>()))
+            .ReturnsAsync(new TestOrderProposal
+            {
+                Id = Guid.NewGuid(),
+                TestSuiteId = suite.Id,
+                Status = ProposalStatus.Applied,
+                AppliedOrder = "[]",
+            });
+        _apiTestOrderServiceMock.Setup(x => x.DeserializeOrderJson(It.IsAny<string>()))
+            .Returns(new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session", OrderIndex = 0, IsAuthRelated = true },
+                new() { EndpointId = protectedEndpointId, HttpMethod = "POST", Path = "/v1/workspaces", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { loginEndpointId } },
+            });
+
+        TestCase capturedTestCase = null;
+        TestCaseRequest capturedRequest = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((testCase, _) => capturedTestCase = testCase)
+            .Returns(Task.CompletedTask);
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = protectedEndpointId;
+        command.TestCases[0].Name = "Create workspace";
+        command.TestCases[0].Request.HttpMethod = "POST";
+        command.TestCases[0].Request.Url = "/v1/workspaces";
+        command.TestCases[0].Request.Headers = "{}";
+        command.TestCases[0].Request.BodyType = "JSON";
+        command.TestCases[0].Request.Body = """{"name":"workspace_{{tcUniqueId}}"}""";
+        command.TestCases[0].Expectation.ExpectedStatus = "[201]";
+
+        await _handler.HandleAsync(command);
+
+        var tags = DeserializeTags(capturedTestCase.Tags);
+        tags.Should().Contain("auth-mode:required");
+        tags.Should().Contain("flow-consumes:authToken");
+        tags.Should().Contain("auth-fallback:allow");
+        capturedRequest.Headers.Should().Contain("\"X-Test-Auth-Mode\":\"required\"");
+    }
+
+    [Fact]
+    public async Task HandleAsync_Should_NotInferRequiredAuthHints_ForExplicitMissingAuthScenario()
+    {
+        var suite = CreateSuite();
+        suite.ApiSpecId = Guid.NewGuid();
+        SetupSuiteFound(suite);
+        SetupExistingTestCases(0);
+
+        var loginEndpointId = Guid.NewGuid();
+        var protectedEndpointId = Guid.NewGuid();
+        _endpointMetadataServiceMock
+            .Setup(x => x.GetEndpointMetadataAsync(
+                suite.ApiSpecId.Value,
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(protectedEndpointId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApiEndpointMetadataDto>
+            {
+                new()
+                {
+                    EndpointId = protectedEndpointId,
+                    HttpMethod = "DELETE",
+                    Path = "/v1/workspaces/{id}",
+                    Responses = new List<ApiEndpointResponseDescriptorDto>
+                    {
+                        new() { StatusCode = 401 },
+                    },
+                },
+            });
+
+        _proposalRepoMock.Setup(x => x.FirstOrDefaultAsync(It.IsAny<IQueryable<TestOrderProposal>>()))
+            .ReturnsAsync(new TestOrderProposal
+            {
+                Id = Guid.NewGuid(),
+                TestSuiteId = suite.Id,
+                Status = ProposalStatus.Applied,
+                AppliedOrder = "[]",
+            });
+        _apiTestOrderServiceMock.Setup(x => x.DeserializeOrderJson(It.IsAny<string>()))
+            .Returns(new List<ApiOrderItemModel>
+            {
+                new() { EndpointId = loginEndpointId, HttpMethod = "POST", Path = "/v1/session", OrderIndex = 0, IsAuthRelated = true },
+                new() { EndpointId = protectedEndpointId, HttpMethod = "DELETE", Path = "/v1/workspaces/{id}", OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { loginEndpointId } },
+            });
+
+        TestCase capturedTestCase = null;
+        TestCaseRequest capturedRequest = null;
+        _testCaseRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCase>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCase, CancellationToken>((testCase, _) => capturedTestCase = testCase)
+            .Returns(Task.CompletedTask);
+        _requestRepoMock.Setup(x => x.AddAsync(It.IsAny<TestCaseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestCaseRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(Task.CompletedTask);
+
+        var command = CreateValidCommand();
+        command.TestCases[0].EndpointId = protectedEndpointId;
+        command.TestCases[0].Name = "Delete workspace missing auth";
+        command.TestCases[0].Description = "Missing authorization should be rejected.";
+        command.TestCases[0].TestType = "Security";
+        command.TestCases[0].Request.HttpMethod = "DELETE";
+        command.TestCases[0].Request.Url = "/v1/workspaces/{id}";
+        command.TestCases[0].Request.Headers = """{"X-Test-Auth-Mode":"none"}""";
+        command.TestCases[0].Request.BodyType = "None";
+        command.TestCases[0].Request.Body = null;
+        command.TestCases[0].Expectation.ExpectedStatus = "[401]";
+
+        await _handler.HandleAsync(command);
+
+        var tags = DeserializeTags(capturedTestCase.Tags);
+        tags.Should().Contain("auth-mode:none");
+        tags.Should().NotContain("auth-mode:required");
+        tags.Should().NotContain("flow-consumes:authToken");
+        tags.Should().NotContain("auth-fallback:allow");
+        capturedRequest.Headers.Should().Contain("\"X-Test-Auth-Mode\":\"none\"");
+        capturedRequest.Headers.Should().NotContain("Authorization");
+    }
+
+    [Fact]
     public async Task HandleAsync_Should_ParseHttpMethod_FromMethodAndPathFormat()
     {
         var suite = CreateSuite();
@@ -926,6 +1242,8 @@ public class SaveAiGeneratedTestCasesCommandHandlerTests
 
         var command = CreateValidCommand();
         command.TestCases[0].EndpointId = endpointId;
+        command.TestCases[0].Request.HttpMethod = "POST";
+        command.TestCases[0].Request.Url = "/api/auth/login";
         command.TestCases[0].CoveredRequirementIds = new List<Guid> { registerReqId, loginReqId };
 
         await _handler.HandleAsync(command);

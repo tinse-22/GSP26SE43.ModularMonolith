@@ -82,6 +82,17 @@ public class RuleBasedValidatorTests
     }
 
     [Fact]
+    public void Validate_DefaultProfile_ShouldUseRelaxedValidationScoreThreshold()
+    {
+        var response = CreateResponse(statusCode: 200);
+        var testCase = CreateTestCase(expectedStatus: "[200]");
+
+        var result = _validator.Validate(response, testCase);
+
+        result.ValidationScoreThreshold.Should().Be(0.50m);
+    }
+
+    [Fact]
     public void Validate_StatusCodeNegativeAllowedSet_Should_PassWhenActual422()
     {
         // Arrange

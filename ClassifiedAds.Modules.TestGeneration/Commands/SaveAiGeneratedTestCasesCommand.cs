@@ -434,9 +434,18 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             var now = DateTimeOffset.UtcNow;
             var actorUserId = suite.LastModifiedById ?? suite.CreatedById;
             var persistedTestCases = new List<TestCase>(validTestCases.Count);
+            var approvedOrder = await LoadApprovedOrderAsync(command.TestSuiteId, ct);
+            var orderItemByEndpointId = approvedOrder
+                .GroupBy(x => x.EndpointId)
+                .ToDictionary(x => x.Key, x => x.First());
             var orderIdx = 0;
             foreach (var dto in validTestCases)
             {
+                metadataByEndpointIdForPersistence.TryGetValue(dto.EndpointId ?? Guid.Empty, out var endpointMetadata);
+                orderItemByEndpointId.TryGetValue(dto.EndpointId ?? Guid.Empty, out var orderItem);
+                NormalizeRequestBodyForEndpoint(dto, endpointMetadata);
+                ApplyRuntimeAuthHints(dto, endpointMetadata, orderItem, metadataByEndpointIdForPersistence, orderItemByEndpointId);
+
                 var testCase = new TestCase
                 {
                     Id = Guid.NewGuid(),
@@ -554,7 +563,6 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 orderIdx++;
             }
 
-            var approvedOrder = await LoadApprovedOrderAsync(command.TestSuiteId, ct);
             GeneratedTestCaseEnrichmentResult enrichment = null;
             if (approvedOrder.Count > 0)
             {
@@ -774,6 +782,13 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
                 continue;
             }
 
+            endpoint = await ResolveEndpointMetadataForRequestAsync(
+                specId,
+                dto,
+                endpoint,
+                cancellationToken);
+            endpointId = dto.EndpointId!.Value;
+
             NormalizeRequestBodyForEndpoint(dto, endpoint);
             valid.Add(dto);
         }
@@ -908,7 +923,7 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         var hasBody = !string.IsNullOrWhiteSpace(dto.Request.Body);
         var bodyType = ParseBodyType(dto.Request.BodyType);
 
-        if (!EndpointDeclaresRequestBody(endpoint))
+        if (methodParsed && MethodForbidsRequestBody(method))
         {
             if (hasBody || bodyType != BodyType.None)
             {
@@ -919,14 +934,114 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             return;
         }
 
+        if (!hasBody)
+        {
+            if (bodyType != BodyType.None)
+            {
+                dto.Request.BodyType = "None";
+            }
+
+            return;
+        }
+
         if (methodParsed
-            && hasBody
             && bodyType == BodyType.None
-            && MethodNormallyCarriesBody(method)
+            && MethodCanCarryGeneratedBody(method)
             && LooksLikeJsonBody(dto.Request.Body))
         {
             dto.Request.BodyType = "JSON";
         }
+    }
+
+    private static void ApplyRuntimeAuthHints(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint,
+        ApiOrderItemModel orderItem,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemByEndpointId)
+    {
+        if (dto?.Request == null ||
+            !EndpointDependsOnAuthBootstrap(endpoint, orderItem, metadataByEndpointId, orderItemByEndpointId))
+        {
+            return;
+        }
+
+        var tags = ParseTagList(dto.Tags);
+        if (IsNoAuthIntent(dto, tags) || HasConcreteAuthHeader(dto.Request.Headers))
+        {
+            return;
+        }
+
+        dto.ExecutionHints ??= new N8nExecutionHints();
+        if (string.IsNullOrWhiteSpace(dto.ExecutionHints.AuthMode) &&
+            string.IsNullOrWhiteSpace(dto.AuthMode) &&
+            string.IsNullOrWhiteSpace(ReadAuthModeHeader(dto.Request.Headers)))
+        {
+            dto.ExecutionHints.AuthMode = "required";
+        }
+
+        dto.ExecutionHints.Consumes ??= new List<string>();
+        if (!dto.ExecutionHints.Consumes.Any(IsTokenLikeVariableName) &&
+            !NormalizeStringList(dto.Consumes).Any(IsTokenLikeVariableName))
+        {
+            dto.ExecutionHints.Consumes.Add("authToken");
+        }
+    }
+
+    private static bool EndpointDependsOnAuthBootstrap(
+        ApiEndpointMetadataDto endpoint,
+        ApiOrderItemModel orderItem,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemByEndpointId)
+    {
+        if (endpoint?.IsAuthRelated == true || orderItem?.IsAuthRelated == true)
+        {
+            return false;
+        }
+
+        return HasAuthBootstrapDependency(endpoint?.DependsOnEndpointIds, metadataByEndpointId, orderItemByEndpointId) ||
+               HasAuthBootstrapDependency(orderItem?.DependsOnEndpointIds, metadataByEndpointId, orderItemByEndpointId);
+    }
+
+    private static bool HasAuthBootstrapDependency(
+        IEnumerable<Guid> dependencyIds,
+        IReadOnlyDictionary<Guid, ApiEndpointMetadataDto> metadataByEndpointId,
+        IReadOnlyDictionary<Guid, ApiOrderItemModel> orderItemByEndpointId)
+    {
+        if (dependencyIds == null)
+        {
+            return false;
+        }
+
+        foreach (var dependencyId in dependencyIds)
+        {
+            if (metadataByEndpointId?.TryGetValue(dependencyId, out var dependencyMetadata) == true &&
+                dependencyMetadata.IsAuthRelated)
+            {
+                return true;
+            }
+
+            if (orderItemByEndpointId?.TryGetValue(dependencyId, out var dependencyOrderItem) == true &&
+                dependencyOrderItem.IsAuthRelated)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasConcreteAuthHeader(string headersJson)
+    {
+        if (!TryReadJsonObject(headersJson, out var headers))
+        {
+            return false;
+        }
+
+        return headers.Any(x =>
+            IsAuthHeaderName(x.Key) &&
+            !string.IsNullOrWhiteSpace(x.Value) &&
+            !PlaceholderRegex.IsMatch(x.Value));
     }
 
     private static bool EndpointDeclaresRequestBody(ApiEndpointMetadataDto endpoint)
@@ -1010,6 +1125,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
     private static bool MethodNormallyCarriesBody(HttpMethod method)
         => method is HttpMethod.POST or HttpMethod.PUT or HttpMethod.PATCH;
+
+    private static bool MethodCanCarryGeneratedBody(HttpMethod method)
+        => method is HttpMethod.POST or HttpMethod.PUT or HttpMethod.PATCH or HttpMethod.DELETE;
+
+    private static bool MethodForbidsRequestBody(HttpMethod method)
+        => method is HttpMethod.GET or HttpMethod.HEAD or HttpMethod.OPTIONS;
 
     private static bool LooksLikeJsonBody(string body)
     {
@@ -1894,6 +2015,12 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
             return false;
         }
 
+        if (endpoint != null && !EndpointMatchesRequest(testCase, endpoint))
+        {
+            reason = $"request.url '{testCase.Request.Url}' does not match endpoint contract '{endpoint.Path}'";
+            return false;
+        }
+
         if (ContainsInvalidJsonBodyExpression(testCase.Request.Body, testCase.Request.BodyType))
         {
             reason = "JSON request.body contains JavaScript expression";
@@ -1917,6 +2044,143 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         return TryParseHttpMethod(left, out var leftMethod)
             && TryParseHttpMethod(right, out var rightMethod)
             && leftMethod == rightMethod;
+    }
+
+    private async Task<ApiEndpointMetadataDto> ResolveEndpointMetadataForRequestAsync(
+        Guid specId,
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto currentEndpoint,
+        CancellationToken cancellationToken)
+    {
+        if (specId == Guid.Empty
+            || dto?.Request == null
+            || currentEndpoint == null
+            || EndpointMatchesRequest(dto, currentEndpoint))
+        {
+            return currentEndpoint;
+        }
+
+        var allMetadata = await _apiEndpointMetadataService.GetEndpointMetadataAsync(
+            specId,
+            selectedEndpointIds: null,
+            cancellationToken);
+        var matched = FindEndpointMetadataByRequest(dto, allMetadata);
+        if (matched == null)
+        {
+            return currentEndpoint;
+        }
+
+        dto.EndpointId = matched.EndpointId;
+        if (string.IsNullOrWhiteSpace(dto.Request.HttpMethod) && !string.IsNullOrWhiteSpace(matched.HttpMethod))
+        {
+            dto.Request.HttpMethod = matched.HttpMethod.Trim().ToUpperInvariant();
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Request.Url) && !string.IsNullOrWhiteSpace(matched.Path))
+        {
+            dto.Request.Url = matched.Path.Trim();
+        }
+
+        return matched;
+    }
+
+    private static ApiEndpointMetadataDto FindEndpointMetadataByRequest(
+        AiGeneratedTestCaseDto dto,
+        IEnumerable<ApiEndpointMetadataDto> endpoints)
+    {
+        if (dto?.Request == null || endpoints == null)
+        {
+            return null;
+        }
+
+        return endpoints
+            .Where(endpoint => endpoint != null && EndpointMatchesRequest(dto, endpoint))
+            .OrderByDescending(endpoint => string.Equals(
+                ExtractComparablePath(dto.Request.Url),
+                ExtractComparablePath(endpoint.Path),
+                StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
+    }
+
+    private static bool EndpointMatchesRequest(
+        AiGeneratedTestCaseDto dto,
+        ApiEndpointMetadataDto endpoint)
+    {
+        if (dto?.Request == null || endpoint == null)
+        {
+            return false;
+        }
+
+        return HttpMethodsEquivalent(dto.Request.HttpMethod, endpoint.HttpMethod)
+            && PathsEquivalent(dto.Request.Url, endpoint.Path);
+    }
+
+    private static bool PathsEquivalent(string requestUrl, string endpointPath)
+    {
+        var requestSegments = SplitPathSegments(requestUrl);
+        var endpointSegments = SplitPathSegments(endpointPath);
+        if (requestSegments.Count == 0 || endpointSegments.Count == 0 || requestSegments.Count != endpointSegments.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < requestSegments.Count; i++)
+        {
+            var requestSegment = requestSegments[i];
+            var endpointSegment = endpointSegments[i];
+            if (IsRouteTemplateSegment(requestSegment) || IsRouteTemplateSegment(endpointSegment))
+            {
+                continue;
+            }
+
+            if (!string.Equals(requestSegment, endpointSegment, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static List<string> SplitPathSegments(string value)
+    {
+        var path = ExtractComparablePath(value);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return new List<string>();
+        }
+
+        return path
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(segment => segment.Trim())
+            .Where(segment => !string.IsNullOrWhiteSpace(segment))
+            .ToList();
+    }
+
+    private static string ExtractComparablePath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == "http" || absolute.Scheme == "https"))
+        {
+            return absolute.AbsolutePath.Trim('/');
+        }
+
+        var splitIndex = trimmed.IndexOfAny(new[] { '?', '#' });
+        return (splitIndex >= 0 ? trimmed[..splitIndex] : trimmed).Trim('/');
+    }
+
+    private static bool IsRouteTemplateSegment(string segment)
+    {
+        return !string.IsNullOrWhiteSpace(segment)
+            && segment.Length >= 2
+            && segment[0] == '{'
+            && segment[^1] == '}';
     }
 
     private static bool ContainsInvalidJsonBodyExpression(string body, string bodyType)
@@ -2614,6 +2878,13 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
         {
             throw new ValidationException(
                 $"AI-generated test case '{dto?.Name ?? $"index {index}"}' is missing request.url.");
+        }
+
+        if (endpoint != null && !EndpointMatchesRequest(dto, endpoint))
+        {
+            throw new ValidationException(
+                $"AI-generated test case '{dto?.Name ?? $"index {index}"}' request '{request.HttpMethod} {request.Url}' " +
+                $"does not match endpoint contract '{endpoint.HttpMethod} {endpoint.Path}'.");
         }
 
         if (request.BodyType != null &&
