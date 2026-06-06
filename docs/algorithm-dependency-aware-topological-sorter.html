@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Algorithm - Dependency Aware Topological Sorter</title>
+  <style>
+    :root {
+      --bg: #06131d;
+      --panel: rgba(5, 22, 34, 0.62);
+      --panel-strong: rgba(10, 38, 56, 0.86);
+      --blue: #3aa0ed;
+      --cyan: #69d5ff;
+      --mint: #94e6ee;
+      --text: #f4fbff;
+      --muted: #b9d5e4;
+      --line: rgba(148, 230, 238, 0.34);
+      --ok: #7ee6b8;
+      --warn: #ffd166;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 14%, rgba(58, 160, 237, 0.20), transparent 28%),
+        radial-gradient(circle at 82% 8%, rgba(148, 230, 238, 0.12), transparent 24%),
+        linear-gradient(115deg, #0d3f56 0%, #06131d 68%);
+    }
+
+    main {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 30px 30px 48px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 24px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .badge {
+      padding: 10px 16px;
+      border: 1px solid rgba(105, 213, 255, 0.62);
+      border-radius: 7px;
+      background: rgba(5, 22, 34, 0.7);
+      color: var(--text);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) 340px;
+      gap: 28px;
+      align-items: center;
+      min-height: 360px;
+      margin-bottom: 28px;
+    }
+
+    .hero-copy {
+      padding: 28px;
+      border-left: 4px solid var(--cyan);
+      background: linear-gradient(90deg, rgba(10, 38, 56, 0.82), rgba(10, 38, 56, 0.22));
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--mint);
+      text-transform: uppercase;
+      letter-spacing: 1.6px;
+      font-weight: 900;
+      font-size: 14px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      max-width: 860px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    p {
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .hero-copy p {
+      margin: 0;
+      max-width: 820px;
+      font-size: 18px;
+    }
+
+    .signal {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background:
+        conic-gradient(from 25deg, #84dce8, #1c5e83, #3aa0ed, #154764, #76cddb, #205b7d, #84dce8);
+      box-shadow: 0 24px 45px rgba(0, 0, 0, 0.34);
+    }
+
+    .signal div {
+      width: 68%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 22px;
+      background: var(--bg);
+      color: var(--text);
+      font-weight: 900;
+      text-transform: uppercase;
+      line-height: 1.2;
+    }
+
+    .section {
+      margin-top: 26px;
+      padding: 26px;
+      border: 1px solid rgba(105, 213, 255, 0.22);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.16);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      line-height: 1.25;
+    }
+
+    .grid-3, .flow, .two-col {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); counter-reset: step; }
+    .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .card {
+      min-height: 130px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(18, 91, 128, 0.72), rgba(8, 34, 50, 0.82));
+    }
+
+    .step {
+      position: relative;
+      padding-top: 48px;
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--cyan);
+      color: #062033;
+      font-weight: 900;
+    }
+
+    h3 {
+      margin: 0 0 9px;
+      font-size: 17px;
+      line-height: 1.25;
+    }
+
+    .card p, li {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li + li { margin-top: 10px; }
+
+    code {
+      color: var(--ok);
+      background: rgba(0, 0, 0, 0.28);
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    .note {
+      border-left: 4px solid var(--warn);
+      background: var(--panel-strong);
+    }
+
+    footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 900px) {
+      main { padding: 22px 18px 38px; }
+      .hero, .grid-3, .flow, .two-col { grid-template-columns: 1fr; }
+      .signal { width: min(320px, 80vw); margin: 0 auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <span>ClassifiedAds.Modules.TestGeneration / Algorithms</span>
+      <span class="badge">DependencyAwareTopologicalSorter.cs</span>
+    </div>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Thuật toán sắp thứ tự endpoint</p>
+        <h1>Dependency-aware topological sorting</h1>
+        <p>Thuật toán này biến danh sách endpoint và các cạnh phụ thuộc thành thứ tự chạy test hợp lý: endpoint tạo dữ liệu, đăng ký, đăng nhập hoặc có nhiều endpoint khác cần dùng sẽ được ưu tiên chạy trước.</p>
+      </div>
+      <div class="signal"><div>producer first<br>consumer later</div></div>
+    </section>
+
+    <section class="section">
+      <h2>Nằm ở đâu và được gọi khi nào?</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>Implementation</h3>
+          <p><code>DependencyAwareTopologicalSorter</code> implement <code>IDependencyAwareTopologicalSorter</code> trong thư mục <code>Algorithms</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Điểm gọi chính</h3>
+          <p><code>ApiTestOrderAlgorithm.BuildProposalOrder</code> gom dependency edges rồi gọi <code>_topologicalSorter.Sort(...)</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Vai trò workflow</h3>
+          <p>Nó tạo <code>OrderIndex</code> cho proposal, từ đó Workflow 6 sinh test case theo đúng thứ tự dữ liệu và Workflow 7 execute ít bị fail do thiếu setup.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Đầu vào và đầu ra</h2>
+      <div class="two-col">
+        <article class="card">
+          <h3>Đầu vào</h3>
+          <ul>
+            <li><code>SortableOperation</code>: <code>OperationId</code>, HTTP method, path, cờ <code>IsAuthRelated</code>.</li>
+            <li><code>DependencyEdge</code>: cạnh có hướng, nghĩa là <code>SourceOperationId</code> phụ thuộc vào <code>TargetOperationId</code>.</li>
+            <li>Cạnh confidence thấp hơn <code>0.5</code> vẫn được ghi metadata nhưng không ép thứ tự.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>Đầu ra</h3>
+          <ul>
+            <li><code>SortedOperationResult</code> gồm <code>OrderIndex</code>, <code>Dependencies</code>, <code>DependencyEdges</code>.</li>
+            <li><code>FanOut</code> cho biết endpoint này được bao nhiêu endpoint khác cần.</li>
+            <li><code>ReasonCodes</code> giải thích vì sao endpoint được xếp ở vị trí đó.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Luồng thuật toán</h2>
+      <div class="flow">
+        <article class="card step">
+          <h3>Khử trùng endpoint</h3>
+          <p>Group theo <code>OperationId</code> để mỗi endpoint chỉ xuất hiện một lần trong graph.</p>
+        </article>
+        <article class="card step">
+          <h3>Dựng graph phụ thuộc</h3>
+          <p>Tạo <code>dependenciesMap</code> và <code>dependentsMap</code>. Mỗi cạnh source - target nghĩa là source cần target chạy trước.</p>
+        </article>
+        <article class="card step">
+          <h3>Tính in-degree và fan-out</h3>
+          <p><code>inDegree</code> là số dependency còn thiếu. <code>fanOut</code> là số endpoint phụ thuộc vào node hiện tại.</p>
+        </article>
+        <article class="card step">
+          <h3>Chọn node sẵn sàng</h3>
+          <p>Node có <code>inDegree = 0</code> được đưa vào tập <code>available</code> để có thể chạy tiếp.</p>
+        </article>
+        <article class="card step">
+          <h3>Xếp hạng ứng viên</h3>
+          <p>Ưu tiên auth trước, fan-out cao trước, in-degree thấp, method weight, path alphabet và cuối cùng là Guid để deterministic.</p>
+        </article>
+        <article class="card step">
+          <h3>Ghi kết quả</h3>
+          <p>Endpoint được chọn nhận <code>OrderIndex</code>, reason code và danh sách dependency metadata.</p>
+        </article>
+        <article class="card step">
+          <h3>Giảm in-degree</h3>
+          <p>Sau khi một producer được xếp, các consumer của nó được giảm in-degree; nếu về 0 thì vào hàng đợi.</p>
+        </article>
+        <article class="card step">
+          <h3>Phá cycle nếu cần</h3>
+          <p>Nếu không có node sẵn sàng, chọn node có in-degree thấp và fan-out cao để phá vòng, đánh dấu <code>CYCLE_BREAK_FALLBACK</code>.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Cách được dùng trong workflow sinh test</h2>
+      <div class="two-col">
+        <article class="card">
+          <h3>Trong Workflow 4/6</h3>
+          <p>Thứ tự proposal giúp hệ thống biết endpoint nào tạo dữ liệu trước. Ví dụ: <code>POST /users</code> hoặc endpoint login thường cần đứng trước <code>GET /users/{id}</code> hoặc endpoint cần bearer token.</p>
+        </article>
+        <article class="card">
+          <h3>Khi callback lưu test case</h3>
+          <p><code>OrderIndex</code> và dependency chain được dùng để lưu test case có thứ tự, giúp runtime resolver lấy biến từ case trước cho case sau.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section note">
+      <h2>Khi debug cần nhìn gì?</h2>
+      <ul>
+        <li>Nếu thứ tự sai, kiểm tra <code>DependencyEdge.SourceOperationId</code> và <code>TargetOperationId</code> có bị đảo chiều không.</li>
+        <li>Nếu cạnh xuất hiện trong metadata nhưng không ép thứ tự, kiểm tra <code>Confidence</code> có thấp hơn <code>0.5</code> không.</li>
+        <li>Nếu có cycle, xem <code>IsCycleBreak</code> và reason code để biết node nào bị chọn làm điểm phá vòng.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Nguồn code chính: <code>ClassifiedAds.Modules.TestGeneration/Algorithms/DependencyAwareTopologicalSorter.cs</code> và <code>Services/ApiTestOrderAlgorithm.cs</code>.
+    </footer>
+  </main>
+</body>
+</html>
