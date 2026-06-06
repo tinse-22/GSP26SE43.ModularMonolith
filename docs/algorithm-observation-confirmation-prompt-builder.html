@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Algorithm - Observation Confirmation Prompt Builder</title>
+  <style>
+    :root {
+      --bg: #06131d;
+      --panel: rgba(5, 22, 34, 0.62);
+      --panel-strong: rgba(10, 38, 56, 0.86);
+      --blue: #3aa0ed;
+      --cyan: #69d5ff;
+      --mint: #94e6ee;
+      --text: #f4fbff;
+      --muted: #b9d5e4;
+      --line: rgba(148, 230, 238, 0.34);
+      --ok: #7ee6b8;
+      --warn: #ffd166;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 14%, rgba(58, 160, 237, 0.20), transparent 28%),
+        radial-gradient(circle at 82% 8%, rgba(148, 230, 238, 0.12), transparent 24%),
+        linear-gradient(115deg, #0d3f56 0%, #06131d 68%);
+    }
+
+    main {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 30px 30px 48px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 24px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .badge {
+      padding: 10px 16px;
+      border: 1px solid rgba(105, 213, 255, 0.62);
+      border-radius: 7px;
+      background: rgba(5, 22, 34, 0.7);
+      color: var(--text);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) 340px;
+      gap: 28px;
+      align-items: center;
+      min-height: 360px;
+      margin-bottom: 28px;
+    }
+
+    .hero-copy {
+      padding: 28px;
+      border-left: 4px solid var(--cyan);
+      background: linear-gradient(90deg, rgba(10, 38, 56, 0.82), rgba(10, 38, 56, 0.22));
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--mint);
+      text-transform: uppercase;
+      letter-spacing: 1.6px;
+      font-weight: 900;
+      font-size: 14px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      max-width: 860px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    p {
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .hero-copy p {
+      margin: 0;
+      max-width: 820px;
+      font-size: 18px;
+    }
+
+    .signal {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background:
+        conic-gradient(from 25deg, #84dce8, #1c5e83, #3aa0ed, #154764, #76cddb, #205b7d, #84dce8);
+      box-shadow: 0 24px 45px rgba(0, 0, 0, 0.34);
+    }
+
+    .signal div {
+      width: 68%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 22px;
+      background: var(--bg);
+      color: var(--text);
+      font-weight: 900;
+      text-transform: uppercase;
+      line-height: 1.2;
+    }
+
+    .section {
+      margin-top: 26px;
+      padding: 26px;
+      border: 1px solid rgba(105, 213, 255, 0.22);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.16);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      line-height: 1.25;
+    }
+
+    .grid-3, .flow, .two-col {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); counter-reset: step; }
+    .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .card {
+      min-height: 130px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(18, 91, 128, 0.72), rgba(8, 34, 50, 0.82));
+    }
+
+    .step {
+      position: relative;
+      padding-top: 48px;
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--cyan);
+      color: #062033;
+      font-weight: 900;
+    }
+
+    h3 {
+      margin: 0 0 9px;
+      font-size: 17px;
+      line-height: 1.25;
+    }
+
+    .card p, li {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li + li { margin-top: 10px; }
+
+    code {
+      color: var(--ok);
+      background: rgba(0, 0, 0, 0.28);
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    .note {
+      border-left: 4px solid var(--warn);
+      background: var(--panel-strong);
+    }
+
+    footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 900px) {
+      main { padding: 22px 18px 38px; }
+      .hero, .grid-3, .flow, .two-col { grid-template-columns: 1fr; }
+      .signal { width: min(320px, 80vw); margin: 0 auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <span>ClassifiedAds.Modules.TestGeneration / Algorithms</span>
+      <span class="badge">ObservationConfirmationPromptBuilder.cs</span>
+    </div>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Thuật toán dựng prompt cho LLM</p>
+        <h1>Observation-Confirmation prompting</h1>
+        <p>Thuật toán này tạo prompt hai pha để LLM sinh expectation và scenario dựa trên bằng chứng từ OpenAPI/SRS. Mục tiêu là giảm hallucination: trước tiên quan sát constraint, sau đó xác nhận từng constraint bằng evidence.</p>
+      </div>
+      <div class="signal"><div>observe<br>confirm<br>output json</div></div>
+    </section>
+
+    <section class="section">
+      <h2>Nằm ở đâu và được gọi khi nào?</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>Implementation</h3>
+          <p><code>ObservationConfirmationPromptBuilder</code> implement <code>IObservationConfirmationPromptBuilder</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Điểm gọi chính</h3>
+          <p><code>HappyPathTestCaseGenerator</code>, <code>LlmScenarioSuggester</code> và <code>TestGenerationPayloadBuilder</code> gọi <code>BuildForSequence</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Vai trò workflow</h3>
+          <p>Prompt được đóng vào n8n payload để LLM sinh test case hoặc scenario có cấu trúc, có evidence và bám sát spec.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Đầu vào và đầu ra</h2>
+      <div class="two-col">
+        <article class="card">
+          <h3>Đầu vào</h3>
+          <ul>
+            <li><code>EndpointPromptContext</code>: method, path, operationId, summary, description.</li>
+            <li>Parameter, response, request/response schema, examples từ OpenAPI.</li>
+            <li><code>BusinessContext</code> từ rule nghiệp vụ hoặc SRS của suite.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>Đầu ra</h3>
+          <ul>
+            <li><code>SystemPrompt</code> định nghĩa vai trò QA engineer và format JSON.</li>
+            <li><code>ObservationPrompt</code> yêu cầu liệt kê constraint.</li>
+            <li><code>ConfirmationPromptTemplate</code> yêu cầu xác nhận constraint bằng evidence.</li>
+            <li><code>CombinedPrompt</code> dùng cho single-shot model.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Luồng thuật toán cho một endpoint</h2>
+      <div class="flow">
+        <article class="card step">
+          <h3>Nhận context</h3>
+          <p><code>BuildForEndpoint</code> trả <code>null</code> nếu context rỗng, tránh tạo prompt không có dữ liệu.</p>
+        </article>
+        <article class="card step">
+          <h3>Dựng spec block</h3>
+          <p><code>BuildSpecBlock</code> gom method, path, parameter, schema, response, example và business rules.</p>
+        </article>
+        <article class="card step">
+          <h3>Tạo observation prompt</h3>
+          <p>Pha 1 yêu cầu LLM liệt kê mọi constraint testable: type, format, required, enum, range, relation, business rule.</p>
+        </article>
+        <article class="card step">
+          <h3>Tạo confirmation prompt</h3>
+          <p>Pha 2 yêu cầu giữ constraint có evidence, loại constraint suy diễn hoặc mâu thuẫn với example.</p>
+        </article>
+        <article class="card step">
+          <h3>Tạo combined prompt</h3>
+          <p>Prompt một lượt mô phỏng observe, confirm và output JSON cho model hoặc webhook không chạy multi-turn.</p>
+        </article>
+        <article class="card step">
+          <h3>Gắn system prompt</h3>
+          <p>System prompt bắt output là JSON array gồm field, constraint, type, source, evidence, confidence và assertion.</p>
+        </article>
+        <article class="card step">
+          <h3>Build sequence</h3>
+          <p><code>BuildForSequence</code> xử lý endpoint đã được order và giữ danh sách previous endpoints.</p>
+        </article>
+        <article class="card step">
+          <h3>Thêm cross context</h3>
+          <p>Nếu endpoint hiện tại liên quan path với endpoint trước, prompt được bổ sung ngữ cảnh dữ liệu liên endpoint.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Cách được dùng trong workflow sinh test</h2>
+      <div class="two-col">
+        <article class="card">
+          <h3>Happy path generation</h3>
+          <p><code>HappyPathTestCaseGenerator.GenerateAsync</code> lấy ordered metadata, map sang <code>EndpointPromptContext</code>, gọi <code>BuildForSequence</code>, rồi đưa prompt vào n8n payload.</p>
+        </article>
+        <article class="card">
+          <h3>Boundary/negative suggestion</h3>
+          <p><code>LlmScenarioSuggester</code> chỉ dùng prompt builder khi profile bật <code>UseObservationConfirmationPrompting</code>; nếu thiếu prompt thì fallback sang prompt tự dựng.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section note">
+      <h2>Khi debug cần nhìn gì?</h2>
+      <ul>
+        <li>Nếu LLM sinh constraint không có bằng chứng, kiểm tra <code>SystemPrompt</code> và <code>ConfirmationPromptTemplate</code> có được gửi trong payload không.</li>
+        <li>Nếu prompt quá dài bị cắt, kiểm tra đoạn truncate trong <code>LlmScenarioSuggester</code> hoặc <code>TestGenerationPayloadBuilder</code>.</li>
+        <li>Nếu thiếu context liên endpoint, kiểm tra thứ tự endpoint đầu vào và logic <code>IsLikelyRelated</code> dựa trên path segments.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Nguồn code chính: <code>ClassifiedAds.Modules.TestGeneration/Algorithms/ObservationConfirmationPromptBuilder.cs</code>, <code>Services/HappyPathTestCaseGenerator.cs</code>, <code>Services/LlmScenarioSuggester.cs</code> và <code>Services/TestGenerationPayloadBuilder.cs</code>.
+    </footer>
+  </main>
+</body>
+</html>
