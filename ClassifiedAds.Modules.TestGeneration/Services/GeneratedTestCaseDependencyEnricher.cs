@@ -24,6 +24,10 @@ public static class GeneratedTestCaseDependencyEnricher
     private static readonly Regex RouteTokenRegex = new(@"\{([A-Za-z0-9_]+)\}", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new(@"^\{\{(?<name>[A-Za-z0-9_]+)\}\}$", RegexOptions.Compiled);
     private static readonly Regex AnyPlaceholderRegex = new(@"\{\{\s*(?<name>[A-Za-z0-9_.-]+)\s*\}\}", RegexOptions.Compiled);
+    private const string FlowScenarioKeyTagPrefix = "flow-scenario-key:";
+    private const string FlowDependsOnTagPrefix = "flow-depends-on:";
+    private const string FlowProducesTagPrefix = "flow-produces:";
+    private const string FlowRequiredTagPrefix = "flow-required:";
 
     private static readonly string[] IdentifierJsonPaths =
     {
@@ -105,6 +109,7 @@ public static class GeneratedTestCaseDependencyEnricher
             return GeneratedTestCaseEnrichmentResult.Empty;
         }
 
+        var producersByFlowKey = BuildProducerFlowIndex(producerCandidates);
         var producersByEndpoint = producerCandidates
             .GroupBy(x => x.EndpointId)
             .ToDictionary(
@@ -125,10 +130,18 @@ public static class GeneratedTestCaseDependencyEnricher
             }
 
             var allowHeuristicRewrite = IsRewritePolicyEnabled(testCase);
-            AddDeclaredDependencies(testCase, orderItem, producersByEndpoint);
+            var explicitDependencyCandidates = ResolveExplicitFlowDependencyCandidates(
+                testCase,
+                producersByFlowKey,
+                testCase.Id,
+                testCase.OrderIndex);
+
+            AddExplicitFlowDependencies(testCase, explicitDependencyCandidates);
+            AddDeclaredDependencies(testCase, orderItem, producersByEndpoint, explicitDependencyCandidates);
             EnsureDeclaredConsumeDependencies(
                 testCase,
                 orderItem,
+                explicitDependencyCandidates,
                 producerCandidates,
                 producersByEndpoint,
                 pendingExistingVariables);
@@ -139,6 +152,7 @@ public static class GeneratedTestCaseDependencyEnricher
             FillMissingRouteParams(
                 testCase,
                 orderItem,
+                explicitDependencyCandidates,
                 producerCandidates,
                 producersByEndpoint,
                 pendingExistingVariables,
@@ -159,6 +173,7 @@ public static class GeneratedTestCaseDependencyEnricher
                 FillMissingBodyBindings(
                     testCase,
                     orderItem,
+                    explicitDependencyCandidates,
                     producerCandidates,
                     producersByEndpoint,
                     pendingExistingVariables);
@@ -229,10 +244,140 @@ public static class GeneratedTestCaseDependencyEnricher
             .ToList();
     }
 
+    private static Dictionary<string, List<ProducerCandidate>> BuildProducerFlowIndex(
+        IReadOnlyList<ProducerCandidate> producerCandidates)
+    {
+        var index = new Dictionary<string, List<ProducerCandidate>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var producer in producerCandidates ?? Array.Empty<ProducerCandidate>())
+        {
+            foreach (var key in BuildProducerFlowKeys(producer))
+            {
+                if (!index.TryGetValue(key, out var producers))
+                {
+                    producers = new List<ProducerCandidate>();
+                    index[key] = producers;
+                }
+
+                if (!producers.Any(x => x.TestCaseId == producer.TestCaseId))
+                {
+                    producers.Add(producer);
+                }
+            }
+        }
+
+        return index;
+    }
+
+    private static List<string> BuildProducerFlowKeys(ProducerCandidate producer)
+    {
+        var keys = new List<string>();
+        if (producer == null)
+        {
+            return keys;
+        }
+
+        keys.Add(producer.EndpointId.ToString("D"));
+        keys.Add(producer.EndpointId.ToString("N"));
+        keys.Add(producer.TestCaseId.ToString("D"));
+        keys.Add(producer.TestCaseId.ToString("N"));
+        AddFlowIndexKey(keys, producer.SourceTestCase?.Name);
+
+        foreach (var scenarioKey in GetTagValues(producer.SourceTestCase, FlowScenarioKeyTagPrefix))
+        {
+            AddFlowIndexKey(keys, scenarioKey);
+        }
+
+        foreach (var produced in GetTagValues(producer.SourceTestCase, FlowProducesTagPrefix))
+        {
+            AddFlowIndexKey(keys, produced);
+        }
+
+        foreach (var variable in producer.Variables ?? Array.Empty<TestCaseVariable>())
+        {
+            AddFlowIndexKey(keys, variable.VariableName);
+        }
+
+        return keys
+            .Select(NormalizeFlowKey)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<ProducerCandidate> ResolveExplicitFlowDependencyCandidates(
+        TestCase testCase,
+        IReadOnlyDictionary<string, List<ProducerCandidate>> producersByFlowKey,
+        Guid consumerTestCaseId,
+        int consumerOrderIndex)
+    {
+        var result = new List<ProducerCandidate>();
+        if (testCase == null || producersByFlowKey == null || producersByFlowKey.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var dependsOn in GetTagValues(testCase, FlowDependsOnTagPrefix))
+        {
+            var normalized = NormalizeFlowKey(dependsOn);
+            if (string.IsNullOrWhiteSpace(normalized) || !producersByFlowKey.TryGetValue(normalized, out var producers))
+            {
+                continue;
+            }
+
+            foreach (var producer in SortFlowDependencyCandidates(producers, consumerTestCaseId, consumerOrderIndex))
+            {
+                if (!result.Any(x => x.TestCaseId == producer.TestCaseId))
+                {
+                    result.Add(producer);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static void AddFlowIndexKey(ICollection<string> keys, string value)
+    {
+        var normalized = NormalizeFlowKey(value);
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            keys.Add(normalized);
+        }
+    }
+
+    private static List<ProducerCandidate> SortFlowDependencyCandidates(
+        IEnumerable<ProducerCandidate> candidates,
+        Guid consumerTestCaseId,
+        int consumerOrderIndex)
+    {
+        return (candidates ?? Array.Empty<ProducerCandidate>())
+            .Where(x => x != null
+                && x.TestCaseId != consumerTestCaseId
+                && (x.IsExisting || x.OrderIndex <= consumerOrderIndex))
+            .GroupBy(x => x.TestCaseId)
+            .Select(x => x.First())
+            .OrderByDescending(IsFlowRequiredProducer)
+            .ThenByDescending(x => x.TestType == TestType.HappyPath)
+            .ThenByDescending(x => GetMethodPriority(x.OrderItem?.HttpMethod))
+            .ThenBy(x => x.OrderIndex)
+            .ToList();
+    }
+
+    private static void AddExplicitFlowDependencies(
+        TestCase testCase,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates)
+    {
+        foreach (var producer in explicitDependencyCandidates ?? Array.Empty<ProducerCandidate>())
+        {
+            EnsureDependency(testCase, producer.TestCaseId);
+        }
+    }
+
     private static void AddDeclaredDependencies(
         TestCase testCase,
         ApiOrderItemModel orderItem,
-        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint)
+        IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates)
     {
         if (orderItem.DependsOnEndpointIds == null || orderItem.DependsOnEndpointIds.Count == 0)
         {
@@ -241,6 +386,12 @@ public static class GeneratedTestCaseDependencyEnricher
 
         foreach (var dependencyEndpointId in orderItem.DependsOnEndpointIds)
         {
+            if (explicitDependencyCandidates != null &&
+                explicitDependencyCandidates.Any(x => x.EndpointId == dependencyEndpointId))
+            {
+                continue;
+            }
+
             if (!producersByEndpoint.TryGetValue(dependencyEndpointId, out var producer))
             {
                 continue;
@@ -295,6 +446,7 @@ public static class GeneratedTestCaseDependencyEnricher
     private static void FillMissingRouteParams(
         TestCase testCase,
         ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
         IReadOnlyList<ProducerCandidate> producerCandidates,
         IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
         ICollection<TestCaseVariable> pendingExistingVariables,
@@ -326,12 +478,19 @@ public static class GeneratedTestCaseDependencyEnricher
             {
                 if (TryExtractPlaceholderVariable(existingValue, out var placeholderVariable))
                 {
-                    var existingProducer = SelectProducerForToken(
+                    var existingProducer = SelectExplicitProducerForToken(
+                        placeholderVariable,
                         token,
                         routePathTemplate,
-                        dependencyCandidates,
-                        producerCandidates,
-                        testCase.Id)
+                        explicitDependencyCandidates,
+                        testCase.Id,
+                        testCase.OrderIndex)
+                        ?? SelectProducerForToken(
+                            token,
+                            routePathTemplate,
+                            dependencyCandidates,
+                            producerCandidates,
+                            testCase.Id)
                         ?? SelectProducerForToken(
                             placeholderVariable,
                             routePathTemplate,
@@ -368,7 +527,14 @@ public static class GeneratedTestCaseDependencyEnricher
                     continue;
                 }
 
-                var producerForLiteral = SelectProducerForToken(
+                var producerForLiteral = SelectExplicitProducerForToken(
+                    token,
+                    token,
+                    routePathTemplate,
+                    explicitDependencyCandidates,
+                    testCase.Id,
+                    testCase.OrderIndex)
+                    ?? SelectProducerForToken(
                     token,
                     routePathTemplate,
                     dependencyCandidates,
@@ -397,7 +563,14 @@ public static class GeneratedTestCaseDependencyEnricher
                 continue;
             }
 
-            var producer = SelectProducerForToken(
+            var producer = SelectExplicitProducerForToken(
+                token,
+                token,
+                routePathTemplate,
+                explicitDependencyCandidates,
+                testCase.Id,
+                testCase.OrderIndex)
+                ?? SelectProducerForToken(
                 token,
                 routePathTemplate,
                 dependencyCandidates,
@@ -573,6 +746,7 @@ public static class GeneratedTestCaseDependencyEnricher
     private static void FillMissingBodyBindings(
         TestCase testCase,
         ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
         IReadOnlyList<ProducerCandidate> producerCandidates,
         IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
         ICollection<TestCaseVariable> pendingExistingVariables)
@@ -605,6 +779,7 @@ public static class GeneratedTestCaseDependencyEnricher
         var changed = BindBodyNode(
             bodyNode,
             orderItem.Path ?? testCase.Request.Url,
+            explicitDependencyCandidates,
             dependencyCandidates,
             producerCandidates,
             testCase,
@@ -700,6 +875,7 @@ public static class GeneratedTestCaseDependencyEnricher
     private static void EnsureDeclaredConsumeDependencies(
         TestCase testCase,
         ApiOrderItemModel orderItem,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
         IReadOnlyList<ProducerCandidate> producerCandidates,
         IReadOnlyDictionary<Guid, ProducerCandidate> producersByEndpoint,
         ICollection<TestCaseVariable> pendingExistingVariables)
@@ -725,13 +901,17 @@ public static class GeneratedTestCaseDependencyEnricher
         {
             if (IsAuthConsumeVariable(consume))
             {
+                var preferredAuthCandidates = explicitDependencyCandidates?.Any(IsAuthLikeProducer) == true
+                    ? explicitDependencyCandidates
+                    : dependencyCandidates;
                 var authProducer = SelectDeclaredProducerForVariable(
                         consume,
+                        explicitDependencyCandidates,
                         dependencyCandidates,
                         producerCandidates,
                         testCase.Id,
                         testCase.OrderIndex)
-                    ?? SelectAuthProducer(dependencyCandidates, producerCandidates, testCase.Id, preferRegister: false);
+                    ?? SelectAuthProducer(preferredAuthCandidates, producerCandidates, testCase.Id, preferRegister: false);
                 if (authProducer == null)
                 {
                     continue;
@@ -744,10 +924,16 @@ public static class GeneratedTestCaseDependencyEnricher
 
             var producer = SelectDeclaredProducerForVariable(
                 consume,
+                explicitDependencyCandidates,
                 dependencyCandidates,
                 producerCandidates,
                 testCase.Id,
                 testCase.OrderIndex)
+                ?? SelectProducerForTokenFromCandidates(
+                    consume,
+                    consumerPath,
+                    explicitDependencyCandidates,
+                    testCase.Id)
                 ?? SelectProducerForToken(
                 consume,
                 consumerPath,
@@ -760,7 +946,12 @@ public static class GeneratedTestCaseDependencyEnricher
             }
 
             var producerScore = ScoreProducer(producer, consume, consumerPath);
-            if (producerScore < 30 && !ProducerAlreadyHasVariable(producer, consume, consumerPath))
+            var explicitProducerSatisfied = ExplicitProducerSatisfiesVariable(
+                explicitDependencyCandidates,
+                producer,
+                consume,
+                consumerPath);
+            if (producerScore < 30 && !explicitProducerSatisfied && !ProducerAlreadyHasVariable(producer, consume, consumerPath))
             {
                 continue;
             }
@@ -896,6 +1087,7 @@ public static class GeneratedTestCaseDependencyEnricher
 
     private static ProducerCandidate SelectDeclaredProducerForVariable(
         string variableName,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
         IReadOnlyList<ProducerCandidate> dependencyCandidates,
         IReadOnlyList<ProducerCandidate> allCandidates,
         Guid consumerTestCaseId,
@@ -906,8 +1098,30 @@ public static class GeneratedTestCaseDependencyEnricher
             return null;
         }
 
-        var candidates = dependencyCandidates
-            .Concat(allCandidates ?? Array.Empty<ProducerCandidate>())
+        return SelectDeclaredProducerFromCandidates(
+                variableName,
+                explicitDependencyCandidates,
+                consumerTestCaseId,
+                consumerOrderIndex)
+            ?? SelectDeclaredProducerFromCandidates(
+                variableName,
+                dependencyCandidates,
+                consumerTestCaseId,
+                consumerOrderIndex)
+            ?? SelectDeclaredProducerFromCandidates(
+                variableName,
+                allCandidates,
+                consumerTestCaseId,
+                consumerOrderIndex);
+    }
+
+    private static ProducerCandidate SelectDeclaredProducerFromCandidates(
+        string variableName,
+        IEnumerable<ProducerCandidate> candidates,
+        Guid consumerTestCaseId,
+        int consumerOrderIndex)
+    {
+        return (candidates ?? Array.Empty<ProducerCandidate>())
             .Where(x => x != null
                 && x.TestCaseId != consumerTestCaseId
                 && (x.IsExisting || x.OrderIndex <= consumerOrderIndex)
@@ -915,17 +1129,17 @@ public static class GeneratedTestCaseDependencyEnricher
             .GroupBy(x => x.TestCaseId)
             .Select(x => x.First())
             .OrderByDescending(x => ProducerHasExtractorVariable(x, variableName))
+            .ThenByDescending(IsFlowRequiredProducer)
             .ThenByDescending(x => x.TestType == TestType.HappyPath)
             .ThenByDescending(x => GetMethodPriority(x.OrderItem?.HttpMethod))
-            .ThenByDescending(x => x.OrderIndex)
-            .ToList();
-
-        return candidates.FirstOrDefault();
+            .ThenBy(x => x.OrderIndex)
+            .FirstOrDefault();
     }
 
     private static bool BindBodyNode(
         JsonNode node,
         string consumerPath,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
         IReadOnlyList<ProducerCandidate> dependencyCandidates,
         IReadOnlyList<ProducerCandidate> allCandidates,
         TestCase testCase,
@@ -945,17 +1159,33 @@ public static class GeneratedTestCaseDependencyEnricher
 
                 if (property.Value is JsonValue || property.Value == null)
                 {
-                    var producer = SelectProducerForToken(
-                        property.Key,
-                        consumerPath,
-                        dependencyCandidates,
-                        allCandidates,
-                        testCase.Id);
+                    var currentValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
+                    var hasPlaceholder = TryExtractPlaceholderVariable(currentValue, out var placeholderVariable);
+                    if (!hasPlaceholder &&
+                        TestCaseDeclaresProducedVariable(testCase, property.Key) &&
+                        !IsConsumedVariable(testCase, property.Key))
+                    {
+                        continue;
+                    }
+
+                    var producer = hasPlaceholder
+                        ? SelectExplicitProducerForToken(
+                            placeholderVariable,
+                            property.Key,
+                            consumerPath,
+                            explicitDependencyCandidates,
+                            testCase.Id,
+                            testCase.OrderIndex)
+                        : null;
+                    producer ??= SelectProducerForToken(
+                            property.Key,
+                            consumerPath,
+                            dependencyCandidates,
+                            allCandidates,
+                            testCase.Id);
 
                     if (producer != null)
                     {
-                        var currentValue = property.Value?.ToJsonString(JsonOpts)?.Trim('"');
-                        var hasPlaceholder = TryExtractPlaceholderVariable(currentValue, out var placeholderVariable);
                         var preferredVariableName = hasPlaceholder ? placeholderVariable : null;
                         var producerResourceScore = ScoreProducer(producer, property.Key, consumerPath);
 
@@ -1006,6 +1236,7 @@ public static class GeneratedTestCaseDependencyEnricher
                     BindBodyNode(
                         property.Value,
                         consumerPath,
+                        explicitDependencyCandidates,
                         dependencyCandidates,
                         allCandidates,
                         testCase,
@@ -1024,6 +1255,7 @@ public static class GeneratedTestCaseDependencyEnricher
                     BindBodyNode(
                         item,
                         consumerPath,
+                        explicitDependencyCandidates,
                         dependencyCandidates,
                         allCandidates,
                         testCase,
@@ -1036,6 +1268,18 @@ public static class GeneratedTestCaseDependencyEnricher
         }
 
         return changed;
+    }
+
+    private static bool TestCaseDeclaresProducedVariable(TestCase testCase, string variableName)
+    {
+        var normalized = NormalizeVariableName(variableName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        return GetTagValues(testCase, FlowProducesTagPrefix)
+            .Any(value => string.Equals(NormalizeVariableName(value), normalized, StringComparison.OrdinalIgnoreCase));
     }
 
     private static ProducerCandidate SelectProducerForToken(
@@ -1078,6 +1322,64 @@ public static class GeneratedTestCaseDependencyEnricher
             .OrderByDescending(x => ScoreProducer(x, token, consumerPath))
             .ThenBy(x => x.OrderIndex)
             .FirstOrDefault();
+    }
+
+    private static ProducerCandidate SelectExplicitProducerForToken(
+        string variableName,
+        string token,
+        string consumerPath,
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
+        Guid currentTestCaseId,
+        int consumerOrderIndex)
+    {
+        return SelectDeclaredProducerFromCandidates(
+                variableName,
+                explicitDependencyCandidates,
+                currentTestCaseId,
+                consumerOrderIndex)
+            ?? SelectProducerForTokenFromCandidates(
+                variableName,
+                consumerPath,
+                explicitDependencyCandidates,
+                currentTestCaseId)
+            ?? SelectProducerForTokenFromCandidates(
+                token,
+                consumerPath,
+                explicitDependencyCandidates,
+                currentTestCaseId);
+    }
+
+    private static ProducerCandidate SelectProducerForTokenFromCandidates(
+        string token,
+        string consumerPath,
+        IReadOnlyList<ProducerCandidate> candidates,
+        Guid currentTestCaseId)
+    {
+        return (candidates ?? Array.Empty<ProducerCandidate>())
+            .Where(x => x != null && x.TestCaseId != currentTestCaseId)
+            .GroupBy(x => x.TestCaseId)
+            .Select(g => g.First())
+            .OrderByDescending(x => ScoreProducer(x, token, consumerPath))
+            .ThenByDescending(x => ProducerAlreadyHasVariable(x, token, consumerPath))
+            .ThenBy(x => x.OrderIndex)
+            .FirstOrDefault();
+    }
+
+    private static bool ExplicitProducerSatisfiesVariable(
+        IReadOnlyList<ProducerCandidate> explicitDependencyCandidates,
+        ProducerCandidate producer,
+        string variableName,
+        string consumerPath)
+    {
+        if (producer == null || explicitDependencyCandidates == null)
+        {
+            return false;
+        }
+
+        return explicitDependencyCandidates.Any(x =>
+            x.TestCaseId == producer.TestCaseId &&
+            (ProducerDeclaresVariable(x, variableName) ||
+             ProducerAlreadyHasVariable(x, variableName, consumerPath)));
     }
 
     private static int ScoreProducer(ProducerCandidate producer, string token, string consumerPath)
@@ -2133,6 +2435,46 @@ public static class GeneratedTestCaseDependencyEnricher
             .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToList();
+    }
+
+    private static List<string> GetTagValues(TestCase testCase, string tagPrefix)
+    {
+        if (testCase == null || string.IsNullOrWhiteSpace(tagPrefix))
+        {
+            return new List<string>();
+        }
+
+        return ParseSerializedTags(testCase.Tags)
+            .Where(tag => tag.StartsWith(tagPrefix, StringComparison.OrdinalIgnoreCase))
+            .Select(tag => tag[tagPrefix.Length..].Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
+    }
+
+    private static string NormalizeFlowKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var chars = value.Trim().ToLowerInvariant()
+            .Select(c => char.IsLetterOrDigit(c) ? c : '-')
+            .ToArray();
+        var normalized = new string(chars);
+
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim('-');
+    }
+
+    private static bool IsFlowRequiredProducer(ProducerCandidate producer)
+    {
+        return GetTagValues(producer?.SourceTestCase, FlowRequiredTagPrefix)
+            .Any(value => string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsRewritePolicyEnabled(TestCase testCase)

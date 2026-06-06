@@ -535,6 +535,246 @@ public class GeneratedTestCaseDependencyEnricherTests
         boundaryUpdate.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == createCategory.Id);
     }
 
+    [Fact]
+    public void Enrich_Should_UseExplicitFlowProducer_WhenMultipleProducersDeclareSameGeneratedVariable()
+    {
+        var producerEndpointId = Guid.NewGuid();
+        var consumerEndpointId = Guid.NewGuid();
+        var flowKey = UniqueFlowKey("producer");
+        var laterFlowKey = UniqueFlowKey("variant");
+        var variableName = UniqueVariable("value");
+        var sourcePath = UniquePath("source");
+        var consumerPath = UniquePath("consumer");
+
+        var explicitProducer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: sourcePath,
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: $"{{\"{variableName}\":\"first\"}}");
+        SetTags(
+            explicitProducer,
+            $"flow-scenario-key:{flowKey}",
+            "flow-required:true",
+            $"flow-produces:{variableName}");
+
+        var laterProducer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: sourcePath,
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: $"{{\"{variableName}\":\"second\"}}");
+        SetTags(
+            laterProducer,
+            $"flow-scenario-key:{laterFlowKey}",
+            $"flow-produces:{variableName}");
+
+        var consumer = CreateTestCase(
+            endpointId: consumerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: consumerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 2,
+            body: $"{{\"payload\":\"{{{{{variableName}}}}}\"}}");
+        SetTags(
+            consumer,
+            $"flow-depends-on:{flowKey}",
+            $"flow-consumes:{variableName}",
+            "rewrite-policy:minimal");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = producerEndpointId, HttpMethod = "POST", Path = sourcePath, OrderIndex = 0 },
+            new() { EndpointId = consumerEndpointId, HttpMethod = "POST", Path = consumerPath, OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { producerEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { explicitProducer, laterProducer, consumer }, approvedOrder);
+
+        consumer.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == explicitProducer.Id);
+        consumer.Dependencies.Should().NotContain(x => x.DependsOnTestCaseId == laterProducer.Id);
+        explicitProducer.Variables.Should().Contain(x => x.VariableName == variableName);
+        laterProducer.Variables.Should().NotContain(x => x.VariableName == variableName);
+    }
+
+    [Fact]
+    public void Enrich_Should_BindMultipleConsumedVariables_ToExplicitFlowProducerOnly()
+    {
+        var producerEndpointId = Guid.NewGuid();
+        var unrelatedEndpointId = Guid.NewGuid();
+        var consumerEndpointId = Guid.NewGuid();
+        var flowKey = UniqueFlowKey("parent");
+        var unrelatedFlowKey = UniqueFlowKey("unrelated");
+        var firstVariable = UniqueVariable("first");
+        var secondVariable = UniqueVariable("second");
+        var producerPath = UniquePath("parent");
+        var unrelatedPath = UniquePath("other");
+        var consumerPath = UniquePath("sink");
+
+        var explicitProducer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: producerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: $"{{\"{firstVariable}\":\"a\",\"{secondVariable}\":\"b\"}}");
+        SetTags(
+            explicitProducer,
+            $"flow-scenario-key:{flowKey}",
+            $"flow-produces:{firstVariable}",
+            $"flow-produces:{secondVariable}");
+
+        var unrelatedProducer = CreateTestCase(
+            endpointId: unrelatedEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: unrelatedPath,
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: $"{{\"{firstVariable}\":\"x\",\"{secondVariable}\":\"y\"}}");
+        SetTags(
+            unrelatedProducer,
+            $"flow-scenario-key:{unrelatedFlowKey}",
+            $"flow-produces:{firstVariable}",
+            $"flow-produces:{secondVariable}");
+
+        var consumer = CreateTestCase(
+            endpointId: consumerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: consumerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 2,
+            body: $"{{\"one\":\"{{{{{firstVariable}}}}}\",\"two\":\"{{{{{secondVariable}}}}}\"}}");
+        SetTags(
+            consumer,
+            $"flow-depends-on:{flowKey}",
+            $"flow-consumes:{firstVariable}",
+            $"flow-consumes:{secondVariable}",
+            "rewrite-policy:minimal");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = producerEndpointId, HttpMethod = "POST", Path = producerPath, OrderIndex = 0 },
+            new() { EndpointId = unrelatedEndpointId, HttpMethod = "POST", Path = unrelatedPath, OrderIndex = 1 },
+            new() { EndpointId = consumerEndpointId, HttpMethod = "POST", Path = consumerPath, OrderIndex = 2, DependsOnEndpointIds = new List<Guid> { producerEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { explicitProducer, unrelatedProducer, consumer }, approvedOrder);
+
+        consumer.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == explicitProducer.Id);
+        consumer.Dependencies.Should().NotContain(x => x.DependsOnTestCaseId == unrelatedProducer.Id);
+        explicitProducer.Variables.Should().Contain(x => x.VariableName == firstVariable);
+        explicitProducer.Variables.Should().Contain(x => x.VariableName == secondVariable);
+        unrelatedProducer.Variables.Should().NotContain(x => x.VariableName == firstVariable || x.VariableName == secondVariable);
+    }
+
+    [Fact]
+    public void Enrich_Should_KeepGenericFallback_WhenFlowDependencyMetadataIsMissing()
+    {
+        var producerEndpointId = Guid.NewGuid();
+        var consumerEndpointId = Guid.NewGuid();
+        var resource = UniqueVariable("resource").ToLowerInvariant();
+        var producerPath = "/" + resource + "s";
+        var consumerPath = "/" + resource + "s/{id}";
+
+        var producer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: producerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: $"{{\"name\":\"{resource}\"}}");
+
+        var consumer = CreateTestCase(
+            endpointId: consumerEndpointId,
+            httpMethod: TestGenHttpMethod.PUT,
+            path: consumerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"name\":\"updated\"}");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = producerEndpointId, HttpMethod = "POST", Path = producerPath, OrderIndex = 0 },
+            new() { EndpointId = consumerEndpointId, HttpMethod = "PUT", Path = consumerPath, OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { producerEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { producer, consumer }, approvedOrder);
+
+        consumer.Request.PathParams.Should().Contain("\"id\":\"{{" + resource + "Id}}\"");
+        consumer.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == producer.Id);
+        producer.Variables.Should().Contain(x =>
+            x.VariableName == resource + "Id" &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.id");
+    }
+
+    [Fact]
+    public void Enrich_Should_SourceGeneratedIdPlaceholder_FromDeclaredParentNotLaterVariant()
+    {
+        var producerEndpointId = Guid.NewGuid();
+        var consumerEndpointId = Guid.NewGuid();
+        var flowKey = UniqueFlowKey("resource");
+        var laterFlowKey = UniqueFlowKey("resourcevariant");
+        var idVariable = UniqueVariable("resource") + "Id";
+        var producerPath = UniquePath("resource");
+        var consumerPath = UniquePath("downstream");
+
+        var explicitProducer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: producerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 0,
+            body: "{\"name\":\"source\"}");
+        SetTags(
+            explicitProducer,
+            $"flow-scenario-key:{flowKey}",
+            "flow-required:true",
+            $"flow-produces:{idVariable}");
+
+        var laterProducer = CreateTestCase(
+            endpointId: producerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: producerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 1,
+            body: "{\"name\":\"variant\"}");
+        SetTags(
+            laterProducer,
+            $"flow-scenario-key:{laterFlowKey}",
+            $"flow-produces:{idVariable}");
+
+        var consumer = CreateTestCase(
+            endpointId: consumerEndpointId,
+            httpMethod: TestGenHttpMethod.POST,
+            path: consumerPath,
+            testType: TestType.HappyPath,
+            orderIndex: 2,
+            body: $"{{\"parent\":\"{{{{{idVariable}}}}}\"}}");
+        SetTags(
+            consumer,
+            $"flow-depends-on:{flowKey}",
+            $"flow-consumes:{idVariable}",
+            "rewrite-policy:minimal");
+
+        var approvedOrder = new List<ApiOrderItemModel>
+        {
+            new() { EndpointId = producerEndpointId, HttpMethod = "POST", Path = producerPath, OrderIndex = 0 },
+            new() { EndpointId = consumerEndpointId, HttpMethod = "POST", Path = consumerPath, OrderIndex = 1, DependsOnEndpointIds = new List<Guid> { producerEndpointId } },
+        };
+
+        GeneratedTestCaseDependencyEnricher.Enrich(new[] { explicitProducer, laterProducer, consumer }, approvedOrder);
+
+        consumer.Dependencies.Should().ContainSingle(x => x.DependsOnTestCaseId == explicitProducer.Id);
+        consumer.Dependencies.Should().NotContain(x => x.DependsOnTestCaseId == laterProducer.Id);
+        explicitProducer.Variables.Should().Contain(x =>
+            x.VariableName == idVariable &&
+            x.ExtractFrom == ExtractFrom.ResponseBody &&
+            x.JsonPath == "$.id");
+        laterProducer.Variables.Should().NotContain(x => x.VariableName == idVariable);
+    }
+
     private static TestCase CreateTestCase(
         Guid endpointId,
         TestGenHttpMethod httpMethod,
@@ -565,4 +805,16 @@ public class GeneratedTestCaseDependencyEnricherTests
             },
         };
     }
+
+    private static string UniqueVariable(string prefix)
+        => prefix + Guid.NewGuid().ToString("N")[..8];
+
+    private static string UniqueFlowKey(string prefix)
+        => prefix + "-" + Guid.NewGuid().ToString("N")[..8];
+
+    private static string UniquePath(string segment)
+        => "/flow-" + Guid.NewGuid().ToString("N")[..8] + "/" + segment;
+
+    private static void SetTags(TestCase testCase, params string[] tags)
+        => testCase.Tags = string.Join(",", tags);
 }
