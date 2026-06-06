@@ -468,7 +468,6 @@ public class SaveAiGeneratedTestCasesCommandHandler : ICommandHandler<SaveAiGene
 
                 if (dto.Request is not null)
                 {
-                    metadataByEndpointIdForPersistence.TryGetValue(dto.EndpointId ?? Guid.Empty, out var endpointMetadata);
                     NormalizeRequestBodyForEndpoint(dto, endpointMetadata);
 
                     var req = new TestCaseRequest
